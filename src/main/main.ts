@@ -203,7 +203,10 @@ function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('devices:get', async (_, id: string) => {
-    return database.getDevice(id);
+    console.log('[IPC] devices:get called with id:', id);
+    const device = await database.getDevice(id);
+    console.log('[IPC] devices:get result:', device ? device.hostname : 'null');
+    return device;
   });
 
   ipcMain.handle('devices:delete', async (_, id: string) => {

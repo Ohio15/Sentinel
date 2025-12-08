@@ -13,7 +13,7 @@ interface DeviceDetailProps {
 type Tab = 'overview' | 'terminal' | 'files' | 'remote' | 'commands';
 
 export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
-  const { selectedDevice, metrics, fetchDevice, fetchMetrics } = useDeviceStore();
+  const { selectedDevice, metrics, loading, error, fetchDevice, fetchMetrics } = useDeviceStore();
   const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [command, setCommand] = useState('');
   const [commandType, setCommandType] = useState('shell');
@@ -43,10 +43,32 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
     }
   };
 
-  if (!selectedDevice) {
+  if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
         <p className="text-text-secondary">Loading device...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-4">
+        <p className="text-red-500">Error: {error}</p>
+        <button onClick={onBack} className="btn btn-secondary">
+          Back to Devices
+        </button>
+      </div>
+    );
+  }
+
+  if (!selectedDevice) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-4">
+        <p className="text-text-secondary">Device not found</p>
+        <button onClick={onBack} className="btn btn-secondary">
+          Back to Devices
+        </button>
       </div>
     );
   }
@@ -264,7 +286,7 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function MetricBar({ label, value, color }: { label: string; value: number; color: string }) {
+function MetricBar({ label, value, color }: { label: string; value: number | null | undefined; color: string }) {
   const colors = {
     blue: 'bg-blue-500',
     green: 'bg-green-500',
@@ -272,18 +294,19 @@ function MetricBar({ label, value, color }: { label: string; value: number; colo
     red: 'bg-red-500',
   };
 
-  const bgColor = value > 90 ? colors.red : colors[color as keyof typeof colors];
+  const safeValue = value ?? 0;
+  const bgColor = safeValue > 90 ? colors.red : colors[color as keyof typeof colors];
 
   return (
     <div>
       <div className="flex justify-between mb-1">
         <span className="text-sm text-text-secondary">{label}</span>
-        <span className="text-sm font-medium">{value.toFixed(1)}%</span>
+        <span className="text-sm font-medium">{safeValue.toFixed(1)}%</span>
       </div>
       <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
         <div
           className={`h-full ${bgColor} transition-all duration-500`}
-          style={{ width: `${Math.min(100, value)}%` }}
+          style={{ width: `${Math.min(100, safeValue)}%` }}
         />
       </div>
     </div>

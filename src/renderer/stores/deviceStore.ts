@@ -63,11 +63,14 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
   },
 
   fetchDevice: async (id: string) => {
+    console.log('[DeviceStore] fetchDevice called with id:', id);
     set({ loading: true, error: null });
     try {
       const device = await window.api.devices.get(id);
+      console.log('[DeviceStore] fetchDevice result:', device);
       set({ selectedDevice: device, loading: false });
     } catch (error: any) {
+      console.error('[DeviceStore] fetchDevice error:', error);
       set({ error: error.message, loading: false });
     }
   },
