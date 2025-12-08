@@ -36,9 +36,8 @@ function getGitHubToken(): string {
 const GITHUB_TOKEN = getGitHubToken();
 
 if (GITHUB_TOKEN) {
-  autoUpdater.requestHeaders = {
-    Authorization: `token ${GITHUB_TOKEN}`,
-  };
+  // Use addAuthHeader for private repo authentication (recommended method)
+  autoUpdater.addAuthHeader(`token ${GITHUB_TOKEN}`);
   console.log('GitHub token configured for auto-updates');
 } else {
   console.log('No GitHub token - updates will only work for public repos');
