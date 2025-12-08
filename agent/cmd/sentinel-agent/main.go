@@ -132,8 +132,20 @@ func main() {
 
 	// Validate configuration
 	if cfg.ServerURL == "" {
-		fmt.Println("Error: Server URL not configured")
-		fmt.Println("Usage: sentinel-agent --server=http://server:8080 --token=<enrollment-token>")
+		fmt.Println("============================================")
+		fmt.Println("  Sentinel Agent - Installation Required")
+		fmt.Println("============================================")
+		fmt.Println()
+		fmt.Println("This agent must be installed with server details.")
+		fmt.Println()
+		fmt.Println("Run from an elevated command prompt:")
+		fmt.Println()
+		fmt.Println("  sentinel-agent.exe --install --server=http://SERVER:8080 --token=TOKEN")
+		fmt.Println()
+		fmt.Println("Get the server URL and token from the Sentinel dashboard.")
+		fmt.Println()
+		fmt.Println("Press Enter to exit...")
+		fmt.Scanln()
 		os.Exit(1)
 	}
 
