@@ -95,11 +95,10 @@ export class Server {
           return;
       }
 
-      // Look for binary in downloads directory (relative to app)
-      const appPath = electronApp.isPackaged
-        ? path.dirname(electronApp.getPath('exe'))
-        : path.join(__dirname, '..', '..');
-      const downloadsDir = path.join(appPath, 'downloads');
+      // Look for binary in downloads directory (uses resources folder when packaged)
+      const downloadsDir = electronApp.isPackaged
+        ? path.join(process.resourcesPath, 'downloads')
+        : path.join(__dirname, '..', '..', 'downloads');
       const binaryPath = path.join(downloadsDir, filename);
 
       // Check if binary exists
@@ -134,10 +133,9 @@ export class Server {
 
     // List available agent downloads
     this.app.get('/api/agent/downloads', (req: Request, res: Response) => {
-      const appPath = electronApp.isPackaged
-        ? path.dirname(electronApp.getPath('exe'))
-        : path.join(__dirname, '..', '..');
-      const downloadsDir = path.join(appPath, 'downloads');
+      const downloadsDir = electronApp.isPackaged
+        ? path.join(process.resourcesPath, 'downloads')
+        : path.join(__dirname, '..', '..', 'downloads');
 
       if (!fs.existsSync(downloadsDir)) {
         res.json({ agents: [], message: 'No agents built yet. Run: cd agent && .\\build.ps1 -Platform all' });

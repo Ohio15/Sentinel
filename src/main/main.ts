@@ -314,11 +314,10 @@ function setupIpcHandlers(): void {
 
   // Agent download with save dialog
   ipcMain.handle('agent:download', async (_, platform: string) => {
-    // Get the source path
-    const appPath = app.isPackaged
-      ? path.dirname(app.getPath('exe'))
-      : path.join(__dirname, '..', '..');
-    const downloadsDir = path.join(appPath, 'downloads');
+    // Get the downloads directory - uses resources folder when packaged
+    const downloadsDir = app.isPackaged
+      ? path.join(process.resourcesPath, 'downloads')
+      : path.join(__dirname, '..', '..', 'downloads');
 
     // Determine filename based on platform
     let filename: string;
