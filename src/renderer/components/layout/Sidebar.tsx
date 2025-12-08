@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 
 interface SidebarProps {
   currentPage: string;
@@ -6,6 +6,11 @@ interface SidebarProps {
 }
 
 export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
+  const [version, setVersion] = useState<string>('');
+
+  useEffect(() => {
+    window.api.updater.getVersion().then(setVersion);
+  }, []);
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: DashboardIcon },
     { id: 'devices', label: 'Devices', icon: DevicesIcon },
@@ -53,7 +58,7 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
       {/* Footer */}
       <div className="p-4 border-t border-border">
         <div className="text-xs text-text-secondary text-center">
-          Version 1.0.0
+          Version {version}
         </div>
       </div>
     </aside>
