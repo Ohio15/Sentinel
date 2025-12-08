@@ -11,6 +11,14 @@ $ErrorActionPreference = "Stop"
 $Version = "1.0.0"
 $OutputDir = "..\downloads"
 $BinaryName = "sentinel-agent"
+$GoPath = $env:GOPATH
+if (-not $GoPath) { $GoPath = "$env:USERPROFILE\go" }
+
+# Add Go to PATH if not already present
+$GoBin = "C:\Program Files\Go\bin"
+if (Test-Path $GoBin) {
+    $env:PATH = "$GoBin;$env:PATH"
+}
 
 # Create output directory
 if (-not (Test-Path $OutputDir)) {
@@ -31,6 +39,17 @@ function Build-Agent {
     $env:GOARCH = $Architecture
     $env:CGO_ENABLED = "0"
 
+    # For Windows builds, generate resource file with admin manifest
+    if ($OS -eq "windows") {
+        Write-Host "  Generating Windows resource file with admin manifest..." -ForegroundColor Yellow
+        Push-Location ".\cmd\sentinel-agent"
+        & "$GoPath\bin\goversioninfo.exe" -64
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  Warning: goversioninfo failed, building without manifest" -ForegroundColor Yellow
+        }
+        Pop-Location
+    }
+
     $ldflags = "-s -w -X main.Version=$Version"
     $output = Join-Path $OutputDir $OutputName
 
@@ -42,6 +61,14 @@ function Build-Agent {
     } else {
         Write-Host "  Build failed!" -ForegroundColor Red
         exit 1
+    }
+
+    # Clean up generated resource file
+    if ($OS -eq "windows") {
+        $sysoFile = ".\cmd\sentinel-agent\resource.syso"
+        if (Test-Path $sysoFile) {
+            Remove-Item $sysoFile -Force
+        }
     }
 }
 
