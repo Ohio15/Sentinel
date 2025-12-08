@@ -315,6 +315,8 @@ function setupIpcHandlers(): void {
   // Agent download with save dialog
   ipcMain.handle('agent:download', async (_, platform: string) => {
     // Get the downloads directory - uses resources folder when packaged
+    console.log('Agent download - isPackaged:', app.isPackaged);
+    console.log('Agent download - resourcesPath:', process.resourcesPath);
     const downloadsDir = app.isPackaged
       ? path.join(process.resourcesPath, 'downloads')
       : path.join(__dirname, '..', '..', 'downloads');
@@ -336,12 +338,14 @@ function setupIpcHandlers(): void {
     }
 
     const sourcePath = path.join(downloadsDir, filename);
+    console.log('Agent download - sourcePath:', sourcePath);
+    console.log('Agent download - exists:', fs.existsSync(sourcePath));
 
     // Check if source file exists
     if (!fs.existsSync(sourcePath)) {
       return {
         success: false,
-        error: `Agent binary not found. Please build the agent first.`,
+        error: `Agent binary not found at: ${sourcePath}`,
       };
     }
 
