@@ -5,6 +5,37 @@ import * as fs from 'fs';
 import { Database } from './database';
 import { Server } from './server';
 import { AgentManager } from './agents';
+import * as os from 'os';
+
+// Helper function to embed configuration into agent binary
+function embedConfigInBinary(binaryData: Buffer, serverUrl: string, token: string): Buffer {
+  const serverPlaceholder = 'SENTINEL_EMBEDDED_SERVER:' + '_'.repeat(64) + ':END';
+  const tokenPlaceholder = 'SENTINEL_EMBEDDED_TOKEN:' + '_'.repeat(64) + ':END';
+
+  const paddedServer = serverUrl.padEnd(64, '_').substring(0, 64);
+  const paddedToken = token.padEnd(64, '_').substring(0, 64);
+
+  const serverReplacement = 'SENTINEL_EMBEDDED_SERVER:' + paddedServer + ':END';
+  const tokenReplacement = 'SENTINEL_EMBEDDED_TOKEN:' + paddedToken + ':END';
+
+  let binaryStr = binaryData.toString('latin1');
+  binaryStr = binaryStr.replace(serverPlaceholder, serverReplacement);
+  binaryStr = binaryStr.replace(tokenPlaceholder, tokenReplacement);
+
+  return Buffer.from(binaryStr, 'latin1');
+}
+
+function getLocalIpAddress(): string {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name] || []) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return '127.0.0.1';
+}
 
 // Auto-updater configuration
 autoUpdater.autoDownload = false; // User must confirm download
@@ -362,17 +393,26 @@ function setupIpcHandlers(): void {
       return { success: false, canceled: true };
     }
 
-    // Copy file
+    // Read, embed config, and save file
     try {
-      const stats = fs.statSync(sourcePath);
-      const totalSize = stats.size;
+      const binaryData = fs.readFileSync(sourcePath);
 
-      await fs.promises.copyFile(sourcePath, result.filePath);
+      // Get server info for embedding
+      const localIp = getLocalIpAddress();
+      const serverPort = server.getPort();
+      const serverUrl = `http://${localIp}:${serverPort}`;
+      const enrollmentToken = server.getEnrollmentToken();
+
+      // Embed server URL and enrollment token into binary
+      const modifiedBinary = embedConfigInBinary(binaryData, serverUrl, enrollmentToken);
+
+      // Write the modified binary
+      await fs.promises.writeFile(result.filePath, modifiedBinary);
 
       return {
         success: true,
         filePath: result.filePath,
-        size: totalSize,
+        size: modifiedBinary.length,
       };
     } catch (error: any) {
       return {

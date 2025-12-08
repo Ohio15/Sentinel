@@ -6,10 +6,43 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
 )
+
+// Embedded configuration placeholders - these get replaced in the binary at download time
+// The strings are padded to fixed length to allow binary replacement without changing file size
+// Format: SENTINEL_EMBEDDED_<KEY>:<64-char-value-padded-with-underscores>:END
+var (
+	EmbeddedServerURL = "SENTINEL_EMBEDDED_SERVER:________________________________________________________________:END"
+	EmbeddedToken     = "SENTINEL_EMBEDDED_TOKEN:________________________________________________________________:END"
+)
+
+// GetEmbeddedConfig extracts embedded config from the placeholder variables
+func GetEmbeddedConfig() (serverURL, token string, hasEmbedded bool) {
+	// Extract server URL
+	if strings.HasPrefix(EmbeddedServerURL, "SENTINEL_EMBEDDED_SERVER:") && strings.HasSuffix(EmbeddedServerURL, ":END") {
+		value := EmbeddedServerURL[25 : len(EmbeddedServerURL)-4] // Remove prefix and suffix
+		value = strings.TrimRight(value, "_")                     // Remove padding
+		if value != "" && !strings.HasPrefix(value, "_") {
+			serverURL = value
+		}
+	}
+
+	// Extract token
+	if strings.HasPrefix(EmbeddedToken, "SENTINEL_EMBEDDED_TOKEN:") && strings.HasSuffix(EmbeddedToken, ":END") {
+		value := EmbeddedToken[24 : len(EmbeddedToken)-4] // Remove prefix and suffix
+		value = strings.TrimRight(value, "_")             // Remove padding
+		if value != "" && !strings.HasPrefix(value, "_") {
+			token = value
+		}
+	}
+
+	hasEmbedded = serverURL != "" && token != ""
+	return
+}
 
 // Config holds the agent configuration
 type Config struct {

@@ -7,6 +7,32 @@ import { v4 as uuidv4 } from 'uuid';
 import { Database } from './database';
 import { AgentManager } from './agents';
 import * as os from 'os';
+
+// Helper function to embed configuration into agent binary
+function embedConfigInBinary(binaryData: Buffer, serverUrl: string, token: string): Buffer {
+  // The agent has placeholder strings that we replace:
+  // SENTINEL_EMBEDDED_SERVER:________________________________________________________________:END (93 chars total)
+  // SENTINEL_EMBEDDED_TOKEN:________________________________________________________________:END (92 chars total)
+
+  const serverPlaceholder = 'SENTINEL_EMBEDDED_SERVER:' + '_'.repeat(64) + ':END';
+  const tokenPlaceholder = 'SENTINEL_EMBEDDED_TOKEN:' + '_'.repeat(64) + ':END';
+
+  // Pad values to exactly 64 characters
+  const paddedServer = serverUrl.padEnd(64, '_').substring(0, 64);
+  const paddedToken = token.padEnd(64, '_').substring(0, 64);
+
+  const serverReplacement = 'SENTINEL_EMBEDDED_SERVER:' + paddedServer + ':END';
+  const tokenReplacement = 'SENTINEL_EMBEDDED_TOKEN:' + paddedToken + ':END';
+
+  // Convert buffer to string for replacement (binary-safe using latin1)
+  let binaryStr = binaryData.toString('latin1');
+
+  // Replace placeholders
+  binaryStr = binaryStr.replace(serverPlaceholder, serverReplacement);
+  binaryStr = binaryStr.replace(tokenPlaceholder, tokenReplacement);
+
+  return Buffer.from(binaryStr, 'latin1');
+}
 import { app as electronApp } from 'electron';
 
 export class Server {
@@ -111,24 +137,21 @@ export class Server {
         return;
       }
 
-      // Get file stats for content-length
-      const stats = fs.statSync(binaryPath);
+      // Read binary and embed configuration
+      const binaryData = fs.readFileSync(binaryPath);
+      const localIp = this.getLocalIpAddress();
+      const serverUrl = `http://${localIp}:${this.port}`;
+
+      // Embed server URL and enrollment token into binary
+      const modifiedBinary = embedConfigInBinary(binaryData, serverUrl, this.enrollmentToken);
 
       // Set headers for binary download
       res.setHeader('Content-Type', 'application/octet-stream');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.setHeader('Content-Length', stats.size);
+      res.setHeader('Content-Length', modifiedBinary.length);
 
-      // Stream the file
-      const fileStream = fs.createReadStream(binaryPath);
-      fileStream.pipe(res);
-
-      fileStream.on('error', (err) => {
-        console.error('Error streaming agent binary:', err);
-        if (!res.headersSent) {
-          res.status(500).json({ error: 'Failed to download agent' });
-        }
-      });
+      // Send the modified binary
+      res.send(modifiedBinary);
     });
 
     // List available agent downloads

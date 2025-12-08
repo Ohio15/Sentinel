@@ -72,7 +72,67 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Check for embedded configuration (set at download time)
+	embeddedServer, embeddedToken, hasEmbedded := config.GetEmbeddedConfig()
+
+	// If we have embedded config and no flags provided, auto-install
+	if hasEmbedded && !*installFlag && *serverURL == "" && *token == "" {
+		fmt.Println("============================================")
+		fmt.Println("  Sentinel Agent - Auto-Installing...")
+		fmt.Println("============================================")
+		fmt.Println()
+		fmt.Printf("Server: %s\n", embeddedServer)
+		fmt.Println()
+
+		if !svc.IsElevated() {
+			fmt.Println("ERROR: Administrator privileges required!")
+			fmt.Println()
+			fmt.Println("Please right-click the agent and select")
+			fmt.Println("'Run as administrator' to install.")
+			fmt.Println()
+			fmt.Println("Press Enter to exit...")
+			fmt.Scanln()
+			os.Exit(1)
+		}
+
+		// Save configuration
+		cfg := config.DefaultConfig()
+		cfg.ServerURL = embeddedServer
+		cfg.EnrollmentToken = embeddedToken
+		if err := cfg.Save(); err != nil {
+			fmt.Printf("Error saving configuration: %v\n", err)
+			fmt.Println()
+			fmt.Println("Press Enter to exit...")
+			fmt.Scanln()
+			os.Exit(1)
+		}
+
+		if err := svc.Install(embeddedServer, embeddedToken); err != nil {
+			fmt.Printf("Error installing service: %v\n", err)
+			fmt.Println()
+			fmt.Println("Press Enter to exit...")
+			fmt.Scanln()
+			os.Exit(1)
+		}
+		fmt.Println("Sentinel Agent installed successfully!")
+		fmt.Println()
+		fmt.Println("The agent is now running as a service and will")
+		fmt.Println("automatically start when Windows boots.")
+		fmt.Println()
+		fmt.Println("Press Enter to exit...")
+		fmt.Scanln()
+		os.Exit(0)
+	}
+
 	if *installFlag {
+		// Use embedded config if no command line args provided
+		if *serverURL == "" && hasEmbedded {
+			*serverURL = embeddedServer
+		}
+		if *token == "" && hasEmbedded {
+			*token = embeddedToken
+		}
+
 		if *serverURL == "" || *token == "" {
 			fmt.Println("Error: --server and --token are required for installation")
 			fmt.Println("Usage: sentinel-agent --install --server=http://server:8080 --token=<enrollment-token>")
