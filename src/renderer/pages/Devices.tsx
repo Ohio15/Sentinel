@@ -61,7 +61,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
         const sizeMB = result.size ? (result.size / 1024 / 1024).toFixed(1) : '?';
         setDownloadResult({
           type: 'success',
-          message: `Agent saved successfully (${sizeMB} MB)`
+          message: `Agent saved (${sizeMB} MB). Run as Admin with: --install --server=<URL> --token=<TOKEN>`
         });
       } else {
         setDownloadResult({
