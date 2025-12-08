@@ -197,6 +197,36 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 
 		// Broadcast to dashboards
 		r.hub.BroadcastToDashboards(message)
+
+	case ws.MsgTypeTerminalOutput:
+		// Forward terminal output to dashboards
+		broadcastMsg, _ := json.Marshal(map[string]interface{}{
+			"type":     ws.MsgTypeTerminalOutput,
+			"deviceId": deviceID,
+			"agentId":  agentID,
+			"payload":  msg.Payload,
+		})
+		r.hub.BroadcastToDashboards(broadcastMsg)
+
+	case ws.MsgTypeFileContent:
+		// Forward file content to dashboards
+		broadcastMsg, _ := json.Marshal(map[string]interface{}{
+			"type":     ws.MsgTypeFileContent,
+			"deviceId": deviceID,
+			"agentId":  agentID,
+			"payload":  msg.Payload,
+		})
+		r.hub.BroadcastToDashboards(broadcastMsg)
+
+	case ws.MsgTypeRemoteFrame:
+		// Forward remote desktop frame to dashboards
+		broadcastMsg, _ := json.Marshal(map[string]interface{}{
+			"type":     ws.MsgTypeRemoteFrame,
+			"deviceId": deviceID,
+			"agentId":  agentID,
+			"payload":  msg.Payload,
+		})
+		r.hub.BroadcastToDashboards(broadcastMsg)
 	}
 }
 
@@ -282,7 +312,7 @@ func (r *Router) handleDashboardWebSocket(c *gin.Context) {
 
 	go client.WritePump(ctx)
 	client.ReadPump(ctx, func(msg []byte) {
-		// Handle dashboard messages if needed
+		r.handleDashboardMessage(userID, msg)
 	})
 }
 
@@ -582,7 +612,12 @@ func (r *Router) listUsers(c *gin.Context) {
 
 func (r *Router) createUser(c *gin.Context) {
 	var req struct {
-		Email     string 		Password  string 		FirstName string 		LastName  string 		Role      string 	}
+		Email     string `json:"email"`
+		Password  string `json:"password"`
+		FirstName string `json:"firstName"`
+		LastName  string `json:"lastName"`
+		Role      string `json:"role"`
+	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -602,7 +637,7 @@ func (r *Router) createUser(c *gin.Context) {
 
 	ctx := context.Background()
 	var id uuid.UUID
-	err = r.db.Pool.QueryRow(ctx, , req.Email, hashedPassword, req.FirstName, req.LastName, req.Role).Scan(&id)
+	err = r.db.Pool.QueryRow(ctx, `INSERT INTO users (email, password_hash, first_name, last_name, role) VALUES ($1, $2, $3, $4, $5) RETURNING id`, req.Email, hashedPassword, req.FirstName, req.LastName, req.Role).Scan(&id)
 
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "User already exists"})

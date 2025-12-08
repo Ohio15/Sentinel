@@ -11,6 +11,7 @@ type Config struct {
 	// Server
 	Environment string
 	Port        int
+	ServerURL   string
 
 	// Database
 	DatabaseURL string
@@ -35,6 +36,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		Environment:          getEnv("SERVER_ENV", "development"),
 		Port:                 getEnvInt("PORT", 8080),
+		ServerURL:            getEnv("SERVER_URL", "http://localhost:8080"),
 		DatabaseURL:          getEnv("DATABASE_URL", ""),
 		RedisURL:             getEnv("REDIS_URL", "redis://localhost:6379"),
 		JWTSecret:            getEnv("JWT_SECRET", ""),

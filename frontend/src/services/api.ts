@@ -92,10 +92,10 @@ class ApiService {
     return response.data;
   }
 
-  async executeCommand(deviceId: string, commandType: string, payload: Record<string, unknown>) {
+  async executeCommand(deviceId: string, command: string, commandType: string = 'shell') {
     const response = await this.client.post(`/devices/${deviceId}/commands`, {
+      command,
       commandType,
-      payload,
     });
     return response.data;
   }

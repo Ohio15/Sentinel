@@ -313,37 +313,124 @@ func mustMarshal(v interface{}) []byte {
 	return b
 }
 
-// Additional stub handlers for remaining endpoints
-func (r *Router) listCommands(c *gin.Context) {
-	ctx := context.Background()
-	deviceID := c.Query("deviceId")
-
-	var rows interface{}
-	var err error
-
-	if deviceID != "" {
-		id, _ := uuid.Parse(deviceID)
-		rows, err = r.db.Pool.Query(ctx, `
-			SELECT id, device_id, command_type, command, status, output, error_message,
-				   exit_code, created_by, created_at, started_at, completed_at
-			FROM commands WHERE device_id = $1 ORDER BY created_at DESC LIMIT 100
-		`, id)
-	} else {
-		rows, err = r.db.Pool.Query(ctx, `
-			SELECT id, device_id, command_type, command, status, output, error_message,
-				   exit_code, created_by, created_at, started_at, completed_at
-			FROM commands ORDER BY created_at DESC LIMIT 100
-		`)
+// listDeviceCommands returns commands for a specific device
+func (r *Router) listDeviceCommands(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid device ID"})
+		return
 	}
 
+	ctx := context.Background()
+
+	pageSize := 10
+	if ps := c.Query("pageSize"); ps != "" {
+		if parsed, err := strconv.Atoi(ps); err == nil && parsed > 0 && parsed <= 100 {
+			pageSize = parsed
+		}
+	}
+
+	rows, err := r.db.Pool.Query(ctx, `
+		SELECT id, device_id, command_type, command, status, output, error_message,
+			   exit_code, created_by, created_at, started_at, completed_at
+		FROM commands WHERE device_id = $1 ORDER BY created_at DESC LIMIT $2
+	`, id, pageSize)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch commands"})
 		return
 	}
+	defer rows.Close()
 
-	c.JSON(http.StatusOK, rows)
+	commands := make([]models.Command, 0)
+	for rows.Next() {
+		var cmd models.Command
+		err := rows.Scan(&cmd.ID, &cmd.DeviceID, &cmd.CommandType, &cmd.Command,
+			&cmd.Status, &cmd.Output, &cmd.ErrorMessage, &cmd.ExitCode,
+			&cmd.CreatedBy, &cmd.CreatedAt, &cmd.StartedAt, &cmd.CompletedAt)
+		if err != nil {
+			continue
+		}
+		commands = append(commands, cmd)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"commands": commands,
+		"total":    len(commands),
+	})
+}
+
+// listCommands returns all commands with optional filtering
+func (r *Router) listCommands(c *gin.Context) {
+	ctx := context.Background()
+	deviceID := c.Query("deviceId")
+
+	var query string
+	var args []interface{}
+
+	if deviceID != "" {
+		id, _ := uuid.Parse(deviceID)
+		query = `
+			SELECT id, device_id, command_type, command, status, output, error_message,
+				   exit_code, created_by, created_at, started_at, completed_at
+			FROM commands WHERE device_id = $1 ORDER BY created_at DESC LIMIT 100`
+		args = []interface{}{id}
+	} else {
+		query = `
+			SELECT id, device_id, command_type, command, status, output, error_message,
+				   exit_code, created_by, created_at, started_at, completed_at
+			FROM commands ORDER BY created_at DESC LIMIT 100`
+		args = []interface{}{}
+	}
+
+	rows, err := r.db.Pool.Query(ctx, query, args...)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch commands"})
+		return
+	}
+	defer rows.Close()
+
+	commands := make([]models.Command, 0)
+	for rows.Next() {
+		var cmd models.Command
+		err := rows.Scan(&cmd.ID, &cmd.DeviceID, &cmd.CommandType, &cmd.Command,
+			&cmd.Status, &cmd.Output, &cmd.ErrorMessage, &cmd.ExitCode,
+			&cmd.CreatedBy, &cmd.CreatedAt, &cmd.StartedAt, &cmd.CompletedAt)
+		if err != nil {
+			continue
+		}
+		commands = append(commands, cmd)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"commands": commands,
+		"total":    len(commands),
+	})
 }
 
 func (r *Router) getCommand(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{})
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid command ID"})
+		return
+	}
+
+	ctx := context.Background()
+
+	var cmd models.Command
+	err = r.db.Pool.QueryRow(ctx, `
+		SELECT id, device_id, command_type, command, status, output, error_message,
+			   exit_code, created_by, created_at, started_at, completed_at
+		FROM commands WHERE id = $1
+	`, id).Scan(&cmd.ID, &cmd.DeviceID, &cmd.CommandType, &cmd.Command,
+		&cmd.Status, &cmd.Output, &cmd.ErrorMessage, &cmd.ExitCode,
+		&cmd.CreatedBy, &cmd.CreatedAt, &cmd.StartedAt, &cmd.CompletedAt)
+
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Command not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, cmd)
 }
+
+

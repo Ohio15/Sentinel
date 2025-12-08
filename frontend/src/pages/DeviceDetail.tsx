@@ -7,11 +7,14 @@ import {
   Cpu,
   HardDrive,
   Activity,
-  Terminal,
+  Terminal as TerminalIcon,
   Play,
   Tag,
+  FolderOpen,
+  MonitorPlay,
 } from 'lucide-react';
 import { Header } from '@/components/layout';
+import { Terminal, FileBrowser, RemoteDesktop } from '@/components/device';
 import { Card, CardContent, Badge, Button, Modal } from '@/components/ui';
 import api from '@/services/api';
 import type { Device, DeviceMetrics, Command } from '@/types';
@@ -31,6 +34,9 @@ export function DeviceDetail() {
   const queryClient = useQueryClient();
   const [showCommandModal, setShowCommandModal] = useState(false);
   const [commandInput, setCommandInput] = useState('');
+  const [showTerminal, setShowTerminal] = useState(false);
+  const [showFileBrowser, setShowFileBrowser] = useState(false);
+  const [showRemoteDesktop, setShowRemoteDesktop] = useState(false);
 
   const { data: device, isLoading } = useQuery<Device>({
     queryKey: ['device', id],
@@ -53,7 +59,7 @@ export function DeviceDetail() {
 
   const executeCommandMutation = useMutation({
     mutationFn: (command: string) =>
-      api.executeCommand(id!, 'shell', { command }),
+      api.executeCommand(id!, command, 'shell'),
     onSuccess: () => {
       toast.success('Command sent to device');
       setShowCommandModal(false);
@@ -99,8 +105,9 @@ export function DeviceDetail() {
     time: new Date(m.timestamp).toLocaleTimeString(),
     cpu: m.cpuPercent,
     memory: m.memoryPercent,
-    disk: m.diskPercent,
-  }));
+    disk: m.diskPercent,  }));
+
+  const isOnline = device.status === 'online';
 
   return (
     <div>
@@ -123,13 +130,69 @@ export function DeviceDetail() {
           <div className="flex gap-2">
             <Button
               variant="secondary"
-              onClick={() => setShowCommandModal(true)}
+              onClick={() => setShowTerminal(true)}
+              disabled={!isOnline}
+              title={!isOnline ? 'Device is offline' : 'Open Terminal'}
             >
-              <Terminal className="w-4 h-4 mr-2" />
+              <TerminalIcon className="w-4 h-4 mr-2" />
+              Terminal
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => setShowFileBrowser(true)}
+              disabled={!isOnline}
+              title={!isOnline ? 'Device is offline' : 'Browse Files'}
+            >
+              <FolderOpen className="w-4 h-4 mr-2" />
+              Files
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => setShowRemoteDesktop(true)}
+              disabled={!isOnline}
+              title={!isOnline ? 'Device is offline' : 'Remote Desktop'}
+            >
+              <MonitorPlay className="w-4 h-4 mr-2" />
+              Remote
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => setShowCommandModal(true)}
+              disabled={!isOnline}
+              title={!isOnline ? 'Device is offline' : 'Run Command'}
+            >
+              <Play className="w-4 h-4 mr-2" />
               Run Command
             </Button>
           </div>
         </div>
+
+        {/* Terminal Panel */}
+        {showTerminal && device.agentId && (
+          <Terminal
+            deviceId={id!}
+            agentId={device.agentId}
+            onClose={() => setShowTerminal(false)}
+          />
+        )}
+
+        {/* File Browser Panel */}
+        {showFileBrowser && device.agentId && (
+          <FileBrowser
+            deviceId={id!}
+            agentId={device.agentId}
+            onClose={() => setShowFileBrowser(false)}
+          />
+        )}
+
+        {/* Remote Desktop Panel */}
+        {showRemoteDesktop && device.agentId && (
+          <RemoteDesktop
+            deviceId={id!}
+            agentId={device.agentId}
+            onClose={() => setShowRemoteDesktop(false)}
+          />
+        )}
 
         {/* Device Info Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -346,7 +409,7 @@ export function DeviceDetail() {
         </Card>
 
         {/* Tags */}
-        {device.tags.length > 0 && (
+        {device.tags && device.tags.length > 0 && (
           <Card>
             <CardContent>
               <div className="flex items-center gap-2 mb-3">

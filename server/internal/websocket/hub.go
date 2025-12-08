@@ -32,9 +32,16 @@ const (
 	MsgTypeTerminalStart = "start_terminal"
 	MsgTypeTerminalInput = "terminal_input"
 	MsgTypeTerminalOutput = "terminal_output"
-	MsgTypeTerminalClose = "close_terminal"
+	MsgTypeTerminalResize = "terminal_resize"
+	MsgTypeTerminalClose  = "close_terminal"
 	MsgTypeListFiles    = "list_files"
-	MsgTypeFileContent  = "file_content"
+	MsgTypeFileContent   = "file_content"
+	MsgTypeDownloadFile  = "download_file"
+	MsgTypeUploadFile     = "upload_file"
+	MsgTypeStartRemote    = "start_remote"
+	MsgTypeStopRemote     = "stop_remote"
+	MsgTypeRemoteInput    = "remote_input"
+	MsgTypeRemoteFrame    = "remote_frame"
 )
 
 type Message struct {
