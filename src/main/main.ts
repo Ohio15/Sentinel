@@ -443,7 +443,24 @@ function setupIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle('install-update', () => {
+  ipcMain.handle('install-update', async () => {
+    // Clean up resources before quitting for update
+    try {
+      console.log('Preparing to install update...');
+      if (server) {
+        console.log('Stopping server...');
+        await server.stop();
+      }
+      if (database) {
+        console.log('Closing database...');
+        await database.close();
+      }
+      console.log('Cleanup complete, installing update...');
+    } catch (error) {
+      console.error('Error during cleanup:', error);
+    }
+    // Small delay to ensure cleanup is complete
+    await new Promise(resolve => setTimeout(resolve, 500));
     autoUpdater.quitAndInstall(false, true);
   });
 

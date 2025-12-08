@@ -61,11 +61,11 @@ interface MetricLineProps {
 
 function MetricLine({ data, dataKey, label, color, unit }: MetricLineProps) {
   const { path, area, points, max, avg, current } = useMemo(() => {
-    const values = data.map(d => d[dataKey] as number);
+    const values = data.map(d => (d[dataKey] as number) ?? 0);
     const max = Math.max(...values);
     const min = Math.min(...values);
     const avg = values.reduce((a, b) => a + b, 0) / values.length;
-    const current = values[values.length - 1];
+    const current = values[values.length - 1] ?? 0;
 
     // Create SVG path
     const width = 800;
@@ -77,7 +77,7 @@ function MetricLine({ data, dataKey, label, color, unit }: MetricLineProps) {
 
     const pathPoints = values.map((v, i) => ({
       x: padding + i * xScale,
-      y: height - padding - v * yScale,
+      y: height - padding - (v ?? 0) * yScale,
     }));
 
     const pathD = pathPoints
@@ -105,13 +105,13 @@ function MetricLine({ data, dataKey, label, color, unit }: MetricLineProps) {
         </div>
         <div className="flex items-center gap-4 text-sm">
           <span className="text-text-secondary">
-            Current: <span className="font-medium text-text-primary">{current.toFixed(1)}{unit}</span>
+            Current: <span className="font-medium text-text-primary">{(current ?? 0).toFixed(1)}{unit}</span>
           </span>
           <span className="text-text-secondary">
-            Avg: <span className="font-medium text-text-primary">{avg.toFixed(1)}{unit}</span>
+            Avg: <span className="font-medium text-text-primary">{(avg ?? 0).toFixed(1)}{unit}</span>
           </span>
           <span className="text-text-secondary">
-            Max: <span className="font-medium text-text-primary">{max.toFixed(1)}{unit}</span>
+            Max: <span className="font-medium text-text-primary">{(max ?? 0).toFixed(1)}{unit}</span>
           </span>
         </div>
       </div>
