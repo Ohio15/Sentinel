@@ -20,12 +20,13 @@ import (
 	"github.com/sentinel/agent/internal/executor"
 	"github.com/sentinel/agent/internal/filetransfer"
 	svc "github.com/sentinel/agent/internal/service"
+	"github.com/sentinel/agent/internal/remote"
 	"github.com/sentinel/agent/internal/terminal"
 	"github.com/sentinel/agent/internal/updater"
 )
 
 const (
-	Version = "1.7.0"
+	Version = "1.8.0"
 )
 
 var (
@@ -46,6 +47,7 @@ type Agent struct {
 	executor        *executor.Executor
 	terminalManager *terminal.Manager
 	fileTransfer    *filetransfer.FileTransfer
+	remoteManager   *remote.Manager
 	updater         *updater.Updater
 	ctx             context.Context
 	cancel          context.CancelFunc
@@ -253,6 +255,7 @@ func NewAgent(cfg *config.Config) *Agent {
 		executor:        executor.New(),
 		terminalManager: terminal.NewManager(),
 		fileTransfer:    ft,
+		remoteManager:   remote.NewManager(),
 		updater:         agentUpdater,
 		ctx:             ctx,
 		cancel:          cancel,
@@ -336,6 +339,9 @@ func (a *Agent) registerHandlers() {
 	a.client.RegisterHandler(client.MsgTypeListFiles, a.handleListFiles)
 	a.client.RegisterHandler(client.MsgTypeDownloadFile, a.handleDownloadFile)
 	a.client.RegisterHandler(client.MsgTypeUploadFile, a.handleUploadFile)
+	a.client.RegisterHandler(client.MsgTypeStartRemote, a.handleStartRemote)
+	a.client.RegisterHandler(client.MsgTypeStopRemote, a.handleStopRemote)
+	a.client.RegisterHandler(client.MsgTypeRemoteInput, a.handleRemoteInput)
 }
 
 func (a *Agent) onConnect() {
@@ -669,4 +675,62 @@ func (a *Agent) handleUploadFile(msg *client.Message) error {
 	}
 
 	return a.client.SendResponse(msg.RequestID, true, nil, "")
+}
+
+// Remote Desktop handlers
+
+func (a *Agent) handleStartRemote(msg *client.Message) error {
+	data, ok := msg.Data.(map[string]interface{})
+	if !ok {
+		return a.client.SendResponse(msg.RequestID, false, nil, "Invalid message data")
+	}
+
+	sessionID, _ := data["sessionId"].(string)
+	quality, _ := data["quality"].(string)
+	if quality == "" {
+		quality = "medium"
+	}
+
+	onFrame := func(frameData string, width, height int) {
+		a.client.SendRemoteFrame(sessionID, frameData, width, height)
+	}
+
+	_, err := a.remoteManager.StartSession(sessionID, quality, onFrame)
+	if err != nil {
+		return a.client.SendResponse(msg.RequestID, false, nil, err.Error())
+	}
+
+	return a.client.SendResponse(msg.RequestID, true, map[string]interface{}{
+		"sessionId": sessionID,
+	}, "")
+}
+
+func (a *Agent) handleStopRemote(msg *client.Message) error {
+	data, ok := msg.Data.(map[string]interface{})
+	if !ok {
+		return a.client.SendResponse(msg.RequestID, false, nil, "Invalid message data")
+	}
+
+	sessionID, _ := data["sessionId"].(string)
+	a.remoteManager.StopSession(sessionID)
+
+	return a.client.SendResponse(msg.RequestID, true, nil, "")
+}
+
+func (a *Agent) handleRemoteInput(msg *client.Message) error {
+	data, ok := msg.Data.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("invalid message data")
+	}
+
+	sessionID, _ := data["sessionId"].(string)
+	inputType, _ := data["type"].(string)
+
+	session, ok := a.remoteManager.GetSession(sessionID)
+	if !ok {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	session.HandleInput(inputType, data)
+	return nil
 }

@@ -20,6 +20,20 @@ interface DeviceDetailProps {
   onBack: () => void;
 }
 
+
+interface Command {
+  id: string;
+  deviceId: string;
+  commandType: string;
+  command: string;
+  status: string;
+  output: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
 type Tab = 'overview' | 'terminal' | 'files' | 'remote' | 'commands' | 'history';
 
 // Collapsible Section Component - Light Theme
@@ -102,6 +116,8 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
   const [commandType, setCommandType] = useState('shell');
   const [commandOutput, setCommandOutput] = useState<string | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
+  const [commandHistory, setCommandHistory] = useState<Command[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   useEffect(() => {
     fetchDevice(deviceId);
@@ -109,6 +125,17 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
     const interval = setInterval(() => fetchMetrics(deviceId, 24), 60000);
     return () => clearInterval(interval);
   }, [deviceId]);
+  // Fetch command history when history tab is active
+  useEffect(() => {
+    if (activeTab === 'history' && deviceId) {
+      setHistoryLoading(true);
+      window.api.commands.getHistory(deviceId)
+        .then(setCommandHistory)
+        .catch(console.error)
+        .finally(() => setHistoryLoading(false));
+    }
+  }, [activeTab, deviceId]);
+
 
   const executeCommand = async () => {
     if (!command.trim() || !selectedDevice) return;
@@ -585,7 +612,47 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
         {activeTab === 'history' && (
           <div className="card p-4">
             <h3 className="font-semibold text-text-primary mb-4">Command History</h3>
-            <p className="text-text-secondary">Command history will be displayed here.</p>
+            {historyLoading ? (
+              <p className="text-text-secondary">Loading...</p>
+            ) : commandHistory.length === 0 ? (
+              <p className="text-text-secondary">No commands have been executed on this device yet.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left py-2 px-3 text-sm font-medium text-text-secondary">Time</th>
+                      <th className="text-left py-2 px-3 text-sm font-medium text-text-secondary">Type</th>
+                      <th className="text-left py-2 px-3 text-sm font-medium text-text-secondary">Command</th>
+                      <th className="text-left py-2 px-3 text-sm font-medium text-text-secondary">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {commandHistory.map((cmd) => (
+                      <tr key={cmd.id} className="border-b border-border hover:bg-gray-50">
+                        <td className="py-2 px-3 text-sm text-text-secondary">
+                          {new Date(cmd.createdAt).toLocaleString()}
+                        </td>
+                        <td className="py-2 px-3 text-sm text-text-primary capitalize">{cmd.commandType}</td>
+                        <td className="py-2 px-3 text-sm font-mono text-text-primary truncate max-w-xs" title={cmd.command}>
+                          {cmd.command}
+                        </td>
+                        <td className="py-2 px-3">
+                          <span className={`px-2 py-0.5 text-xs rounded-full ${
+                            cmd.status === 'completed' ? 'bg-green-100 text-green-800' :
+                            cmd.status === 'failed' ? 'bg-red-100 text-red-800' :
+                            cmd.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-gray-100 text-gray-800'
+                          }`}>
+                            {cmd.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </div>

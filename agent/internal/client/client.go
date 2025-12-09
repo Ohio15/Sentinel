@@ -239,6 +239,20 @@ func (c *Client) SendEvent(severity, title, message string) error {
 	return c.SendJSON(msg)
 }
 
+
+
+// SendRemoteFrame sends a remote desktop frame to the server
+func (c *Client) SendRemoteFrame(sessionID string, data string, width, height int) error {
+	msg := map[string]interface{}{
+		"type":      MsgTypeRemoteFrame,
+		"sessionId": sessionID,
+		"data":      data,
+		"width":     width,
+		"height":    height,
+	}
+	return c.SendJSON(msg)
+}
+
 // readLoop handles incoming messages
 func (c *Client) readLoop(ctx context.Context) {
 	defer func() {
