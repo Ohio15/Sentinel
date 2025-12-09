@@ -138,8 +138,6 @@ let database: Database;
 let server: Server;
 let agentManager: AgentManager;
 
-const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
-
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -156,13 +154,8 @@ function createWindow(): void {
     show: false,
   });
 
-  // Load the app
-  if (isDev) {
-    mainWindow.loadURL('http://localhost:5173');
-    mainWindow.webContents.openDevTools();
-  } else {
-    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
-  }
+  // Load the app from built files
+  mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
 
   // Show window when ready
   mainWindow.once('ready-to-show', () => {
