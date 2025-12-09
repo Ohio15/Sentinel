@@ -24,7 +24,7 @@ export class Database {
       port: parseInt(process.env.DB_PORT || '') || config?.port || 5432,
       database: process.env.DB_NAME || config?.database || 'sentinel',
       user: process.env.DB_USER || config?.user || 'sentinel',
-      password: process.env.DB_PASSWORD || config?.password || 'sentinel',
+      password: process.env.DB_PASSWORD || config?.password || 'sentinel_dev_password_32chars!!',
       ssl: process.env.DB_SSL === 'true' || config?.ssl || false,
       max: parseInt(process.env.DB_POOL_MAX || '') || config?.max || 20,
     };
