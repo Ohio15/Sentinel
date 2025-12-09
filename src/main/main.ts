@@ -137,6 +137,25 @@ let mainWindow: BrowserWindow | null = null;
 let database: Database;
 let server: Server;
 let agentManager: AgentManager;
+let isQuitting = false;
+
+// Ensure single instance - focus existing window if already running
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  // Another instance is running, quit immediately
+  app.quit();
+} else {
+  // Handle second instance attempt - focus existing window
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+      }
+      mainWindow.focus();
+    }
+  });
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -477,13 +496,48 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
+    isQuitting = true;
     app.quit();
   }
 });
 
-app.on('before-quit', async () => {
-  await server?.stop();
-  await database?.close();
+app.on('before-quit', async (event) => {
+  if (!isQuitting) {
+    isQuitting = true;
+    event.preventDefault();
+
+    console.log('Shutting down gracefully...');
+
+    try {
+      // Close all windows first
+      BrowserWindow.getAllWindows().forEach(win => {
+        win.removeAllListeners('close');
+        win.close();
+      });
+
+      // Stop server and close database
+      if (server) {
+        console.log('Stopping server...');
+        await server.stop();
+      }
+      if (database) {
+        console.log('Closing database...');
+        await database.close();
+      }
+
+      console.log('Cleanup complete');
+    } catch (error) {
+      console.error('Error during shutdown:', error);
+    }
+
+    // Force quit after cleanup
+    app.exit(0);
+  }
+});
+
+// Final cleanup on quit
+app.on('will-quit', () => {
+  console.log('Application will quit');
 });
 
 // Handle uncaught exceptions
