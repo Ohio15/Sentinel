@@ -19,7 +19,7 @@ import (
 )
 
 // Current agent version - update this when releasing new versions
-const currentAgentVersion = "1.6.0"
+const currentAgentVersion = "1.6.1"
 
 // AgentVersionInfo contains version information for auto-update
 type AgentVersionInfo struct {

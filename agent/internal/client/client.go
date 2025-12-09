@@ -113,9 +113,13 @@ func (c *Client) Connect(ctx context.Context) error {
 		wsURL = "wss://" + wsURL[8:]
 	}
 
-	// Ensure /ws path
-	if len(wsURL) < 3 || wsURL[len(wsURL)-3:] != "/ws" {
-		wsURL = wsURL + "/ws"
+	// Ensure /ws/agent path for agent connections
+	if len(wsURL) < 9 || wsURL[len(wsURL)-9:] != "/ws/agent" {
+		// Remove trailing /ws if present (wrong path)
+		if len(wsURL) >= 3 && wsURL[len(wsURL)-3:] == "/ws" {
+			wsURL = wsURL[:len(wsURL)-3]
+		}
+		wsURL = wsURL + "/ws/agent"
 	}
 
 	log.Printf("Connecting to %s", wsURL)
