@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -34,6 +35,8 @@ type SystemInfo struct {
 	Manufacturer   string        `json:"manufacturer"`
 	Model          string        `json:"model"`
 	Domain         string        `json:"domain"`
+	IPAddress      string        `json:"ip_address"`
+	MACAddress     string        `json:"mac_address"`
 }
 
 // GPUInfo contains graphics card information
@@ -120,6 +123,15 @@ func (c *Collector) GetSystemInfo() (*SystemInfo, error) {
 	// Get GPU info (platform-specific)
 	gpu := c.getGPUInfo()
 
+	// Get hardware info (serial number, manufacturer, model)
+	serialNumber, manufacturer, model := c.getHardwareInfo()
+
+	// Get domain info
+	domain := c.getDomainInfo()
+
+	// Get network info (IP and MAC)
+	ipAddress, macAddress := c.getNetworkInfo()
+
 	return &SystemInfo{
 		Hostname:       hostInfo.Hostname,
 		OS:             hostInfo.OS,
@@ -136,6 +148,12 @@ func (c *Collector) GetSystemInfo() (*SystemInfo, error) {
 		BootTime:       hostInfo.BootTime,
 		GPU:            gpu,
 		Storage:        storage,
+		SerialNumber:   serialNumber,
+		Manufacturer:   manufacturer,
+		Model:          model,
+		Domain:         domain,
+		IPAddress:      ipAddress,
+		MACAddress:     macAddress,
 	}, nil
 }
 
@@ -165,6 +183,46 @@ func (c *Collector) getStorageInfo() []StorageInfo {
 	}
 
 	return storage
+}
+
+// getNetworkInfo returns the primary IP address and MAC address
+func (c *Collector) getNetworkInfo() (ipAddress, macAddress string) {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return "", ""
+	}
+
+	for _, iface := range interfaces {
+		// Skip loopback and down interfaces
+		if iface.HardwareAddr == "" {
+			continue
+		}
+
+		// Check for real network interfaces (skip virtual adapters)
+		nameLower := strings.ToLower(iface.Name)
+		if strings.Contains(nameLower, "loopback") ||
+			strings.Contains(nameLower, "virtual") ||
+			strings.Contains(nameLower, "vmware") ||
+			strings.Contains(nameLower, "vbox") {
+			continue
+		}
+
+		for _, addr := range iface.Addrs {
+			// Look for IPv4 addresses (not localhost)
+			addrStr := addr.Addr
+			if strings.Contains(addrStr, ".") && !strings.HasPrefix(addrStr, "127.") {
+				// Extract IP without CIDR notation
+				ip := strings.Split(addrStr, "/")[0]
+				if ip != "" && ipAddress == "" {
+					ipAddress = ip
+					macAddress = iface.HardwareAddr
+					return ipAddress, macAddress
+				}
+			}
+		}
+	}
+
+	return "", ""
 }
 
 // Collect gathers current system metrics

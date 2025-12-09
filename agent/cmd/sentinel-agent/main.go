@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	Version = "1.6.1"
+	Version = "1.7.0"
 )
 
 var (
@@ -377,6 +377,8 @@ func (a *Agent) enroll() error {
 		"manufacturer":   sysInfo.Manufacturer,
 		"model":          sysInfo.Model,
 		"domain":         sysInfo.Domain,
+		"ipAddress":      sysInfo.IPAddress,
+		"macAddress":     sysInfo.MACAddress,
 		"agentVersion":   Version,
 	}
 
