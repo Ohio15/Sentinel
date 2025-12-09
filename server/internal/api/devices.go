@@ -272,6 +272,12 @@ func (r *Router) enrollAgent(c *gin.Context) {
 	gpuJSON, _ := json.Marshal(enrollment.GPU)
 	storageJSON, _ := json.Marshal(enrollment.Storage)
 
+	// Convert empty strings to nil for inet type columns (PostgreSQL rejects empty strings for inet)
+	var ipAddr interface{}
+	if enrollment.IPAddress != "" {
+		ipAddr = enrollment.IPAddress
+	}
+
 	// Check if agent already exists
 	var existingID uuid.UUID
 	err := r.db.Pool.QueryRow(ctx, "SELECT id FROM devices WHERE agent_id = $1", enrollment.AgentID).Scan(&existingID)
@@ -293,7 +299,7 @@ func (r *Router) enrollAgent(c *gin.Context) {
 			enrollment.CPUModel, enrollment.CPUCores, enrollment.CPUThreads, enrollment.CPUSpeed,
 			enrollment.TotalMemory, enrollment.BootTime, gpuJSON, storageJSON,
 			enrollment.SerialNumber, enrollment.Manufacturer, enrollment.Model, enrollment.Domain,
-			enrollment.AgentVersion, enrollment.IPAddress, enrollment.MACAddress)
+			enrollment.AgentVersion, ipAddr, enrollment.MACAddress)
 
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update device"})
@@ -331,7 +337,7 @@ func (r *Router) enrollAgent(c *gin.Context) {
 		enrollment.Architecture, enrollment.CPUModel, enrollment.CPUCores, enrollment.CPUThreads,
 		enrollment.CPUSpeed, enrollment.TotalMemory, enrollment.BootTime, gpuJSON, storageJSON,
 		enrollment.SerialNumber, enrollment.Manufacturer, enrollment.Model, enrollment.Domain,
-		enrollment.AgentVersion, enrollment.IPAddress, enrollment.MACAddress)
+		enrollment.AgentVersion, ipAddr, enrollment.MACAddress)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create device"})

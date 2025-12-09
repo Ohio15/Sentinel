@@ -13,6 +13,12 @@ import {
   FolderOpen,
   MonitorPlay,
   History,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  Check,
+  Edit3,
+  MemoryStick,
 } from 'lucide-react';
 import { Header } from '@/components/layout';
 import { Terminal, FileBrowser, RemoteDesktop } from '@/components/device';
@@ -21,13 +27,13 @@ import api from '@/services/api';
 import type { Device, DeviceMetrics, Command } from '@/types';
 import toast from 'react-hot-toast';
 import {
-    XAxis,
+  XAxis,
   YAxis,
   Tooltip,
   ResponsiveContainer,
   AreaChart,
   Area,
-}  from 'recharts';
+} from 'recharts';
 
 // Helper function to format bytes to human readable format
 function formatBytes(bytes: number, decimals = 2): string {
@@ -39,10 +45,97 @@ function formatBytes(bytes: number, decimals = 2): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 }
 
+// Helper to format RAM in GB
+function formatRAMInGB(bytes: number): string {
+  if (bytes === 0) return '0';
+  const gb = bytes / (1024 * 1024 * 1024);
+  return gb.toFixed(1);
+}
+
+// Collapsible Section Component
+function CollapsibleSection({
+  title,
+  children,
+  defaultOpen = true,
+  onCopy
+}: {
+  title: string;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+  onCopy?: () => void;
+}) {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    if (onCopy) {
+      onCopy();
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  return (
+    <div className="bg-[#2d2d2d] rounded-lg overflow-hidden">
+      <div
+        className="flex items-center justify-between p-4 cursor-pointer hover:bg-[#3d3d3d] transition-colors"
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        <div className="flex items-center gap-3">
+          {isOpen ? (
+            <ChevronUp className="w-5 h-5 text-gray-400" />
+          ) : (
+            <ChevronDown className="w-5 h-5 text-gray-400" />
+          )}
+          <span className="text-white font-medium">{title}</span>
+        </div>
+        {onCopy && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleCopy();
+            }}
+            className="flex items-center gap-1 px-3 py-1 text-sm text-gray-400 hover:text-white hover:bg-[#4d4d4d] rounded transition-colors"
+          >
+            {copied ? (
+              <>
+                <Check className="w-4 h-4" />
+                Copied
+              </>
+            ) : (
+              <>
+                <Copy className="w-4 h-4" />
+                Copy
+              </>
+            )}
+          </button>
+        )}
+      </div>
+      {isOpen && (
+        <div className="px-4 pb-4">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Spec Row Component
+function SpecRow({ label, value }: { label: string; value: string | undefined }) {
+  if (!value) return null;
+  return (
+    <div className="flex justify-between py-2.5 border-b border-[#3d3d3d] last:border-b-0">
+      <span className="text-gray-400">{label}</span>
+      <span className="text-white text-right max-w-[60%]">{value}</span>
+    </div>
+  );
+}
+
 export function DeviceDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState<'overview' | 'metrics' | 'commands'>('overview');
   const [showCommandModal, setShowCommandModal] = useState(false);
   const [commandInput, setCommandInput] = useState('');
   const [showTerminal, setShowTerminal] = useState(false);
@@ -88,21 +181,49 @@ export function DeviceDetail() {
     },
   });
 
+  const copyDeviceSpecs = () => {
+    if (!device) return;
+    const specs = [
+      'Device name: ' + device.hostname,
+      device.manufacturer ? 'Manufacturer: ' + device.manufacturer : null,
+      device.model ? 'Model: ' + device.model : null,
+      'Processor: ' + (device.cpuModel || 'N/A'),
+      'Installed RAM: ' + (device.totalMemory ? formatBytes(device.totalMemory) : 'N/A'),
+      'System type: ' + device.architecture,
+      'Agent Version: v' + device.agentVersion,
+    ].filter(Boolean).join("\n");
+    navigator.clipboard.writeText(specs);
+    toast.success('Device specifications copied');
+  };
+
+  const copyWindowsSpecs = () => {
+    if (!device) return;
+    const specs = [
+      'Edition: ' + (device.platform || device.osType),
+      'Version: ' + device.osVersion,
+      device.osBuild ? 'OS build: ' + device.osBuild : null,
+      'IP Address: ' + (device.ipAddress || 'N/A'),
+      'MAC Address: ' + (device.macAddress || 'N/A'),
+    ].filter(Boolean).join("\n");
+    navigator.clipboard.writeText(specs);
+    toast.success('Windows specifications copied');
+  };
+
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      <div className="flex items-center justify-center h-screen bg-[#1a1a1a]">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500" />
       </div>
     );
   }
 
   if (!device) {
     return (
-      <div className="p-6">
-        <Card>
+      <div className="p-6 bg-[#1a1a1a] min-h-screen">
+        <Card className="bg-[#2d2d2d] border-none">
           <CardContent>
             <div className="text-center py-12">
-              <p className="text-text-secondary">Device not found</p>
+              <p className="text-gray-400">Device not found</p>
               <Button className="mt-4" onClick={() => navigate('/devices')}>
                 Back to Devices
               </Button>
@@ -115,476 +236,331 @@ export function DeviceDetail() {
 
   const metrics = metricsData || [];
   const commands: Command[] = commandsData?.commands || [];
-
   const latestMetrics = metrics[metrics.length - 1];
 
   const chartData = metrics.map((m) => ({
     time: new Date(m.timestamp).toLocaleTimeString(),
     cpu: m.cpuPercent,
     memory: m.memoryPercent,
-    disk: m.diskPercent,  }));
+    disk: m.diskPercent,
+  }));
 
   const isOnline = device.status === 'online';
 
+  const primaryDisk = device.storage?.[0];
+  const storageUsedPercent = primaryDisk?.percent || 0;
+  const storageTotal = primaryDisk ? formatBytes(primaryDisk.total) : 'N/A';
+  const storageUsed = primaryDisk ? formatBytes(primaryDisk.used) : 'N/A';
+  const primaryGPU = device.gpu?.[0];
+
   return (
-    <div>
+    <div className="bg-[#1a1a1a] min-h-screen">
       <Header
         title={device.displayName || device.hostname}
-        subtitle={`${device.osType} ${device.osVersion} - ${device.ipAddress}`}
+        subtitle={device.osType + ' ' + device.osVersion + ' - ' + device.ipAddress}
       />
 
       <div className="p-6 space-y-6">
-        {/* Back button and actions */}
-        <div className="flex items-center justify-between">
+        <button
+          onClick={() => navigate('/devices')}
+          className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to Devices
+        </button>
+
+        <div className="flex gap-1 bg-[#2d2d2d] p-1 rounded-lg w-fit">
           <button
-            onClick={() => navigate('/devices')}
-            className="flex items-center gap-2 text-text-secondary hover:text-text-primary"
+            onClick={() => setActiveTab('overview')}
+            className={'px-4 py-2 rounded-md text-sm font-medium transition-colors ' +
+              (activeTab === 'overview'
+                ? 'bg-[#3d3d3d] text-white'
+                : 'text-gray-400 hover:text-white hover:bg-[#3d3d3d]/50')}
           >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Devices
+            Overview
           </button>
-
-          <div className="flex gap-2">
-            <Button
-              variant="secondary"
-              onClick={() => setShowTerminal(true)}
-              disabled={!isOnline}
-              title={!isOnline ? 'Device is offline' : 'Open Terminal'}
-            >
-              <TerminalIcon className="w-4 h-4 mr-2" />
-              Terminal
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => setShowFileBrowser(true)}
-              disabled={!isOnline}
-              title={!isOnline ? 'Device is offline' : 'Browse Files'}
-            >
-              <FolderOpen className="w-4 h-4 mr-2" />
-              Files
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => setShowRemoteDesktop(true)}
-              disabled={!isOnline}
-              title={!isOnline ? 'Device is offline' : 'Remote Desktop'}
-            >
-              <MonitorPlay className="w-4 h-4 mr-2" />
-              Remote
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => setShowCommandModal(true)}
-              disabled={!isOnline}
-              title={!isOnline ? 'Device is offline' : 'Run Command'}
-            >
-              <Play className="w-4 h-4 mr-2" />
-              Run Command
-            </Button>
-          </div>
+          <button
+            onClick={() => setActiveTab('metrics')}
+            className={'px-4 py-2 rounded-md text-sm font-medium transition-colors ' +
+              (activeTab === 'metrics'
+                ? 'bg-[#3d3d3d] text-white'
+                : 'text-gray-400 hover:text-white hover:bg-[#3d3d3d]/50')}
+          >
+            Metrics
+          </button>
+          <button
+            onClick={() => setActiveTab('commands')}
+            className={'px-4 py-2 rounded-md text-sm font-medium transition-colors ' +
+              (activeTab === 'commands'
+                ? 'bg-[#3d3d3d] text-white'
+                : 'text-gray-400 hover:text-white hover:bg-[#3d3d3d]/50')}
+          >
+            Commands
+          </button>
         </div>
 
-        {/* Terminal Panel */}
-        {showTerminal && device.agentId && (
-          <Terminal
-            deviceId={id!}
-            agentId={device.agentId}
-            onClose={() => setShowTerminal(false)}
-          />
-        )}
-
-        {/* File Browser Panel */}
-        {showFileBrowser && device.agentId && (
-          <FileBrowser
-            deviceId={id!}
-            agentId={device.agentId}
-            onClose={() => setShowFileBrowser(false)}
-          />
-        )}
-
-        {/* Remote Desktop Panel */}
-        {showRemoteDesktop && device.agentId && (
-          <RemoteDesktop
-            deviceId={id!}
-            agentId={device.agentId}
-            onClose={() => setShowRemoteDesktop(false)}
-          />
-        )}
-
-        {/* Device Info Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Card>
-            <CardContent>
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-blue-100 text-blue-600 rounded-lg">
-                  <Monitor className="w-5 h-5" />
+        {activeTab === 'overview' && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-gradient-to-br from-blue-600 to-blue-800 rounded-xl p-4 text-white">
+                <div className="flex items-center gap-3 mb-3">
+                  <HardDrive className="w-6 h-6" />
+                  <span className="font-medium">Storage</span>
                 </div>
-                <div>
-                  <p className="text-sm text-text-secondary">Status</p>
-                  <Badge
-                    variant={
-                      device.status === 'online'
-                        ? 'success'
-                        : device.status === 'warning'
-                        ? 'warning'
-                        : device.status === 'critical'
-                        ? 'danger'
-                        : 'default'
-                    }
-                    size="md"
-                  >
-                    {device.status}
-                  </Badge>
+                <div className="text-2xl font-bold mb-2">{storageTotal}</div>
+                <div className="w-full bg-blue-900/50 rounded-full h-2 mb-2">
+                  <div
+                    className="bg-white h-2 rounded-full transition-all"
+                    style={{ width: storageUsedPercent + '%' }}
+                  />
+                </div>
+                <div className="text-sm text-blue-200">
+                  {storageUsed} used ({storageUsedPercent.toFixed(0)}%)
                 </div>
               </div>
-            </CardContent>
-          </Card>
 
-          <Card>
-            <CardContent>
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-green-100 text-green-600 rounded-lg">
-                  <Cpu className="w-5 h-5" />
+              <div className="bg-gradient-to-br from-purple-600 to-purple-800 rounded-xl p-4 text-white">
+                <div className="flex items-center gap-3 mb-3">
+                  <Monitor className="w-6 h-6" />
+                  <span className="font-medium">Graphics Card</span>
                 </div>
-                <div>
-                  <p className="text-sm text-text-secondary">CPU Usage</p>
-                  <p className="text-xl font-semibold text-text-primary">
-                    {latestMetrics?.cpuPercent?.toFixed(1) || '0'}%
-                  </p>
+                <div className="text-lg font-bold truncate" title={primaryGPU?.name}>
+                  {primaryGPU?.name || 'N/A'}
                 </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent>
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-purple-100 text-purple-600 rounded-lg">
-                  <Activity className="w-5 h-5" />
-                </div>
-                <div>
-                  <p className="text-sm text-text-secondary">Memory Usage</p>
-                  <p className="text-xl font-semibold text-text-primary">
-                    {latestMetrics?.memoryPercent?.toFixed(1) || '0'}%
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent>
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-amber-100 text-amber-600 rounded-lg">
-                  <HardDrive className="w-5 h-5" />
-                </div>
-                <div>
-                  <p className="text-sm text-text-secondary">Disk Usage</p>
-                  <p className="text-xl font-semibold text-text-primary">
-                    {latestMetrics?.diskPercent?.toFixed(1) || '0'}%
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Charts */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Card>
-            <CardContent>
-              <h3 className="text-lg font-semibold text-text-primary mb-4">
-                Resource Usage
-              </h3>
-              <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={chartData}>
-                    <XAxis dataKey="time" tick={{ fontSize: 10 }} />
-                    <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
-                    <Tooltip />
-                    <Area
-                      type="monotone"
-                      dataKey="cpu"
-                      stroke="#22c55e"
-                      fill="#22c55e"
-                      fillOpacity={0.2}
-                      name="CPU %"
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="memory"
-                      stroke="#8b5cf6"
-                      fill="#8b5cf6"
-                      fillOpacity={0.2}
-                      name="Memory %"
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent>
-              <h3 className="text-lg font-semibold text-text-primary mb-4">
-                Device Specifications
-              </h3>
-              <div className="space-y-3">
-                <div className="flex justify-between py-2 border-b border-border">
-                  <span className="text-text-secondary">Device Name</span>
-                  <span className="text-text-primary font-medium">
-                    {device.hostname}
-                  </span>
-                </div>
-                {device.manufacturer && (
-                  <div className="flex justify-between py-2 border-b border-border">
-                    <span className="text-text-secondary">Manufacturer</span>
-                    <span className="text-text-primary font-medium">
-                      {device.manufacturer}
-                    </span>
+                {primaryGPU?.memory && primaryGPU.memory > 0 && (
+                  <div className="text-sm text-purple-200 mt-1">
+                    {formatBytes(primaryGPU.memory)} VRAM
                   </div>
                 )}
-                {device.model && (
-                  <div className="flex justify-between py-2 border-b border-border">
-                    <span className="text-text-secondary">Model</span>
-                    <span className="text-text-primary font-medium">
-                      {device.model}
-                    </span>
-                  </div>
-                )}
-                <div className="flex justify-between py-2 border-b border-border">
-                  <span className="text-text-secondary">Processor</span>
-                  <span className="text-text-primary font-medium text-right max-w-xs truncate" title={device.cpuModel}>
-                    {device.cpuModel || 'N/A'}
-                  </span>
+              </div>
+
+              <div className="bg-gradient-to-br from-teal-600 to-teal-800 rounded-xl p-4 text-white">
+                <div className="flex items-center gap-3 mb-3">
+                  <MemoryStick className="w-6 h-6" />
+                  <span className="font-medium">Installed RAM</span>
                 </div>
-                <div className="flex justify-between py-2 border-b border-border">
-                  <span className="text-text-secondary">CPU Cores / Threads</span>
-                  <span className="text-text-primary font-medium">
-                    {device.cpuCores || 0} cores / {device.cpuThreads || 0} threads
-                  </span>
+                <div className="text-2xl font-bold">
+                  {device.totalMemory ? formatRAMInGB(device.totalMemory) : '0'} GB
                 </div>
-                <div className="flex justify-between py-2 border-b border-border">
-                  <span className="text-text-secondary">Installed RAM</span>
-                  <span className="text-text-primary font-medium">
-                    {device.totalMemory ? formatBytes(device.totalMemory) : 'N/A'}
-                  </span>
-                </div>
-                <div className="flex justify-between py-2 border-b border-border">
-                  <span className="text-text-secondary">System Type</span>
-                  <span className="text-text-primary font-medium">
-                    {device.architecture} {device.osType === 'windows' ? 'operating system' : ''}
-                  </span>
-                </div>
-                <div className="flex justify-between py-2">
-                  <span className="text-text-secondary">Agent Version</span>
-                  <span className="text-text-primary font-medium">
-                    v{device.agentVersion}
-                  </span>
+                <div className="text-sm text-teal-200 mt-1">
+                  {latestMetrics?.memoryPercent?.toFixed(0) || 0}% in use
                 </div>
               </div>
-            </CardContent>
-          </Card>
-        </div>
 
-        {/* Extended System Information */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Windows Specifications */}
-          <Card>
-            <CardContent>
-              <h3 className="text-lg font-semibold text-text-primary mb-4">
-                Windows Specifications
-              </h3>
-              <div className="space-y-3">
-                <div className="flex justify-between py-2 border-b border-border">
-                  <span className="text-text-secondary">Edition</span>
-                  <span className="text-text-primary font-medium capitalize">
-                    {device.platform || device.osType}
-                  </span>
+              <div className="bg-gradient-to-br from-orange-600 to-orange-800 rounded-xl p-4 text-white">
+                <div className="flex items-center gap-3 mb-3">
+                  <Cpu className="w-6 h-6" />
+                  <span className="font-medium">Processor</span>
                 </div>
-                <div className="flex justify-between py-2 border-b border-border">
-                  <span className="text-text-secondary">Version</span>
-                  <span className="text-text-primary font-medium">
-                    {device.osVersion}
-                  </span>
+                <div className="text-sm font-bold truncate" title={device.cpuModel}>
+                  {device.cpuModel || 'N/A'}
                 </div>
-                {device.osBuild && (
-                  <div className="flex justify-between py-2 border-b border-border">
-                    <span className="text-text-secondary">OS Build</span>
-                    <span className="text-text-primary font-medium">
-                      {device.osBuild}
-                    </span>
-                  </div>
-                )}
-                <div className="flex justify-between py-2 border-b border-border">
-                  <span className="text-text-secondary">IP Address</span>
-                  <span className="text-text-primary font-medium">
-                    {device.ipAddress || 'N/A'}
-                  </span>
-                </div>
-                <div className="flex justify-between py-2 border-b border-border">
-                  <span className="text-text-secondary">MAC Address</span>
-                  <span className="text-text-primary font-medium">
-                    {device.macAddress || 'N/A'}
-                  </span>
-                </div>
-                {device.domain && (
-                  <div className="flex justify-between py-2 border-b border-border">
-                    <span className="text-text-secondary">Domain</span>
-                    <span className="text-text-primary font-medium">
-                      {device.domain}
-                    </span>
-                  </div>
-                )}
-                <div className="flex justify-between py-2">
-                  <span className="text-text-secondary">Last Seen</span>
-                  <span className="text-text-primary font-medium">
-                    {new Date(device.lastSeen).toLocaleString()}
-                  </span>
+                <div className="text-sm text-orange-200 mt-1">
+                  {device.cpuCores} cores, {device.cpuThreads} threads
                 </div>
               </div>
-            </CardContent>
-          </Card>
+            </div>
 
-          {/* Graphics Card */}
-          <Card>
-            <CardContent>
-              <h3 className="text-lg font-semibold text-text-primary mb-4">
-                Display
-              </h3>
-              {device.gpu && device.gpu.length > 0 ? (
+            <div className="bg-[#2d2d2d] rounded-lg p-6">
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-16 h-16 bg-[#3d3d3d] rounded-lg flex items-center justify-center">
+                    <Monitor className="w-10 h-10 text-gray-400" />
+                  </div>
+                  <div>
+                    <h1 className="text-2xl font-semibold text-white">
+                      {device.displayName || device.hostname}
+                    </h1>
+                    <p className="text-gray-400">
+                      {device.manufacturer && device.model
+                        ? device.manufacturer + ' ' + device.model
+                        : device.model || device.manufacturer || 'Desktop PC'}
+                    </p>
+                    <div className="flex items-center gap-2 mt-2">
+                      <Badge
+                        variant={isOnline ? 'success' : 'default'}
+                        size="sm"
+                      >
+                        {device.status}
+                      </Badge>
+                      <span className="text-gray-500 text-sm">•</span>
+                      <span className="text-gray-400 text-sm">{device.ipAddress}</span>
+                    </div>
+                  </div>
+                </div>
+                <button className="flex items-center gap-2 px-4 py-2 bg-[#3d3d3d] hover:bg-[#4d4d4d] text-white rounded-lg transition-colors">
+                  <Edit3 className="w-4 h-4" />
+                  Rename this PC
+                </button>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => setShowTerminal(true)}
+                disabled={!isOnline}
+                className="bg-[#2d2d2d] border-none hover:bg-[#3d3d3d]"
+              >
+                <TerminalIcon className="w-4 h-4 mr-2" />
+                Terminal
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => setShowFileBrowser(true)}
+                disabled={!isOnline}
+                className="bg-[#2d2d2d] border-none hover:bg-[#3d3d3d]"
+              >
+                <FolderOpen className="w-4 h-4 mr-2" />
+                Files
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => setShowRemoteDesktop(true)}
+                disabled={!isOnline}
+                className="bg-[#2d2d2d] border-none hover:bg-[#3d3d3d]"
+              >
+                <MonitorPlay className="w-4 h-4 mr-2" />
+                Remote
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => setShowCommandModal(true)}
+                disabled={!isOnline}
+                className="bg-[#2d2d2d] border-none hover:bg-[#3d3d3d]"
+              >
+                <Play className="w-4 h-4 mr-2" />
+                Run Command
+              </Button>
+            </div>
+
+            {showTerminal && device.agentId && (
+              <Terminal
+                deviceId={id!}
+                agentId={device.agentId}
+                onClose={() => setShowTerminal(false)}
+              />
+            )}
+            {showFileBrowser && device.agentId && (
+              <FileBrowser
+                deviceId={id!}
+                agentId={device.agentId}
+                onClose={() => setShowFileBrowser(false)}
+              />
+            )}
+            {showRemoteDesktop && device.agentId && (
+              <RemoteDesktop
+                deviceId={id!}
+                agentId={device.agentId}
+                onClose={() => setShowRemoteDesktop(false)}
+              />
+            )}
+
+            <CollapsibleSection title="Device specifications" onCopy={copyDeviceSpecs}>
+              <div className="space-y-0">
+                <SpecRow label="Device name" value={device.hostname} />
+                <SpecRow label="Manufacturer" value={device.manufacturer} />
+                <SpecRow label="Model" value={device.model} />
+                <SpecRow label="Processor" value={device.cpuModel} />
+                <SpecRow
+                  label="Installed RAM"
+                  value={device.totalMemory ? formatBytes(device.totalMemory) : undefined}
+                />
+                <SpecRow label="Device ID" value={device.id} />
+                <SpecRow label="System type" value={device.architecture + ' operating system'} />
+                <SpecRow label="Agent Version" value={'v' + device.agentVersion} />
+              </div>
+            </CollapsibleSection>
+
+            <CollapsibleSection title="Windows specifications" onCopy={copyWindowsSpecs}>
+              <div className="space-y-0">
+                <SpecRow label="Edition" value={device.platform || device.osType} />
+                <SpecRow label="Version" value={device.osVersion} />
+                <SpecRow label="OS build" value={device.osBuild} />
+                <SpecRow label="IP Address" value={device.ipAddress} />
+                <SpecRow label="MAC Address" value={device.macAddress} />
+                <SpecRow label="Domain" value={device.domain} />
+                <SpecRow label="Last seen" value={new Date(device.lastSeen).toLocaleString()} />
+              </div>
+            </CollapsibleSection>
+
+            {device.gpu && device.gpu.length > 0 && (
+              <CollapsibleSection title="Display" defaultOpen={false}>
                 <div className="space-y-4">
                   {device.gpu.map((gpu, index) => (
-                    <div key={index} className="space-y-2">
+                    <div key={index} className="space-y-0">
                       {device.gpu && device.gpu.length > 1 && (
-                        <p className="text-sm font-medium text-text-secondary">GPU {index + 1}</p>
+                        <p className="text-sm font-medium text-gray-400 mb-2">GPU {index + 1}</p>
                       )}
-                      <div className="flex justify-between py-2 border-b border-border">
-                        <span className="text-text-secondary">Name</span>
-                        <span className="text-text-primary font-medium text-right max-w-xs truncate" title={gpu.name}>
-                          {gpu.name}
-                        </span>
-                      </div>
-                      {gpu.vendor && (
-                        <div className="flex justify-between py-2 border-b border-border">
-                          <span className="text-text-secondary">Vendor</span>
-                          <span className="text-text-primary font-medium">
-                            {gpu.vendor}
-                          </span>
-                        </div>
-                      )}
-                      {gpu.memory > 0 && (
-                        <div className="flex justify-between py-2 border-b border-border">
-                          <span className="text-text-secondary">Dedicated Memory</span>
-                          <span className="text-text-primary font-medium">
-                            {formatBytes(gpu.memory)}
-                          </span>
-                        </div>
-                      )}
-                      {gpu.driver_version && (
-                        <div className="flex justify-between py-2">
-                          <span className="text-text-secondary">Driver Version</span>
-                          <span className="text-text-primary font-medium">
-                            {gpu.driver_version}
-                          </span>
-                        </div>
-                      )}
+                      <SpecRow label="Name" value={gpu.name} />
+                      <SpecRow label="Vendor" value={gpu.vendor} />
+                      <SpecRow
+                        label="Dedicated memory"
+                        value={gpu.memory > 0 ? formatBytes(gpu.memory) : undefined}
+                      />
+                      <SpecRow label="Driver version" value={gpu.driver_version} />
                     </div>
                   ))}
                 </div>
-              ) : (
-                <p className="text-sm text-text-secondary">No GPU information available</p>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+              </CollapsibleSection>
+            )}
 
-        {/* Storage */}
-        {device.storage && device.storage.length > 0 && (
-          <Card>
-            <CardContent>
-              <h3 className="text-lg font-semibold text-text-primary mb-4">
-                Storage
-              </h3>
-              <div className="space-y-4">
-                {device.storage.map((disk, index) => (
-                  <div key={index} className="p-4 bg-gray-50 rounded-lg">
-                    <div className="flex justify-between items-center mb-2">
-                      <span className="font-medium text-text-primary">
-                        {disk.mountpoint} ({disk.device})
-                      </span>
-                      <span className="text-sm text-text-secondary">
-                        {disk.fstype}
-                      </span>
+            {device.storage && device.storage.length > 0 && (
+              <CollapsibleSection title="Storage" defaultOpen={false}>
+                <div className="space-y-4">
+                  {device.storage.map((disk, index) => (
+                    <div key={index} className="bg-[#3d3d3d] rounded-lg p-4">
+                      <div className="flex justify-between items-center mb-3">
+                        <span className="font-medium text-white">
+                          {disk.mountpoint} ({disk.device})
+                        </span>
+                        <span className="text-sm text-gray-400">{disk.fstype}</span>
+                      </div>
+                      <div className="w-full bg-[#4d4d4d] rounded-full h-2 mb-2">
+                        <div
+                          className="bg-blue-500 h-2 rounded-full"
+                          style={{ width: disk.percent + '%' }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-sm text-gray-400">
+                        <span>{formatBytes(disk.used)} of {formatBytes(disk.total)} used</span>
+                        <span>{formatBytes(disk.free)} free ({disk.percent.toFixed(1)}%)</span>
+                      </div>
                     </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
-                      <div
-                        className="bg-primary h-2 rounded-full"
-                        style={{ width: disk.percent + '%' }}
-                      />
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-text-secondary">
-                        {formatBytes(disk.used)} of {formatBytes(disk.total)} used
-                      </span>
-                      <span className="text-text-secondary">
-                        {formatBytes(disk.free)} free ({disk.percent.toFixed(1)}% used)
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
+                  ))}
+                </div>
+              </CollapsibleSection>
+            )}
 
-        {/* Version History */}
-        <Card>
-          <CardContent>
-            <div className="flex items-center gap-2 mb-4">
-              <History className="w-5 h-5 text-text-secondary" />
-              <h3 className="text-lg font-semibold text-text-primary">Version History</h3>
-            </div>
-            <div className="space-y-3">
-              <div className="flex justify-between py-2 border-b border-border">
-                <span className="text-text-secondary">Current Version</span>
-                <span className="text-text-primary font-medium">
-                  v{device.agentVersion}
-                </span>
+            <CollapsibleSection title="Version history" defaultOpen={false}>
+              <div className="space-y-0">
+                <SpecRow label="Current Version" value={'v' + device.agentVersion} />
+                {device.previousAgentVersion && device.previousAgentVersion !== device.agentVersion && (
+                  <SpecRow label="Previous Version" value={'v' + device.previousAgentVersion} />
+                )}
+                {device.lastUpdateCheck && (
+                  <SpecRow
+                    label="Last Update Check"
+                    value={new Date(device.lastUpdateCheck).toLocaleString()}
+                  />
+                )}
               </div>
-              {device.previousAgentVersion && device.previousAgentVersion !== device.agentVersion && (
-                <div className="flex justify-between py-2 border-b border-border">
-                  <span className="text-text-secondary">Previous Version</span>
-                  <span className="text-text-primary font-medium">
-                    v{device.previousAgentVersion}
-                  </span>
-                </div>
-              )}
-              {device.lastUpdateCheck && (
-                <div className="flex justify-between py-2 border-b border-border">
-                  <span className="text-text-secondary">Last Update Check</span>
-                  <span className="text-text-primary font-medium">
-                    {new Date(device.lastUpdateCheck).toLocaleString()}
-                  </span>
-                </div>
-              )}
-            </div>
-            {versionHistory && versionHistory.length > 0 && (
-              <div className="mt-4">
-                <h4 className="text-sm font-medium text-text-secondary mb-2">Update History</h4>
-                <div className="space-y-2">
+              {versionHistory && versionHistory.length > 0 && (
+                <div className="mt-4 space-y-2">
                   {versionHistory.slice(0, 5).map((update: any) => (
                     <div
                       key={update.id}
-                      className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+                      className="flex items-center justify-between p-3 bg-[#3d3d3d] rounded-lg"
                     >
                       <div className="flex items-center gap-3">
-                        <History className="w-4 h-4 text-text-secondary" />
+                        <History className="w-4 h-4 text-gray-400" />
                         <div>
-                          <p className="text-sm font-medium text-text-primary">
-                            {update.fromVersion ? `v${update.fromVersion} → v${update.toVersion}` : `v${update.toVersion}`}
+                          <p className="text-sm font-medium text-white">
+                            {update.fromVersion
+                              ? 'v' + update.fromVersion + ' → v' + update.toVersion
+                              : 'v' + update.toVersion}
                           </p>
-                          <p className="text-xs text-text-secondary">
+                          <p className="text-xs text-gray-400">
                             {new Date(update.createdAt).toLocaleString()}
                           </p>
                         </div>
@@ -605,80 +581,177 @@ export function DeviceDetail() {
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+              )}
+            </CollapsibleSection>
 
-        {/* Recent Commands */}
-        <Card>
-          <CardContent>
-            <h3 className="text-lg font-semibold text-text-primary mb-4">
-              Recent Commands
-            </h3>
-            {commands.length > 0 ? (
-              <div className="space-y-2">
-                {commands.map((cmd) => (
-                  <div
-                    key={cmd.id}
-                    className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
-                  >
-                    <div className="flex items-center gap-3">
-                      <Play className="w-4 h-4 text-text-secondary" />
-                      <div>
-                        <p className="text-sm font-medium text-text-primary">
-                          {cmd.commandType}
-                        </p>
-                        <p className="text-xs text-text-secondary">
-                          {new Date(cmd.createdAt).toLocaleString()}
-                        </p>
-                      </div>
-                    </div>
-                    <Badge
-                      variant={
-                        cmd.status === 'completed'
-                          ? 'success'
-                          : cmd.status === 'failed'
-                          ? 'danger'
-                          : cmd.status === 'running'
-                          ? 'warning'
-                          : 'default'
-                      }
-                    >
-                      {cmd.status}
+            {device.tags && device.tags.length > 0 && (
+              <div className="bg-[#2d2d2d] rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Tag className="w-4 h-4 text-gray-400" />
+                  <h3 className="font-medium text-white">Tags</h3>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {device.tags.map((tag) => (
+                    <Badge key={tag} variant="info">
+                      {tag}
                     </Badge>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            ) : (
-              <p className="text-sm text-text-secondary text-center py-4">
-                No commands executed yet
-              </p>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        )}
 
-        {/* Tags */}
-        {device.tags && device.tags.length > 0 && (
-          <Card>
-            <CardContent>
-              <div className="flex items-center gap-2 mb-3">
-                <Tag className="w-4 h-4 text-text-secondary" />
-                <h3 className="font-semibold text-text-primary">Tags</h3>
+        {activeTab === 'metrics' && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-[#2d2d2d] rounded-lg p-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-green-500/20 text-green-500 rounded-lg">
+                    <Cpu className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-400">CPU Usage</p>
+                    <p className="text-xl font-semibold text-white">
+                      {latestMetrics?.cpuPercent?.toFixed(1) || '0'}%
+                    </p>
+                  </div>
+                </div>
               </div>
-              <div className="flex flex-wrap gap-2">
-                {device.tags.map((tag) => (
-                  <Badge key={tag} variant="info">
-                    {tag}
-                  </Badge>
-                ))}
+
+              <div className="bg-[#2d2d2d] rounded-lg p-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-purple-500/20 text-purple-500 rounded-lg">
+                    <Activity className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-400">Memory Usage</p>
+                    <p className="text-xl font-semibold text-white">
+                      {latestMetrics?.memoryPercent?.toFixed(1) || '0'}%
+                    </p>
+                  </div>
+                </div>
               </div>
-            </CardContent>
-          </Card>
+
+              <div className="bg-[#2d2d2d] rounded-lg p-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-amber-500/20 text-amber-500 rounded-lg">
+                    <HardDrive className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-400">Disk Usage</p>
+                    <p className="text-xl font-semibold text-white">
+                      {latestMetrics?.diskPercent?.toFixed(1) || '0'}%
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-[#2d2d2d] rounded-lg p-6">
+              <h3 className="text-lg font-semibold text-white mb-4">Resource Usage Over Time</h3>
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData}>
+                    <XAxis
+                      dataKey="time"
+                      tick={{ fontSize: 10, fill: '#9ca3af' }}
+                      stroke="#4b5563"
+                    />
+                    <YAxis
+                      domain={[0, 100]}
+                      tick={{ fontSize: 10, fill: '#9ca3af' }}
+                      stroke="#4b5563"
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#2d2d2d',
+                        border: 'none',
+                        borderRadius: '8px',
+                        color: '#fff'
+                      }}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="cpu"
+                      stroke="#22c55e"
+                      fill="#22c55e"
+                      fillOpacity={0.2}
+                      name="CPU %"
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="memory"
+                      stroke="#8b5cf6"
+                      fill="#8b5cf6"
+                      fillOpacity={0.2}
+                      name="Memory %"
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'commands' && (
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <h3 className="text-lg font-semibold text-white">Recent Commands</h3>
+              <Button
+                onClick={() => setShowCommandModal(true)}
+                disabled={!isOnline}
+              >
+                <Play className="w-4 h-4 mr-2" />
+                Run Command
+              </Button>
+            </div>
+
+            <div className="bg-[#2d2d2d] rounded-lg overflow-hidden">
+              {commands.length > 0 ? (
+                <div className="divide-y divide-[#3d3d3d]">
+                  {commands.map((cmd) => (
+                    <div
+                      key={cmd.id}
+                      className="flex items-center justify-between p-4 hover:bg-[#3d3d3d] transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        <Play className="w-4 h-4 text-gray-400" />
+                        <div>
+                          <p className="text-sm font-medium text-white">
+                            {cmd.commandType}
+                          </p>
+                          <p className="text-xs text-gray-400">
+                            {new Date(cmd.createdAt).toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+                      <Badge
+                        variant={
+                          cmd.status === 'completed'
+                            ? 'success'
+                            : cmd.status === 'failed'
+                            ? 'danger'
+                            : cmd.status === 'running'
+                            ? 'warning'
+                            : 'default'
+                        }
+                      >
+                        {cmd.status}
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-400 text-center py-12">
+                  No commands executed yet
+                </p>
+              )}
+            </div>
+          </div>
         )}
       </div>
 
-      {/* Command Modal */}
       <Modal
         isOpen={showCommandModal}
         onClose={() => {
@@ -689,15 +762,15 @@ export function DeviceDetail() {
         size="lg"
       >
         <div className="space-y-4">
-          <p className="text-sm text-text-secondary">
+          <p className="text-sm text-gray-400">
             Execute a shell command on{' '}
-            <strong>{device.displayName || device.hostname}</strong>
+            <strong className="text-white">{device.displayName || device.hostname}</strong>
           </p>
           <textarea
             value={commandInput}
             onChange={(e) => setCommandInput(e.target.value)}
             placeholder="Enter command..."
-            className="w-full h-32 px-3 py-2 border border-border rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary resize-none"
+            className="w-full h-32 px-3 py-2 bg-[#3d3d3d] border border-[#4d4d4d] rounded-lg font-mono text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
           />
           <div className="flex gap-3 justify-end">
             <Button
