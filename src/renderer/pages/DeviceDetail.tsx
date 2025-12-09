@@ -22,7 +22,7 @@ interface DeviceDetailProps {
 
 type Tab = 'overview' | 'terminal' | 'files' | 'remote' | 'commands' | 'history';
 
-// Collapsible Section Component
+// Collapsible Section Component - Light Theme
 function CollapsibleSection({
   title,
   children,
@@ -46,12 +46,12 @@ function CollapsibleSection({
   };
 
   return (
-    <div className="bg-[#2d2d2d] rounded-lg overflow-hidden">
+    <div className="bg-surface border border-border rounded-lg overflow-hidden">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between p-4 hover:bg-[#3d3d3d] transition-colors"
+        className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
       >
-        <span className="text-lg font-semibold text-white">{title}</span>
+        <span className="text-lg font-semibold text-text-primary">{title}</span>
         <div className="flex items-center gap-2">
           {onCopy && (
             <button
@@ -59,20 +59,20 @@ function CollapsibleSection({
                 e.stopPropagation();
                 handleCopy();
               }}
-              className="p-2 hover:bg-[#4d4d4d] rounded-lg transition-colors"
+              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
               title="Copy"
             >
               {copied ? (
-                <CheckIcon className="w-4 h-4 text-green-400" />
+                <CheckIcon className="w-4 h-4 text-success" />
               ) : (
-                <CopyIcon className="w-4 h-4 text-gray-400" />
+                <CopyIcon className="w-4 h-4 text-text-secondary" />
               )}
             </button>
           )}
           {isOpen ? (
-            <ChevronUpIcon className="w-5 h-5 text-gray-400" />
+            <ChevronUpIcon className="w-5 h-5 text-text-secondary" />
           ) : (
-            <ChevronDownIcon className="w-5 h-5 text-gray-400" />
+            <ChevronDownIcon className="w-5 h-5 text-text-secondary" />
           )}
         </div>
       </button>
@@ -85,12 +85,12 @@ function CollapsibleSection({
   );
 }
 
-// Spec Row Component
+// Spec Row Component - Light Theme
 function SpecRow({ label, value }: { label: string; value: string | undefined }) {
   return (
-    <div className="flex py-2 border-b border-[#3d3d3d] last:border-0">
-      <span className="w-48 text-gray-400 text-sm">{label}</span>
-      <span className="text-white text-sm flex-1">{value || 'N/A'}</span>
+    <div className="flex py-2 border-b border-border last:border-0">
+      <span className="w-48 text-text-secondary text-sm">{label}</span>
+      <span className="text-text-primary text-sm flex-1">{value || 'N/A'}</span>
     </div>
   );
 }
@@ -131,8 +131,8 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
     if (!selectedDevice) return;
     const specs = [
       `Device name: ${selectedDevice.displayName || selectedDevice.hostname}`,
-      `Processor: ${selectedDevice.metadata?.cpu?.model || 'N/A'}`,
-      `Installed RAM: ${selectedDevice.metadata?.memory?.total ? formatBytes(selectedDevice.metadata.memory.total) : 'N/A'}`,
+      `Processor: ${selectedDevice.cpuModel || 'N/A'}`,
+      `Installed RAM: ${selectedDevice.totalMemory ? formatBytes(selectedDevice.totalMemory) : 'N/A'}`,
       `System type: ${selectedDevice.architecture}`,
     ].join("\n");
     navigator.clipboard.writeText(specs);
@@ -143,8 +143,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
     const specs = [
       `Edition: ${selectedDevice.osType}`,
       `Version: ${selectedDevice.osVersion}`,
-      `OS build: ${selectedDevice.metadata?.os?.build || 'N/A'}`,
-      `Experience: ${selectedDevice.metadata?.os?.experience || 'N/A'}`,
+      `OS build: ${selectedDevice.osBuild || 'N/A'}`,
     ].join("\n");
     navigator.clipboard.writeText(specs);
   };
@@ -160,7 +159,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4">
-        <p className="text-red-500">Error: {error}</p>
+        <p className="text-danger">Error: {error}</p>
         <button onClick={onBack} className="btn btn-secondary">
           Back to Devices
         </button>
@@ -188,11 +187,23 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
     { id: 'history', label: 'History', icon: HistoryIcon },
   ];
 
-  // Extract metadata for summary cards
+  // Extract data for summary cards - use real device fields
   const latestMetrics = metrics.length > 0 ? metrics[0] : null;
-  const diskTotal = selectedDevice.metadata?.disk?.total || 0;
-  const diskUsed = latestMetrics?.diskUsedBytes || 0;
-  const memoryTotal = selectedDevice.metadata?.memory?.total || 0;
+
+  // Calculate total storage from storage array
+  const totalStorage = selectedDevice.storage?.reduce((sum, s) => sum + (s.total || 0), 0) || 0;
+  const usedStorage = selectedDevice.storage?.reduce((sum, s) => sum + (s.used || 0), 0) || 0;
+
+  // Get GPU info from device
+  const gpuName = selectedDevice.gpu?.[0]?.name || 'Unknown GPU';
+  const gpuMemory = selectedDevice.gpu?.[0]?.memory;
+
+  // Get memory from device
+  const totalMemory = selectedDevice.totalMemory || 0;
+  const memoryUsed = latestMetrics?.memoryUsedBytes || 0;
+
+  // CPU info
+  const cpuModel = selectedDevice.cpuModel || 'Unknown CPU';
 
   return (
     <div className="space-y-6">
@@ -251,46 +262,46 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
       <div className="min-h-[500px]">
         {activeTab === 'overview' && (
           <div className="space-y-6">
-            {/* Windows 11 Style Summary Cards */}
+            {/* Summary Cards - Gradient Style */}
             <div className="grid grid-cols-4 gap-4">
               {/* Storage Card */}
-              <div className="bg-gradient-to-br from-blue-600 to-blue-800 rounded-xl p-4 text-white">
+              <div className="bg-gradient-to-br from-blue-500 to-blue-700 rounded-xl p-4 text-white shadow-lg">
                 <div className="flex items-center gap-3 mb-3">
                   <HardDriveIcon className="w-8 h-8" />
                   <span className="text-lg font-medium">Storage</span>
                 </div>
                 <div className="text-2xl font-bold">
-                  {diskTotal ? `${formatBytes(diskUsed)} / ${formatBytes(diskTotal)}` : 'N/A'}
+                  {totalStorage ? `${formatBytes(usedStorage)} / ${formatBytes(totalStorage)}` : 'N/A'}
                 </div>
                 <div className="text-sm opacity-80 mt-1">
-                  {diskTotal && latestMetrics?.diskPercent !== undefined
+                  {totalStorage && latestMetrics?.diskPercent !== undefined
                     ? `${(100 - latestMetrics.diskPercent).toFixed(0)}% free`
                     : ''}
                 </div>
               </div>
 
               {/* GPU Card */}
-              <div className="bg-gradient-to-br from-purple-600 to-purple-800 rounded-xl p-4 text-white">
+              <div className="bg-gradient-to-br from-purple-500 to-purple-700 rounded-xl p-4 text-white shadow-lg">
                 <div className="flex items-center gap-3 mb-3">
                   <GpuIcon className="w-8 h-8" />
                   <span className="text-lg font-medium">Graphics</span>
                 </div>
-                <div className="text-lg font-bold truncate">
-                  {selectedDevice.metadata?.gpu?.name || 'Unknown GPU'}
+                <div className="text-lg font-bold truncate" title={gpuName}>
+                  {gpuName}
                 </div>
                 <div className="text-sm opacity-80 mt-1">
-                  {selectedDevice.metadata?.gpu?.memory || ''}
+                  {gpuMemory ? formatBytes(gpuMemory) : ''}
                 </div>
               </div>
 
               {/* RAM Card */}
-              <div className="bg-gradient-to-br from-teal-600 to-teal-800 rounded-xl p-4 text-white">
+              <div className="bg-gradient-to-br from-teal-500 to-teal-700 rounded-xl p-4 text-white shadow-lg">
                 <div className="flex items-center gap-3 mb-3">
                   <MemoryIcon className="w-8 h-8" />
                   <span className="text-lg font-medium">RAM</span>
                 </div>
                 <div className="text-2xl font-bold">
-                  {memoryTotal ? formatBytes(memoryTotal) : 'N/A'}
+                  {totalMemory ? formatBytes(totalMemory) : 'N/A'}
                 </div>
                 <div className="text-sm opacity-80 mt-1">
                   {latestMetrics?.memoryPercent !== undefined
@@ -300,13 +311,13 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
               </div>
 
               {/* CPU Card */}
-              <div className="bg-gradient-to-br from-orange-600 to-orange-800 rounded-xl p-4 text-white">
+              <div className="bg-gradient-to-br from-orange-500 to-orange-700 rounded-xl p-4 text-white shadow-lg">
                 <div className="flex items-center gap-3 mb-3">
                   <CpuIcon className="w-8 h-8" />
                   <span className="text-lg font-medium">Processor</span>
                 </div>
-                <div className="text-lg font-bold truncate">
-                  {selectedDevice.metadata?.cpu?.model || 'Unknown CPU'}
+                <div className="text-lg font-bold truncate" title={cpuModel}>
+                  {cpuModel}
                 </div>
                 <div className="text-sm opacity-80 mt-1">
                   {latestMetrics?.cpuPercent !== undefined
@@ -316,39 +327,39 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
               </div>
             </div>
 
-            {/* Device Header with Rename */}
-            <div className="bg-[#2d2d2d] rounded-xl p-6">
+            {/* Device Header with PC Icon - Light Theme */}
+            <div className="bg-surface border border-border rounded-xl p-6">
               <div className="flex items-start gap-6">
-                <div className="w-24 h-24 bg-[#3d3d3d] rounded-xl flex items-center justify-center">
-                  <MonitorIcon className="w-16 h-16 text-blue-400" />
+                <div className="w-24 h-24 bg-primary-light rounded-xl flex items-center justify-center">
+                  <MonitorIcon className="w-16 h-16 text-primary" />
                 </div>
                 <div className="flex-1">
                   <div className="flex items-center gap-3 mb-2">
-                    <h2 className="text-2xl font-bold text-white">
+                    <h2 className="text-2xl font-bold text-text-primary">
                       {selectedDevice.displayName || selectedDevice.hostname}
                     </h2>
                     <button
-                      className="p-2 hover:bg-[#3d3d3d] rounded-lg transition-colors"
+                      className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
                       title="Rename this PC"
                     >
-                      <EditIcon className="w-4 h-4 text-gray-400" />
+                      <EditIcon className="w-4 h-4 text-text-secondary" />
                     </button>
                   </div>
-                  <p className="text-gray-400 mb-4">
-                    {selectedDevice.metadata?.model || selectedDevice.osType}
+                  <p className="text-text-secondary mb-4">
+                    {selectedDevice.model || selectedDevice.manufacturer || selectedDevice.osType}
                   </p>
                   <div className="flex gap-4">
                     <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm ${
                       selectedDevice.status === 'online'
-                        ? 'bg-green-500/20 text-green-400'
-                        : 'bg-red-500/20 text-red-400'
+                        ? 'bg-green-100 text-green-700'
+                        : 'bg-red-100 text-red-700'
                     }`}>
                       <span className={`w-2 h-2 rounded-full ${
-                        selectedDevice.status === 'online' ? 'bg-green-400' : 'bg-red-400'
+                        selectedDevice.status === 'online' ? 'bg-green-500' : 'bg-red-500'
                       }`}></span>
                       {selectedDevice.status === 'online' ? 'Online' : 'Offline'}
                     </span>
-                    <span className="text-gray-500 text-sm">
+                    <span className="text-text-secondary text-sm">
                       Last seen: {new Date(selectedDevice.lastSeen).toLocaleString()}
                     </span>
                   </div>
@@ -360,22 +371,26 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
             <CollapsibleSection title="Device specifications" onCopy={copyDeviceSpecs}>
               <div className="space-y-1">
                 <SpecRow label="Device name" value={selectedDevice.displayName || selectedDevice.hostname} />
-                <SpecRow label="Processor" value={selectedDevice.metadata?.cpu?.model} />
-                <SpecRow label="Installed RAM" value={memoryTotal ? formatBytes(memoryTotal) : undefined} />
+                <SpecRow label="Processor" value={selectedDevice.cpuModel} />
+                <SpecRow label="CPU Cores" value={selectedDevice.cpuCores ? `${selectedDevice.cpuCores} cores (${selectedDevice.cpuThreads || selectedDevice.cpuCores} threads)` : undefined} />
+                <SpecRow label="Installed RAM" value={totalMemory ? formatBytes(totalMemory) : undefined} />
                 <SpecRow label="Device ID" value={selectedDevice.id} />
-                <SpecRow label="Product ID" value={selectedDevice.agentId} />
                 <SpecRow label="System type" value={selectedDevice.architecture} />
+                <SpecRow label="Manufacturer" value={selectedDevice.manufacturer} />
+                <SpecRow label="Model" value={selectedDevice.model} />
+                <SpecRow label="Serial Number" value={selectedDevice.serialNumber} />
               </div>
             </CollapsibleSection>
 
-            {/* Windows Specifications - Collapsible */}
-            <CollapsibleSection title="Windows specifications" onCopy={copyWindowsSpecs}>
+            {/* OS Specifications - Collapsible */}
+            <CollapsibleSection title="Operating System" onCopy={copyWindowsSpecs}>
               <div className="space-y-1">
-                <SpecRow label="Edition" value={selectedDevice.osType} />
+                <SpecRow label="OS Type" value={selectedDevice.osType} />
                 <SpecRow label="Version" value={selectedDevice.osVersion} />
-                <SpecRow label="Installed on" value={selectedDevice.metadata?.os?.installDate} />
-                <SpecRow label="OS build" value={selectedDevice.metadata?.os?.build} />
-                <SpecRow label="Experience" value={selectedDevice.metadata?.os?.experience} />
+                <SpecRow label="Build" value={selectedDevice.osBuild} />
+                <SpecRow label="Platform" value={selectedDevice.platform} />
+                <SpecRow label="Platform Family" value={selectedDevice.platformFamily} />
+                <SpecRow label="Domain" value={selectedDevice.domain} />
               </div>
             </CollapsibleSection>
 
@@ -383,9 +398,36 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
             <CollapsibleSection title="Network">
               <div className="space-y-1">
                 <SpecRow label="IP Address" value={selectedDevice.ipAddress} />
+                <SpecRow label="Public IP" value={selectedDevice.publicIp} />
                 <SpecRow label="MAC Address" value={selectedDevice.macAddress} />
               </div>
             </CollapsibleSection>
+
+            {/* Storage Info */}
+            {selectedDevice.storage && selectedDevice.storage.length > 0 && (
+              <CollapsibleSection title="Storage Drives">
+                <div className="space-y-3">
+                  {selectedDevice.storage.map((drive, idx) => (
+                    <div key={idx} className="p-3 bg-gray-50 rounded-lg">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="font-medium text-text-primary">{drive.mountpoint || drive.device}</span>
+                        <span className="text-text-secondary text-sm">{drive.fstype}</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
+                        <div
+                          className="bg-primary h-2 rounded-full"
+                          style={{ width: `${drive.percent || 0}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-sm text-text-secondary">
+                        <span>{formatBytes(drive.used)} used</span>
+                        <span>{formatBytes(drive.free)} free of {formatBytes(drive.total)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CollapsibleSection>
+            )}
 
             {/* Agent Info */}
             <CollapsibleSection title="Agent information">
@@ -398,22 +440,22 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
 
             {/* Real-time Metrics Chart */}
             {metrics.length > 0 && (
-              <div className="bg-[#2d2d2d] rounded-xl p-6">
-                <h3 className="text-lg font-semibold text-white mb-4">Resource Usage (24h)</h3>
+              <div className="bg-surface border border-border rounded-xl p-6">
+                <h3 className="text-lg font-semibold text-text-primary mb-4">Resource Usage (24h)</h3>
                 <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={[...metrics].reverse()}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#3d3d3d" />
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                       <XAxis
                         dataKey="timestamp"
-                        stroke="#6b7280"
+                        stroke="#64748b"
                         tickFormatter={(value) => new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       />
-                      <YAxis stroke="#6b7280" domain={[0, 100]} />
+                      <YAxis stroke="#64748b" domain={[0, 100]} />
                       <Tooltip
                         contentStyle={{
-                          backgroundColor: '#1a1a1a',
-                          border: '1px solid #3d3d3d',
+                          backgroundColor: '#ffffff',
+                          border: '1px solid #e2e8f0',
                           borderRadius: '8px'
                         }}
                         labelFormatter={(value) => new Date(value).toLocaleString()}

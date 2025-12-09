@@ -1,5 +1,22 @@
 import { create } from 'zustand';
 
+export interface GPUInfo {
+  name: string;
+  vendor: string;
+  memory: number;
+  driver_version: string;
+}
+
+export interface StorageInfo {
+  device: string;
+  mountpoint: string;
+  fstype: string;
+  total: number;
+  used: number;
+  free: number;
+  percent: number;
+}
+
 export interface Device {
   id: string;
   agentId: string;
@@ -7,11 +24,27 @@ export interface Device {
   displayName?: string;
   osType: string;
   osVersion: string;
+  osBuild?: string;
+  platform?: string;
+  platformFamily?: string;
   architecture: string;
+  cpuModel?: string;
+  cpuCores?: number;
+  cpuThreads?: number;
+  cpuSpeed?: number;
+  totalMemory?: number;
+  bootTime?: number;
+  gpu?: GPUInfo[];
+  storage?: StorageInfo[];
+  serialNumber?: string;
+  manufacturer?: string;
+  model?: string;
+  domain?: string;
   agentVersion: string;
   lastSeen: string;
   status: 'online' | 'offline' | 'warning' | 'critical';
   ipAddress: string;
+  publicIp?: string;
   macAddress: string;
   tags: string[];
   metadata: Record<string, any>;
@@ -24,8 +57,10 @@ export interface DeviceMetrics {
   cpuPercent: number;
   memoryPercent: number;
   memoryUsedBytes: number;
+  memoryTotalBytes?: number;
   diskPercent: number;
   diskUsedBytes: number;
+  diskTotalBytes?: number;
   networkRxBytes: number;
   networkTxBytes: number;
   processCount: number;
