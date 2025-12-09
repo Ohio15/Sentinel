@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"time"
@@ -19,14 +20,16 @@ import (
 	"github.com/sentinel/agent/internal/config"
 	"github.com/sentinel/agent/internal/executor"
 	"github.com/sentinel/agent/internal/filetransfer"
-	svc "github.com/sentinel/agent/internal/service"
+	"github.com/sentinel/agent/internal/protection"
 	"github.com/sentinel/agent/internal/remote"
+	svc "github.com/sentinel/agent/internal/service"
 	"github.com/sentinel/agent/internal/terminal"
 	"github.com/sentinel/agent/internal/updater"
 )
 
 const (
-	Version = "1.8.0"
+	Version     = "1.9.0"
+	ServiceName = "SentinelAgent"
 )
 
 var (
@@ -41,16 +44,18 @@ var (
 
 // Agent represents the main agent application
 type Agent struct {
-	cfg             *config.Config
-	client          *client.Client
-	collector       *collector.Collector
-	executor        *executor.Executor
-	terminalManager *terminal.Manager
-	fileTransfer    *filetransfer.FileTransfer
-	remoteManager   *remote.Manager
-	updater         *updater.Updater
-	ctx             context.Context
-	cancel          context.CancelFunc
+	cfg               *config.Config
+	client            *client.Client
+	collector         *collector.Collector
+	executor          *executor.Executor
+	terminalManager   *terminal.Manager
+	fileTransfer      *filetransfer.FileTransfer
+	remoteManager     *remote.Manager
+	updater           *updater.Updater
+	protectionManager *protection.Manager
+	tamperChan        chan string
+	ctx               context.Context
+	cancel            context.CancelFunc
 }
 
 func main() {
@@ -248,17 +253,24 @@ func NewAgent(cfg *config.Config) *Agent {
 	agentUpdater := updater.New(cfg.ServerURL, Version)
 	agentUpdater.SetCheckInterval(1 * time.Hour) // Check for updates hourly
 
+	// Create protection manager
+	exePath, _ := os.Executable()
+	installPath := filepath.Dir(exePath)
+	protMgr := protection.NewManager(installPath, ServiceName)
+
 	return &Agent{
-		cfg:             cfg,
-		client:          client.New(cfg),
-		collector:       collector.New(),
-		executor:        executor.New(),
-		terminalManager: terminal.NewManager(),
-		fileTransfer:    ft,
-		remoteManager:   remote.NewManager(),
-		updater:         agentUpdater,
-		ctx:             ctx,
-		cancel:          cancel,
+		cfg:               cfg,
+		client:            client.New(cfg),
+		collector:         collector.New(),
+		executor:          executor.New(),
+		terminalManager:   terminal.NewManager(),
+		fileTransfer:      ft,
+		remoteManager:     remote.NewManager(),
+		updater:           agentUpdater,
+		protectionManager: protMgr,
+		tamperChan:        make(chan string, 10),
+		ctx:               ctx,
+		cancel:            cancel,
 	}
 }
 
@@ -285,6 +297,18 @@ func (a *Agent) Start() error {
 	log.Printf("Starting Sentinel Agent v%s", Version)
 	log.Printf("Agent ID: %s", a.cfg.AgentID)
 	log.Printf("Server: %s", a.cfg.ServerURL)
+
+	// Enable protection mechanisms when running as service
+	if protection.IsRunningAsService() {
+		log.Println("Enabling protection mechanisms...")
+		if err := a.protectionManager.EnableAllProtections(); err != nil {
+			log.Printf("Warning: Some protections could not be enabled: %v", err)
+		}
+
+		// Start tamper monitoring
+		go a.protectionManager.MonitorTamperAttempts(a.tamperChan)
+		go a.handleTamperReports()
+	}
 
 	// Register message handlers
 	a.registerHandlers()
@@ -733,4 +757,27 @@ func (a *Agent) handleRemoteInput(msg *client.Message) error {
 
 	session.HandleInput(inputType, data)
 	return nil
+}
+
+// handleTamperReports processes tamper detection alerts
+func (a *Agent) handleTamperReports() {
+	for {
+		select {
+		case <-a.ctx.Done():
+			return
+		case report := <-a.tamperChan:
+			log.Printf("SECURITY ALERT: %s", report)
+			// Send tamper report to server
+			if a.client.IsConnected() && a.client.IsAuthenticated() {
+				a.client.SendJSON(map[string]interface{}{
+					"type": "tamper_alert",
+					"data": map[string]interface{}{
+						"message":   report,
+						"timestamp": time.Now().UTC().Format(time.RFC3339),
+						"agentId":   a.cfg.AgentID,
+					},
+				})
+			}
+		}
+	}
 }

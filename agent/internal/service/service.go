@@ -1,12 +1,18 @@
 package service
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/kardianos/service"
+	"github.com/sentinel/agent/internal/protection"
 )
 
 const (
@@ -99,6 +105,7 @@ func Install(serverURL, token string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %w", err)
 	}
+	installPath := filepath.Dir(exe)
 
 	// Update config with arguments
 	cfg := Config()
@@ -136,11 +143,130 @@ func Install(serverURL, token string) error {
 	}
 
 	log.Println("Service started successfully")
+
+	// Install and start the watchdog service (Windows only)
+	if runtime.GOOS == "windows" {
+		installWatchdog(installPath)
+	}
+
 	return nil
 }
 
-// Uninstall removes the service
+// installWatchdog installs the watchdog service
+func installWatchdog(installPath string) {
+	watchdogPath := filepath.Join(installPath, "sentinel-watchdog.exe")
+	if _, err := os.Stat(watchdogPath); os.IsNotExist(err) {
+		log.Println("Watchdog executable not found, skipping watchdog installation")
+		return
+	}
+
+	cfg := &service.Config{
+		Name:        "SentinelWatchdog",
+		DisplayName: "Sentinel Watchdog Service",
+		Description: "Monitors and maintains Sentinel Agent availability",
+		Executable:  watchdogPath,
+		Option: service.KeyValue{
+			"StartType":               "automatic",
+			"OnFailure":               "restart",
+			"OnFailureDelayDuration":  "5s",
+			"OnFailureResetPeriod":    10,
+		},
+	}
+
+	prg := &Program{}
+	svc, err := service.New(prg, cfg)
+	if err != nil {
+		log.Printf("Warning: could not create watchdog service: %v", err)
+		return
+	}
+
+	// Stop and uninstall if already exists
+	status, _ := svc.Status()
+	if status == service.StatusRunning {
+		svc.Stop()
+	}
+	svc.Uninstall()
+
+	if err := svc.Install(); err != nil {
+		log.Printf("Warning: could not install watchdog service: %v", err)
+		return
+	}
+
+	if err := svc.Start(); err != nil {
+		log.Printf("Warning: could not start watchdog service: %v", err)
+		return
+	}
+
+	log.Println("Watchdog service installed and started")
+}
+
+// Uninstall removes the service - requires server authorization
 func Uninstall() error {
+	return UninstallWithToken("", "", "")
+}
+
+// UninstallWithToken removes the service with server authorization
+func UninstallWithToken(serverURL, deviceID, uninstallToken string) error {
+	// Get install path
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get executable path: %w", err)
+	}
+	installPath := filepath.Dir(exe)
+
+	// If no token provided, try to get one from server
+	if uninstallToken == "" {
+		// Try to load config to get server URL and device ID
+		configPath := filepath.Join(installPath, "config.json")
+		if data, err := os.ReadFile(configPath); err == nil {
+			var cfg struct {
+				ServerURL string `json:"serverUrl"`
+				AgentID   string `json:"agentId"`
+				DeviceID  string `json:"deviceId"`
+			}
+			if json.Unmarshal(data, &cfg) == nil {
+				if serverURL == "" {
+					serverURL = cfg.ServerURL
+				}
+				if deviceID == "" {
+					deviceID = cfg.DeviceID
+					if deviceID == "" {
+						deviceID = cfg.AgentID
+					}
+				}
+			}
+		}
+
+		if serverURL != "" && deviceID != "" {
+			token, err := requestUninstallToken(serverURL, deviceID)
+			if err != nil {
+				log.Printf("Warning: Could not get uninstall token from server: %v", err)
+				log.Println("Proceeding with local uninstall (protections may prevent this)")
+			} else {
+				uninstallToken = token
+			}
+		}
+	}
+
+	// Validate token if provided
+	if uninstallToken != "" {
+		protMgr := protection.NewManager(installPath, ServiceName)
+		token := &protection.UninstallToken{
+			Token:     uninstallToken,
+			DeviceID:  deviceID,
+			IssuedAt:  time.Now(),
+			ExpiresAt: time.Now().Add(5 * time.Minute),
+		}
+		if !protMgr.ValidateUninstallToken(token, deviceID) {
+			return fmt.Errorf("invalid uninstall token - please request a new one from the server")
+		}
+
+		// Disable protections for legitimate uninstall
+		if err := protMgr.DisableProtections(); err != nil {
+			log.Printf("Warning: could not disable protections: %v", err)
+		}
+	}
+
 	svc, err := New(nil, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create service: %w", err)
@@ -154,6 +280,9 @@ func Uninstall() error {
 		}
 	}
 
+	// Also stop the watchdog if running
+	stopWatchdog()
+
 	// Uninstall the service
 	if err := svc.Uninstall(); err != nil {
 		return fmt.Errorf("failed to uninstall service: %w", err)
@@ -161,6 +290,59 @@ func Uninstall() error {
 
 	log.Println("Service uninstalled successfully")
 	return nil
+}
+
+// requestUninstallToken requests an uninstall token from the server
+func requestUninstallToken(serverURL, deviceID string) (string, error) {
+	payload := map[string]string{"deviceId": deviceID}
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Post(
+		serverURL+"/api/agent/request-uninstall-token",
+		"application/json",
+		bytes.NewReader(jsonData),
+	)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("server returned status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	return result.Token, nil
+}
+
+// stopWatchdog stops the watchdog service if running
+func stopWatchdog() {
+	cfg := &service.Config{
+		Name:        "SentinelWatchdog",
+		DisplayName: "Sentinel Watchdog Service",
+		Description: "Monitors Sentinel Agent",
+	}
+	prg := &Program{}
+	svc, err := service.New(prg, cfg)
+	if err != nil {
+		return
+	}
+
+	status, err := svc.Status()
+	if err == nil && status == service.StatusRunning {
+		svc.Stop()
+	}
+	svc.Uninstall()
 }
 
 // Start starts the service
