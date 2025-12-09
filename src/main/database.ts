@@ -230,6 +230,35 @@ export class Database {
     );
   }
 
+  
+  async updateDevice(id: string, updates: { displayName?: string; tags?: string[] }): Promise<any | null> {
+    const fields: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    if (updates.displayName !== undefined) {
+      fields.push(`display_name = ${paramIndex++}`);
+      values.push(updates.displayName);
+    }
+    if (updates.tags !== undefined) {
+      fields.push(`tags = ${paramIndex++}`);
+      values.push(JSON.stringify(updates.tags));
+    }
+
+    if (fields.length === 0) {
+      return this.getDevice(id);
+    }
+
+    fields.push(`updated_at = CURRENT_TIMESTAMP`);
+    values.push(id);
+
+    await this.query(
+      `UPDATE devices SET ${fields.join(', ')} WHERE id = ${paramIndex}`,
+      values
+    );
+    return this.getDevice(id);
+  }
+
   async deleteDevice(id: string): Promise<void> {
     await this.query('DELETE FROM devices WHERE id = $1', [id]);
   }

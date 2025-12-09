@@ -240,6 +240,10 @@ function setupIpcHandlers(): void {
     return database.deleteDevice(id);
   });
 
+  ipcMain.handle('devices:update', async (_, id: string, updates: { displayName?: string; tags?: string[] }) => {
+    return database.updateDevice(id, updates);
+  });
+
   ipcMain.handle('devices:getMetrics', async (_, deviceId: string, hours: number) => {
     return database.getDeviceMetrics(deviceId, hours);
   });

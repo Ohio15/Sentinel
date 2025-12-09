@@ -118,6 +118,8 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
   const [isExecuting, setIsExecuting] = useState(false);
   const [commandHistory, setCommandHistory] = useState<Command[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editedName, setEditedName] = useState('');
 
   useEffect(() => {
     fetchDevice(deviceId);
@@ -136,6 +138,27 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
     }
   }, [activeTab, deviceId]);
 
+
+  const handleSaveName = async () => {
+    if (!selectedDevice || !editedName.trim()) return;
+    try {
+      await window.api.devices.update(selectedDevice.id, { displayName: editedName.trim() });
+      await fetchDevice(deviceId); // Refresh device data
+      setIsEditingName(false);
+    } catch (error) {
+      console.error('Failed to update device name:', error);
+    }
+  };
+
+  const handleStartEdit = () => {
+    setEditedName(selectedDevice?.displayName || selectedDevice?.hostname || '');
+    setIsEditingName(true);
+  };
+
+  const handleCancelEdit = () => {
+    setIsEditingName(false);
+    setEditedName('');
+  };
 
   const executeCommand = async () => {
     if (!command.trim() || !selectedDevice) return;
@@ -362,15 +385,48 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                 </div>
                 <div className="flex-1">
                   <div className="flex items-center gap-3 mb-2">
-                    <h2 className="text-2xl font-bold text-text-primary">
-                      {selectedDevice.displayName || selectedDevice.hostname}
-                    </h2>
-                    <button
-                      className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                      title="Rename this PC"
-                    >
-                      <EditIcon className="w-4 h-4 text-text-secondary" />
-                    </button>
+                    {isEditingName ? (
+                      <>
+                        <input
+                          type="text"
+                          value={editedName}
+                          onChange={(e) => setEditedName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSaveName();
+                            if (e.key === 'Escape') handleCancelEdit();
+                          }}
+                          className="text-2xl font-bold text-text-primary bg-gray-100 border border-border rounded-lg px-3 py-1 focus:outline-none focus:ring-2 focus:ring-primary"
+                          autoFocus
+                        />
+                        <button
+                          onClick={handleSaveName}
+                          className="p-2 hover:bg-green-100 rounded-lg transition-colors"
+                          title="Save"
+                        >
+                          <CheckIcon className="w-4 h-4 text-success" />
+                        </button>
+                        <button
+                          onClick={handleCancelEdit}
+                          className="p-2 hover:bg-red-100 rounded-lg transition-colors"
+                          title="Cancel"
+                        >
+                          <CloseIcon className="w-4 h-4 text-danger" />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <h2 className="text-2xl font-bold text-text-primary">
+                          {selectedDevice.displayName || selectedDevice.hostname}
+                        </h2>
+                        <button
+                          onClick={handleStartEdit}
+                          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                          title="Rename this PC"
+                        >
+                          <EditIcon className="w-4 h-4 text-text-secondary" />
+                        </button>
+                      </>
+                    )}
                   </div>
                   <p className="text-text-secondary mb-4">
                     {selectedDevice.model || selectedDevice.manufacturer || selectedDevice.osType}
@@ -798,6 +854,14 @@ function CheckIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+    </svg>
+  );
+}
+
+function CloseIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
     </svg>
   );
 }

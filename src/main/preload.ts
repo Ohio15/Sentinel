@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('api', {
     list: () => ipcRenderer.invoke('devices:list'),
     get: (id: string) => ipcRenderer.invoke('devices:get', id),
     delete: (id: string) => ipcRenderer.invoke('devices:delete', id),
+    update: (id: string, updates: { displayName?: string; tags?: string[] }) =>
+      ipcRenderer.invoke('devices:update', id, updates),
     getMetrics: (deviceId: string, hours: number) =>
       ipcRenderer.invoke('devices:getMetrics', deviceId, hours),
   },
@@ -173,6 +175,7 @@ export interface ElectronAPI {
     list: () => Promise<Device[]>;
     get: (id: string) => Promise<Device | null>;
     delete: (id: string) => Promise<void>;
+    update: (id: string, updates: { displayName?: string; tags?: string[] }) => Promise<Device | null>;
     getMetrics: (deviceId: string, hours: number) => Promise<DeviceMetrics[]>;
   };
   commands: {
