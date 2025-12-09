@@ -113,8 +113,12 @@ export class Database {
       SELECT
         id, agent_id as "agentId", hostname, display_name as "displayName",
         os_type as "osType", os_version as "osVersion", os_build as "osBuild",
-        architecture, agent_version as "agentVersion", last_seen as "lastSeen",
-        status, ip_address as "ipAddress", mac_address as "macAddress",
+        platform, platform_family as "platformFamily", architecture,
+        cpu_model as "cpuModel", cpu_cores as "cpuCores", cpu_threads as "cpuThreads",
+        cpu_speed as "cpuSpeed", total_memory as "totalMemory", boot_time as "bootTime",
+        gpu, storage, serial_number as "serialNumber", manufacturer, model, domain,
+        agent_version as "agentVersion", last_seen as "lastSeen",
+        status, ip_address as "ipAddress", public_ip as "publicIp", mac_address as "macAddress",
         tags, metadata, created_at as "createdAt", updated_at as "updatedAt"
       FROM devices
       ORDER BY hostname
@@ -128,8 +132,12 @@ export class Database {
       SELECT
         id, agent_id as "agentId", hostname, display_name as "displayName",
         os_type as "osType", os_version as "osVersion", os_build as "osBuild",
-        architecture, agent_version as "agentVersion", last_seen as "lastSeen",
-        status, ip_address as "ipAddress", mac_address as "macAddress",
+        platform, platform_family as "platformFamily", architecture,
+        cpu_model as "cpuModel", cpu_cores as "cpuCores", cpu_threads as "cpuThreads",
+        cpu_speed as "cpuSpeed", total_memory as "totalMemory", boot_time as "bootTime",
+        gpu, storage, serial_number as "serialNumber", manufacturer, model, domain,
+        agent_version as "agentVersion", last_seen as "lastSeen",
+        status, ip_address as "ipAddress", public_ip as "publicIp", mac_address as "macAddress",
         tags, metadata, created_at as "createdAt", updated_at as "updatedAt"
       FROM devices WHERE id = $1
     `,
