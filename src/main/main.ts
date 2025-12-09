@@ -483,8 +483,20 @@ function setupIpcHandlers(): void {
 
 // App lifecycle
 app.whenReady().then(async () => {
-  await initialize();
+  // Create window first so user sees something immediately
   createWindow();
+
+  try {
+    await initialize();
+  } catch (error) {
+    console.error('Failed to initialize:', error);
+    // Show error dialog and continue - window is already visible
+    dialog.showErrorBox(
+      'Initialization Error',
+      'Failed to start Sentinel: ' + (error as Error).message + '\n\nPlease ensure PostgreSQL is running and accessible.'
+    );
+  }
+
   setupAutoUpdater();
 
   app.on('activate', () => {
