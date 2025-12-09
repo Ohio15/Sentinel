@@ -7,6 +7,11 @@ import { Server } from './server';
 import { AgentManager } from './agents';
 import * as os from 'os';
 
+// Disable GPU acceleration to prevent crashes on some systems
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('disable-gpu');
+app.commandLine.appendSwitch('disable-software-rasterizer');
+
 // Helper function to embed configuration into agent binary
 function embedConfigInBinary(binaryData: Buffer, serverUrl: string, token: string): Buffer {
   const serverPlaceholder = 'SENTINEL_EMBEDDED_SERVER:' + '_'.repeat(64) + ':END';
@@ -158,6 +163,7 @@ if (!gotTheLock) {
 }
 
 function createWindow(): void {
+  console.log('Creating main window...');
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -170,15 +176,24 @@ function createWindow(): void {
     },
     icon: path.join(__dirname, '../../assets/icon.png'),
     titleBarStyle: 'default',
-    show: false,
+    show: true, // Show immediately instead of waiting
   });
 
-  // Load the app from built files
-  mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+  const indexPath = path.join(__dirname, '../renderer/index.html');
+  console.log('Loading index.html from:', indexPath);
 
-  // Show window when ready
+  // Load the app from built files
+  mainWindow.loadFile(indexPath).then(() => {
+    console.log('Index.html loaded successfully');
+  }).catch((err) => {
+    console.error('Failed to load index.html:', err);
+  });
+
+  // Show window when ready (backup)
   mainWindow.once('ready-to-show', () => {
+    console.log('Window ready to show');
     mainWindow?.show();
+    mainWindow?.focus();
   });
 
   // Handle external links
