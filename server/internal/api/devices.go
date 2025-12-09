@@ -17,8 +17,10 @@ func (r *Router) listDevices(c *gin.Context) {
 
 	rows, err := r.db.Pool.Query(ctx, `
 		SELECT id, agent_id, hostname, display_name, os_type, os_version, os_build,
-			   architecture, agent_version, last_seen, status, ip_address, public_ip,
-			   mac_address, tags, metadata, created_at, updated_at
+			   platform, platform_family, architecture, cpu_model, cpu_cores, cpu_threads,
+			   cpu_speed, total_memory, boot_time, gpu, storage, serial_number,
+			   manufacturer, model, domain, agent_version, last_seen, status,
+			   ip_address, public_ip, mac_address, tags, metadata, created_at, updated_at
 		FROM devices
 		ORDER BY hostname
 	`)
@@ -33,16 +35,22 @@ func (r *Router) listDevices(c *gin.Context) {
 		var d models.Device
 		var tags []string
 		var metadata map[string]string
+		var gpuJSON, storageJSON []byte
 
 		err := rows.Scan(&d.ID, &d.AgentID, &d.Hostname, &d.DisplayName, &d.OSType,
-			&d.OSVersion, &d.OSBuild, &d.Architecture, &d.AgentVersion, &d.LastSeen,
-			&d.Status, &d.IPAddress, &d.PublicIP, &d.MACAddress, &tags, &metadata,
+			&d.OSVersion, &d.OSBuild, &d.Platform, &d.PlatformFamily, &d.Architecture,
+			&d.CPUModel, &d.CPUCores, &d.CPUThreads, &d.CPUSpeed, &d.TotalMemory,
+			&d.BootTime, &gpuJSON, &storageJSON, &d.SerialNumber, &d.Manufacturer,
+			&d.Model, &d.Domain, &d.AgentVersion, &d.LastSeen, &d.Status,
+			&d.IPAddress, &d.PublicIP, &d.MACAddress, &tags, &metadata,
 			&d.CreatedAt, &d.UpdatedAt)
 		if err != nil {
 			continue
 		}
 		d.Tags = tags
 		d.Metadata = metadata
+		json.Unmarshal(gpuJSON, &d.GPU)
+		json.Unmarshal(storageJSON, &d.Storage)
 
 		// Check if agent is currently connected
 		if r.hub.IsAgentOnline(d.AgentID) {
@@ -67,15 +75,21 @@ func (r *Router) getDevice(c *gin.Context) {
 	var d models.Device
 	var tags []string
 	var metadata map[string]string
+	var gpuJSON, storageJSON []byte
 
 	err = r.db.Pool.QueryRow(ctx, `
 		SELECT id, agent_id, hostname, display_name, os_type, os_version, os_build,
-			   architecture, agent_version, last_seen, status, ip_address, public_ip,
-			   mac_address, tags, metadata, created_at, updated_at
+			   platform, platform_family, architecture, cpu_model, cpu_cores, cpu_threads,
+			   cpu_speed, total_memory, boot_time, gpu, storage, serial_number,
+			   manufacturer, model, domain, agent_version, last_seen, status,
+			   ip_address, public_ip, mac_address, tags, metadata, created_at, updated_at
 		FROM devices WHERE id = $1
 	`, id).Scan(&d.ID, &d.AgentID, &d.Hostname, &d.DisplayName, &d.OSType,
-		&d.OSVersion, &d.OSBuild, &d.Architecture, &d.AgentVersion, &d.LastSeen,
-		&d.Status, &d.IPAddress, &d.PublicIP, &d.MACAddress, &tags, &metadata,
+		&d.OSVersion, &d.OSBuild, &d.Platform, &d.PlatformFamily, &d.Architecture,
+		&d.CPUModel, &d.CPUCores, &d.CPUThreads, &d.CPUSpeed, &d.TotalMemory,
+		&d.BootTime, &gpuJSON, &storageJSON, &d.SerialNumber, &d.Manufacturer,
+		&d.Model, &d.Domain, &d.AgentVersion, &d.LastSeen, &d.Status,
+		&d.IPAddress, &d.PublicIP, &d.MACAddress, &tags, &metadata,
 		&d.CreatedAt, &d.UpdatedAt)
 
 	if err != nil {
@@ -85,6 +99,8 @@ func (r *Router) getDevice(c *gin.Context) {
 
 	d.Tags = tags
 	d.Metadata = metadata
+	json.Unmarshal(gpuJSON, &d.GPU)
+	json.Unmarshal(storageJSON, &d.Storage)
 
 	if r.hub.IsAgentOnline(d.AgentID) {
 		d.Status = "online"
@@ -252,6 +268,10 @@ func (r *Router) enrollAgent(c *gin.Context) {
 
 	ctx := context.Background()
 
+	// Convert GPU and Storage to JSON
+	gpuJSON, _ := json.Marshal(enrollment.GPU)
+	storageJSON, _ := json.Marshal(enrollment.Storage)
+
 	// Check if agent already exists
 	var existingID uuid.UUID
 	err := r.db.Pool.QueryRow(ctx, "SELECT id FROM devices WHERE agent_id = $1", enrollment.AgentID).Scan(&existingID)
@@ -261,13 +281,19 @@ func (r *Router) enrollAgent(c *gin.Context) {
 		_, err = r.db.Pool.Exec(ctx, `
 			UPDATE devices SET
 				hostname = $2, os_type = $3, os_version = $4, os_build = $5,
-				architecture = $6, agent_version = $7, ip_address = $8,
-				mac_address = $9, metadata = $10, last_seen = NOW(), status = 'online',
-				updated_at = NOW()
+				platform = $6, platform_family = $7, architecture = $8,
+				cpu_model = $9, cpu_cores = $10, cpu_threads = $11, cpu_speed = $12,
+				total_memory = $13, boot_time = $14, gpu = $15, storage = $16,
+				serial_number = $17, manufacturer = $18, model = $19, domain = $20,
+				agent_version = $21, ip_address = $22, mac_address = $23,
+				last_seen = NOW(), status = 'online', updated_at = NOW()
 			WHERE agent_id = $1
 		`, enrollment.AgentID, enrollment.Hostname, enrollment.OSType, enrollment.OSVersion,
-			enrollment.OSBuild, enrollment.Architecture, enrollment.AgentVersion,
-			enrollment.IPAddress, enrollment.MACAddress, enrollment.Metadata)
+			enrollment.OSBuild, enrollment.Platform, enrollment.PlatformFamily, enrollment.Architecture,
+			enrollment.CPUModel, enrollment.CPUCores, enrollment.CPUThreads, enrollment.CPUSpeed,
+			enrollment.TotalMemory, enrollment.BootTime, gpuJSON, storageJSON,
+			enrollment.SerialNumber, enrollment.Manufacturer, enrollment.Model, enrollment.Domain,
+			enrollment.AgentVersion, enrollment.IPAddress, enrollment.MACAddress)
 
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update device"})
@@ -275,8 +301,12 @@ func (r *Router) enrollAgent(c *gin.Context) {
 		}
 
 		c.JSON(http.StatusOK, gin.H{
+			"success":  true,
 			"deviceId": existingID,
-			"message":  "Device updated",
+			"config": map[string]int{
+				"heartbeatInterval": 30,
+				"metricsInterval":   60,
+			},
 		})
 		return
 	}
@@ -290,12 +320,18 @@ func (r *Router) enrollAgent(c *gin.Context) {
 
 	_, err = r.db.Pool.Exec(ctx, `
 		INSERT INTO devices (id, agent_id, hostname, display_name, os_type, os_version,
-			os_build, architecture, agent_version, ip_address, mac_address, metadata,
+			os_build, platform, platform_family, architecture, cpu_model, cpu_cores,
+			cpu_threads, cpu_speed, total_memory, boot_time, gpu, storage, serial_number,
+			manufacturer, model, domain, agent_version, ip_address, mac_address,
 			last_seen, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), 'online')
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+			$17, $18, $19, $20, $21, $22, $23, $24, $25, NOW(), 'online')
 	`, deviceID, enrollment.AgentID, enrollment.Hostname, displayName, enrollment.OSType,
-		enrollment.OSVersion, enrollment.OSBuild, enrollment.Architecture, enrollment.AgentVersion,
-		enrollment.IPAddress, enrollment.MACAddress, enrollment.Metadata)
+		enrollment.OSVersion, enrollment.OSBuild, enrollment.Platform, enrollment.PlatformFamily,
+		enrollment.Architecture, enrollment.CPUModel, enrollment.CPUCores, enrollment.CPUThreads,
+		enrollment.CPUSpeed, enrollment.TotalMemory, enrollment.BootTime, gpuJSON, storageJSON,
+		enrollment.SerialNumber, enrollment.Manufacturer, enrollment.Model, enrollment.Domain,
+		enrollment.AgentVersion, enrollment.IPAddress, enrollment.MACAddress)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create device"})
@@ -303,8 +339,12 @@ func (r *Router) enrollAgent(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
+		"success":  true,
 		"deviceId": deviceID,
-		"message":  "Device enrolled successfully",
+		"config": map[string]int{
+			"heartbeatInterval": 30,
+			"metricsInterval":   60,
+		},
 	})
 }
 

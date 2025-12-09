@@ -318,6 +318,18 @@ class ApiService {
     const baseUrl = import.meta.env.VITE_API_URL?.replace('/api', '') || window.location.origin;
     return `${baseUrl}/api/agents/script/${platform}?token=${encodeURIComponent(token)}`;
   }
+
+
+  // Agent Version endpoints
+  async getAgentVersions() {
+    const response = await this.client.get('/agents/versions');
+    return response.data;
+  }
+
+  async getDeviceVersionHistory(deviceId: string) {
+    const response = await this.client.get(`/devices/${deviceId}/version-history`);
+    return response.data;
+  }
 }
 
 export const api = new ApiService();

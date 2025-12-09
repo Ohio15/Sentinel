@@ -15,15 +15,44 @@ import (
 
 // SystemInfo contains static system information
 type SystemInfo struct {
-	Hostname     string `json:"hostname"`
-	OS           string `json:"os"`
-	OSVersion    string `json:"os_version"`
-	Platform     string `json:"platform"`
-	Architecture string `json:"architecture"`
-	CPUModel     string `json:"cpu_model"`
-	CPUCores     int    `json:"cpu_cores"`
-	TotalMemory  uint64 `json:"total_memory"`
-	BootTime     uint64 `json:"boot_time"`
+	Hostname       string        `json:"hostname"`
+	OS             string        `json:"os"`
+	OSVersion      string        `json:"os_version"`
+	OSBuild        string        `json:"os_build"`
+	Platform       string        `json:"platform"`
+	PlatformFamily string        `json:"platform_family"`
+	Architecture   string        `json:"architecture"`
+	CPUModel       string        `json:"cpu_model"`
+	CPUCores       int           `json:"cpu_cores"`
+	CPUThreads     int           `json:"cpu_threads"`
+	CPUSpeed       float64       `json:"cpu_speed"`
+	TotalMemory    uint64        `json:"total_memory"`
+	BootTime       uint64        `json:"boot_time"`
+	GPU            []GPUInfo     `json:"gpu"`
+	Storage        []StorageInfo `json:"storage"`
+	SerialNumber   string        `json:"serial_number"`
+	Manufacturer   string        `json:"manufacturer"`
+	Model          string        `json:"model"`
+	Domain         string        `json:"domain"`
+}
+
+// GPUInfo contains graphics card information
+type GPUInfo struct {
+	Name          string `json:"name"`
+	Vendor        string `json:"vendor"`
+	Memory        uint64 `json:"memory"`
+	DriverVersion string `json:"driver_version"`
+}
+
+// StorageInfo contains disk/partition information
+type StorageInfo struct {
+	Device     string  `json:"device"`
+	Mountpoint string  `json:"mountpoint"`
+	FSType     string  `json:"fstype"`
+	Total      uint64  `json:"total"`
+	Used       uint64  `json:"used"`
+	Free       uint64  `json:"free"`
+	Percent    float64 `json:"percent"`
 }
 
 // Metrics contains current system metrics
@@ -74,21 +103,68 @@ func (c *Collector) GetSystemInfo() (*SystemInfo, error) {
 	}
 
 	cpuModel := ""
+	cpuSpeed := float64(0)
+	cpuThreads := 0
 	if len(cpuInfo) > 0 {
 		cpuModel = cpuInfo[0].ModelName
+		cpuSpeed = cpuInfo[0].Mhz
+		// Count total threads across all CPUs
+		for _, ci := range cpuInfo {
+			cpuThreads += int(ci.Cores)
+		}
 	}
 
+	// Get storage info
+	storage := c.getStorageInfo()
+
+	// Get GPU info (platform-specific)
+	gpu := c.getGPUInfo()
+
 	return &SystemInfo{
-		Hostname:     hostInfo.Hostname,
-		OS:           hostInfo.OS,
-		OSVersion:    hostInfo.PlatformVersion,
-		Platform:     hostInfo.Platform,
-		Architecture: runtime.GOARCH,
-		CPUModel:     cpuModel,
-		CPUCores:     runtime.NumCPU(),
-		TotalMemory:  memInfo.Total,
-		BootTime:     hostInfo.BootTime,
+		Hostname:       hostInfo.Hostname,
+		OS:             hostInfo.OS,
+		OSVersion:      hostInfo.PlatformVersion,
+		OSBuild:        hostInfo.KernelVersion,
+		Platform:       hostInfo.Platform,
+		PlatformFamily: hostInfo.PlatformFamily,
+		Architecture:   runtime.GOARCH,
+		CPUModel:       cpuModel,
+		CPUCores:       runtime.NumCPU(),
+		CPUThreads:     cpuThreads,
+		CPUSpeed:       cpuSpeed,
+		TotalMemory:    memInfo.Total,
+		BootTime:       hostInfo.BootTime,
+		GPU:            gpu,
+		Storage:        storage,
 	}, nil
+}
+
+// getStorageInfo returns detailed storage information
+func (c *Collector) getStorageInfo() []StorageInfo {
+	partitions, err := disk.Partitions(false)
+	if err != nil {
+		return nil
+	}
+
+	storage := make([]StorageInfo, 0, len(partitions))
+	for _, p := range partitions {
+		usage, err := disk.Usage(p.Mountpoint)
+		if err != nil {
+			continue
+		}
+
+		storage = append(storage, StorageInfo{
+			Device:     p.Device,
+			Mountpoint: p.Mountpoint,
+			FSType:     p.Fstype,
+			Total:      usage.Total,
+			Used:       usage.Used,
+			Free:       usage.Free,
+			Percent:    usage.UsedPercent,
+		})
+	}
+
+	return storage
 }
 
 // Collect gathers current system metrics

@@ -63,6 +63,14 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 			agent.POST("/enroll", router.enrollAgent)
 		}
 
+		// Agent update routes (public - agents call these for updates)
+		agentUpdate := api.Group("/agent")
+		{
+			agentUpdate.GET("/version", router.getAgentVersion)
+			agentUpdate.GET("/update/download", router.downloadAgentUpdate)
+			agentUpdate.POST("/update/status", router.reportUpdateStatus)
+		}
+
 		// Agent download routes (public with token validation)
 		agents := api.Group("/agents")
 		{
@@ -134,6 +142,10 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 
 			// Agent Installers (authenticated users can view)
 			protected.GET("/agents/installers", router.listAgentInstallers)
+
+			// Agent Version Management
+			protected.GET("/agents/versions", router.listAgentVersions)
+			protected.GET("/devices/:id/version-history", router.getDeviceVersionHistory)
 		}
 	}
 

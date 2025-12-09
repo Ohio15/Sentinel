@@ -18,6 +18,23 @@ export interface AuthState {
   checkAuth: () => Promise<void>;
 }
 
+export interface GPUInfo {
+  name: string;
+  vendor: string;
+  memory: number;
+  driver_version: string;
+}
+
+export interface StorageInfo {
+  device: string;
+  mountpoint: string;
+  fstype: string;
+  total: number;
+  used: number;
+  free: number;
+  percent: number;
+}
+
 export interface Device {
   id: string;
   agentId: string;
@@ -26,11 +43,28 @@ export interface Device {
   osType: 'windows' | 'linux' | 'macos';
   osVersion: string;
   osBuild?: string;
+  platform?: string;
+  platformFamily?: string;
   architecture: string;
+  cpuModel?: string;
+  cpuCores?: number;
+  cpuThreads?: number;
+  cpuSpeed?: number;
+  totalMemory?: number;
+  bootTime?: number;
+  gpu?: GPUInfo[];
+  storage?: StorageInfo[];
+  serialNumber?: string;
+  manufacturer?: string;
+  model?: string;
+  domain?: string;
   agentVersion: string;
+  previousAgentVersion?: string;
+  lastUpdateCheck?: string;
   lastSeen: string;
   status: 'online' | 'offline' | 'warning' | 'critical';
   ipAddress?: string;
+  publicIp?: string;
   macAddress?: string;
   tags: string[];
   createdAt: string;

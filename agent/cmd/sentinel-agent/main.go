@@ -21,6 +21,7 @@ import (
 	"github.com/sentinel/agent/internal/filetransfer"
 	svc "github.com/sentinel/agent/internal/service"
 	"github.com/sentinel/agent/internal/terminal"
+	"github.com/sentinel/agent/internal/updater"
 )
 
 const (
@@ -45,6 +46,7 @@ type Agent struct {
 	executor        *executor.Executor
 	terminalManager *terminal.Manager
 	fileTransfer    *filetransfer.FileTransfer
+	updater         *updater.Updater
 	ctx             context.Context
 	cancel          context.CancelFunc
 }
@@ -240,6 +242,10 @@ func NewAgent(cfg *config.Config) *Agent {
 
 	ft := filetransfer.New(nil)
 
+	// Create updater for autonomous updates
+	agentUpdater := updater.New(cfg.ServerURL, Version)
+	agentUpdater.SetCheckInterval(1 * time.Hour) // Check for updates hourly
+
 	return &Agent{
 		cfg:             cfg,
 		client:          client.New(cfg),
@@ -247,6 +253,7 @@ func NewAgent(cfg *config.Config) *Agent {
 		executor:        executor.New(),
 		terminalManager: terminal.NewManager(),
 		fileTransfer:    ft,
+		updater:         agentUpdater,
 		ctx:             ctx,
 		cancel:          cancel,
 	}
@@ -300,6 +307,9 @@ func (a *Agent) Start() error {
 	// Start metrics loop
 	go a.metricsLoop()
 
+	// Start update check loop
+	go a.updater.RunUpdateLoop(a.ctx)
+
 	return nil
 }
 
@@ -345,18 +355,29 @@ func (a *Agent) enroll() error {
 		return fmt.Errorf("failed to collect system info: %w", err)
 	}
 
-	// Build enrollment payload
+	// Build enrollment payload with extended system info
 	payload := map[string]interface{}{
-		"agentId":      a.cfg.AgentID,
-		"hostname":     sysInfo.Hostname,
-		"osType":       sysInfo.OS,
-		"osVersion":    sysInfo.OSVersion,
-		"platform":     sysInfo.Platform,
-		"architecture": sysInfo.Architecture,
-		"cpuModel":     sysInfo.CPUModel,
-		"cpuCores":     sysInfo.CPUCores,
-		"totalMemory":  sysInfo.TotalMemory,
-		"agentVersion": Version,
+		"agentId":        a.cfg.AgentID,
+		"hostname":       sysInfo.Hostname,
+		"osType":         sysInfo.OS,
+		"osVersion":      sysInfo.OSVersion,
+		"osBuild":        sysInfo.OSBuild,
+		"platform":       sysInfo.Platform,
+		"platformFamily": sysInfo.PlatformFamily,
+		"architecture":   sysInfo.Architecture,
+		"cpuModel":       sysInfo.CPUModel,
+		"cpuCores":       sysInfo.CPUCores,
+		"cpuThreads":     sysInfo.CPUThreads,
+		"cpuSpeed":       sysInfo.CPUSpeed,
+		"totalMemory":    sysInfo.TotalMemory,
+		"bootTime":       sysInfo.BootTime,
+		"gpu":            sysInfo.GPU,
+		"storage":        sysInfo.Storage,
+		"serialNumber":   sysInfo.SerialNumber,
+		"manufacturer":   sysInfo.Manufacturer,
+		"model":          sysInfo.Model,
+		"domain":         sysInfo.Domain,
+		"agentVersion":   Version,
 	}
 
 	// Send enrollment request

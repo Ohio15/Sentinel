@@ -20,26 +20,59 @@ type User struct {
 	UpdatedAt    time.Time  `json:"updatedAt"`
 }
 
+// GPUInfo contains graphics card information
+type GPUInfo struct {
+	Name          string `json:"name"`
+	Vendor        string `json:"vendor"`
+	Memory        uint64 `json:"memory"`
+	DriverVersion string `json:"driver_version"`
+}
+
+// StorageInfo contains disk/partition information
+type StorageInfo struct {
+	Device     string  `json:"device"`
+	Mountpoint string  `json:"mountpoint"`
+	FSType     string  `json:"fstype"`
+	Total      uint64  `json:"total"`
+	Used       uint64  `json:"used"`
+	Free       uint64  `json:"free"`
+	Percent    float64 `json:"percent"`
+}
+
 // Device represents a monitored endpoint
 type Device struct {
-	ID           uuid.UUID         `json:"id"`
-	AgentID      string            `json:"agentId"`
-	Hostname     string            `json:"hostname"`
-	DisplayName  string            `json:"displayName"`
-	OSType       string            `json:"osType"`
-	OSVersion    string            `json:"osVersion"`
-	OSBuild      string            `json:"osBuild"`
-	Architecture string            `json:"architecture"`
-	AgentVersion string            `json:"agentVersion"`
-	LastSeen     *time.Time        `json:"lastSeen"`
-	Status       string            `json:"status"`
-	IPAddress    string            `json:"ipAddress"`
-	PublicIP     string            `json:"publicIp"`
-	MACAddress   string            `json:"macAddress"`
-	Tags         []string          `json:"tags"`
-	Metadata     map[string]string `json:"metadata"`
-	CreatedAt    time.Time         `json:"createdAt"`
-	UpdatedAt    time.Time         `json:"updatedAt"`
+	ID             uuid.UUID         `json:"id"`
+	AgentID        string            `json:"agentId"`
+	Hostname       string            `json:"hostname"`
+	DisplayName    string            `json:"displayName"`
+	OSType         string            `json:"osType"`
+	OSVersion      string            `json:"osVersion"`
+	OSBuild        string            `json:"osBuild"`
+	Platform       string            `json:"platform"`
+	PlatformFamily string            `json:"platformFamily"`
+	Architecture   string            `json:"architecture"`
+	CPUModel       string            `json:"cpuModel"`
+	CPUCores       int               `json:"cpuCores"`
+	CPUThreads     int               `json:"cpuThreads"`
+	CPUSpeed       float64           `json:"cpuSpeed"`
+	TotalMemory    uint64            `json:"totalMemory"`
+	BootTime       uint64            `json:"bootTime"`
+	GPU            []GPUInfo         `json:"gpu"`
+	Storage        []StorageInfo     `json:"storage"`
+	SerialNumber   string            `json:"serialNumber"`
+	Manufacturer   string            `json:"manufacturer"`
+	Model          string            `json:"model"`
+	Domain         string            `json:"domain"`
+	AgentVersion   string            `json:"agentVersion"`
+	LastSeen       *time.Time        `json:"lastSeen"`
+	Status         string            `json:"status"`
+	IPAddress      string            `json:"ipAddress"`
+	PublicIP       string            `json:"publicIp"`
+	MACAddress     string            `json:"macAddress"`
+	Tags           []string          `json:"tags"`
+	Metadata       map[string]string `json:"metadata"`
+	CreatedAt      time.Time         `json:"createdAt"`
+	UpdatedAt      time.Time         `json:"updatedAt"`
 }
 
 // DeviceMetrics represents system metrics from an agent
@@ -143,16 +176,29 @@ type Session struct {
 
 // AgentEnrollment represents agent enrollment data
 type AgentEnrollment struct {
-	AgentID      string            `json:"agentId"`
-	Hostname     string            `json:"hostname"`
-	OSType       string            `json:"osType"`
-	OSVersion    string            `json:"osVersion"`
-	OSBuild      string            `json:"osBuild"`
-	Architecture string            `json:"architecture"`
-	AgentVersion string            `json:"agentVersion"`
-	IPAddress    string            `json:"ipAddress"`
-	MACAddress   string            `json:"macAddress"`
-	Metadata     map[string]string `json:"metadata"`
+	AgentID        string        `json:"agentId"`
+	Hostname       string        `json:"hostname"`
+	OSType         string        `json:"osType"`
+	OSVersion      string        `json:"osVersion"`
+	OSBuild        string        `json:"osBuild"`
+	Platform       string        `json:"platform"`
+	PlatformFamily string        `json:"platformFamily"`
+	Architecture   string        `json:"architecture"`
+	CPUModel       string        `json:"cpuModel"`
+	CPUCores       int           `json:"cpuCores"`
+	CPUThreads     int           `json:"cpuThreads"`
+	CPUSpeed       float64       `json:"cpuSpeed"`
+	TotalMemory    uint64        `json:"totalMemory"`
+	BootTime       uint64        `json:"bootTime"`
+	GPU            []GPUInfo     `json:"gpu"`
+	Storage        []StorageInfo `json:"storage"`
+	SerialNumber   string        `json:"serialNumber"`
+	Manufacturer   string        `json:"manufacturer"`
+	Model          string        `json:"model"`
+	Domain         string        `json:"domain"`
+	AgentVersion   string        `json:"agentVersion"`
+	IPAddress      string        `json:"ipAddress"`
+	MACAddress     string        `json:"macAddress"`
 }
 
 // EnrollmentToken represents a token for agent enrollment
