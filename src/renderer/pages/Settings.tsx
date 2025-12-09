@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useThemeStore } from '../stores/themeStore';
 
 interface Settings {
   serverPort: number;
@@ -6,7 +7,6 @@ interface Settings {
   metricsRetentionDays: number;
   alertEmailEnabled: boolean;
   alertEmail?: string;
-  theme: 'light' | 'dark' | 'system';
 }
 
 interface ServerInfo {
@@ -14,11 +14,36 @@ interface ServerInfo {
   agentCount: number;
 }
 
+function SunIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+    </svg>
+  );
+}
+
+function MoonIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+    </svg>
+  );
+}
+
+function MonitorIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+    </svg>
+  );
+}
+
 export function Settings() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const { theme, setTheme } = useThemeStore();
 
   useEffect(() => {
     loadData();
@@ -64,6 +89,49 @@ export function Settings() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-text-primary">Settings</h1>
+
+      {/* Appearance Settings */}
+      <div className="card p-6">
+        <h2 className="text-lg font-semibold text-text-primary mb-4">Appearance</h2>
+        <div>
+          <label className="label">Theme</label>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setTheme('light')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg border transition-colors ${
+                theme === 'light'
+                  ? 'border-primary bg-primary-light text-primary'
+                  : 'border-border text-text-secondary hover:bg-gray-50 dark:hover:bg-slate-700'
+              }`}
+            >
+              <SunIcon className="w-5 h-5" />
+              Light
+            </button>
+            <button
+              onClick={() => setTheme('dark')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg border transition-colors ${
+                theme === 'dark'
+                  ? 'border-primary bg-primary-light text-primary'
+                  : 'border-border text-text-secondary hover:bg-gray-50 dark:hover:bg-slate-700'
+              }`}
+            >
+              <MoonIcon className="w-5 h-5" />
+              Dark
+            </button>
+            <button
+              onClick={() => setTheme('system')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg border transition-colors ${
+                theme === 'system'
+                  ? 'border-primary bg-primary-light text-primary'
+                  : 'border-border text-text-secondary hover:bg-gray-50 dark:hover:bg-slate-700'
+              }`}
+            >
+              <MonitorIcon className="w-5 h-5" />
+              System
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* Server Settings */}
       <div className="card p-6">
@@ -141,15 +209,15 @@ export function Settings() {
       <div className="card p-6">
         <h2 className="text-lg font-semibold text-text-primary mb-4">Server Status</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="p-4 bg-gray-50 rounded-lg">
+          <div className="p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
             <p className="text-sm text-text-secondary">Status</p>
             <p className="text-lg font-semibold text-success">Running</p>
           </div>
-          <div className="p-4 bg-gray-50 rounded-lg">
+          <div className="p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
             <p className="text-sm text-text-secondary">Port</p>
             <p className="text-lg font-semibold text-text-primary">{serverInfo.port}</p>
           </div>
-          <div className="p-4 bg-gray-50 rounded-lg">
+          <div className="p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
             <p className="text-sm text-text-secondary">Connected Agents</p>
             <p className="text-lg font-semibold text-text-primary">{serverInfo.agentCount}</p>
           </div>
