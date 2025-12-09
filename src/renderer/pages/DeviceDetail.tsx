@@ -4,13 +4,96 @@ import { Terminal } from '../components/Terminal';
 import { FileExplorer } from '../components/FileExplorer';
 import { RemoteDesktop } from '../components/RemoteDesktop';
 import { MetricsChart } from '../components/MetricsChart';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+} from 'recharts';
 
 interface DeviceDetailProps {
   deviceId: string;
   onBack: () => void;
 }
 
-type Tab = 'overview' | 'terminal' | 'files' | 'remote' | 'commands';
+type Tab = 'overview' | 'terminal' | 'files' | 'remote' | 'commands' | 'history';
+
+// Collapsible Section Component
+function CollapsibleSection({
+  title,
+  children,
+  defaultOpen = true,
+  onCopy
+}: {
+  title: string;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+  onCopy?: () => void;
+}) {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    if (onCopy) {
+      onCopy();
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  return (
+    <div className="bg-[#2d2d2d] rounded-lg overflow-hidden">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full flex items-center justify-between p-4 hover:bg-[#3d3d3d] transition-colors"
+      >
+        <span className="text-lg font-semibold text-white">{title}</span>
+        <div className="flex items-center gap-2">
+          {onCopy && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleCopy();
+              }}
+              className="p-2 hover:bg-[#4d4d4d] rounded-lg transition-colors"
+              title="Copy"
+            >
+              {copied ? (
+                <CheckIcon className="w-4 h-4 text-green-400" />
+              ) : (
+                <CopyIcon className="w-4 h-4 text-gray-400" />
+              )}
+            </button>
+          )}
+          {isOpen ? (
+            <ChevronUpIcon className="w-5 h-5 text-gray-400" />
+          ) : (
+            <ChevronDownIcon className="w-5 h-5 text-gray-400" />
+          )}
+        </div>
+      </button>
+      {isOpen && (
+        <div className="px-4 pb-4">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Spec Row Component
+function SpecRow({ label, value }: { label: string; value: string | undefined }) {
+  return (
+    <div className="flex py-2 border-b border-[#3d3d3d] last:border-0">
+      <span className="w-48 text-gray-400 text-sm">{label}</span>
+      <span className="text-white text-sm flex-1">{value || 'N/A'}</span>
+    </div>
+  );
+}
 
 export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
   const { selectedDevice, metrics, loading, error, fetchDevice, fetchMetrics } = useDeviceStore();
@@ -41,6 +124,29 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
     } finally {
       setIsExecuting(false);
     }
+  };
+
+  // Helper to copy device specs to clipboard
+  const copyDeviceSpecs = () => {
+    if (!selectedDevice) return;
+    const specs = [
+      `Device name: ${selectedDevice.displayName || selectedDevice.hostname}`,
+      `Processor: ${selectedDevice.metadata?.cpu?.model || 'N/A'}`,
+      `Installed RAM: ${selectedDevice.metadata?.memory?.total ? formatBytes(selectedDevice.metadata.memory.total) : 'N/A'}`,
+      `System type: ${selectedDevice.architecture}`,
+    ].join("\n");
+    navigator.clipboard.writeText(specs);
+  };
+
+  const copyWindowsSpecs = () => {
+    if (!selectedDevice) return;
+    const specs = [
+      `Edition: ${selectedDevice.osType}`,
+      `Version: ${selectedDevice.osVersion}`,
+      `OS build: ${selectedDevice.metadata?.os?.build || 'N/A'}`,
+      `Experience: ${selectedDevice.metadata?.os?.experience || 'N/A'}`,
+    ].join("\n");
+    navigator.clipboard.writeText(specs);
   };
 
   if (loading) {
@@ -74,12 +180,19 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
   }
 
   const tabs = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'terminal', label: 'Terminal' },
-    { id: 'files', label: 'Files' },
-    { id: 'remote', label: 'Remote Desktop' },
-    { id: 'commands', label: 'Commands' },
+    { id: 'overview', label: 'Overview', icon: MonitorIcon },
+    { id: 'terminal', label: 'Terminal', icon: TerminalTabIcon },
+    { id: 'files', label: 'Files', icon: FolderIcon },
+    { id: 'remote', label: 'Remote Desktop', icon: DesktopIcon },
+    { id: 'commands', label: 'Commands', icon: PlayIcon },
+    { id: 'history', label: 'History', icon: HistoryIcon },
   ];
+
+  // Extract metadata for summary cards
+  const latestMetrics = metrics.length > 0 ? metrics[0] : null;
+  const diskTotal = selectedDevice.metadata?.disk?.total || 0;
+  const diskUsed = latestMetrics?.diskUsedBytes || 0;
+  const memoryTotal = selectedDevice.metadata?.memory?.total || 0;
 
   return (
     <div className="space-y-6">
@@ -114,19 +227,23 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
       {/* Tabs */}
       <div className="border-b border-border">
         <div className="flex gap-1">
-          {tabs.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as Tab)}
-              className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
-                activeTab === tab.id
-                  ? 'bg-surface border border-b-0 border-border text-primary'
-                  : 'text-text-secondary hover:text-text-primary'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+          {tabs.map(tab => {
+            const Icon = tab.icon;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as Tab)}
+                className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+                  activeTab === tab.id
+                    ? 'bg-surface border border-b-0 border-border text-primary'
+                    : 'text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+                {tab.label}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -134,51 +251,201 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
       <div className="min-h-[500px]">
         {activeTab === 'overview' && (
           <div className="space-y-6">
-            {/* Device Info */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="card p-4">
-                <h3 className="font-semibold text-text-primary mb-4">System Information</h3>
-                <dl className="space-y-2">
-                  <InfoRow label="Hostname" value={selectedDevice.hostname} />
-                  <InfoRow label="OS" value={`${selectedDevice.osType} ${selectedDevice.osVersion}`} />
-                  <InfoRow label="Architecture" value={selectedDevice.architecture} />
-                  <InfoRow label="Agent Version" value={selectedDevice.agentVersion} />
-                  <InfoRow label="IP Address" value={selectedDevice.ipAddress} />
-                  <InfoRow label="MAC Address" value={selectedDevice.macAddress} />
-                  <InfoRow label="Last Seen" value={new Date(selectedDevice.lastSeen).toLocaleString()} />
-                </dl>
+            {/* Windows 11 Style Summary Cards */}
+            <div className="grid grid-cols-4 gap-4">
+              {/* Storage Card */}
+              <div className="bg-gradient-to-br from-blue-600 to-blue-800 rounded-xl p-4 text-white">
+                <div className="flex items-center gap-3 mb-3">
+                  <HardDriveIcon className="w-8 h-8" />
+                  <span className="text-lg font-medium">Storage</span>
+                </div>
+                <div className="text-2xl font-bold">
+                  {diskTotal ? `${formatBytes(diskUsed)} / ${formatBytes(diskTotal)}` : 'N/A'}
+                </div>
+                <div className="text-sm opacity-80 mt-1">
+                  {diskTotal && latestMetrics?.diskPercent !== undefined
+                    ? `${(100 - latestMetrics.diskPercent).toFixed(0)}% free`
+                    : ''}
+                </div>
               </div>
 
-              {/* Current Metrics */}
-              {metrics.length > 0 && (
-                <div className="card p-4">
-                  <h3 className="font-semibold text-text-primary mb-4">Current Metrics</h3>
-                  <div className="space-y-4">
-                    <MetricBar
-                      label="CPU"
-                      value={metrics[0].cpuPercent}
-                      color="blue"
-                    />
-                    <MetricBar
-                      label="Memory"
-                      value={metrics[0].memoryPercent}
-                      color="green"
-                    />
-                    <MetricBar
-                      label="Disk"
-                      value={metrics[0].diskPercent}
-                      color="yellow"
-                    />
-                  </div>
+              {/* GPU Card */}
+              <div className="bg-gradient-to-br from-purple-600 to-purple-800 rounded-xl p-4 text-white">
+                <div className="flex items-center gap-3 mb-3">
+                  <GpuIcon className="w-8 h-8" />
+                  <span className="text-lg font-medium">Graphics</span>
                 </div>
-              )}
+                <div className="text-lg font-bold truncate">
+                  {selectedDevice.metadata?.gpu?.name || 'Unknown GPU'}
+                </div>
+                <div className="text-sm opacity-80 mt-1">
+                  {selectedDevice.metadata?.gpu?.memory || ''}
+                </div>
+              </div>
+
+              {/* RAM Card */}
+              <div className="bg-gradient-to-br from-teal-600 to-teal-800 rounded-xl p-4 text-white">
+                <div className="flex items-center gap-3 mb-3">
+                  <MemoryIcon className="w-8 h-8" />
+                  <span className="text-lg font-medium">RAM</span>
+                </div>
+                <div className="text-2xl font-bold">
+                  {memoryTotal ? formatBytes(memoryTotal) : 'N/A'}
+                </div>
+                <div className="text-sm opacity-80 mt-1">
+                  {latestMetrics?.memoryPercent !== undefined
+                    ? `${latestMetrics.memoryPercent.toFixed(0)}% in use`
+                    : ''}
+                </div>
+              </div>
+
+              {/* CPU Card */}
+              <div className="bg-gradient-to-br from-orange-600 to-orange-800 rounded-xl p-4 text-white">
+                <div className="flex items-center gap-3 mb-3">
+                  <CpuIcon className="w-8 h-8" />
+                  <span className="text-lg font-medium">Processor</span>
+                </div>
+                <div className="text-lg font-bold truncate">
+                  {selectedDevice.metadata?.cpu?.model || 'Unknown CPU'}
+                </div>
+                <div className="text-sm opacity-80 mt-1">
+                  {latestMetrics?.cpuPercent !== undefined
+                    ? `${latestMetrics.cpuPercent.toFixed(0)}% utilization`
+                    : ''}
+                </div>
+              </div>
             </div>
 
-            {/* Metrics Chart */}
+            {/* Device Header with Rename */}
+            <div className="bg-[#2d2d2d] rounded-xl p-6">
+              <div className="flex items-start gap-6">
+                <div className="w-24 h-24 bg-[#3d3d3d] rounded-xl flex items-center justify-center">
+                  <MonitorIcon className="w-16 h-16 text-blue-400" />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-3 mb-2">
+                    <h2 className="text-2xl font-bold text-white">
+                      {selectedDevice.displayName || selectedDevice.hostname}
+                    </h2>
+                    <button
+                      className="p-2 hover:bg-[#3d3d3d] rounded-lg transition-colors"
+                      title="Rename this PC"
+                    >
+                      <EditIcon className="w-4 h-4 text-gray-400" />
+                    </button>
+                  </div>
+                  <p className="text-gray-400 mb-4">
+                    {selectedDevice.metadata?.model || selectedDevice.osType}
+                  </p>
+                  <div className="flex gap-4">
+                    <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm ${
+                      selectedDevice.status === 'online'
+                        ? 'bg-green-500/20 text-green-400'
+                        : 'bg-red-500/20 text-red-400'
+                    }`}>
+                      <span className={`w-2 h-2 rounded-full ${
+                        selectedDevice.status === 'online' ? 'bg-green-400' : 'bg-red-400'
+                      }`}></span>
+                      {selectedDevice.status === 'online' ? 'Online' : 'Offline'}
+                    </span>
+                    <span className="text-gray-500 text-sm">
+                      Last seen: {new Date(selectedDevice.lastSeen).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Device Specifications - Collapsible */}
+            <CollapsibleSection title="Device specifications" onCopy={copyDeviceSpecs}>
+              <div className="space-y-1">
+                <SpecRow label="Device name" value={selectedDevice.displayName || selectedDevice.hostname} />
+                <SpecRow label="Processor" value={selectedDevice.metadata?.cpu?.model} />
+                <SpecRow label="Installed RAM" value={memoryTotal ? formatBytes(memoryTotal) : undefined} />
+                <SpecRow label="Device ID" value={selectedDevice.id} />
+                <SpecRow label="Product ID" value={selectedDevice.agentId} />
+                <SpecRow label="System type" value={selectedDevice.architecture} />
+              </div>
+            </CollapsibleSection>
+
+            {/* Windows Specifications - Collapsible */}
+            <CollapsibleSection title="Windows specifications" onCopy={copyWindowsSpecs}>
+              <div className="space-y-1">
+                <SpecRow label="Edition" value={selectedDevice.osType} />
+                <SpecRow label="Version" value={selectedDevice.osVersion} />
+                <SpecRow label="Installed on" value={selectedDevice.metadata?.os?.installDate} />
+                <SpecRow label="OS build" value={selectedDevice.metadata?.os?.build} />
+                <SpecRow label="Experience" value={selectedDevice.metadata?.os?.experience} />
+              </div>
+            </CollapsibleSection>
+
+            {/* Network Info */}
+            <CollapsibleSection title="Network">
+              <div className="space-y-1">
+                <SpecRow label="IP Address" value={selectedDevice.ipAddress} />
+                <SpecRow label="MAC Address" value={selectedDevice.macAddress} />
+              </div>
+            </CollapsibleSection>
+
+            {/* Agent Info */}
+            <CollapsibleSection title="Agent information">
+              <div className="space-y-1">
+                <SpecRow label="Agent Version" value={selectedDevice.agentVersion} />
+                <SpecRow label="Agent ID" value={selectedDevice.agentId} />
+                <SpecRow label="Enrolled" value={new Date(selectedDevice.createdAt).toLocaleDateString()} />
+              </div>
+            </CollapsibleSection>
+
+            {/* Real-time Metrics Chart */}
             {metrics.length > 0 && (
-              <div className="card p-4">
-                <h3 className="font-semibold text-text-primary mb-4">Resource Usage (24h)</h3>
-                <MetricsChart metrics={metrics} />
+              <div className="bg-[#2d2d2d] rounded-xl p-6">
+                <h3 className="text-lg font-semibold text-white mb-4">Resource Usage (24h)</h3>
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={[...metrics].reverse()}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#3d3d3d" />
+                      <XAxis
+                        dataKey="timestamp"
+                        stroke="#6b7280"
+                        tickFormatter={(value) => new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      />
+                      <YAxis stroke="#6b7280" domain={[0, 100]} />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: '#1a1a1a',
+                          border: '1px solid #3d3d3d',
+                          borderRadius: '8px'
+                        }}
+                        labelFormatter={(value) => new Date(value).toLocaleString()}
+                      />
+                      <Legend />
+                      <Line
+                        type="monotone"
+                        dataKey="cpuPercent"
+                        name="CPU %"
+                        stroke="#f97316"
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="memoryPercent"
+                        name="Memory %"
+                        stroke="#14b8a6"
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="diskPercent"
+                        name="Disk %"
+                        stroke="#3b82f6"
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
             )}
           </div>
@@ -272,45 +539,25 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
             </div>
           </div>
         )}
+
+        {activeTab === 'history' && (
+          <div className="card p-4">
+            <h3 className="font-semibold text-text-primary mb-4">Command History</h3>
+            <p className="text-text-secondary">Command history will be displayed here.</p>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex justify-between">
-      <dt className="text-text-secondary">{label}</dt>
-      <dd className="text-text-primary font-medium">{value}</dd>
-    </div>
-  );
-}
-
-function MetricBar({ label, value, color }: { label: string; value: number | null | undefined; color: string }) {
-  const colors = {
-    blue: 'bg-blue-500',
-    green: 'bg-green-500',
-    yellow: 'bg-yellow-500',
-    red: 'bg-red-500',
-  };
-
-  const safeValue = value ?? 0;
-  const bgColor = safeValue > 90 ? colors.red : colors[color as keyof typeof colors];
-
-  return (
-    <div>
-      <div className="flex justify-between mb-1">
-        <span className="text-sm text-text-secondary">{label}</span>
-        <span className="text-sm font-medium">{safeValue.toFixed(1)}%</span>
-      </div>
-      <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-        <div
-          className={`h-full ${bgColor} transition-all duration-500`}
-          style={{ width: `${Math.min(100, safeValue)}%` }}
-        />
-      </div>
-    </div>
-  );
+// Helper function to format bytes
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
 function QuickAction({ label, command, onExecute }: { label: string; command: string; onExecute: (cmd: string) => void }) {
@@ -324,10 +571,132 @@ function QuickAction({ label, command, onExecute }: { label: string; command: st
   );
 }
 
+// Icons
 function BackIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+    </svg>
+  );
+}
+
+function MonitorIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+    </svg>
+  );
+}
+
+function TerminalTabIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+    </svg>
+  );
+}
+
+function FolderIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+    </svg>
+  );
+}
+
+function DesktopIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+    </svg>
+  );
+}
+
+function PlayIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  );
+}
+
+function HistoryIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  );
+}
+
+function HardDriveIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+    </svg>
+  );
+}
+
+function GpuIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+    </svg>
+  );
+}
+
+function MemoryIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+    </svg>
+  );
+}
+
+function CpuIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+    </svg>
+  );
+}
+
+function ChevronDownIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+    </svg>
+  );
+}
+
+function ChevronUpIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+    </svg>
+  );
+}
+
+function CopyIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+    </svg>
+  );
+}
+
+function CheckIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+    </svg>
+  );
+}
+
+function EditIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
     </svg>
   );
 }
