@@ -50,6 +50,7 @@ services:
       - ALLOWED_ORIGINS=https://${DOMAIN}
       - RATE_LIMIT_REQUESTS=${RATE_LIMIT_REQUESTS:-100}
       - RATE_LIMIT_WINDOW=${RATE_LIMIT_WINDOW:-60}
+      - SERVER_URL=${SERVER_URL:-http://localhost:8081}
     volumes:
       - ./installers:/app/installers:ro
       - ./agent/version.json:/app/agent/version.json:ro
