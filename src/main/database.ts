@@ -66,23 +66,29 @@ export class Database {
   private async runMigrations(): Promise<void> {
     if (!this.pool) return;
 
-    // Read and execute migration file
     const migrationsDir = path.join(__dirname, 'migrations');
-    const migrationFile = path.join(migrationsDir, '001_initial_schema.sql');
 
-    if (fs.existsSync(migrationFile)) {
+    // Get all migration files and sort them
+    const migrationFiles = fs.readdirSync(migrationsDir)
+      .filter((f: string) => f.endsWith('.sql'))
+      .sort();
+
+    for (const file of migrationFiles) {
+      const migrationFile = path.join(migrationsDir, file);
       const sql = fs.readFileSync(migrationFile, 'utf-8');
       try {
         await this.pool.query(sql);
-        console.log('Database migrations completed');
+        console.log('Migration ' + file + ' completed');
       } catch (error: any) {
         // Ignore errors for objects that already exist
-        if (!error.message.includes('already exists')) {
-          console.error('Migration error:', error);
+        if (!error.message.includes('already exists') &&
+            !error.message.includes('duplicate key')) {
+          console.error('Migration ' + file + ' error:', error);
           throw error;
         }
       }
     }
+    console.log('All database migrations completed');
   }
 
   private async initializeDefaults(): Promise<void> {
