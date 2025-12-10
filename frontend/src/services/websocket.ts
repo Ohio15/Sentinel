@@ -25,8 +25,12 @@ class WebSocketService {
     }
 
     this.isConnecting = true;
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws/dashboard?token=${token}`;
+    // Use VITE_API_URL to get the correct server host, removing /api suffix
+    const apiUrl = import.meta.env.VITE_API_URL?.replace('/api', '') || window.location.origin;
+    const url = new URL(apiUrl);
+    const protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${url.host}/ws/dashboard?token=${token}`;
+    console.log('[WebSocket] Connecting to:', wsUrl);
 
     try {
       this.ws = new WebSocket(wsUrl);
