@@ -321,13 +321,32 @@ func (c *Client) readLoop(ctx context.Context) {
 
 		// Handle authentication response
 		if msg.Type == MsgTypeAuthResponse {
-			if msg.Success {
+			// Server sends success/error inside Payload field
+			var authResp struct {
+				Success bool   `json:"success"`
+				Error   string `json:"error"`
+			}
+			// Try to parse Payload if present
+			if msg.Payload != nil {
+				if payloadBytes, err := json.Marshal(msg.Payload); err == nil {
+					json.Unmarshal(payloadBytes, &authResp)
+				}
+			}
+			// Fall back to top-level Success/Error for backwards compatibility
+			if !authResp.Success && msg.Success {
+				authResp.Success = true
+			}
+			if authResp.Error == "" && msg.Error != "" {
+				authResp.Error = msg.Error
+			}
+
+			if authResp.Success {
 				c.mu.Lock()
 				c.authenticated = true
 				c.mu.Unlock()
 				log.Println("Authentication successful")
 			} else {
-				log.Printf("Authentication failed: %s", msg.Error)
+				log.Printf("Authentication failed: %s", authResp.Error)
 			}
 			continue
 		}
