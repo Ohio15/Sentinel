@@ -558,7 +558,7 @@ export class AgentManager {
 
     const result = await this.sendRequest(device.agentId, {
       type: 'collect_diagnostics',
-      hoursBack,
+      data: { hoursBack },
     }, 120000); // 2 minute timeout for diagnostics collection
 
     return result;
