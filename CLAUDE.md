@@ -74,12 +74,14 @@ When releasing a new version:
 2. Update `agent/version.json` (version, releaseDate, changelog)
 3. Build agent binaries with matching `-ldflags "-X main.Version=X.X.X"`
 4. Copy binaries to `release/agent/`
-5. Update `release/agent/version.json`
-6. Run `npm run dist:win`
-7. **Restart Docker:** `docker restart sentinel-backend`
-8. Commit all version files
-9. Push to GitHub
-10. Create GitHub release with installer
+5. **Copy binaries to `installers/` for Docker auto-update downloads**
+   - `cp release/agent/sentinel-agent.exe installers/sentinel-agent-windows-amd64.exe`
+6. Update `release/agent/version.json`
+7. Run `npm run dist:win`
+8. **Restart Docker:** `docker restart sentinel-backend`
+9. Commit all version files
+10. Push to GitHub
+11. Create GitHub release with installer
 
 ---
 
