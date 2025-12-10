@@ -25,20 +25,20 @@ export function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+    <div className="min-h-screen bg-black flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-4 overflow-hidden">
+        {/* Logo - large on black background */}
+        <div className="text-center mb-10">
+          <div className="inline-flex items-center justify-center w-48 h-48 mb-6">
             <img src="/sentinel.svg" alt="Sentinel" className="w-full h-full" />
           </div>
-          <h1 className="text-2xl font-bold text-text-primary">Sentinel</h1>
-          <p className="text-text-secondary mt-1">Remote Monitoring & Management</p>
+          <h1 className="text-3xl font-bold text-white">Sentinel</h1>
+          <p className="text-gray-400 mt-2">Remote Monitoring & Management</p>
         </div>
 
         {/* Login form */}
-        <div className="bg-surface rounded-xl shadow-sm border border-border p-6">
-          <h2 className="text-xl font-semibold text-text-primary mb-6">Sign in to your account</h2>
+        <div className="bg-gray-900 rounded-xl shadow-lg border border-gray-800 p-6">
+          <h2 className="text-xl font-semibold text-white mb-6">Sign in to your account</h2>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <Input
@@ -63,8 +63,8 @@ export function Login() {
             />
 
             {error && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-                <p className="text-sm text-red-700">{error}</p>
+              <div className="p-3 bg-red-900/50 border border-red-700 rounded-lg">
+                <p className="text-sm text-red-300">{error}</p>
               </div>
             )}
 
@@ -84,10 +84,10 @@ export function Login() {
             </button>
           </form>
 
-          <div className="mt-6 pt-6 border-t border-border">
-            <p className="text-sm text-text-secondary text-center">
-              Default credentials: <code className="bg-gray-100 px-1.5 py-0.5 rounded">admin@sentinel.local</code> /{' '}
-              <code className="bg-gray-100 px-1.5 py-0.5 rounded">admin</code>
+          <div className="mt-6 pt-6 border-t border-gray-700">
+            <p className="text-sm text-gray-400 text-center">
+              Default credentials: <code className="bg-gray-800 px-1.5 py-0.5 rounded text-gray-300">admin@sentinel.local</code> /{' '}
+              <code className="bg-gray-800 px-1.5 py-0.5 rounded text-gray-300">admin</code>
             </p>
           </div>
         </div>

@@ -1,69 +1,61 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
-  <defs>
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#1a1a1a"/>
-      <stop offset="100%" style="stop-color:#0d0d0d"/>
-    </linearGradient>
-  </defs>
-
-  <!-- Background -->
-  <rect width="256" height="256" fill="url(#bgGrad)"/>
+  <!-- Transparent background - no rect -->
 
   <!-- Shield shape - pointed bottom -->
-  <path d="M128 20 L210 50 L210 130 C210 180 175 220 128 240 C81 220 46 180 46 130 L46 50 Z"
-        fill="none" stroke="#8b7355" stroke-width="4"/>
+  <path d="M128 8 L220 42 L220 125 C220 182 178 225 128 248 C78 225 36 182 36 125 L36 42 Z"
+        fill="none" stroke="#8b7355" stroke-width="5"/>
 
   <!-- Inner shield line -->
-  <path d="M128 32 L198 58 L198 128 C198 172 168 206 128 224 C88 206 58 172 58 128 L58 58 Z"
-        fill="none" stroke="#8b7355" stroke-width="2.5"/>
+  <path d="M128 22 L206 52 L206 122 C206 172 170 210 128 230 C86 210 50 172 50 122 L50 52 Z"
+        fill="none" stroke="#8b7355" stroke-width="3"/>
 
   <!-- Eagle head - facing right -->
   <g fill="#8b7355">
     <!-- Head -->
-    <ellipse cx="128" cy="58" rx="16" ry="12"/>
+    <ellipse cx="128" cy="52" rx="18" ry="14"/>
     <!-- Beak pointing right -->
-    <path d="M144 56 L162 62 L144 64 Z"/>
+    <path d="M146 50 L168 57 L146 58 Z"/>
     <!-- Eye -->
-    <circle cx="136" cy="56" r="2.5" fill="#0d0d0d"/>
+    <circle cx="138" cy="50" r="3" fill="#1a1a1a"/>
   </g>
 
   <!-- Eagle body/chest -->
-  <path d="M112 68 L144 68 L140 95 L116 95 Z" fill="#8b7355"/>
+  <path d="M108 64 L148 64 L144 95 L112 95 Z" fill="#8b7355"/>
 
   <!-- Left wing - horizontal spread -->
   <g fill="#8b7355">
-    <polygon points="50,72 108,65 108,75 55,85"/>
-    <polygon points="52,85 108,75 108,85 54,98"/>
-    <polygon points="54,98 108,85 108,95 56,112"/>
-    <polygon points="56,112 108,95 108,108 60,128"/>
-    <polygon points="60,128 108,108 112,140 70,145"/>
+    <polygon points="40,68 105,58 105,70 46,82"/>
+    <polygon points="42,82 105,70 105,82 44,96"/>
+    <polygon points="44,96 105,82 105,94 46,112"/>
+    <polygon points="46,112 105,94 105,108 50,130"/>
+    <polygon points="50,130 105,108 110,145 62,148"/>
   </g>
 
   <!-- Right wing - horizontal spread -->
   <g fill="#8b7355">
-    <polygon points="206,72 148,65 148,75 201,85"/>
-    <polygon points="204,85 148,75 148,85 202,98"/>
-    <polygon points="202,98 148,85 148,95 200,112"/>
-    <polygon points="200,112 148,95 148,108 196,128"/>
-    <polygon points="196,128 148,108 144,140 186,145"/>
+    <polygon points="216,68 151,58 151,70 210,82"/>
+    <polygon points="214,82 151,70 151,82 212,96"/>
+    <polygon points="212,96 151,82 151,94 210,112"/>
+    <polygon points="210,112 151,94 151,108 206,130"/>
+    <polygon points="206,130 151,108 146,145 194,148"/>
   </g>
 
   <!-- Star - centered on chest -->
   <polygon fill="#8b7355"
-    points="128,100 133,114 148,114 136,123 140,138 128,129 116,138 120,123 108,114 123,114"/>
+    points="128,100 134,116 152,116 138,127 143,144 128,134 113,144 118,127 104,116 122,116"/>
 
   <!-- Chevrons / Stripes - 3 rows -->
   <g fill="#8b7355">
-    <polygon points="85,160 128,180 171,160 171,168 128,188 85,168"/>
-    <polygon points="85,175 128,195 171,175 171,183 128,203 85,183"/>
-    <polygon points="85,190 128,210 171,190 171,198 128,218 85,198"/>
+    <polygon points="78,162 128,185 178,162 178,172 128,195 78,172"/>
+    <polygon points="78,180 128,203 178,180 178,190 128,213 78,190"/>
+    <polygon points="78,198 128,221 178,198 178,208 128,231 78,208"/>
   </g>
 
   <!-- Talons/feet -->
   <g fill="#8b7355">
-    <path d="M108,140 L102,158 L96,152 Z"/>
-    <path d="M118,140 L118,158 L110,152 Z"/>
-    <path d="M148,140 L154,158 L160,152 Z"/>
-    <path d="M138,140 L138,158 L146,152 Z"/>
+    <path d="M106,145 L98,162 L92,155 Z"/>
+    <path d="M118,145 L118,162 L108,155 Z"/>
+    <path d="M150,145 L158,162 L164,155 Z"/>
+    <path d="M138,145 L138,162 L148,155 Z"/>
   </g>
 </svg>
