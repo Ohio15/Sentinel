@@ -35,16 +35,23 @@ export function Terminal({ deviceId, isOnline }: TerminalProps) {
   }, [output]);
 
   const handleConnect = async () => {
-    if (!isOnline) return;
+    console.log('[Terminal] handleConnect called, deviceId:', deviceId, 'isOnline:', isOnline);
+    if (!isOnline) {
+      console.log('[Terminal] Device is offline, aborting');
+      return;
+    }
 
     setConnecting(true);
     try {
+      console.log('[Terminal] Calling window.api.terminal.start...');
       const result = await window.api.terminal.start(deviceId);
+      console.log('[Terminal] terminal.start result:', result);
       setSessionId(result.sessionId);
       setConnected(true);
       setOutput(['Connected to remote terminal.\n']);
       inputRef.current?.focus();
     } catch (error: any) {
+      console.error('[Terminal] terminal.start error:', error);
       setOutput([`Failed to connect: ${error.message}\n`]);
     } finally {
       setConnecting(false);
