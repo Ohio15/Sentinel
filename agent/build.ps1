@@ -8,8 +8,19 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$Version = "1.0.0"
-$OutputDir = "..\downloads"
+# Read version from version.json
+$VersionFile = Join-Path $PSScriptRoot "version.json"
+if (Test-Path $VersionFile) {
+    $VersionInfo = Get-Content $VersionFile -Raw | ConvertFrom-Json
+    $Version = $VersionInfo.version
+} else {
+    Write-Host "Warning: version.json not found, using default version" -ForegroundColor Yellow
+    $Version = "1.0.0"
+}
+
+Write-Host "Building Sentinel Agent v$Version" -ForegroundColor Cyan
+
+$OutputDir = "..\release\agent"
 $BinaryName = "sentinel-agent"
 $GoPath = $env:GOPATH
 if (-not $GoPath) { $GoPath = "$env:USERPROFILE\go" }
@@ -111,6 +122,10 @@ switch ($Platform.ToLower()) {
 
 Write-Host "`nBuild complete!" -ForegroundColor Green
 Write-Host "Output directory: $(Resolve-Path $OutputDir)" -ForegroundColor Gray
+
+# Copy version.json to output directory for the server to read
+Copy-Item $VersionFile -Destination $OutputDir -Force
+Write-Host "Copied version.json to output directory" -ForegroundColor Gray
 
 # List built files
 Get-ChildItem $OutputDir -Filter "sentinel-agent*" | Format-Table Name, @{N='Size (MB)';E={[math]::Round($_.Length/1MB, 2)}}

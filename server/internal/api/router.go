@@ -92,6 +92,7 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 			protected.DELETE("/devices/:id", middleware.RequireRole("admin", "operator"), router.deleteDevice)
 			protected.GET("/devices/:id/metrics", router.getDeviceMetrics)
 			protected.POST("/devices/:id/commands", middleware.RequireRole("admin", "operator"), router.executeCommand)
+			protected.POST("/devices/:id/uninstall", middleware.RequireRole("admin"), router.uninstallAgent)
 			protected.GET("/devices/:id/commands", router.listDeviceCommands)
 
 			// Commands

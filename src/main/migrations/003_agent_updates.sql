@@ -50,6 +50,16 @@ VALUES
 - Added Windows specifications', ARRAY['windows', 'linux', 'darwin']),
     ('1.3.1', '2024-12-08', '- Bug fixes for Windows service management
 - Improved memory usage', ARRAY['windows', 'linux', 'darwin']),
+    ('1.9.0', '2024-12-09', '- Full system monitoring
+- Protection manager
+- Remote desktop support
+- Auto-update framework', ARRAY['windows', 'linux', 'darwin']),
+    ('1.10.0', '2024-12-10', '- Added ticketing system
+- Bug fixes', ARRAY['windows', 'linux', 'darwin']),
+    ('1.11.0', '2024-12-10', '- Automatic diagnostic collection on ticket creation
+- System error logs collection
+- Application logs collection
+- Active programs tracking', ARRAY['windows', 'linux', 'darwin']),
     ('1.3.2', '2024-12-09', '- Added autonomous update capability
 - Extended system information collection
 - Improved connection stability', ARRAY['windows', 'linux', 'darwin'])

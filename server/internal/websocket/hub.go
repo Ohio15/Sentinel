@@ -42,6 +42,7 @@ const (
 	MsgTypeStopRemote     = "stop_remote"
 	MsgTypeRemoteInput    = "remote_input"
 	MsgTypeRemoteFrame    = "remote_frame"
+	MsgTypeUninstallAgent = "uninstall_agent"
 )
 
 type Message struct {

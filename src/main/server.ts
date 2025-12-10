@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { Database } from './database';
 import { AgentManager } from './agents';
 import * as os from 'os';
+import * as crypto from 'crypto';
 
 // Helper function to embed configuration into agent binary
 function embedConfigInBinary(binaryData: Buffer, serverUrl: string, token: string): Buffer {
@@ -189,10 +190,264 @@ export class Server {
         wsEndpoint: `ws://${localIp}:${this.port}/ws`,
         version: '1.0.0',
       });
+
+
+    // =========================================================================
+    // AGENT UPDATE API ENDPOINTS
+    // =========================================================================
+
+    // Agent version check endpoint - agents poll this to check for updates
+    this.app.get('/api/agent/version', async (req: Request, res: Response) => {
+      try {
+        const { platform, arch, current } = req.query as { platform?: string; arch?: string; current?: string };
+
+        if (!platform || !current) {
+          res.status(400).json({ error: 'Missing required parameters: platform, current' });
+          return;
+        }
+
+        // Map platform names
+        const normalizedPlatform = platform === 'darwin' ? 'macos' : platform;
+
+        // Get latest release for this platform
+        const latestRelease = await this.database.getLatestAgentRelease(normalizedPlatform);
+
+        if (!latestRelease) {
+          res.json({
+            available: false,
+            currentVersion: current,
+            latestVersion: current,
+            message: 'No releases available'
+          });
+          return;
+        }
+
+        // Compare versions
+        const isNewer = this.compareVersions(latestRelease.version, current) > 0;
+
+        if (!isNewer) {
+          res.json({
+            available: false,
+            currentVersion: current,
+            latestVersion: latestRelease.version
+          });
+          return;
+        }
+
+        // Build download URL
+        const localIp = this.getLocalIpAddress();
+        const downloadUrl = `http://${localIp}:${this.port}/api/agent/update/download?platform=${normalizedPlatform}&arch=${arch || 'amd64'}`;
+
+        // Get binary info for checksum
+        const binaryInfo = this.getAgentBinaryInfo(normalizedPlatform);
+
+        res.json({
+          available: true,
+          currentVersion: current,
+          latestVersion: latestRelease.version,
+          versionInfo: {
+            version: latestRelease.version,
+            platform: normalizedPlatform,
+            arch: arch || 'amd64',
+            downloadUrl,
+            checksum: binaryInfo?.checksum || '',
+            size: binaryInfo?.size || 0,
+            releaseDate: latestRelease.releaseDate,
+            changelog: latestRelease.changelog,
+            required: latestRelease.isRequired || false
+          }
+        });
+      } catch (error) {
+        console.error('Version check error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+    // Agent update download endpoint
+    this.app.get('/api/agent/update/download', async (req: Request, res: Response) => {
+      try {
+        const { platform, arch } = req.query as { platform?: string; arch?: string };
+
+        if (!platform) {
+          res.status(400).json({ error: 'Missing required parameter: platform' });
+          return;
+        }
+
+        // Get binary filename
+        let filename: string;
+        switch (platform.toLowerCase()) {
+          case 'windows':
+            filename = 'sentinel-agent.exe';
+            break;
+          case 'macos':
+            filename = 'sentinel-agent-macos';
+            break;
+          case 'linux':
+            filename = 'sentinel-agent-linux';
+            break;
+          default:
+            res.status(400).json({ error: 'Unsupported platform' });
+            return;
+        }
+
+        // Get binary path
+        const downloadsDir = electronApp.isPackaged
+          ? path.join(process.resourcesPath, 'downloads')
+          : path.join(__dirname, '..', '..', 'downloads');
+        const binaryPath = path.join(downloadsDir, filename);
+
+        if (!fs.existsSync(binaryPath)) {
+          res.status(404).json({
+            error: 'Agent binary not found',
+            message: `Binary not available for platform: ${platform}`
+          });
+          return;
+        }
+
+        // Get latest version for header
+        const latestRelease = await this.database.getLatestAgentRelease(platform);
+        const agentVersion = latestRelease?.version || 'unknown';
+
+        // Get file stats
+        const stats = fs.statSync(binaryPath);
+
+        // Log download attempt
+        const agentId = req.headers['x-agent-id'] as string;
+        const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+
+        if (agentId) {
+          const currentVersion = req.headers['x-current-version'] as string;
+          await this.database.logAgentUpdate({
+            agentId,
+            fromVersion: currentVersion,
+            toVersion: agentVersion,
+            platform,
+            architecture: arch as string,
+            ipAddress: clientIp,
+            status: 'downloading'
+          });
+        }
+
+        // Send file
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Length', stats.size);
+        res.setHeader('X-Agent-Version', agentVersion);
+
+        const stream = fs.createReadStream(binaryPath);
+        stream.pipe(res);
+      } catch (error) {
+        console.error('Update download error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+    // Agent update status reporting endpoint
+    this.app.post('/api/agent/update/status', async (req: Request, res: Response) => {
+      try {
+        const { agentId, status, fromVersion, toVersion, error: errorMessage } = req.body;
+
+        if (!agentId || !status) {
+          res.status(400).json({ error: 'Missing required fields: agentId, status' });
+          return;
+        }
+
+        // Log the status update
+        console.log(`Agent ${agentId} update status: ${status} (${fromVersion} -> ${toVersion})`);
+
+        // Find the most recent update record for this agent
+        const updates = await this.database.getAgentUpdateHistory(agentId, 1);
+        if (updates.length > 0) {
+          await this.database.updateAgentUpdateStatus(updates[0].id, status, errorMessage);
+        }
+
+        // If completed successfully, update device version
+        if (status === 'completed' && toVersion) {
+          await this.database.updateDeviceAgentVersion(agentId, toVersion, fromVersion);
+        }
+
+        res.json({ success: true });
+      } catch (error) {
+        console.error('Update status error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+    // Get all agent releases (for admin UI)
+    this.app.get('/api/agent/releases', async (req: Request, res: Response) => {
+      try {
+        const releases = await this.database.getAgentReleases();
+        res.json(releases);
+      } catch (error) {
+        console.error('Get releases error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+    // Create a new agent release
+    this.app.post('/api/agent/releases', async (req: Request, res: Response) => {
+      try {
+        const release = await this.database.createAgentRelease(req.body);
+        res.json(release);
+      } catch (error) {
+        console.error('Create release error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
     });
   }
 
-  private setupWebSocket(): void {
+  
+
+  // Compare semantic versions: returns 1 if v1 > v2, -1 if v1 < v2, 0 if equal
+  private compareVersions(v1: string, v2: string): number {
+    const parts1 = v1.split('.').map(Number);
+    const parts2 = v2.split('.').map(Number);
+
+    for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
+      const p1 = parts1[i] || 0;
+      const p2 = parts2[i] || 0;
+      if (p1 > p2) return 1;
+      if (p1 < p2) return -1;
+    }
+    return 0;
+  }
+
+  // Get agent binary info (checksum, size)
+  private getAgentBinaryInfo(platform: string): { checksum: string; size: number } | null {
+    let filename: string;
+    switch (platform.toLowerCase()) {
+      case 'windows':
+        filename = 'sentinel-agent.exe';
+        break;
+      case 'macos':
+        filename = 'sentinel-agent-macos';
+        break;
+      case 'linux':
+        filename = 'sentinel-agent-linux';
+        break;
+      default:
+        return null;
+    }
+
+    const downloadsDir = electronApp.isPackaged
+      ? path.join(process.resourcesPath, 'downloads')
+      : path.join(__dirname, '..', '..', 'downloads');
+    const binaryPath = path.join(downloadsDir, filename);
+
+    if (!fs.existsSync(binaryPath)) {
+      return null;
+    }
+
+    const stats = fs.statSync(binaryPath);
+    const fileBuffer = fs.readFileSync(binaryPath);
+    const checksum = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+
+    return { checksum, size: stats.size };
+  }
+
+private setupWebSocket(): void {
     if (!this.server) return;
 
     this.wss = new WebSocketServer({ server: this.server, path: '/ws' });

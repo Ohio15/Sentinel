@@ -4,22 +4,88 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
-// Current agent version - update this when releasing new versions
-const currentAgentVersion = "1.6.1"
+// AgentVersionFile represents the version.json file structure
+type AgentVersionFile struct {
+	Version       string   `json:"version"`
+	ReleaseDate   string   `json:"releaseDate"`
+	Changelog     string   `json:"changelog"`
+	Platforms     []string `json:"platforms"`
+	MinAppVersion string   `json:"minAppVersion"`
+}
+
+// Cached agent version info
+var (
+	cachedAgentVersion *AgentVersionFile
+	versionCacheMutex  sync.RWMutex
+	versionCacheTime   time.Time
+)
+
+// getAgentVersionFromFile reads the agent version from version.json
+func getAgentVersionFromFile() *AgentVersionFile {
+	versionCacheMutex.RLock()
+	// Cache for 60 seconds
+	if cachedAgentVersion != nil && time.Since(versionCacheTime) < 60*time.Second {
+		defer versionCacheMutex.RUnlock()
+		return cachedAgentVersion
+	}
+	versionCacheMutex.RUnlock()
+
+	versionCacheMutex.Lock()
+	defer versionCacheMutex.Unlock()
+
+	// Check paths for version.json
+	paths := []string{
+		"agent/version.json",
+		"../agent/version.json",
+		"installers/version.json",
+	}
+
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			var vf AgentVersionFile
+			if err := json.Unmarshal(data, &vf); err == nil {
+				cachedAgentVersion = &vf
+				versionCacheTime = time.Now()
+				log.Printf("Loaded agent version %s from %s", vf.Version, path)
+				return cachedAgentVersion
+			}
+		}
+	}
+
+	// Fallback to default version
+	log.Println("Warning: Could not load version.json, using default version")
+	cachedAgentVersion = &AgentVersionFile{
+		Version:     "1.12.0",
+		ReleaseDate: time.Now().Format("2006-01-02"),
+		Changelog:   "No changelog available",
+		Platforms:   []string{"windows", "linux", "darwin"},
+	}
+	versionCacheTime = time.Now()
+	return cachedAgentVersion
+}
+
+// getCurrentAgentVersion returns the current agent version string
+func getCurrentAgentVersion() string {
+	return getAgentVersionFromFile().Version
+}
 
 // AgentVersionInfo contains version information for auto-update
 type AgentVersionInfo struct {
@@ -74,13 +140,15 @@ func (r *Router) getAgentVersion(c *gin.Context) {
 		arch = "386"
 	}
 
+	agentVersion := getAgentVersionFromFile()
+
 	response := AgentUpdateResponse{
 		CurrentVersion: currentVersion,
-		LatestVersion:  currentAgentVersion,
+		LatestVersion:  agentVersion.Version,
 	}
 
 	// Compare versions
-	if !isNewerVersion(currentAgentVersion, currentVersion) {
+	if !isNewerVersion(agentVersion.Version, currentVersion) {
 		response.Available = false
 		c.JSON(http.StatusOK, response)
 		return
@@ -118,14 +186,14 @@ func (r *Router) getAgentVersion(c *gin.Context) {
 
 	response.Available = true
 	response.VersionInfo = &AgentVersionInfo{
-		Version:     currentAgentVersion,
+		Version:     agentVersion.Version,
 		Platform:    platform,
 		Arch:        arch,
 		DownloadURL: downloadURL,
 		Checksum:    checksum,
 		Size:        info.Size(),
-		ReleaseDate: info.ModTime().Format(time.RFC3339),
-		Changelog:   getChangelog(currentAgentVersion),
+		ReleaseDate: agentVersion.ReleaseDate,
+		Changelog:   agentVersion.Changelog,
 		Required:    false,
 	}
 
@@ -165,19 +233,17 @@ func (r *Router) downloadAgentUpdate(c *gin.Context) {
 
 	filename := filepath.Base(binaryPath)
 	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
-	c.Header("X-Agent-Version", currentAgentVersion)
+	c.Header("X-Agent-Version", getCurrentAgentVersion())
 	c.File(binaryPath)
 }
 
 // logAgentUpdate records an update download in the database
 func (r *Router) logAgentUpdate(ctx context.Context, agentID, platform, arch, ipAddress string) {
-	// Record in agent_updates table
 	r.db.Pool.Exec(ctx, `
 		INSERT INTO agent_updates (id, agent_id, from_version, to_version, platform, architecture, ip_address, status, created_at)
 		VALUES ($1, $2, '', $3, $4, $5, $6, 'downloading', NOW())
-	`, uuid.New(), agentID, currentAgentVersion, platform, arch, ipAddress)
+	`, uuid.New(), agentID, getCurrentAgentVersion(), platform, arch, ipAddress)
 
-	// Also update the device previous_version field
 	r.db.Pool.Exec(ctx, `
 		UPDATE devices
 		SET previous_agent_version = agent_version,
@@ -188,7 +254,8 @@ func (r *Router) logAgentUpdate(ctx context.Context, agentID, platform, arch, ip
 
 // listAgentVersions returns all available agent versions and their release info
 func (r *Router) listAgentVersions(c *gin.Context) {
-	// Query agent_releases table for version history
+	agentVersion := getAgentVersionFromFile()
+
 	rows, err := r.db.Pool.Query(c.Request.Context(), `
 		SELECT version, release_date, changelog, is_required, platforms
 		FROM agent_releases
@@ -196,12 +263,11 @@ func (r *Router) listAgentVersions(c *gin.Context) {
 		LIMIT 20
 	`)
 	if err != nil {
-		// Return just current version if table does not exist
 		c.JSON(http.StatusOK, []map[string]interface{}{
 			{
-				"version":     currentAgentVersion,
-				"releaseDate": time.Now().Format(time.RFC3339),
-				"changelog":   getChangelog(currentAgentVersion),
+				"version":     agentVersion.Version,
+				"releaseDate": agentVersion.ReleaseDate,
+				"changelog":   agentVersion.Changelog,
 				"isCurrent":   true,
 			},
 		})
@@ -226,15 +292,15 @@ func (r *Router) listAgentVersions(c *gin.Context) {
 			"changelog":   changelog,
 			"isRequired":  isRequired,
 			"platforms":   platforms,
-			"isCurrent":   version == currentAgentVersion,
+			"isCurrent":   version == agentVersion.Version,
 		})
 	}
 
 	if len(versions) == 0 {
 		versions = append(versions, map[string]interface{}{
-			"version":     currentAgentVersion,
-			"releaseDate": time.Now().Format(time.RFC3339),
-			"changelog":   getChangelog(currentAgentVersion),
+			"version":     agentVersion.Version,
+			"releaseDate": agentVersion.ReleaseDate,
+			"changelog":   agentVersion.Changelog,
 			"isCurrent":   true,
 		})
 	}
@@ -307,7 +373,6 @@ func (r *Router) reportUpdateStatus(c *gin.Context) {
 		return
 	}
 
-	// Update existing record or create new one
 	_, err := r.db.Pool.Exec(c.Request.Context(), `
 		UPDATE agent_updates
 		SET status = $1, error_message = $2, completed_at = CASE WHEN $1 IN ('completed', 'failed') THEN NOW() ELSE NULL END
@@ -319,7 +384,6 @@ func (r *Router) reportUpdateStatus(c *gin.Context) {
 		return
 	}
 
-	// If update completed successfully, update device version
 	if req.Status == "completed" {
 		r.db.Pool.Exec(c.Request.Context(), `
 			UPDATE devices SET agent_version = $1, updated_at = NOW() WHERE agent_id = $2
@@ -372,20 +436,4 @@ func parseVersion(v string) [3]int {
 		parts[i], _ = strconv.Atoi(split[i])
 	}
 	return parts
-}
-
-func getChangelog(version string) string {
-	changelogs := map[string]string{
-		"1.3.2": "- Added autonomous update capability\n- Extended system information collection\n- Improved connection stability",
-		"1.3.1": "- Bug fixes for Windows service management\n- Improved memory usage",
-		"1.3.0": "- Added GPU information collection\n- Added detailed storage information\n- Added Windows specifications",
-		"1.2.0": "- Added remote terminal support\n- Added file browser functionality",
-		"1.1.0": "- Added script execution\n- Improved metrics collection",
-		"1.0.0": "- Initial release",
-	}
-
-	if changelog, ok := changelogs[version]; ok {
-		return changelog
-	}
-	return "No changelog available"
 }

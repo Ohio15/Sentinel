@@ -563,4 +563,49 @@ export class AgentManager {
 
     return result;
   }
+
+
+  // Trigger an update on a specific agent (push update)
+  async triggerAgentUpdate(deviceId: string): Promise<boolean> {
+    const device = await this.database.getDevice(deviceId);
+    if (!device) {
+      throw new Error('Device not found');
+    }
+
+    if (!this.isAgentConnected(device.agentId)) {
+      throw new Error('Agent not connected');
+    }
+
+    console.log(`Triggering update check for device ${deviceId}`);
+
+    // Send update check command to agent
+    const result = await this.sendRequest(device.agentId, {
+      type: 'check_update',
+      force: true, // Force immediate check
+    }, 30000);
+
+    return result?.success || false;
+  }
+
+  // Trigger updates on all connected agents
+  async triggerFleetUpdate(): Promise<{ success: number; failed: number }> {
+    let success = 0;
+    let failed = 0;
+
+    for (const [agentId, conn] of this.connections) {
+      try {
+        this.sendToAgent(agentId, {
+          type: 'check_update',
+          force: true,
+        });
+        success++;
+      } catch (error) {
+        console.error(`Failed to trigger update for agent ${agentId}:`, error);
+        failed++;
+      }
+    }
+
+    return { success, failed };
+  }
+
 }

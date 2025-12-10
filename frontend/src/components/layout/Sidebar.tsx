@@ -31,9 +31,7 @@ export function Sidebar() {
       {/* Logo */}
       <div className="p-4 border-b border-slate-700">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
-            <Shield className="w-6 h-6" />
-          </div>
+          <img src="/sentinel.svg" alt="Sentinel" className="w-10 h-10 rounded-lg" />
           <div>
             <h1 className="text-xl font-bold">Sentinel</h1>
             <p className="text-xs text-slate-400">RMM Platform</p>

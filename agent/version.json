@@ -1,0 +1,7 @@
+{
+  "version": "1.13.0",
+  "releaseDate": "2024-12-10",
+  "changelog": "- Remote agent uninstall capability\n- Admin-initiated remote uninstallation\n- Improved agent management",
+  "platforms": ["windows", "linux", "darwin"],
+  "minAppVersion": "1.10.0"
+}

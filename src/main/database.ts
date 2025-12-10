@@ -983,6 +983,153 @@ export class Database {
     return result.rows[0];
   }
 
+
+  // ============================================================================
+  // AGENT UPDATE METHODS
+  // ============================================================================
+
+  // Get the latest agent release version
+  async getLatestAgentRelease(platform?: string): Promise<any | null> {
+    let sql = `
+      SELECT version, release_date as "releaseDate", changelog, is_required as "isRequired",
+             platforms, min_version as "minVersion", created_at as "createdAt"
+      FROM agent_releases
+    `;
+    const values: any[] = [];
+
+    if (platform) {
+      sql += ` WHERE $1 = ANY(platforms)`;
+      values.push(platform);
+    }
+
+    sql += ` ORDER BY string_to_array(version, '.')::int[] DESC LIMIT 1`;
+
+    const result = await this.query(sql, values);
+    return result.rows[0] || null;
+  }
+
+  // Get agent release by version
+  async getAgentRelease(version: string): Promise<any | null> {
+    const result = await this.query(
+      `SELECT version, release_date as "releaseDate", changelog, is_required as "isRequired",
+              platforms, min_version as "minVersion", created_at as "createdAt"
+       FROM agent_releases WHERE version = $1`,
+      [version]
+    );
+    return result.rows[0] || null;
+  }
+
+  // Create a new agent release
+  async createAgentRelease(release: any): Promise<any> {
+    await this.query(
+      `INSERT INTO agent_releases (version, release_date, changelog, is_required, platforms, min_version)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (version) DO UPDATE SET
+         changelog = EXCLUDED.changelog,
+         is_required = EXCLUDED.is_required,
+         platforms = EXCLUDED.platforms,
+         min_version = EXCLUDED.min_version`,
+      [
+        release.version,
+        release.releaseDate || new Date().toISOString(),
+        release.changelog || '',
+        release.isRequired || false,
+        release.platforms || ['windows', 'linux', 'darwin'],
+        release.minVersion || null
+      ]
+    );
+    return this.getAgentRelease(release.version);
+  }
+
+  // Log an update attempt
+  async logAgentUpdate(update: {
+    agentId: string;
+    fromVersion?: string;
+    toVersion: string;
+    platform?: string;
+    architecture?: string;
+    ipAddress?: string;
+    status: string;
+  }): Promise<any> {
+    const id = uuidv4();
+    await this.query(
+      `INSERT INTO agent_updates (id, agent_id, from_version, to_version, platform, architecture, ip_address, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [id, update.agentId, update.fromVersion, update.toVersion, update.platform, update.architecture, update.ipAddress, update.status]
+    );
+    const result = await this.query('SELECT * FROM agent_updates WHERE id = $1', [id]);
+    return result.rows[0];
+  }
+
+  // Update agent update status
+  async updateAgentUpdateStatus(id: string, status: string, errorMessage?: string): Promise<void> {
+    const updates = ['status = $1'];
+    const values: any[] = [status];
+    let paramIndex = 2;
+
+    if (status === 'completed' || status === 'failed' || status === 'rolled_back') {
+      updates.push('completed_at = CURRENT_TIMESTAMP');
+    }
+    if (errorMessage) {
+      updates.push(`error_message = ${paramIndex++}`);
+      values.push(errorMessage);
+    }
+    values.push(id);
+
+    await this.query(
+      `UPDATE agent_updates SET ${updates.join(', ')} WHERE id = ${paramIndex}`,
+      values
+    );
+  }
+
+  // Get agent update history
+  async getAgentUpdateHistory(agentId: string, limit: number = 20): Promise<any[]> {
+    const result = await this.query(
+      `SELECT id, agent_id as "agentId", from_version as "fromVersion", to_version as "toVersion",
+              platform, architecture, ip_address as "ipAddress", status, error_message as "errorMessage",
+              created_at as "createdAt", completed_at as "completedAt"
+       FROM agent_updates
+       WHERE agent_id = $1
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [agentId, limit]
+    );
+    return result.rows;
+  }
+
+  // Update device agent version after successful update
+  async updateDeviceAgentVersion(agentId: string, newVersion: string, oldVersion?: string): Promise<void> {
+    await this.query(
+      `UPDATE devices SET
+         previous_agent_version = COALESCE($3, agent_version),
+         agent_version = $2,
+         last_update_check = CURRENT_TIMESTAMP,
+         updated_at = CURRENT_TIMESTAMP
+       WHERE agent_id = $1`,
+      [agentId, newVersion, oldVersion]
+    );
+  }
+
+  // Update last update check timestamp
+  async updateDeviceLastUpdateCheck(agentId: string): Promise<void> {
+    await this.query(
+      `UPDATE devices SET last_update_check = CURRENT_TIMESTAMP WHERE agent_id = $1`,
+      [agentId]
+    );
+  }
+
+  // Get all agent releases
+  async getAgentReleases(): Promise<any[]> {
+    const result = await this.query(`
+      SELECT version, release_date as "releaseDate", changelog, is_required as "isRequired",
+             platforms, min_version as "minVersion", created_at as "createdAt"
+      FROM agent_releases
+      ORDER BY string_to_array(version, '.')::int[] DESC
+    `);
+    return result.rows;
+  }
+
+
   async close(): Promise<void> {
     if (this.pool) {
       await this.pool.end();

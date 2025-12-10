@@ -1,6 +1,6 @@
 import { useState, FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import { Input } from '@/components/ui';
 import toast from 'react-hot-toast';
@@ -29,8 +29,8 @@ export function Login() {
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-primary rounded-2xl mb-4">
-            <Shield className="w-8 h-8 text-white" />
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-4 overflow-hidden">
+            <img src="/sentinel.svg" alt="Sentinel" className="w-full h-full" />
           </div>
           <h1 className="text-2xl font-bold text-text-primary">Sentinel</h1>
           <p className="text-text-secondary mt-1">Remote Monitoring & Management</p>

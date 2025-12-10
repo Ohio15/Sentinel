@@ -28,9 +28,9 @@ const (
 )
 
 var (
-	Version   = "1.9.0"
-	elog      debug.Log
-	isDebug   = false
+	Version = "1.12.0"
+	elog    debug.Log
+	isDebug = false
 )
 
 // WatchdogConfig holds watchdog configuration

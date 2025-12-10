@@ -1,24 +1,76 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
   <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#2563eb;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#1d4ed8;stop-opacity:1" />
-    </linearGradient>
-    <linearGradient id="shield" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" style="stop-color:#ffffff;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#e2e8f0;stop-opacity:1" />
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1f1f1f"/>
+      <stop offset="100%" style="stop-color:#0f0f0f"/>
     </linearGradient>
   </defs>
-  <!-- Background circle -->
-  <circle cx="128" cy="128" r="120" fill="url(#bg)"/>
-  <!-- Shield outline -->
-  <path d="M128 40 L200 70 L200 130 C200 175 165 210 128 225 C91 210 56 175 56 130 L56 70 Z"
-        fill="url(#shield)" stroke="#1e40af" stroke-width="4"/>
-  <!-- Eye/monitoring symbol -->
-  <ellipse cx="128" cy="120" rx="45" ry="30" fill="none" stroke="#2563eb" stroke-width="6"/>
-  <circle cx="128" cy="120" r="15" fill="#2563eb"/>
-  <!-- Signal waves -->
-  <path d="M128 160 L128 190" stroke="#2563eb" stroke-width="6" stroke-linecap="round"/>
-  <path d="M108 175 Q128 195 148 175" fill="none" stroke="#2563eb" stroke-width="4" stroke-linecap="round"/>
-  <path d="M93 185 Q128 210 163 185" fill="none" stroke="#2563eb" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Background -->
+  <rect width="256" height="256" fill="url(#bgGrad)"/>
+
+  <!-- Outer shield outline -->
+  <path d="M128 18 L215 52 L215 142 C215 192 176 228 128 245 C80 228 41 192 41 142 L41 52 Z"
+        fill="none" stroke="#7a6b5a" stroke-width="5"/>
+
+  <!-- Inner shield outline -->
+  <path d="M128 30 L203 60 L203 138 C203 183 169 214 128 230 C87 214 53 183 53 138 L53 60 Z"
+        fill="none" stroke="#7a6b5a" stroke-width="3"/>
+
+  <!-- Eagle body and head -->
+  <g fill="#7a6b5a">
+    <!-- Eagle head looking right -->
+    <ellipse cx="128" cy="62" rx="18" ry="14"/>
+    <!-- Beak -->
+    <path d="M146 60 L168 68 L146 68 Z"/>
+    <!-- Eye -->
+    <circle cx="138" cy="60" r="3" fill="#0f0f0f"/>
+    <!-- Neck/body connection -->
+    <path d="M115 72 L141 72 L138 85 L118 85 Z"/>
+  </g>
+
+  <!-- Wings - Left side feathers -->
+  <g fill="#7a6b5a">
+    <polygon points="55,82 100,72 100,82 60,95"/>
+    <polygon points="58,95 100,82 100,92 62,108"/>
+    <polygon points="62,108 100,92 100,102 66,120"/>
+    <polygon points="66,120 100,102 100,112 70,132"/>
+    <polygon points="70,132 100,112 100,125 75,145"/>
+    <polygon points="75,145 100,125 105,155 82,158"/>
+  </g>
+
+  <!-- Wings - Right side feathers -->
+  <g fill="#7a6b5a">
+    <polygon points="201,82 156,72 156,82 196,95"/>
+    <polygon points="198,95 156,82 156,92 194,108"/>
+    <polygon points="194,108 156,92 156,102 190,120"/>
+    <polygon points="190,120 156,102 156,112 186,132"/>
+    <polygon points="186,132 156,112 156,125 181,145"/>
+    <polygon points="181,145 156,125 151,155 174,158"/>
+  </g>
+
+  <!-- Wing inner body panels -->
+  <g fill="#7a6b5a">
+    <polygon points="100,72 118,82 118,158 105,158"/>
+    <polygon points="156,72 138,82 138,158 151,158"/>
+  </g>
+
+  <!-- Star -->
+  <polygon fill="#7a6b5a"
+    points="128,95 134,112 152,112 138,123 143,140 128,130 113,140 118,123 104,112 122,112"/>
+
+  <!-- Chevrons / Stripes -->
+  <g fill="#7a6b5a">
+    <polygon points="88,168 128,188 168,168 168,176 128,196 88,176"/>
+    <polygon points="88,182 128,202 168,182 168,190 128,210 88,190"/>
+    <polygon points="88,196 128,216 168,196 168,204 128,224 88,204"/>
+  </g>
+
+  <!-- Talons -->
+  <g fill="#7a6b5a">
+    <path d="M105,158 L100,172 L95,168 L105,158 Z"/>
+    <path d="M115,158 L115,172 L108,168 L115,158 Z"/>
+    <path d="M151,158 L156,172 L161,168 L151,158 Z"/>
+    <path d="M141,158 L141,172 L148,168 L141,158 Z"/>
+  </g>
 </svg>

@@ -52,6 +52,7 @@ services:
       - RATE_LIMIT_WINDOW=${RATE_LIMIT_WINDOW:-60}
     volumes:
       - ./installers:/app/installers:ro
+      - ./agent/version.json:/app/agent/version.json:ro
     depends_on:
       postgres:
         condition: service_healthy
