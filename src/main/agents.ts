@@ -342,7 +342,12 @@ export class AgentManager {
 
   // Terminal sessions
   async startTerminalSession(deviceId: string): Promise<{ sessionId: string }> {
+    console.log('=== START TERMINAL SESSION ===');
+    console.log('Requested deviceId:', deviceId);
+    console.log('Connected agents:', Array.from(this.connections.keys()));
+
     const device = await this.database.getDevice(deviceId);
+    console.log('Device from DB:', device ? { id: device.id, agentId: device.agentId, hostname: device.hostname } : null);
     if (!device) {
       throw new Error('Device not found');
     }

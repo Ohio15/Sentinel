@@ -479,6 +479,8 @@ private setupWebSocket(): void {
 
           // Handle authentication - support both direct fields and payload format
           if (message.type === 'auth') {
+            console.log('=== AUTH MESSAGE RECEIVED ===');
+            console.log('Raw auth message:', JSON.stringify(message, null, 2));
             // Extract agentId and token from either top-level or payload (agent sends in payload)
             const authAgentId = message.agentId || message.payload?.agentId;
             const authToken = message.token || message.payload?.token;
