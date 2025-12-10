@@ -237,11 +237,11 @@ export class Database {
     let paramIndex = 1;
 
     if (updates.displayName !== undefined) {
-      fields.push(`display_name = ${paramIndex++}`);
+      fields.push(`display_name = $${paramIndex++}`);
       values.push(updates.displayName);
     }
     if (updates.tags !== undefined) {
-      fields.push(`tags = ${paramIndex++}`);
+      fields.push(`tags = $${paramIndex++}`);
       values.push(JSON.stringify(updates.tags));
     }
 
@@ -253,7 +253,7 @@ export class Database {
     values.push(id);
 
     await this.query(
-      `UPDATE devices SET ${fields.join(', ')} WHERE id = ${paramIndex}`,
+      `UPDATE devices SET ${fields.join(', ')} WHERE id = $${paramIndex}`,
       values
     );
     return this.getDevice(id);
@@ -689,19 +689,19 @@ export class Database {
     let paramIndex = 1;
 
     if (filters?.status) {
-      sql += ` AND t.status = ${paramIndex++}`;
+      sql += ` AND t.status = $${paramIndex++}`;
       values.push(filters.status);
     }
     if (filters?.priority) {
-      sql += ` AND t.priority = ${paramIndex++}`;
+      sql += ` AND t.priority = $${paramIndex++}`;
       values.push(filters.priority);
     }
     if (filters?.assignedTo) {
-      sql += ` AND t.assigned_to = ${paramIndex++}`;
+      sql += ` AND t.assigned_to = $${paramIndex++}`;
       values.push(filters.assignedTo);
     }
     if (filters?.deviceId) {
-      sql += ` AND t.device_id = ${paramIndex++}`;
+      sql += ` AND t.device_id = $${paramIndex++}`;
       values.push(filters.deviceId);
     }
 
@@ -784,7 +784,7 @@ export class Database {
 
     for (const [jsField, dbField] of Object.entries(fieldMap)) {
       if (updates[jsField] !== undefined) {
-        fields.push(`${dbField} = ${paramIndex++}`);
+        fields.push(`${dbField} = $${paramIndex++}`);
         values.push(updates[jsField]);
 
         // Log activity for important field changes
@@ -799,7 +799,7 @@ export class Database {
     }
 
     if (updates.tags !== undefined) {
-      fields.push(`tags = ${paramIndex++}`);
+      fields.push(`tags = $${paramIndex++}`);
       values.push(JSON.stringify(updates.tags));
     }
 
@@ -814,7 +814,7 @@ export class Database {
     if (fields.length > 0) {
       values.push(id);
       await this.query(
-        `UPDATE tickets SET ${fields.join(', ')} WHERE id = ${paramIndex}`,
+        `UPDATE tickets SET ${fields.join(', ')} WHERE id = $${paramIndex}`,
         values
       );
     }
@@ -931,26 +931,26 @@ export class Database {
     let paramIndex = 1;
 
     if (template.name !== undefined) {
-      updates.push(`name = ${paramIndex++}`);
+      updates.push(`name = $${paramIndex++}`);
       values.push(template.name);
     }
     if (template.subject !== undefined) {
-      updates.push(`subject = ${paramIndex++}`);
+      updates.push(`subject = $${paramIndex++}`);
       values.push(template.subject);
     }
     if (template.content !== undefined) {
-      updates.push(`content = ${paramIndex++}`);
+      updates.push(`content = $${paramIndex++}`);
       values.push(template.content);
     }
     if (template.isActive !== undefined) {
-      updates.push(`is_active = ${paramIndex++}`);
+      updates.push(`is_active = $${paramIndex++}`);
       values.push(template.isActive);
     }
 
     if (updates.length > 0) {
       values.push(id);
       await this.query(
-        `UPDATE ticket_templates SET ${updates.join(', ')} WHERE id = ${paramIndex}`,
+        `UPDATE ticket_templates SET ${updates.join(', ')} WHERE id = $${paramIndex}`,
         values
       );
     }
