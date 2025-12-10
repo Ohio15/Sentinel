@@ -226,13 +226,27 @@ async function initialize(): Promise<void> {
 function setupIpcHandlers(): void {
   // Device management
   ipcMain.handle('devices:list', async () => {
-    return database.getDevices();
+    const devices = await database.getDevices();
+    // Override status based on actual WebSocket connection state
+    return devices.map(device => ({
+      ...device,
+      status: device.agentId && agentManager.isAgentConnected(device.agentId) ? 'online' : 'offline'
+    }));
   });
 
   ipcMain.handle('devices:get', async (_, id: string) => {
     console.log('[IPC] devices:get called with id:', id);
     const device = await database.getDevice(id);
     console.log('[IPC] devices:get result:', device ? device.hostname : 'null');
+    if (device) {
+      // Override status based on actual WebSocket connection state
+      const isConnected = device.agentId && agentManager.isAgentConnected(device.agentId);
+      console.log('[IPC] devices:get isConnected:', isConnected, 'agentId:', device.agentId);
+      return {
+        ...device,
+        status: isConnected ? 'online' : 'offline'
+      };
+    }
     return device;
   });
 
