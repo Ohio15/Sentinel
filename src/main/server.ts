@@ -450,10 +450,25 @@ export class Server {
 private setupWebSocket(): void {
     if (!this.server) return;
 
-    this.wss = new WebSocketServer({ server: this.server, path: '/ws' });
+    // Create WebSocket server without path filter - we'll handle paths manually
+    this.wss = new WebSocketServer({ noServer: true });
+
+    // Handle upgrade requests to support multiple paths
+    this.server.on('upgrade', (request, socket, head) => {
+      const pathname = new URL(request.url || '', `http://${request.headers.host}`).pathname;
+
+      // Accept both /ws and /ws/agent paths for agent connections
+      if (pathname === '/ws' || pathname === '/ws/agent') {
+        this.wss!.handleUpgrade(request, socket, head, (ws) => {
+          this.wss!.emit('connection', ws, request);
+        });
+      } else {
+        socket.destroy();
+      }
+    });
 
     this.wss.on('connection', (ws: WebSocket, req) => {
-      console.log('New WebSocket connection');
+      console.log('New WebSocket connection from path:', req.url);
 
       let agentId: string | null = null;
       let authenticated = false;
@@ -462,27 +477,34 @@ private setupWebSocket(): void {
         try {
           const message = JSON.parse(data.toString());
 
-          // Handle authentication
+          // Handle authentication - support both direct fields and payload format
           if (message.type === 'auth') {
-            if (message.token === this.enrollmentToken || message.agentId) {
-              agentId = message.agentId;
+            // Extract agentId and token from either top-level or payload (agent sends in payload)
+            const authAgentId = message.agentId || message.payload?.agentId;
+            const authToken = message.token || message.payload?.token;
+
+            if (authToken === this.enrollmentToken || authAgentId) {
+              agentId = authAgentId;
               authenticated = true;
 
               // Register agent connection
               if (agentId) {
                 await this.agentManager.registerConnection(agentId, ws);
                 await this.database.updateDeviceLastSeen(agentId);
+                console.log(`Agent ${agentId} authenticated and registered`);
               }
 
               ws.send(JSON.stringify({
                 type: 'auth_response',
                 success: true,
+                payload: { success: true },
                 timestamp: new Date().toISOString(),
               }));
             } else {
               ws.send(JSON.stringify({
                 type: 'auth_response',
                 success: false,
+                payload: { success: false, error: 'Invalid credentials' },
                 error: 'Invalid credentials',
               }));
               ws.close();
@@ -515,6 +537,7 @@ private setupWebSocket(): void {
         if (agentId) {
           this.agentManager.unregisterConnection(agentId);
           await this.database.updateDeviceStatus(agentId, 'offline');
+          console.log(`Agent ${agentId} disconnected`);
         }
         console.log('WebSocket connection closed');
       });
