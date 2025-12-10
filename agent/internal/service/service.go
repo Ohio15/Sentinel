@@ -1,6 +1,7 @@
 package service
 
 import (
+	"os/exec"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -136,6 +137,9 @@ func Install(serverURL, token string) error {
 	}
 
 	log.Println("Service installed successfully")
+	
+	// Configure with native SC commands for reliable startup/recovery
+	configureServiceWithSC(ServiceName)
 
 	// Start the service
 	if err := svc.Start(); err != nil {
@@ -198,6 +202,7 @@ func installWatchdog(installPath string) {
 	}
 
 	log.Println("Watchdog service installed and started")
+		configureServiceWithSC("SentinelWatchdog")
 }
 
 // Uninstall removes the service - requires server authorization
@@ -387,6 +392,37 @@ func IsElevated() bool {
 	default:
 		return os.Geteuid() == 0
 	}
+}
+
+
+// configureServiceWithSC uses native Windows SC commands to ensure proper service configuration
+func configureServiceWithSC(serviceName string) error {
+	if runtime.GOOS != "windows" {
+		return nil
+	}
+	
+	// Set start type to automatic
+	cmd := exec.Command("sc", "config", serviceName, "start=", "auto")
+	if err := cmd.Run(); err != nil {
+		log.Printf("Warning: sc config start=auto failed: %v", err)
+	}
+	
+	// Configure failure recovery: restart after 5s, 10s, 30s
+	cmd = exec.Command("sc", "failure", serviceName, 
+		"reset=", "86400",
+		"actions=", "restart/5000/restart/10000/restart/30000")
+	if err := cmd.Run(); err != nil {
+		log.Printf("Warning: sc failure config failed: %v", err)
+	}
+	
+	// Enable recovery on non-crash failures (exit code != 0)
+	cmd = exec.Command("sc", "failureflag", serviceName, "1")
+	if err := cmd.Run(); err != nil {
+		log.Printf("Warning: sc failureflag failed: %v", err)
+	}
+	
+	log.Printf("Service %s configured with automatic start and failure recovery", serviceName)
+	return nil
 }
 
 // Linux systemd unit file template

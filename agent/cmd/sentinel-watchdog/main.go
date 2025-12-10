@@ -28,7 +28,7 @@ const (
 )
 
 var (
-	Version = "1.12.0"
+	Version = "1.19.0"
 	elog    debug.Log
 	isDebug = false
 )
@@ -203,6 +203,9 @@ func (ws *watchdogService) Execute(args []string, r <-chan svc.ChangeRequest, ch
 
 // monitorAgent continuously monitors the agent service
 func (ws *watchdogService) monitorAgent() {
+	// Immediately check and start agent on watchdog startup
+	ws.checkAndRestartAgent()
+
 	ticker := time.NewTicker(time.Duration(ws.config.CheckInterval) * time.Second)
 	defer ticker.Stop()
 
@@ -376,7 +379,7 @@ func installService(installPath string) {
 		Description:      serviceDescription,
 		StartType:        mgr.StartAutomatic,
 		ServiceStartName: "LocalSystem",
-		Dependencies:     []string{agentServiceName}, // Start after agent
+		// No dependencies - watchdog starts independently to monitor agent
 	}
 
 	s, err = m.CreateService(serviceName, exePath, config)
