@@ -24,6 +24,7 @@ import (
 	"github.com/sentinel/agent/internal/remote"
 	svc "github.com/sentinel/agent/internal/service"
 	"github.com/sentinel/agent/internal/terminal"
+	"github.com/sentinel/agent/internal/diagnostics"
 	"github.com/sentinel/agent/internal/updater"
 )
 
@@ -52,10 +53,11 @@ type Agent struct {
 	fileTransfer      *filetransfer.FileTransfer
 	remoteManager     *remote.Manager
 	updater           *updater.Updater
-	protectionManager *protection.Manager
-	tamperChan        chan string
-	ctx               context.Context
-	cancel            context.CancelFunc
+	protectionManager    *protection.Manager
+	diagnosticsCollector *diagnostics.Collector
+	tamperChan           chan string
+	ctx                  context.Context
+	cancel               context.CancelFunc
 }
 
 func main() {
@@ -259,18 +261,19 @@ func NewAgent(cfg *config.Config) *Agent {
 	protMgr := protection.NewManager(installPath, ServiceName)
 
 	return &Agent{
-		cfg:               cfg,
-		client:            client.New(cfg),
-		collector:         collector.New(),
-		executor:          executor.New(),
-		terminalManager:   terminal.NewManager(),
-		fileTransfer:      ft,
-		remoteManager:     remote.NewManager(),
-		updater:           agentUpdater,
-		protectionManager: protMgr,
-		tamperChan:        make(chan string, 10),
-		ctx:               ctx,
-		cancel:            cancel,
+		cfg:                  cfg,
+		client:               client.New(cfg),
+		collector:            collector.New(),
+		executor:             executor.New(),
+		terminalManager:      terminal.NewManager(),
+		fileTransfer:         ft,
+		remoteManager:        remote.NewManager(),
+		updater:              agentUpdater,
+		protectionManager:    protMgr,
+		diagnosticsCollector: diagnostics.New(),
+		tamperChan:           make(chan string, 10),
+		ctx:                  ctx,
+		cancel:               cancel,
 	}
 }
 
@@ -366,6 +369,7 @@ func (a *Agent) registerHandlers() {
 	a.client.RegisterHandler(client.MsgTypeStartRemote, a.handleStartRemote)
 	a.client.RegisterHandler(client.MsgTypeStopRemote, a.handleStopRemote)
 	a.client.RegisterHandler(client.MsgTypeRemoteInput, a.handleRemoteInput)
+	a.client.RegisterHandler(client.MsgTypeCollectDiagnostics, a.handleCollectDiagnostics)
 }
 
 func (a *Agent) onConnect() {
@@ -780,4 +784,31 @@ func (a *Agent) handleTamperReports() {
 			}
 		}
 	}
+
+}
+
+// handleCollectDiagnostics handles diagnostic data collection requests
+func (a *Agent) handleCollectDiagnostics(msg *client.Message) error {
+	data, ok := msg.Data.(map[string]interface{})
+	if !ok {
+		return a.client.SendResponse(msg.RequestID, false, nil, "Invalid message data")
+	}
+
+	hoursBack := 8 // Default to 8 hours
+	if h, ok := data["hoursBack"].(float64); ok {
+		hoursBack = int(h)
+	}
+
+	log.Printf("Collecting diagnostics for the past %d hours...", hoursBack)
+
+	result, err := a.diagnosticsCollector.CollectAll(a.ctx, hoursBack)
+	if err != nil {
+		log.Printf("Diagnostics collection error: %v", err)
+		return a.client.SendResponse(msg.RequestID, false, nil, err.Error())
+	}
+
+	log.Printf("Diagnostics collected: %d system errors, %d app logs, %d processes",
+		len(result.SystemErrors), len(result.ApplicationLogs), len(result.ActivePrograms))
+
+	return a.client.SendResponse(msg.RequestID, true, result, "")
 }

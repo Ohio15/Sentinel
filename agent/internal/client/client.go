@@ -38,7 +38,8 @@ const (
 	MsgTypeRemoteInput   = "remote_input"
 	MsgTypeRemoteFrame   = "remote_frame"
 	MsgTypeEvent         = "event"
-	MsgTypeError         = "error"
+	MsgTypeError              = "error"
+	MsgTypeCollectDiagnostics = "collect_diagnostics"
 )
 
 // Message represents a WebSocket message

@@ -360,7 +360,17 @@ function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('tickets:create', async (_, ticket: any) => {
-    return database.createTicket(ticket);
+    // Create the ticket first
+    const createdTicket = await database.createTicket(ticket);
+
+    // If ticket has a deviceId, collect diagnostics in the background
+    if (ticket.deviceId) {
+      collectAndPostDiagnostics(createdTicket.id, ticket.deviceId).catch(err => {
+        console.error('Failed to collect diagnostics:', err);
+      });
+    }
+
+    return createdTicket;
   });
 
   ipcMain.handle('tickets:update', async (_, id: string, updates: any) => {
@@ -551,6 +561,157 @@ function setupIpcHandlers(): void {
   ipcMain.handle('get-app-version', () => {
     return app.getVersion();
   });
+}
+
+// Helper function to collect diagnostics and post as ticket comments
+async function collectAndPostDiagnostics(ticketId: string, deviceId: string): Promise<void> {
+  try {
+    console.log(`Collecting diagnostics for ticket ${ticketId} from device ${deviceId}`);
+
+    // Collect diagnostics (8 hours back)
+    const diagnostics = await agentManager.collectDiagnostics(deviceId, 8);
+
+    if (!diagnostics) {
+      console.log('No diagnostics data received');
+      return;
+    }
+
+    const timestamp = new Date().toISOString();
+
+    // Post System Errors as a comment
+    if (diagnostics.systemErrors && diagnostics.systemErrors.length > 0) {
+      const systemErrorsContent = formatLogEntries('System Errors (Event Viewer)', diagnostics.systemErrors);
+      await database.createTicketComment({
+        ticketId,
+        content: systemErrorsContent,
+        authorName: 'Sentinel Diagnostics',
+        isInternal: true,
+      });
+    }
+
+    // Post Application Logs as a comment
+    if (diagnostics.applicationLogs && diagnostics.applicationLogs.length > 0) {
+      const appLogsContent = formatLogEntries('Application Logs', diagnostics.applicationLogs);
+      await database.createTicketComment({
+        ticketId,
+        content: appLogsContent,
+        authorName: 'Sentinel Diagnostics',
+        isInternal: true,
+      });
+    }
+
+    // Post Security Events as a comment
+    if (diagnostics.securityEvents && diagnostics.securityEvents.length > 0) {
+      const securityContent = formatLogEntries('Security Events (Audit Failures)', diagnostics.securityEvents);
+      await database.createTicketComment({
+        ticketId,
+        content: securityContent,
+        authorName: 'Sentinel Diagnostics',
+        isInternal: true,
+      });
+    }
+
+    // Post Hardware Events as a comment
+    if (diagnostics.hardwareEvents && diagnostics.hardwareEvents.length > 0) {
+      const hardwareContent = formatLogEntries('Hardware Events', diagnostics.hardwareEvents);
+      await database.createTicketComment({
+        ticketId,
+        content: hardwareContent,
+        authorName: 'Sentinel Diagnostics',
+        isInternal: true,
+      });
+    }
+
+    // Post Network Events as a comment
+    if (diagnostics.networkEvents && diagnostics.networkEvents.length > 0) {
+      const networkContent = formatLogEntries('Network Events', diagnostics.networkEvents);
+      await database.createTicketComment({
+        ticketId,
+        content: networkContent,
+        authorName: 'Sentinel Diagnostics',
+        isInternal: true,
+      });
+    }
+
+    // Post Recent Crashes as a comment
+    if (diagnostics.recentCrashes && diagnostics.recentCrashes.length > 0) {
+      const crashesContent = formatLogEntries('Recent Application Crashes', diagnostics.recentCrashes);
+      await database.createTicketComment({
+        ticketId,
+        content: crashesContent,
+        authorName: 'Sentinel Diagnostics',
+        isInternal: true,
+      });
+    }
+
+    // Post Active Programs as a comment
+    if (diagnostics.activePrograms && diagnostics.activePrograms.length > 0) {
+      const programsContent = formatActivePrograms(diagnostics.activePrograms);
+      await database.createTicketComment({
+        ticketId,
+        content: programsContent,
+        authorName: 'Sentinel Diagnostics',
+        isInternal: true,
+      });
+    }
+
+    // Post summary comment
+    await database.createTicketComment({
+      ticketId,
+      content: `**Automatic Diagnostics Collection Complete**\n\nCollected at: ${timestamp}\nTime range: Past 8 hours\n\n- System Errors: ${diagnostics.systemErrors?.length || 0}\n- Application Logs: ${diagnostics.applicationLogs?.length || 0}\n- Security Events: ${diagnostics.securityEvents?.length || 0}\n- Hardware Events: ${diagnostics.hardwareEvents?.length || 0}\n- Network Events: ${diagnostics.networkEvents?.length || 0}\n- Recent Crashes: ${diagnostics.recentCrashes?.length || 0}\n- Active Programs: ${diagnostics.activePrograms?.length || 0}`,
+      authorName: 'Sentinel Diagnostics',
+      isInternal: true,
+    });
+
+    console.log(`Diagnostics posted to ticket ${ticketId}`);
+  } catch (error) {
+    console.error(`Failed to collect/post diagnostics for ticket ${ticketId}:`, error);
+    // Post error comment
+    await database.createTicketComment({
+      ticketId,
+      content: `**Diagnostics Collection Failed**\n\nUnable to collect diagnostics from the device. The agent may be offline or unresponsive.\n\nError: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      authorName: 'Sentinel Diagnostics',
+      isInternal: true,
+    }).catch(() => {});
+  }
+}
+
+function formatLogEntries(title: string, entries: any[]): string {
+  let content = `**${title}** (Past 8 Hours)\n\n`;
+  content += `Found ${entries.length} entries:\n\n`;
+
+  for (const entry of entries.slice(0, 50)) { // Limit to 50 entries per comment
+    content += `---\n`;
+    content += `**Time:** ${entry.timestamp || 'N/A'}\n`;
+    content += `**Source:** ${entry.source || 'N/A'}\n`;
+    content += `**Level:** ${entry.level || 'N/A'}\n`;
+    if (entry.eventId) content += `**Event ID:** ${entry.eventId}\n`;
+    content += `**Message:** ${entry.message || 'No message'}\n\n`;
+  }
+
+  if (entries.length > 50) {
+    content += `\n*... and ${entries.length - 50} more entries*\n`;
+  }
+
+  return content;
+}
+
+function formatActivePrograms(programs: any[]): string {
+  let content = `**Active Programs** (Past 8 Hours)\n\n`;
+  content += `Found ${programs.length} programs (sorted alphabetically):\n\n`;
+  content += `| Program | Version | Company | Memory (MB) | Session Duration |\n`;
+  content += `|---------|---------|---------|-------------|------------------|\n`;
+
+  for (const prog of programs) {
+    const name = prog.name || 'Unknown';
+    const version = prog.version || '-';
+    const company = prog.company || '-';
+    const memory = prog.memoryMB ? prog.memoryMB.toFixed(1) : '-';
+    const duration = prog.sessionDuration || '-';
+    content += `| ${name} | ${version} | ${company} | ${memory} | ${duration} |\n`;
+  }
+
+  return content;
 }
 
 // App lifecycle

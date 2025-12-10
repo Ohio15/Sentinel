@@ -542,4 +542,25 @@ export class AgentManager {
       });
     }
   }
+
+  // Collect diagnostics from device
+  async collectDiagnostics(deviceId: string, hoursBack: number = 8): Promise<any> {
+    const device = await this.database.getDevice(deviceId);
+    if (!device) {
+      throw new Error('Device not found');
+    }
+
+    if (!this.isAgentConnected(device.agentId)) {
+      throw new Error('Agent not connected');
+    }
+
+    console.log(`Requesting diagnostics from device ${deviceId} for past ${hoursBack} hours`);
+
+    const result = await this.sendRequest(device.agentId, {
+      type: 'collect_diagnostics',
+      hoursBack,
+    }, 120000); // 2 minute timeout for diagnostics collection
+
+    return result;
+  }
 }
