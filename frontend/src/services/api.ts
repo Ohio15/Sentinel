@@ -105,6 +105,12 @@ class ApiService {
     return response.data;
   }
 
+  // Uninstall agent from device (admin only)
+  async uninstallAgent(deviceId: string) {
+    const response = await this.client.post(`/devices/${deviceId}/uninstall`);
+    return response.data;
+  }
+
   // Script endpoints
   async getScripts(params?: { language?: string; search?: string; page?: number; pageSize?: number }) {
     const response = await this.client.get('/scripts', { params });

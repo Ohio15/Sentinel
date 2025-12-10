@@ -20,7 +20,7 @@ func (r *Router) listDevices(c *gin.Context) {
 			   platform, platform_family, architecture, cpu_model, cpu_cores, cpu_threads,
 			   cpu_speed, total_memory, boot_time, gpu, storage, serial_number,
 			   manufacturer, model, domain, agent_version, last_seen, status,
-			   ip_address, public_ip, mac_address, tags, metadata, created_at, updated_at
+			   COALESCE(host(ip_address), '' ) as ip_address, COALESCE(host(public_ip), '' ) as public_ip, mac_address, tags, metadata, created_at, updated_at
 		FROM devices
 		ORDER BY hostname
 	`)
@@ -82,7 +82,7 @@ func (r *Router) getDevice(c *gin.Context) {
 			   platform, platform_family, architecture, cpu_model, cpu_cores, cpu_threads,
 			   cpu_speed, total_memory, boot_time, gpu, storage, serial_number,
 			   manufacturer, model, domain, agent_version, last_seen, status,
-			   ip_address, public_ip, mac_address, tags, metadata, created_at, updated_at
+			   COALESCE(host(ip_address), '' ) as ip_address, COALESCE(host(public_ip), '' ) as public_ip, mac_address, tags, metadata, created_at, updated_at
 		FROM devices WHERE id = $1
 	`, id).Scan(&d.ID, &d.AgentID, &d.Hostname, &d.DisplayName, &d.OSType,
 		&d.OSVersion, &d.OSBuild, &d.Platform, &d.PlatformFamily, &d.Architecture,
@@ -480,3 +480,59 @@ func (r *Router) getCommand(c *gin.Context) {
 }
 
 
+
+// uninstallAgent sends an uninstall command to the agent
+func (r *Router) uninstallAgent(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid device ID"})
+		return
+	}
+
+	ctx := context.Background()
+
+	// Get device agent ID
+	var agentID string
+	err = r.db.Pool.QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1", id).Scan(&agentID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
+		return
+	}
+
+	// Check if agent is online
+	if !r.hub.IsAgentOnline(agentID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Device is offline. Cannot uninstall an offline agent."})
+		return
+	}
+
+	// Generate an uninstall token for security
+	uninstallToken := uuid.New().String()
+	requestID := uuid.New().String()
+
+	// Send uninstall command to agent
+	msg := websocket.Message{
+		Type:      "uninstall_agent",
+		RequestID: requestID,
+		Payload: json.RawMessage(mustMarshal(map[string]interface{}{
+			"deviceId":       id.String(),
+			"uninstallToken": uninstallToken,
+		})),
+	}
+
+	msgBytes, _ := json.Marshal(msg)
+	if err := r.hub.SendToAgent(agentID, msgBytes); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send uninstall command to agent"})
+		return
+	}
+
+	// Mark device as pending uninstall in database
+	r.db.Pool.Exec(ctx, `
+		UPDATE devices SET status = 'uninstalling', updated_at = NOW() WHERE id = $1
+	`, id)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "Uninstall command sent to agent",
+		"requestId": requestID,
+		"status":    "uninstalling",
+	})
+}

@@ -491,12 +491,12 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
               <CollapsibleSection title="Storage Drives">
                 <div className="space-y-3">
                   {selectedDevice.storage.map((drive, idx) => (
-                    <div key={idx} className="p-3 bg-gray-50 rounded-lg">
+                    <div key={idx} className="p-3 bg-gray-50 dark:bg-slate-700 rounded-lg">
                       <div className="flex justify-between items-center mb-2">
                         <span className="font-medium text-text-primary">{drive.mountpoint || drive.device}</span>
                         <span className="text-text-secondary text-sm">{drive.fstype}</span>
                       </div>
-                      <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
+                      <div className="w-full bg-gray-200 dark:bg-slate-600 rounded-full h-2 mb-2">
                         <div
                           className="bg-primary h-2 rounded-full"
                           style={{ width: `${drive.percent || 0}%` }}

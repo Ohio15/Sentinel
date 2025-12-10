@@ -40,6 +40,7 @@ const (
 	MsgTypeEvent         = "event"
 	MsgTypeError              = "error"
 	MsgTypeCollectDiagnostics = "collect_diagnostics"
+	MsgTypeUninstallAgent     = "uninstall_agent"
 )
 
 // Message represents a WebSocket message
@@ -47,6 +48,7 @@ type Message struct {
 	Type      string      `json:"type"`
 	RequestID string      `json:"requestId,omitempty"`
 	Data      interface{} `json:"data,omitempty"`
+	Payload   interface{} `json:"payload,omitempty"`
 	Success   bool        `json:"success,omitempty"`
 	Error     string      `json:"error,omitempty"`
 	Timestamp string      `json:"timestamp,omitempty"`
@@ -141,6 +143,25 @@ func (c *Client) Connect(ctx context.Context) error {
 	c.mu.Unlock()
 
 	log.Println("WebSocket connected")
+
+	// Send auth message immediately (server expects auth first)
+	authMsg := map[string]interface{}{
+		"type": MsgTypeAuth,
+		"payload": map[string]interface{}{
+			"agentId": c.config.AgentID,
+			"token":   c.config.EnrollmentToken,
+		},
+	}
+	authData, err := json.Marshal(authMsg)
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("failed to marshal auth message: %w", err)
+	}
+	if err := conn.WriteMessage(websocket.TextMessage, authData); err != nil {
+		conn.Close()
+		return fmt.Errorf("failed to send auth message: %w", err)
+	}
+	log.Println("Auth message sent, waiting for response...")
 
 	// Start message handlers
 	go c.readLoop(ctx)

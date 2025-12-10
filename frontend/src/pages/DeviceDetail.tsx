@@ -19,6 +19,7 @@ import {
   Check,
   Edit3,
   MemoryStick,
+  Trash2,
 } from 'lucide-react';
 import { Header } from '@/components/layout';
 import { Terminal, FileBrowser, RemoteDesktop } from '@/components/device';
@@ -141,6 +142,7 @@ export function DeviceDetail() {
   const [showTerminal, setShowTerminal] = useState(false);
   const [showFileBrowser, setShowFileBrowser] = useState(false);
   const [showRemoteDesktop, setShowRemoteDesktop] = useState(false);
+  const [showUninstallModal, setShowUninstallModal] = useState(false);
 
   const { data: device, isLoading } = useQuery<Device>({
     queryKey: ['device', id],
@@ -178,6 +180,18 @@ export function DeviceDetail() {
     },
     onError: () => {
       toast.error('Failed to execute command');
+    },
+  });
+
+  const uninstallAgentMutation = useMutation({
+    mutationFn: () => api.uninstallAgent(id!),
+    onSuccess: () => {
+      toast.success('Uninstall command sent to agent');
+      setShowUninstallModal(false);
+      queryClient.invalidateQueries({ queryKey: ['device', id] });
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Failed to uninstall agent');
     },
   });
 
@@ -431,6 +445,15 @@ export function DeviceDetail() {
               >
                 <Play className="w-4 h-4 mr-2" />
                 Run Command
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => setShowUninstallModal(true)}
+                disabled={!isOnline}
+                className="bg-red-900/50 border-none hover:bg-red-800/50 text-red-400 hover:text-red-300"
+              >
+                <Trash2 className="w-4 h-4 mr-2" />
+                Uninstall Agent
               </Button>
             </div>
 
@@ -788,6 +811,44 @@ export function DeviceDetail() {
               isLoading={executeCommandMutation.isPending}
             >
               Execute
+            </Button>
+          </div>
+        </div>
+</Modal>
+      <Modal
+        isOpen={showUninstallModal}
+        onClose={() => setShowUninstallModal(false)}
+        title="Uninstall Agent"
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="bg-red-900/20 border border-red-900/50 rounded-lg p-4">
+            <p className="text-red-400 font-medium mb-2">Warning: This action cannot be undone</p>
+            <p className="text-sm text-gray-400">
+              This will permanently uninstall the Sentinel agent from{' '}
+              <strong className="text-white">{device.displayName || device.hostname}</strong>.
+              The agent service will be stopped and removed from the system.
+            </p>
+          </div>
+          <p className="text-sm text-gray-400">
+            After uninstallation, this device will no longer be monitored and you will need to
+            manually reinstall the agent to reconnect it.
+          </p>
+          <div className="flex gap-3 justify-end">
+            <Button
+              variant="secondary"
+              onClick={() => setShowUninstallModal(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => uninstallAgentMutation.mutate()}
+              disabled={uninstallAgentMutation.isPending}
+              isLoading={uninstallAgentMutation.isPending}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              Uninstall Agent
             </Button>
           </div>
         </div>

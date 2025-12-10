@@ -1,6 +1,6 @@
 {
   "name": "sentinel",
-  "version": "1.11.0",
+  "version": "1.16.0",
   "description": "Sentinel - Remote Monitoring and Management",
   "main": "dist/main/main.js",
   "author": "Sentinel",
@@ -63,21 +63,21 @@
     "appId": "com.sentinel.rmm",
     "productName": "Sentinel",
     "directories": {
-      "output": "release"
+      "output": "release/app"
     },
     "files": [
       "dist/**/*",
-      "downloads/**/*",
       "node_modules/**/*",
       "package.json"
     ],
     "extraResources": [
       {
-        "from": "downloads/",
-        "to": "downloads/",
+        "from": "release/agent/",
+        "to": "agent/",
         "filter": [
           "sentinel-agent*",
-          "sentinel-watchdog*"
+          "sentinel-watchdog*",
+          "version.json"
         ]
       },
       {

@@ -28,10 +28,9 @@ import (
 	"github.com/sentinel/agent/internal/updater"
 )
 
-const (
-	Version     = "1.9.0"
-	ServiceName = "SentinelAgent"
-)
+var Version = "1.12.0"
+
+const ServiceName = "SentinelAgent"
 
 var (
 	serverURL   = flag.String("server", "", "Sentinel server URL (e.g., http://192.168.1.100:8080)")
@@ -370,6 +369,7 @@ func (a *Agent) registerHandlers() {
 	a.client.RegisterHandler(client.MsgTypeStopRemote, a.handleStopRemote)
 	a.client.RegisterHandler(client.MsgTypeRemoteInput, a.handleRemoteInput)
 	a.client.RegisterHandler(client.MsgTypeCollectDiagnostics, a.handleCollectDiagnostics)
+	a.client.RegisterHandler(client.MsgTypeUninstallAgent, a.handleUninstallAgent)
 }
 
 func (a *Agent) onConnect() {
@@ -811,4 +811,60 @@ func (a *Agent) handleCollectDiagnostics(msg *client.Message) error {
 		len(result.SystemErrors), len(result.ApplicationLogs), len(result.ActivePrograms))
 
 	return a.client.SendResponse(msg.RequestID, true, result, "")
+}
+
+// handleUninstallAgent handles remote uninstall requests
+func (a *Agent) handleUninstallAgent(msg *client.Message) error {
+	// Server sends data in Payload field
+	data, ok := msg.Payload.(map[string]interface{})
+	if !ok {
+		return a.client.SendResponse(msg.RequestID, false, nil, "Invalid message data")
+	}
+
+	// Extract the uninstall token from the message
+	uninstallToken, _ := data["uninstallToken"].(string)
+	deviceID, _ := data["deviceId"].(string)
+
+	log.Printf("Received remote uninstall request for device %s", deviceID)
+
+	// Send acknowledgment before starting uninstall
+	if err := a.client.SendResponse(msg.RequestID, true, map[string]interface{}{
+		"status": "uninstalling",
+	}, ""); err != nil {
+		log.Printf("Failed to send uninstall acknowledgment: %v", err)
+	}
+
+	// Perform uninstall in a goroutine so we can respond first
+	go func() {
+		// Small delay to ensure response is sent
+		time.Sleep(2 * time.Second)
+
+		log.Println("Starting agent uninstall process...")
+
+		// Call the service uninstall with token
+		err := svc.UninstallWithToken(a.cfg.ServerURL, deviceID, uninstallToken)
+		if err != nil {
+			log.Printf("Uninstall error: %v", err)
+			// Try to send error notification if still connected
+			a.client.SendJSON(map[string]interface{}{
+				"type": "error",
+				"data": map[string]interface{}{
+					"message": fmt.Sprintf("Uninstall failed: %v", err),
+				},
+			})
+		} else {
+			log.Println("Agent uninstalled successfully, exiting...")
+		}
+
+		// Stop the agent
+		a.cancel()
+
+		// Give time for cleanup
+		time.Sleep(1 * time.Second)
+
+		// Exit the process
+		os.Exit(0)
+	}()
+
+	return nil
 }
