@@ -32,6 +32,7 @@ interface PendingRequest {
 export class AgentManager {
   private connections: Map<string, AgentConnection> = new Map();
   private terminalSessions: Map<string, TerminalSession> = new Map();
+  private dashboardSessions: Map<string, WebSocket> = new Map();
   private remoteSessions: Map<string, RemoteSession> = new Map();
   private pendingRequests: Map<string, PendingRequest> = new Map();
   private database: Database;
@@ -87,7 +88,7 @@ export class AgentManager {
     return this.connections.has(agentId);
   }
 
-  private sendToAgent(agentId: string, message: any): boolean {
+  sendToAgent(agentId: string, message: any): boolean {
     const conn = this.connections.get(agentId);
     if (conn && conn.ws.readyState === WebSocket.OPEN) {
       conn.ws.send(JSON.stringify(message));
@@ -194,7 +195,28 @@ export class AgentManager {
     }
   }
 
+  registerDashboardSession(sessionId: string, ws: WebSocket): void {
+    this.dashboardSessions.set(sessionId, ws);
+    console.log('Registered dashboard session:', sessionId);
+  }
+
+  unregisterDashboardSession(sessionId: string): void {
+    this.dashboardSessions.delete(sessionId);
+    console.log('Unregistered dashboard session:', sessionId);
+  }
+
   private handleTerminalOutput(message: any): void {
+    const dashboardWs = this.dashboardSessions.get(message.sessionId);
+    if (dashboardWs && dashboardWs.readyState === 1) {
+      dashboardWs.send(JSON.stringify({
+        type: 'terminal_output',
+        payload: {
+          sessionId: message.sessionId,
+          data: message.data,
+        }
+      }));
+    }
+    // Also notify renderer via IPC for backward compatibility
     this.notifyRenderer('terminal:data', {
       sessionId: message.sessionId,
       data: message.data,

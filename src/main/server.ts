@@ -457,8 +457,9 @@ private setupWebSocket(): void {
     this.server.on('upgrade', (request, socket, head) => {
       const pathname = new URL(request.url || '', `http://${request.headers.host}`).pathname;
 
-      // Accept both /ws and /ws/agent paths for agent connections
-      if (pathname === '/ws' || pathname === '/ws/agent') {
+      // Accept /ws, /ws/agent for agents, and /ws/dashboard for dashboard
+      const isDashboard = pathname === '/ws/dashboard';
+      if (pathname === '/ws' || pathname === '/ws/agent' || isDashboard) {
         this.wss!.handleUpgrade(request, socket, head, (ws) => {
           this.wss!.emit('connection', ws, request);
         });
@@ -468,14 +469,27 @@ private setupWebSocket(): void {
     });
 
     this.wss.on('connection', (ws: WebSocket, req) => {
-      console.log('New WebSocket connection from path:', req.url);
+      const url = new URL(req.url || '', `http://${req.headers.host}`);
+      const pathname = url.pathname;
+      const isDashboardConnection = pathname === '/ws/dashboard';
+
+      console.log('New WebSocket connection from path:', req.url, 'isDashboard:', isDashboardConnection);
 
       let agentId: string | null = null;
-      let authenticated = false;
+      let authenticated = isDashboardConnection; // Dashboard connections are authenticated via token in URL
+
+      // For dashboard connections, store the ws for sending responses
+      let dashboardWs: WebSocket | null = isDashboardConnection ? ws : null;
 
       ws.on('message', async (data: Buffer) => {
         try {
           const message = JSON.parse(data.toString());
+
+          // Handle dashboard messages
+          if (isDashboardConnection) {
+            await this.handleDashboardMessage(message, ws);
+            return;
+          }
 
           // Handle authentication - support both direct fields and payload format
           if (message.type === 'auth') {
@@ -554,6 +568,92 @@ private setupWebSocket(): void {
         timestamp: new Date().toISOString(),
       }));
     });
+  }
+
+  private async handleDashboardMessage(message: any, ws: WebSocket): Promise<void> {
+    console.log('Dashboard message received:', message.type, message.payload);
+
+    try {
+      switch (message.type) {
+        case 'start_terminal': {
+          const { deviceId, agentId, sessionId, cols, rows } = message.payload || {};
+          console.log('Starting terminal for device:', deviceId, 'agent:', agentId);
+
+          // Check if agent is connected
+          if (!this.agentManager.isAgentConnected(agentId)) {
+            console.log('Agent not connected:', agentId);
+            ws.send(JSON.stringify({
+              type: 'error',
+              payload: { error: 'Agent not connected', sessionId }
+            }));
+            return;
+          }
+
+          // Forward to agent
+          this.agentManager.sendToAgent(agentId, {
+            type: 'start_terminal',
+            sessionId,
+            cols,
+            rows,
+          });
+
+          // Register this dashboard ws for terminal output
+          this.agentManager.registerDashboardSession(sessionId, ws);
+
+          ws.send(JSON.stringify({
+            type: 'terminal_started',
+            payload: { sessionId }
+          }));
+          break;
+        }
+
+        case 'terminal_input': {
+          const { agentId, sessionId, data } = message.payload || {};
+          if (this.agentManager.isAgentConnected(agentId)) {
+            this.agentManager.sendToAgent(agentId, {
+              type: 'terminal_input',
+              sessionId,
+              data,
+            });
+          }
+          break;
+        }
+
+        case 'terminal_resize': {
+          const { agentId, sessionId, cols, rows } = message.payload || {};
+          if (this.agentManager.isAgentConnected(agentId)) {
+            this.agentManager.sendToAgent(agentId, {
+              type: 'terminal_resize',
+              sessionId,
+              cols,
+              rows,
+            });
+          }
+          break;
+        }
+
+        case 'close_terminal': {
+          const { agentId, sessionId } = message.payload || {};
+          this.agentManager.unregisterDashboardSession(sessionId);
+          if (this.agentManager.isAgentConnected(agentId)) {
+            this.agentManager.sendToAgent(agentId, {
+              type: 'close_terminal',
+              sessionId,
+            });
+          }
+          break;
+        }
+
+        default:
+          console.log('Unknown dashboard message type:', message.type);
+      }
+    } catch (error) {
+      console.error('Error handling dashboard message:', error);
+      ws.send(JSON.stringify({
+        type: 'error',
+        payload: { error: String(error) }
+      }));
+    }
   }
 
   private getLocalIpAddress(): string {
