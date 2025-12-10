@@ -350,6 +350,59 @@ function setupIpcHandlers(): void {
     return agentManager.executeScript(scriptId, deviceIds);
   });
 
+  // Tickets
+  ipcMain.handle('tickets:list', async (_, filters?: { status?: string; priority?: string; assignedTo?: string; deviceId?: string }) => {
+    return database.getTickets(filters);
+  });
+
+  ipcMain.handle('tickets:get', async (_, id: string) => {
+    return database.getTicket(id);
+  });
+
+  ipcMain.handle('tickets:create', async (_, ticket: any) => {
+    return database.createTicket(ticket);
+  });
+
+  ipcMain.handle('tickets:update', async (_, id: string, updates: any) => {
+    return database.updateTicket(id, updates);
+  });
+
+  ipcMain.handle('tickets:delete', async (_, id: string) => {
+    return database.deleteTicket(id);
+  });
+
+  ipcMain.handle('tickets:getComments', async (_, ticketId: string) => {
+    return database.getTicketComments(ticketId);
+  });
+
+  ipcMain.handle('tickets:addComment', async (_, comment: any) => {
+    return database.createTicketComment(comment);
+  });
+
+  ipcMain.handle('tickets:getActivity', async (_, ticketId: string) => {
+    return database.getTicketActivity(ticketId);
+  });
+
+  ipcMain.handle('tickets:getStats', async () => {
+    return database.getTicketStats();
+  });
+
+  ipcMain.handle('tickets:getTemplates', async () => {
+    return database.getTicketTemplates();
+  });
+
+  ipcMain.handle('tickets:createTemplate', async (_, template: any) => {
+    return database.createTicketTemplate(template);
+  });
+
+  ipcMain.handle('tickets:updateTemplate', async (_, id: string, template: any) => {
+    return database.updateTicketTemplate(id, template);
+  });
+
+  ipcMain.handle('tickets:deleteTemplate', async (_, id: string) => {
+    return database.deleteTicketTemplate(id);
+  });
+
   // Settings
   ipcMain.handle('settings:get', async () => {
     return database.getSettings();

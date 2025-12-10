@@ -7,15 +7,18 @@ import { DeviceDetail } from './pages/DeviceDetail';
 import { Alerts } from './pages/Alerts';
 import { Scripts } from './pages/Scripts';
 import { Settings } from './pages/Settings';
+import { Tickets } from './pages/Tickets';
+import { TicketDetail } from './pages/TicketDetail';
 import { useDeviceStore } from './stores/deviceStore';
 import { useAlertStore } from './stores/alertStore';
 import { UpdateNotification } from './components/UpdateNotification';
 
-type Page = 'dashboard' | 'devices' | 'device-detail' | 'alerts' | 'scripts' | 'settings';
+type Page = 'dashboard' | 'devices' | 'device-detail' | 'alerts' | 'scripts' | 'settings' | 'tickets' | 'ticket-detail';
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('dashboard');
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
+  const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const { fetchDevices, subscribeToUpdates } = useDeviceStore();
   const { fetchAlerts, subscribeToAlerts } = useAlertStore();
 
@@ -39,6 +42,9 @@ function App() {
     if (page !== 'device-detail') {
       setSelectedDeviceId(null);
     }
+    if (page !== 'ticket-detail') {
+      setSelectedTicketId(null);
+    }
   };
 
   const handleDeviceSelect = (deviceId: string) => {
@@ -49,6 +55,16 @@ function App() {
   const handleBackToDevices = () => {
     setSelectedDeviceId(null);
     setCurrentPage('devices');
+  };
+
+  const handleTicketSelect = (ticketId: string) => {
+    setSelectedTicketId(ticketId);
+    setCurrentPage('ticket-detail');
+  };
+
+  const handleBackToTickets = () => {
+    setSelectedTicketId(null);
+    setCurrentPage('tickets');
   };
 
   const renderPage = () => {
@@ -69,6 +85,14 @@ function App() {
         return <Scripts />;
       case 'settings':
         return <Settings />;
+      case 'tickets':
+        return <Tickets onTicketSelect={handleTicketSelect} />;
+      case 'ticket-detail':
+        return selectedTicketId ? (
+          <TicketDetail ticketId={selectedTicketId} onBack={handleBackToTickets} />
+        ) : (
+          <Tickets onTicketSelect={handleTicketSelect} />
+        );
       default:
         return <Dashboard onDeviceSelect={handleDeviceSelect} />;
     }

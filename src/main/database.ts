@@ -669,6 +669,314 @@ export class Database {
     return result.rows[0]?.value || null;
   }
 
+
+  // Ticket methods
+  async getTickets(filters?: { status?: string; priority?: string; assignedTo?: string; deviceId?: string }): Promise<any[]> {
+    let sql = `
+      SELECT
+        t.id, t.ticket_number as "ticketNumber", t.subject, t.description,
+        t.status, t.priority, t.type, t.device_id as "deviceId",
+        d.hostname as "deviceName", d.display_name as "deviceDisplayName",
+        t.requester_name as "requesterName", t.requester_email as "requesterEmail",
+        t.assigned_to as "assignedTo", t.tags, t.due_date as "dueDate",
+        t.resolved_at as "resolvedAt", t.closed_at as "closedAt",
+        t.created_at as "createdAt", t.updated_at as "updatedAt"
+      FROM tickets t
+      LEFT JOIN devices d ON t.device_id = d.id
+      WHERE 1=1
+    `;
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    if (filters?.status) {
+      sql += ` AND t.status = ${paramIndex++}`;
+      values.push(filters.status);
+    }
+    if (filters?.priority) {
+      sql += ` AND t.priority = ${paramIndex++}`;
+      values.push(filters.priority);
+    }
+    if (filters?.assignedTo) {
+      sql += ` AND t.assigned_to = ${paramIndex++}`;
+      values.push(filters.assignedTo);
+    }
+    if (filters?.deviceId) {
+      sql += ` AND t.device_id = ${paramIndex++}`;
+      values.push(filters.deviceId);
+    }
+
+    sql += ' ORDER BY t.created_at DESC';
+    const result = await this.query(sql, values);
+    return result.rows;
+  }
+
+  async getTicket(id: string): Promise<any | null> {
+    const result = await this.query(
+      `
+      SELECT
+        t.id, t.ticket_number as "ticketNumber", t.subject, t.description,
+        t.status, t.priority, t.type, t.device_id as "deviceId",
+        d.hostname as "deviceName", d.display_name as "deviceDisplayName",
+        t.requester_name as "requesterName", t.requester_email as "requesterEmail",
+        t.assigned_to as "assignedTo", t.tags, t.due_date as "dueDate",
+        t.resolved_at as "resolvedAt", t.closed_at as "closedAt",
+        t.created_at as "createdAt", t.updated_at as "updatedAt"
+      FROM tickets t
+      LEFT JOIN devices d ON t.device_id = d.id
+      WHERE t.id = $1
+    `,
+      [id]
+    );
+    return result.rows[0] || null;
+  }
+
+  async createTicket(ticket: any): Promise<any> {
+    const id = uuidv4();
+    await this.query(
+      `
+      INSERT INTO tickets (
+        id, subject, description, status, priority, type, device_id,
+        requester_name, requester_email, assigned_to, tags, due_date
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    `,
+      [
+        id,
+        ticket.subject,
+        ticket.description,
+        ticket.status || 'open',
+        ticket.priority || 'medium',
+        ticket.type || 'incident',
+        ticket.deviceId || null,
+        ticket.requesterName,
+        ticket.requesterEmail,
+        ticket.assignedTo,
+        JSON.stringify(ticket.tags || []),
+        ticket.dueDate || null,
+      ]
+    );
+
+    // Log activity
+    await this.createTicketActivity(id, 'created', null, null, null, ticket.requesterName || 'System');
+
+    return this.getTicket(id);
+  }
+
+  async updateTicket(id: string, updates: any): Promise<any> {
+    const currentTicket = await this.getTicket(id);
+    if (!currentTicket) return null;
+
+    const fields: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    const fieldMap: { [key: string]: string } = {
+      subject: 'subject',
+      description: 'description',
+      status: 'status',
+      priority: 'priority',
+      type: 'type',
+      deviceId: 'device_id',
+      requesterName: 'requester_name',
+      requesterEmail: 'requester_email',
+      assignedTo: 'assigned_to',
+      dueDate: 'due_date',
+    };
+
+    for (const [jsField, dbField] of Object.entries(fieldMap)) {
+      if (updates[jsField] !== undefined) {
+        fields.push(`${dbField} = ${paramIndex++}`);
+        values.push(updates[jsField]);
+
+        // Log activity for important field changes
+        if (['status', 'priority', 'assignedTo'].includes(jsField)) {
+          const oldVal = currentTicket[jsField];
+          const newVal = updates[jsField];
+          if (oldVal !== newVal) {
+            await this.createTicketActivity(id, 'field_changed', jsField, oldVal, newVal, updates.actorName || 'System');
+          }
+        }
+      }
+    }
+
+    if (updates.tags !== undefined) {
+      fields.push(`tags = ${paramIndex++}`);
+      values.push(JSON.stringify(updates.tags));
+    }
+
+    // Handle status changes
+    if (updates.status === 'resolved' && currentTicket.status !== 'resolved') {
+      fields.push(`resolved_at = CURRENT_TIMESTAMP`);
+    }
+    if (updates.status === 'closed' && currentTicket.status !== 'closed') {
+      fields.push(`closed_at = CURRENT_TIMESTAMP`);
+    }
+
+    if (fields.length > 0) {
+      values.push(id);
+      await this.query(
+        `UPDATE tickets SET ${fields.join(', ')} WHERE id = ${paramIndex}`,
+        values
+      );
+    }
+    return this.getTicket(id);
+  }
+
+  async deleteTicket(id: string): Promise<void> {
+    await this.query('DELETE FROM tickets WHERE id = $1', [id]);
+  }
+
+  // Ticket comments
+  async getTicketComments(ticketId: string): Promise<any[]> {
+    const result = await this.query(
+      `
+      SELECT
+        id, ticket_id as "ticketId", content, is_internal as "isInternal",
+        author_name as "authorName", author_email as "authorEmail",
+        attachments, created_at as "createdAt"
+      FROM ticket_comments
+      WHERE ticket_id = $1
+      ORDER BY created_at ASC
+    `,
+      [ticketId]
+    );
+    return result.rows;
+  }
+
+  async createTicketComment(comment: any): Promise<any> {
+    const id = uuidv4();
+    await this.query(
+      `
+      INSERT INTO ticket_comments (id, ticket_id, content, is_internal, author_name, author_email, attachments)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `,
+      [
+        id,
+        comment.ticketId,
+        comment.content,
+        comment.isInternal || false,
+        comment.authorName,
+        comment.authorEmail,
+        JSON.stringify(comment.attachments || []),
+      ]
+    );
+
+    // Log activity
+    await this.createTicketActivity(
+      comment.ticketId,
+      comment.isInternal ? 'internal_note_added' : 'comment_added',
+      null, null, null,
+      comment.authorName
+    );
+
+    const result = await this.query('SELECT id, ticket_id as "ticketId", content, is_internal as "isInternal", author_name as "authorName", author_email as "authorEmail", attachments, created_at as "createdAt" FROM ticket_comments WHERE id = $1', [id]);
+    return result.rows[0];
+  }
+
+  // Ticket activity
+  async getTicketActivity(ticketId: string): Promise<any[]> {
+    const result = await this.query(
+      `
+      SELECT
+        id, ticket_id as "ticketId", action, field_name as "fieldName",
+        old_value as "oldValue", new_value as "newValue",
+        actor_name as "actorName", created_at as "createdAt"
+      FROM ticket_activity
+      WHERE ticket_id = $1
+      ORDER BY created_at DESC
+    `,
+      [ticketId]
+    );
+    return result.rows;
+  }
+
+  async createTicketActivity(
+    ticketId: string,
+    action: string,
+    fieldName: string | null,
+    oldValue: string | null,
+    newValue: string | null,
+    actorName: string
+  ): Promise<void> {
+    const id = uuidv4();
+    await this.query(
+      `INSERT INTO ticket_activity (id, ticket_id, action, field_name, old_value, new_value, actor_name) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [id, ticketId, action, fieldName, oldValue, newValue, actorName]
+    );
+  }
+
+  // Ticket templates
+  async getTicketTemplates(): Promise<any[]> {
+    const result = await this.query(`
+      SELECT id, name, subject, content, is_active as "isActive", created_at as "createdAt", updated_at as "updatedAt"
+      FROM ticket_templates
+      WHERE is_active = TRUE
+      ORDER BY name
+    `);
+    return result.rows;
+  }
+
+  async createTicketTemplate(template: any): Promise<any> {
+    const id = uuidv4();
+    await this.query(
+      `INSERT INTO ticket_templates (id, name, subject, content) VALUES ($1, $2, $3, $4)`,
+      [id, template.name, template.subject, template.content]
+    );
+    const result = await this.query('SELECT id, name, subject, content, is_active as "isActive", created_at as "createdAt", updated_at as "updatedAt" FROM ticket_templates WHERE id = $1', [id]);
+    return result.rows[0];
+  }
+
+  async updateTicketTemplate(id: string, template: any): Promise<any> {
+    const updates: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    if (template.name !== undefined) {
+      updates.push(`name = ${paramIndex++}`);
+      values.push(template.name);
+    }
+    if (template.subject !== undefined) {
+      updates.push(`subject = ${paramIndex++}`);
+      values.push(template.subject);
+    }
+    if (template.content !== undefined) {
+      updates.push(`content = ${paramIndex++}`);
+      values.push(template.content);
+    }
+    if (template.isActive !== undefined) {
+      updates.push(`is_active = ${paramIndex++}`);
+      values.push(template.isActive);
+    }
+
+    if (updates.length > 0) {
+      values.push(id);
+      await this.query(
+        `UPDATE ticket_templates SET ${updates.join(', ')} WHERE id = ${paramIndex}`,
+        values
+      );
+    }
+    const result = await this.query('SELECT id, name, subject, content, is_active as "isActive", created_at as "createdAt", updated_at as "updatedAt" FROM ticket_templates WHERE id = $1', [id]);
+    return result.rows[0];
+  }
+
+  async deleteTicketTemplate(id: string): Promise<void> {
+    await this.query('DELETE FROM ticket_templates WHERE id = $1', [id]);
+  }
+
+  // Get ticket counts for dashboard
+  async getTicketStats(): Promise<any> {
+    const result = await this.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'open') as "openCount",
+        COUNT(*) FILTER (WHERE status = 'in_progress') as "inProgressCount",
+        COUNT(*) FILTER (WHERE status = 'waiting') as "waitingCount",
+        COUNT(*) FILTER (WHERE status = 'resolved') as "resolvedCount",
+        COUNT(*) FILTER (WHERE status = 'closed') as "closedCount",
+        COUNT(*) as "totalCount"
+      FROM tickets
+    `);
+    return result.rows[0];
+  }
+
   async close(): Promise<void> {
     if (this.pool) {
       await this.pool.end();

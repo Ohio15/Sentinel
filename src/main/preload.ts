@@ -94,6 +94,31 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('scripts:execute', scriptId, deviceIds),
   },
 
+  // Tickets
+  tickets: {
+    list: (filters?: { status?: string; priority?: string; assignedTo?: string; deviceId?: string }) =>
+      ipcRenderer.invoke('tickets:list', filters),
+    get: (id: string) => ipcRenderer.invoke('tickets:get', id),
+    create: (ticket: any) => ipcRenderer.invoke('tickets:create', ticket),
+    update: (id: string, updates: any) =>
+      ipcRenderer.invoke('tickets:update', id, updates),
+    delete: (id: string) => ipcRenderer.invoke('tickets:delete', id),
+    getComments: (ticketId: string) =>
+      ipcRenderer.invoke('tickets:getComments', ticketId),
+    addComment: (comment: any) =>
+      ipcRenderer.invoke('tickets:addComment', comment),
+    getActivity: (ticketId: string) =>
+      ipcRenderer.invoke('tickets:getActivity', ticketId),
+    getStats: () => ipcRenderer.invoke('tickets:getStats'),
+    getTemplates: () => ipcRenderer.invoke('tickets:getTemplates'),
+    createTemplate: (template: any) =>
+      ipcRenderer.invoke('tickets:createTemplate', template),
+    updateTemplate: (id: string, template: any) =>
+      ipcRenderer.invoke('tickets:updateTemplate', id, template),
+    deleteTemplate: (id: string) =>
+      ipcRenderer.invoke('tickets:deleteTemplate', id),
+  },
+
   // Settings
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
@@ -159,6 +184,7 @@ contextBridge.exposeInMainWorld('api', {
       'files:progress',
       'remote:frame',
       'command:output',
+      'tickets:updated',
     ];
     if (validChannels.includes(channel)) {
       const handler = (_: any, ...args: any[]) => callback(...args);
@@ -217,6 +243,21 @@ export interface ElectronAPI {
     update: (id: string, script: Partial<Script>) => Promise<Script>;
     delete: (id: string) => Promise<void>;
     execute: (scriptId: string, deviceIds: string[]) => Promise<void>;
+  };
+  tickets: {
+    list: (filters?: TicketFilters) => Promise<Ticket[]>;
+    get: (id: string) => Promise<Ticket | null>;
+    create: (ticket: Omit<Ticket, 'id' | 'ticketNumber' | 'createdAt' | 'updatedAt'>) => Promise<Ticket>;
+    update: (id: string, updates: Partial<Ticket> & { actorName?: string }) => Promise<Ticket>;
+    delete: (id: string) => Promise<void>;
+    getComments: (ticketId: string) => Promise<TicketComment[]>;
+    addComment: (comment: Omit<TicketComment, 'id' | 'createdAt'>) => Promise<TicketComment>;
+    getActivity: (ticketId: string) => Promise<TicketActivity[]>;
+    getStats: () => Promise<TicketStats>;
+    getTemplates: () => Promise<TicketTemplate[]>;
+    createTemplate: (template: Omit<TicketTemplate, 'id' | 'createdAt' | 'updatedAt'>) => Promise<TicketTemplate>;
+    updateTemplate: (id: string, template: Partial<TicketTemplate>) => Promise<TicketTemplate>;
+    deleteTemplate: (id: string) => Promise<void>;
   };
   settings: {
     get: () => Promise<Settings>;
@@ -391,6 +432,77 @@ interface ServerInfo {
   port: number;
   agentCount: number;
   enrollmentToken: string;
+}
+
+// Ticket types
+interface Ticket {
+  id: string;
+  ticketNumber: number;
+  subject: string;
+  description?: string;
+  status: 'open' | 'in_progress' | 'waiting' | 'resolved' | 'closed';
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  type: 'incident' | 'request' | 'problem' | 'change';
+  deviceId?: string;
+  deviceName?: string;
+  deviceDisplayName?: string;
+  requesterName?: string;
+  requesterEmail?: string;
+  assignedTo?: string;
+  tags: string[];
+  dueDate?: string;
+  resolvedAt?: string;
+  closedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface TicketFilters {
+  status?: string;
+  priority?: string;
+  assignedTo?: string;
+  deviceId?: string;
+}
+
+interface TicketComment {
+  id: string;
+  ticketId: string;
+  content: string;
+  isInternal: boolean;
+  authorName: string;
+  authorEmail?: string;
+  attachments: string[];
+  createdAt: string;
+}
+
+interface TicketActivity {
+  id: string;
+  ticketId: string;
+  action: string;
+  fieldName?: string;
+  oldValue?: string;
+  newValue?: string;
+  actorName: string;
+  createdAt: string;
+}
+
+interface TicketTemplate {
+  id: string;
+  name: string;
+  subject?: string;
+  content: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface TicketStats {
+  openCount: number;
+  inProgressCount: number;
+  waitingCount: number;
+  resolvedCount: number;
+  closedCount: number;
+  totalCount: number;
 }
 
 declare global {
