@@ -1,76 +1,69 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
   <defs>
     <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#1f1f1f"/>
-      <stop offset="100%" style="stop-color:#0f0f0f"/>
+      <stop offset="0%" style="stop-color:#1a1a1a"/>
+      <stop offset="100%" style="stop-color:#0d0d0d"/>
     </linearGradient>
   </defs>
 
   <!-- Background -->
   <rect width="256" height="256" fill="url(#bgGrad)"/>
 
-  <!-- Outer shield outline -->
-  <path d="M128 18 L215 52 L215 142 C215 192 176 228 128 245 C80 228 41 192 41 142 L41 52 Z"
-        fill="none" stroke="#7a6b5a" stroke-width="5"/>
+  <!-- Shield shape - pointed bottom -->
+  <path d="M128 20 L210 50 L210 130 C210 180 175 220 128 240 C81 220 46 180 46 130 L46 50 Z"
+        fill="none" stroke="#8b7355" stroke-width="4"/>
 
-  <!-- Inner shield outline -->
-  <path d="M128 30 L203 60 L203 138 C203 183 169 214 128 230 C87 214 53 183 53 138 L53 60 Z"
-        fill="none" stroke="#7a6b5a" stroke-width="3"/>
+  <!-- Inner shield line -->
+  <path d="M128 32 L198 58 L198 128 C198 172 168 206 128 224 C88 206 58 172 58 128 L58 58 Z"
+        fill="none" stroke="#8b7355" stroke-width="2.5"/>
 
-  <!-- Eagle body and head -->
-  <g fill="#7a6b5a">
-    <!-- Eagle head looking right -->
-    <ellipse cx="128" cy="62" rx="18" ry="14"/>
-    <!-- Beak -->
-    <path d="M146 60 L168 68 L146 68 Z"/>
+  <!-- Eagle head - facing right -->
+  <g fill="#8b7355">
+    <!-- Head -->
+    <ellipse cx="128" cy="58" rx="16" ry="12"/>
+    <!-- Beak pointing right -->
+    <path d="M144 56 L162 62 L144 64 Z"/>
     <!-- Eye -->
-    <circle cx="138" cy="60" r="3" fill="#0f0f0f"/>
-    <!-- Neck/body connection -->
-    <path d="M115 72 L141 72 L138 85 L118 85 Z"/>
+    <circle cx="136" cy="56" r="2.5" fill="#0d0d0d"/>
   </g>
 
-  <!-- Wings - Left side feathers -->
-  <g fill="#7a6b5a">
-    <polygon points="55,82 100,72 100,82 60,95"/>
-    <polygon points="58,95 100,82 100,92 62,108"/>
-    <polygon points="62,108 100,92 100,102 66,120"/>
-    <polygon points="66,120 100,102 100,112 70,132"/>
-    <polygon points="70,132 100,112 100,125 75,145"/>
-    <polygon points="75,145 100,125 105,155 82,158"/>
+  <!-- Eagle body/chest -->
+  <path d="M112 68 L144 68 L140 95 L116 95 Z" fill="#8b7355"/>
+
+  <!-- Left wing - horizontal spread -->
+  <g fill="#8b7355">
+    <polygon points="50,72 108,65 108,75 55,85"/>
+    <polygon points="52,85 108,75 108,85 54,98"/>
+    <polygon points="54,98 108,85 108,95 56,112"/>
+    <polygon points="56,112 108,95 108,108 60,128"/>
+    <polygon points="60,128 108,108 112,140 70,145"/>
   </g>
 
-  <!-- Wings - Right side feathers -->
-  <g fill="#7a6b5a">
-    <polygon points="201,82 156,72 156,82 196,95"/>
-    <polygon points="198,95 156,82 156,92 194,108"/>
-    <polygon points="194,108 156,92 156,102 190,120"/>
-    <polygon points="190,120 156,102 156,112 186,132"/>
-    <polygon points="186,132 156,112 156,125 181,145"/>
-    <polygon points="181,145 156,125 151,155 174,158"/>
+  <!-- Right wing - horizontal spread -->
+  <g fill="#8b7355">
+    <polygon points="206,72 148,65 148,75 201,85"/>
+    <polygon points="204,85 148,75 148,85 202,98"/>
+    <polygon points="202,98 148,85 148,95 200,112"/>
+    <polygon points="200,112 148,95 148,108 196,128"/>
+    <polygon points="196,128 148,108 144,140 186,145"/>
   </g>
 
-  <!-- Wing inner body panels -->
-  <g fill="#7a6b5a">
-    <polygon points="100,72 118,82 118,158 105,158"/>
-    <polygon points="156,72 138,82 138,158 151,158"/>
+  <!-- Star - centered on chest -->
+  <polygon fill="#8b7355"
+    points="128,100 133,114 148,114 136,123 140,138 128,129 116,138 120,123 108,114 123,114"/>
+
+  <!-- Chevrons / Stripes - 3 rows -->
+  <g fill="#8b7355">
+    <polygon points="85,160 128,180 171,160 171,168 128,188 85,168"/>
+    <polygon points="85,175 128,195 171,175 171,183 128,203 85,183"/>
+    <polygon points="85,190 128,210 171,190 171,198 128,218 85,198"/>
   </g>
 
-  <!-- Star -->
-  <polygon fill="#7a6b5a"
-    points="128,95 134,112 152,112 138,123 143,140 128,130 113,140 118,123 104,112 122,112"/>
-
-  <!-- Chevrons / Stripes -->
-  <g fill="#7a6b5a">
-    <polygon points="88,168 128,188 168,168 168,176 128,196 88,176"/>
-    <polygon points="88,182 128,202 168,182 168,190 128,210 88,190"/>
-    <polygon points="88,196 128,216 168,196 168,204 128,224 88,204"/>
-  </g>
-
-  <!-- Talons -->
-  <g fill="#7a6b5a">
-    <path d="M105,158 L100,172 L95,168 L105,158 Z"/>
-    <path d="M115,158 L115,172 L108,168 L115,158 Z"/>
-    <path d="M151,158 L156,172 L161,168 L151,158 Z"/>
-    <path d="M141,158 L141,172 L148,168 L141,158 Z"/>
+  <!-- Talons/feet -->
+  <g fill="#8b7355">
+    <path d="M108,140 L102,158 L96,152 Z"/>
+    <path d="M118,140 L118,158 L110,152 Z"/>
+    <path d="M148,140 L154,158 L160,152 Z"/>
+    <path d="M138,140 L138,158 L146,152 Z"/>
   </g>
 </svg>
