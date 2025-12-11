@@ -18,13 +18,14 @@ import (
 	"github.com/sentinel/agent/internal/client"
 	"github.com/sentinel/agent/internal/collector"
 	"github.com/sentinel/agent/internal/config"
+	"github.com/sentinel/agent/internal/diagnostics"
 	"github.com/sentinel/agent/internal/executor"
 	"github.com/sentinel/agent/internal/filetransfer"
+	"github.com/sentinel/agent/internal/ipc"
 	"github.com/sentinel/agent/internal/protection"
 	"github.com/sentinel/agent/internal/remote"
 	svc "github.com/sentinel/agent/internal/service"
 	"github.com/sentinel/agent/internal/terminal"
-	"github.com/sentinel/agent/internal/diagnostics"
 	"github.com/sentinel/agent/internal/updater"
 )
 
@@ -300,6 +301,13 @@ func (a *Agent) Start() error {
 	log.Printf("Agent ID: %s", a.cfg.AgentID)
 	log.Printf("Server: %s", a.cfg.ServerURL)
 
+	// Write agent info for watchdog to verify updates
+	a.writeAgentInfo()
+
+	// Check for and report any completed update result
+	a.updater.SetDeviceID(a.cfg.DeviceID)
+	a.updater.CheckAndReportUpdateResult(a.ctx)
+
 	// Enable protection mechanisms when running as service
 	if protection.IsRunningAsService() {
 		log.Println("Enabling protection mechanisms...")
@@ -340,6 +348,22 @@ func (a *Agent) Start() error {
 	go a.updater.RunUpdateLoop(a.ctx)
 
 	return nil
+}
+
+// writeAgentInfo writes the agent's version info for watchdog verification
+func (a *Agent) writeAgentInfo() {
+	info := &ipc.AgentInfo{
+		Version:   Version,
+		StartedAt: time.Now(),
+		PID:       os.Getpid(),
+		AgentID:   a.cfg.AgentID,
+	}
+
+	if err := ipc.WriteAgentInfo(info); err != nil {
+		log.Printf("Warning: failed to write agent info: %v", err)
+	} else {
+		log.Printf("Agent info written: version=%s pid=%d", Version, info.PID)
+	}
 }
 
 // Stop gracefully shuts down the agent

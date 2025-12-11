@@ -1,8 +1,11 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -11,6 +14,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sentinel/agent/internal/ipc"
+	"github.com/sentinel/agent/internal/protection"
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/debug"
 	"golang.org/x/sys/windows/svc/eventlog"
@@ -25,6 +31,11 @@ const (
 	checkInterval      = 10 * time.Second
 	maxRestartAttempts = 5
 	restartCooldown    = 60 * time.Second
+
+	// Update orchestration constants
+	updateCheckInterval    = 5 * time.Second  // How often to check for pending updates
+	updateVerifyTimeout    = 30 * time.Second // How long to wait for agent to report version
+	updateVerifyInterval   = 2 * time.Second  // How often to check agent version during verification
 )
 
 var (
@@ -50,6 +61,9 @@ type watchdogService struct {
 	lastRestart    time.Time
 	mu             sync.Mutex
 	stopChan       chan struct{}
+	installPath    string
+	updateInProgress bool
+	pipeServer     *ipc.PipeServer
 }
 
 func main() {
@@ -144,10 +158,13 @@ func runService(installPath string) {
 
 	elog.Info(1, fmt.Sprintf("Starting %s v%s", serviceName, Version))
 
-	err = svc.Run(serviceName, &watchdogService{
-		config:   loadConfig(installPath),
-		stopChan: make(chan struct{}),
-	})
+	ws := &watchdogService{
+		config:      loadConfig(installPath),
+		stopChan:    make(chan struct{}),
+		installPath: installPath,
+	}
+
+	err = svc.Run(serviceName, ws)
 	if err != nil {
 		elog.Error(1, fmt.Sprintf("Service failed: %v", err))
 	}
@@ -160,11 +177,18 @@ func runDebug(installPath string) {
 	log.Printf("Starting %s v%s in debug mode", serviceName, Version)
 
 	ws := &watchdogService{
-		config:   loadConfig(installPath),
-		stopChan: make(chan struct{}),
+		config:      loadConfig(installPath),
+		stopChan:    make(chan struct{}),
+		installPath: installPath,
 	}
 
-	// Run in foreground
+	// Start pipe server for update coordination
+	go ws.startPipeServer()
+
+	// Check for any pending updates from before restart
+	go ws.checkForPendingUpdate()
+
+	// Run agent monitor in foreground
 	go ws.monitorAgent()
 
 	// Wait for interrupt
@@ -178,8 +202,17 @@ func (ws *watchdogService) Execute(args []string, r <-chan svc.ChangeRequest, ch
 
 	changes <- svc.Status{State: svc.StartPending}
 
+	// Start pipe server for update coordination
+	go ws.startPipeServer()
+
+	// Check for any pending updates from before restart
+	go ws.checkForPendingUpdate()
+
 	// Start the monitoring goroutine
 	go ws.monitorAgent()
+
+	// Start update checker goroutine
+	go ws.updateChecker()
 
 	changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
 
@@ -191,6 +224,9 @@ func (ws *watchdogService) Execute(args []string, r <-chan svc.ChangeRequest, ch
 				changes <- c.CurrentStatus
 			case svc.Stop, svc.Shutdown:
 				elog.Info(1, "Received stop signal")
+				if ws.pipeServer != nil {
+					ws.pipeServer.Close()
+				}
 				close(ws.stopChan)
 				changes <- svc.Status{State: svc.StopPending}
 				return
@@ -484,4 +520,469 @@ func init() {
 	if runtime.GOOS != "windows" {
 		log.Fatal("Watchdog service is only supported on Windows")
 	}
+}
+
+// ============================================================================
+// Update Orchestration Functions
+// ============================================================================
+
+// startPipeServer creates and runs the named pipe server for update coordination
+func (ws *watchdogService) startPipeServer() {
+	handler := func(msg ipc.PipeMessage) *ipc.PipeMessage {
+		switch msg.Type {
+		case ipc.MsgUpdateReady:
+			logMessage("Received update ready signal via pipe")
+			// The update checker will pick up the request file
+			return nil
+
+		case ipc.MsgVersionQuery:
+			return &ipc.PipeMessage{
+				Type:    ipc.MsgVersionResp,
+				Payload: Version,
+			}
+
+		case ipc.MsgShutdown:
+			logMessage("Received shutdown signal via pipe")
+			return nil
+
+		default:
+			logMessage(fmt.Sprintf("Unknown pipe message type: %s", msg.Type))
+			return nil
+		}
+	}
+
+	var err error
+	ws.pipeServer, err = ipc.NewPipeServer(handler)
+	if err != nil {
+		logMessage(fmt.Sprintf("Failed to create pipe server: %v", err))
+		return
+	}
+
+	logMessage("Pipe server started")
+
+	// Accept connections in a loop
+	for {
+		select {
+		case <-ws.stopChan:
+			return
+		default:
+			if err := ws.pipeServer.Accept(); err != nil {
+				// Check if we're shutting down
+				select {
+				case <-ws.stopChan:
+					return
+				default:
+					logMessage(fmt.Sprintf("Pipe accept error: %v", err))
+				}
+			}
+		}
+	}
+}
+
+// checkForPendingUpdate checks for any pending updates from before a restart
+func (ws *watchdogService) checkForPendingUpdate() {
+	// Give the system a moment to stabilize after startup
+	time.Sleep(5 * time.Second)
+
+	request, err := ipc.ReadUpdateRequest()
+	if err != nil {
+		logMessage(fmt.Sprintf("Error reading update request: %v", err))
+		return
+	}
+
+	if request == nil {
+		return // No pending update
+	}
+
+	logMessage(fmt.Sprintf("Found pending update request for version %s", request.Version))
+
+	// Check if this update was already applied (agent is running new version)
+	info, _ := ipc.ReadAgentInfo()
+	if info != nil && info.Version == request.Version {
+		logMessage(fmt.Sprintf("Update already applied: agent running version %s", info.Version))
+		// Clean up the request file
+		ipc.DeleteUpdateRequest()
+		// Write success status if not already written
+		status, _ := ipc.ReadUpdateStatus()
+		if status == nil || status.State != ipc.StateComplete {
+			ipc.WriteUpdateStatus(&ipc.UpdateStatus{
+				State:       ipc.StateComplete,
+				Version:     request.Version,
+				CompletedAt: time.Now(),
+			})
+		}
+		return
+	}
+
+	// There's a pending update that wasn't completed - attempt to apply it
+	ws.mu.Lock()
+	if ws.updateInProgress {
+		ws.mu.Unlock()
+		return
+	}
+	ws.updateInProgress = true
+	ws.mu.Unlock()
+
+	go ws.applyUpdate(request)
+}
+
+// updateChecker periodically checks for pending update requests
+func (ws *watchdogService) updateChecker() {
+	ticker := time.NewTicker(updateCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ws.stopChan:
+			return
+		case <-ticker.C:
+			ws.mu.Lock()
+			inProgress := ws.updateInProgress
+			ws.mu.Unlock()
+
+			if inProgress {
+				continue
+			}
+
+			request, err := ipc.ReadUpdateRequest()
+			if err != nil {
+				logMessage(fmt.Sprintf("Error checking for updates: %v", err))
+				continue
+			}
+
+			if request == nil {
+				continue
+			}
+
+			logMessage(fmt.Sprintf("Update request found for version %s", request.Version))
+
+			ws.mu.Lock()
+			ws.updateInProgress = true
+			ws.mu.Unlock()
+
+			go ws.applyUpdate(request)
+		}
+	}
+}
+
+// applyUpdate performs the actual update operation
+func (ws *watchdogService) applyUpdate(request *ipc.UpdateRequest) {
+	defer func() {
+		ws.mu.Lock()
+		ws.updateInProgress = false
+		ws.mu.Unlock()
+	}()
+
+	logMessage(fmt.Sprintf("Starting update to version %s", request.Version))
+
+	// Write status: applying
+	status := &ipc.UpdateStatus{
+		State:     ipc.StateApplying,
+		Version:   request.Version,
+		StartedAt: time.Now(),
+	}
+	if err := ipc.WriteUpdateStatus(status); err != nil {
+		logMessage(fmt.Sprintf("Failed to write update status: %v", err))
+	}
+
+	// Step 1: Verify staged file exists and checksum matches
+	if err := ws.verifyStagedFile(request); err != nil {
+		ws.failUpdate(status, fmt.Sprintf("staged file verification failed: %v", err))
+		return
+	}
+	logMessage("Staged file verified")
+
+	// Step 2: Disable protection on target file FIRST (before stopping service)
+	protMgr := protection.NewManager(ws.installPath, ws.config.AgentService)
+	if err := protMgr.DisableProtectionForFile(request.TargetPath); err != nil {
+		logMessage(fmt.Sprintf("Warning: failed to disable protection: %v", err))
+		// Continue anyway - might not have been protected
+	}
+
+	// Step 3: Stop the agent service (releases file lock)
+	if err := ws.stopAgentService(); err != nil {
+		ws.failUpdate(status, fmt.Sprintf("failed to stop agent: %v", err))
+		return
+	}
+	logMessage("Agent service stopped")
+
+	// Step 4: Create backup of current binary (after service stopped, file unlocked)
+	backupPath, err := ws.createBackup(request.TargetPath)
+	if err != nil {
+		ws.failUpdate(status, fmt.Sprintf("failed to create backup: %v", err))
+		return
+	}
+	status.BackupPath = backupPath
+	logMessage(fmt.Sprintf("Backup created at %s", backupPath))
+
+	// Step 5: Replace the binary using atomic move
+	if err := ws.atomicReplace(request.StagedPath, request.TargetPath); err != nil {
+		logMessage(fmt.Sprintf("Failed to replace binary: %v, attempting rollback", err))
+		ws.rollbackUpdate(backupPath, request.TargetPath, status)
+		return
+	}
+	logMessage("Binary replaced successfully")
+
+	// Step 6: Re-enable protection on the new file
+	if err := protMgr.EnableProtectionForFile(request.TargetPath); err != nil {
+		logMessage(fmt.Sprintf("Warning: failed to re-enable protection: %v", err))
+	}
+
+	// Step 7: Start the agent service
+	if err := ws.startAgentService(); err != nil {
+		logMessage(fmt.Sprintf("Failed to start agent: %v, attempting rollback", err))
+		ws.rollbackUpdate(backupPath, request.TargetPath, status)
+		return
+	}
+	logMessage("Agent service started")
+
+	// Step 8: Verify the update succeeded
+	if err := ws.verifyUpdate(request.Version); err != nil {
+		logMessage(fmt.Sprintf("Update verification failed: %v, attempting rollback", err))
+		ws.rollbackUpdate(backupPath, request.TargetPath, status)
+		return
+	}
+
+	// Success!
+	status.State = ipc.StateComplete
+	status.CompletedAt = time.Now()
+	if err := ipc.WriteUpdateStatus(status); err != nil {
+		logMessage(fmt.Sprintf("Failed to write success status: %v", err))
+	}
+
+	// Clean up
+	ipc.DeleteUpdateRequest()
+	os.Remove(backupPath)
+	ipc.CleanupStagingDir()
+
+	logMessage(fmt.Sprintf("Update to version %s completed successfully", request.Version))
+}
+
+// verifyStagedFile verifies the staged update file exists and checksum matches
+func (ws *watchdogService) verifyStagedFile(request *ipc.UpdateRequest) error {
+	// Check file exists
+	info, err := os.Stat(request.StagedPath)
+	if err != nil {
+		return fmt.Errorf("staged file not found: %w", err)
+	}
+
+	if info.Size() == 0 {
+		return fmt.Errorf("staged file is empty")
+	}
+
+	// Verify checksum if provided
+	if request.Checksum != "" {
+		file, err := os.Open(request.StagedPath)
+		if err != nil {
+			return fmt.Errorf("failed to open staged file: %w", err)
+		}
+		defer file.Close()
+
+		hasher := sha256.New()
+		if _, err := io.Copy(hasher, file); err != nil {
+			return fmt.Errorf("failed to hash staged file: %w", err)
+		}
+
+		actualChecksum := hex.EncodeToString(hasher.Sum(nil))
+		if actualChecksum != request.Checksum {
+			return fmt.Errorf("checksum mismatch: expected %s, got %s", request.Checksum, actualChecksum)
+		}
+	}
+
+	return nil
+}
+
+// createBackup creates a backup of the current binary
+func (ws *watchdogService) createBackup(targetPath string) (string, error) {
+	backupPath := targetPath + ".backup"
+
+	// Remove old backup if exists
+	os.Remove(backupPath)
+
+	// Copy current file to backup
+	src, err := os.Open(targetPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open source: %w", err)
+	}
+	defer src.Close()
+
+	dst, err := os.Create(backupPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to create backup: %w", err)
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		return "", fmt.Errorf("failed to copy to backup: %w", err)
+	}
+
+	return backupPath, nil
+}
+
+// stopAgentService stops the agent Windows service
+func (ws *watchdogService) stopAgentService() error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return fmt.Errorf("failed to connect to SCM: %w", err)
+	}
+	defer m.Disconnect()
+
+	s, err := m.OpenService(ws.config.AgentService)
+	if err != nil {
+		return fmt.Errorf("failed to open agent service: %w", err)
+	}
+	defer s.Close()
+
+	status, err := s.Query()
+	if err != nil {
+		return fmt.Errorf("failed to query service: %w", err)
+	}
+
+	if status.State == svc.Stopped {
+		return nil // Already stopped
+	}
+
+	_, err = s.Control(svc.Stop)
+	if err != nil {
+		return fmt.Errorf("failed to send stop control: %w", err)
+	}
+
+	// Wait for service to stop
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		status, err = s.Query()
+		if err != nil {
+			return fmt.Errorf("failed to query service status: %w", err)
+		}
+		if status.State == svc.Stopped {
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	return fmt.Errorf("timeout waiting for service to stop")
+}
+
+// startAgentService starts the agent Windows service
+func (ws *watchdogService) startAgentService() error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return fmt.Errorf("failed to connect to SCM: %w", err)
+	}
+	defer m.Disconnect()
+
+	s, err := m.OpenService(ws.config.AgentService)
+	if err != nil {
+		return fmt.Errorf("failed to open agent service: %w", err)
+	}
+	defer s.Close()
+
+	if err := s.Start(); err != nil {
+		return fmt.Errorf("failed to start service: %w", err)
+	}
+
+	// Wait for service to start
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		status, err := s.Query()
+		if err != nil {
+			return fmt.Errorf("failed to query service status: %w", err)
+		}
+		if status.State == svc.Running {
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	return fmt.Errorf("timeout waiting for service to start")
+}
+
+// atomicReplace replaces the target file with the source using Windows MoveFileEx
+func (ws *watchdogService) atomicReplace(src, dst string) error {
+	srcPtr, err := windows.UTF16PtrFromString(src)
+	if err != nil {
+		return fmt.Errorf("invalid source path: %w", err)
+	}
+
+	dstPtr, err := windows.UTF16PtrFromString(dst)
+	if err != nil {
+		return fmt.Errorf("invalid destination path: %w", err)
+	}
+
+	// MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH
+	const flags = 0x1 | 0x8
+
+	err = windows.MoveFileEx(srcPtr, dstPtr, flags)
+	if err != nil {
+		return fmt.Errorf("MoveFileEx failed: %w", err)
+	}
+
+	return nil
+}
+
+// verifyUpdate waits for the agent to start and report the expected version
+func (ws *watchdogService) verifyUpdate(expectedVersion string) error {
+	deadline := time.Now().Add(updateVerifyTimeout)
+
+	for time.Now().Before(deadline) {
+		info, err := ipc.ReadAgentInfo()
+		if err == nil && info != nil {
+			if info.Version == expectedVersion {
+				logMessage(fmt.Sprintf("Update verified: agent running version %s", expectedVersion))
+				return nil
+			}
+			logMessage(fmt.Sprintf("Agent version mismatch: expected %s, got %s", expectedVersion, info.Version))
+		}
+		time.Sleep(updateVerifyInterval)
+	}
+
+	return fmt.Errorf("timeout waiting for agent to report version %s", expectedVersion)
+}
+
+// rollbackUpdate restores the backup and restarts the agent
+func (ws *watchdogService) rollbackUpdate(backupPath, targetPath string, status *ipc.UpdateStatus) {
+	logMessage("Starting rollback...")
+
+	// Stop agent if running
+	ws.stopAgentService()
+
+	// Disable protection
+	protMgr := protection.NewManager(ws.installPath, ws.config.AgentService)
+	protMgr.DisableProtectionForFile(targetPath)
+
+	// Restore from backup
+	if err := ws.atomicReplace(backupPath, targetPath); err != nil {
+		logMessage(fmt.Sprintf("CRITICAL: Failed to restore backup: %v", err))
+		status.State = ipc.StateFailed
+		status.Error = fmt.Sprintf("rollback failed: %v", err)
+		ipc.WriteUpdateStatus(status)
+		return
+	}
+
+	// Re-enable protection
+	protMgr.EnableProtectionForFile(targetPath)
+
+	// Start agent
+	if err := ws.startAgentService(); err != nil {
+		logMessage(fmt.Sprintf("Warning: failed to start agent after rollback: %v", err))
+	}
+
+	status.State = ipc.StateRolledBack
+	status.RolledBack = true
+	status.CompletedAt = time.Now()
+	ipc.WriteUpdateStatus(status)
+
+	logMessage("Rollback completed")
+}
+
+// failUpdate marks the update as failed and cleans up
+func (ws *watchdogService) failUpdate(status *ipc.UpdateStatus, reason string) {
+	logMessage(fmt.Sprintf("Update failed: %s", reason))
+	status.State = ipc.StateFailed
+	status.Error = reason
+	status.CompletedAt = time.Now()
+	ipc.WriteUpdateStatus(status)
+
+	// Clean up request file so we don't keep retrying
+	ipc.DeleteUpdateRequest()
 }

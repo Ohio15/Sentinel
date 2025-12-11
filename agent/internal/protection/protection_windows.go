@@ -129,9 +129,11 @@ func (m *Manager) ProtectProcess() error {
 	handle := windows.CurrentProcess()
 
 	// Create a restrictive security descriptor
-	// This denies PROCESS_TERMINATE to all except SYSTEM
+	// This denies PROCESS_TERMINATE (0x0001) to Users, but allows SYSTEM and Administrators
+	// Note: Using BU (Builtin Users) instead of WD (World/Everyone) so SYSTEM can still
+	// control the process during updates.
 	sd, err := windows.SecurityDescriptorFromString(
-		"D:(A;;GA;;;SY)(A;;GA;;;BA)(D;;0x0001;;;WD)",
+		"D:(A;;GA;;;SY)(A;;GA;;;BA)(D;;0x0001;;;BU)",
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create security descriptor: %w", err)
@@ -173,11 +175,14 @@ func (m *Manager) ProtectFiles() error {
 
 		// Use icacls to set restrictive permissions
 		// Only SYSTEM and Administrators can modify
+		// Note: We use "Users" (BU) instead of "Everyone" for deny because
+		// "Everyone" includes SYSTEM, which would prevent SYSTEM from resetting
+		// permissions during watchdog-orchestrated updates.
 		cmd := exec.Command("icacls", file,
 			"/inheritance:r",
 			"/grant:r", "SYSTEM:(F)",
 			"/grant:r", "Administrators:(R)",
-			"/deny", "Everyone:(D,WDAC,WO)",
+			"/deny", "Users:(D,WO)",
 		)
 		if err := cmd.Run(); err != nil {
 			log.Printf("Warning: failed to protect %s: %v", file, err)
@@ -216,8 +221,11 @@ func (m *Manager) ProtectRegistry() error {
 
 	// Create restrictive security descriptor
 	// Only SYSTEM can modify, Administrators can read
+	// Note: We use BU (Builtin Users) instead of WD (World/Everyone) for deny
+	// because Everyone includes SYSTEM, which would prevent SYSTEM from
+	// managing the service during watchdog-orchestrated updates.
 	sd, err := windows.SecurityDescriptorFromString(
-		"D:(A;OICI;KA;;;SY)(A;OICI;KR;;;BA)(D;OICI;KA;;;WD)",
+		"D:(A;OICI;KA;;;SY)(A;OICI;KR;;;BA)(D;OICI;KA;;;BU)",
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create registry SD: %w", err)
@@ -344,6 +352,86 @@ func (m *Manager) DisableProtections() error {
 
 	// Note: Process and registry protections will be removed when the service stops
 	return nil
+}
+
+// DisableProtectionForFile resets permissions on a specific file only.
+// This is more granular than DisableProtections() and is used during updates.
+func (m *Manager) DisableProtectionForFile(filePath string) error {
+	log.Printf("Disabling protection for file: %s", filePath)
+
+	// Reset permissions on the specific file
+	cmd := exec.Command("icacls", filePath, "/reset")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to reset permissions on %s: %w (output: %s)", filePath, err, string(output))
+	}
+
+	return nil
+}
+
+// EnableProtectionForFile applies restrictive permissions to a specific file.
+// This is used after an update to re-protect the new binary.
+func (m *Manager) EnableProtectionForFile(filePath string) error {
+	log.Printf("Enabling protection for file: %s", filePath)
+
+	// Set restrictive permissions: SYSTEM full, Administrators read, Users deny delete/write
+	// Note: We use "Users" instead of "Everyone" to allow SYSTEM to reset permissions
+	// during watchdog-orchestrated updates.
+	cmd := exec.Command("icacls", filePath,
+		"/inheritance:r",
+		"/grant:r", "SYSTEM:(F)",
+		"/grant:r", "Administrators:(R)",
+		"/deny", "Users:(D,WO)",
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to protect %s: %w (output: %s)", filePath, err, string(output))
+	}
+
+	return nil
+}
+
+// DisableProtectionForDir resets permissions on a directory (non-recursive).
+func (m *Manager) DisableProtectionForDir(dirPath string) error {
+	log.Printf("Disabling protection for directory: %s", dirPath)
+
+	cmd := exec.Command("icacls", dirPath, "/reset")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to reset permissions on %s: %w (output: %s)", dirPath, err, string(output))
+	}
+
+	return nil
+}
+
+// EnableProtectionForDir applies restrictive permissions to a directory.
+func (m *Manager) EnableProtectionForDir(dirPath string) error {
+	log.Printf("Enabling protection for directory: %s", dirPath)
+
+	cmd := exec.Command("icacls", dirPath,
+		"/inheritance:r",
+		"/grant:r", "SYSTEM:(OI)(CI)(F)",
+		"/grant:r", "Administrators:(OI)(CI)(R)",
+		"/deny", "Everyone:(OI)(CI)(D,DC)",
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to protect %s: %w (output: %s)", dirPath, err, string(output))
+	}
+
+	return nil
+}
+
+// IsFileProtected checks if a file has restrictive permissions applied.
+func (m *Manager) IsFileProtected(filePath string) (bool, error) {
+	// Use icacls to check permissions
+	cmd := exec.Command("icacls", filePath)
+	output, err := cmd.Output()
+	if err != nil {
+		return false, fmt.Errorf("failed to check permissions: %w", err)
+	}
+
+	// Check if "Everyone" deny entry exists
+	outputStr := string(output)
+	return strings.Contains(outputStr, "Everyone:(DENY)") ||
+		strings.Contains(outputStr, "Everyone:(D)") ||
+		strings.Contains(outputStr, "(N)"), nil
 }
 
 // HideService attempts to hide the service from standard enumeration

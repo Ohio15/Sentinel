@@ -16,6 +16,9 @@ import (
 	"runtime"
 	"sync"
 	"time"
+
+	"github.com/sentinel/agent/internal/ipc"
+	"github.com/sentinel/agent/internal/protection"
 )
 
 const (
@@ -144,8 +147,14 @@ func (u *Updater) DownloadUpdate(ctx context.Context, info *VersionInfo) (string
 	log.Printf("Downloading update v%s from %s", info.Version, info.DownloadURL)
 	u.updateStatus(StateDownloading, "Downloading update...", 0)
 
-	tempFile := filepath.Join(os.TempDir(), fmt.Sprintf("sentinel-agent-%s-%s-%s.tmp",
-		info.Version, info.Platform, info.Arch))
+	// Ensure staging directory exists
+	if err := ipc.EnsureDirectories(); err != nil {
+		return "", fmt.Errorf("failed to create staging directory: %w", err)
+	}
+
+	// Download to staging directory (not temp) for reliability
+	stagingFile := ipc.StagingPath(info.Version, info.Platform, info.Arch)
+	tempFile := stagingFile + ".tmp"
 
 	var lastErr error
 	for attempt := 0; attempt <= u.maxRetries; attempt++ {
@@ -234,8 +243,18 @@ func (u *Updater) downloadOnce(ctx context.Context, info *VersionInfo, tempFile 
 		return "", fmt.Errorf("checksum mismatch: expected %s, got %s", info.Checksum, checksum)
 	}
 
+	// Rename from .tmp to final staging path
+	finalPath := ipc.StagingPath(info.Version, info.Platform, info.Arch)
+	if tempFile != finalPath {
+		os.Remove(finalPath) // Remove any existing file
+		if err := os.Rename(tempFile, finalPath); err != nil {
+			os.Remove(tempFile)
+			return "", fmt.Errorf("failed to rename to staging path: %w", err)
+		}
+	}
+
 	log.Printf("Download complete, checksum verified: %s", checksum)
-	return tempFile, nil
+	return finalPath, nil
 }
 
 func (u *Updater) ApplyUpdate(ctx context.Context, downloadPath string, info *VersionInfo) error {
@@ -258,7 +277,63 @@ func (u *Updater) ApplyUpdate(ctx context.Context, downloadPath string, info *Ve
 }
 
 func (u *Updater) applyUpdateWindows(currentExe, downloadPath, newVersion string) error {
-	u.updateStatus(StateRestarting, "Installing update...", 50)
+	u.updateStatus(StateRestarting, "Signaling watchdog for update...", 50)
+
+	// Check if watchdog pipe is available (new watchdog with update orchestration)
+	if ipc.IsPipeAvailable() {
+		log.Println("Watchdog pipe available, using watchdog-orchestrated update")
+		return u.applyUpdateViaWatchdog(currentExe, downloadPath, newVersion)
+	}
+
+	// Fallback: old watchdog without pipe support - use legacy batch approach
+	log.Println("Watchdog pipe not available, using legacy update method")
+	return u.applyUpdateLegacyWindows(currentExe, downloadPath, newVersion)
+}
+
+// applyUpdateViaWatchdog uses the new watchdog-orchestrated update mechanism
+func (u *Updater) applyUpdateViaWatchdog(currentExe, downloadPath, newVersion string) error {
+	// Create update request for the watchdog
+	request := &ipc.UpdateRequest{
+		Version:     newVersion,
+		StagedPath:  downloadPath,
+		Checksum:    "", // Already verified during download
+		RequestedAt: time.Now(),
+		RequestedBy: u.deviceID,
+		TargetPath:  currentExe,
+	}
+
+	// Write the update request file (persists across reboots)
+	if err := ipc.WriteUpdateRequest(request); err != nil {
+		return fmt.Errorf("failed to write update request: %w", err)
+	}
+	log.Printf("Update request written for version %s", newVersion)
+
+	// Signal the watchdog via named pipe for immediate handling
+	if err := ipc.SignalUpdateReady(request); err != nil {
+		// Not fatal - watchdog will poll the JSON file
+		log.Printf("Could not signal watchdog via pipe (will poll): %v", err)
+	} else {
+		log.Println("Watchdog signaled via pipe")
+	}
+
+	log.Printf("Update orchestration handed to watchdog, agent will be restarted")
+
+	// Give the watchdog a moment to receive the signal before we potentially exit
+	time.Sleep(1 * time.Second)
+
+	return nil
+}
+
+// applyUpdateLegacyWindows uses the old batch script method for backward compatibility
+func (u *Updater) applyUpdateLegacyWindows(currentExe, downloadPath, newVersion string) error {
+	// Disable file protections before update
+	installPath := filepath.Dir(currentExe)
+	protMgr := protection.NewManager(installPath, "SentinelAgent")
+	if err := protMgr.DisableProtections(); err != nil {
+		log.Printf("Warning: failed to disable protections: %v", err)
+	} else {
+		log.Println("File protections disabled for update")
+	}
 
 	batchPath := filepath.Join(os.TempDir(), "sentinel-update.bat")
 	backupPath := currentExe + ".old"
@@ -267,39 +342,67 @@ func (u *Updater) applyUpdateWindows(currentExe, downloadPath, newVersion string
 	batchContent := fmt.Sprintf(`@echo off
 setlocal enabledelayedexpansion
 set LOG_FILE=%s
-echo [%%%%date%%%% %%%%time%%%%] Starting update to v%s > "%%%%LOG_FILE%%%%"
+echo [%%date%% %%time%%] Starting update to v%s > "%%LOG_FILE%%"
+echo [%%date%% %%time%%] Current exe: %s >> "%%LOG_FILE%%"
+echo [%%date%% %%time%%] Download path: %s >> "%%LOG_FILE%%"
 timeout /t 3 /nobreak > nul
 sc query SentinelAgent | find "STOPPED" > nul
-if %%%%errorlevel%%%% neq 0 (
+if %%errorlevel%% neq 0 (
+    echo [%%date%% %%time%%] Stopping service... >> "%%LOG_FILE%%"
     net stop SentinelAgent /y
     timeout /t 2 /nobreak > nul
 )
+echo [%%date%% %%time%%] Deleting old backup if exists >> "%%LOG_FILE%%"
 if exist "%s" del /f "%s" 2>nul
+echo [%%date%% %%time%%] Moving current to backup >> "%%LOG_FILE%%"
 move /y "%s" "%s"
-if %%%%errorlevel%%%% neq 0 goto :restart_old
+if %%errorlevel%% neq 0 (
+    echo [%%date%% %%time%%] Failed to backup current exe >> "%%LOG_FILE%%"
+    goto :restart_old
+)
+echo [%%date%% %%time%%] Moving new exe into place >> "%%LOG_FILE%%"
 move /y "%s" "%s"
-if %%%%errorlevel%%%% neq 0 goto :rollback
+if %%errorlevel%% neq 0 (
+    echo [%%date%% %%time%%] Failed to install new exe >> "%%LOG_FILE%%"
+    goto :rollback
+)
+echo [%%date%% %%time%%] Starting service... >> "%%LOG_FILE%%"
 net start SentinelAgent
 timeout /t 3 /nobreak > nul
 sc query SentinelAgent | find "RUNNING" > nul
-if %%%%errorlevel%%%% neq 0 goto :rollback
+if %%errorlevel%% neq 0 (
+    echo [%%date%% %%time%%] Service failed to start, rolling back >> "%%LOG_FILE%%"
+    goto :rollback
+)
+echo [%%date%% %%time%%] Update successful! >> "%%LOG_FILE%%"
 del /f "%s" 2>nul
 goto :cleanup
 :rollback
+echo [%%date%% %%time%%] Rolling back... >> "%%LOG_FILE%%"
 net stop SentinelAgent /y 2>nul
 del /f "%s" 2>nul
 move /y "%s" "%s"
 :restart_old
+echo [%%date%% %%time%%] Restarting old version >> "%%LOG_FILE%%"
 net start SentinelAgent
 :cleanup
-del /f "%s" 2>nul
-`, logPath, newVersion, backupPath, backupPath, currentExe, backupPath, downloadPath, currentExe, backupPath, currentExe, backupPath, currentExe, batchPath)
+echo [%%date%% %%time%%] Cleanup complete >> "%%LOG_FILE%%"
+`, logPath, newVersion, currentExe, downloadPath,
+		backupPath, backupPath,
+		currentExe, backupPath,
+		downloadPath, currentExe,
+		backupPath,
+		currentExe, backupPath, currentExe)
 
 	if err := os.WriteFile(batchPath, []byte(batchContent), 0755); err != nil {
 		return fmt.Errorf("failed to create update script: %w", err)
 	}
 
-	cmd := exec.Command("cmd.exe", "/C", "net stop SentinelAgent && start /min cmd.exe /C "+batchPath)
+	log.Printf("Created update script at %s", batchPath)
+	log.Printf("Update will replace %s with %s", currentExe, downloadPath)
+
+	// Use cmd.exe start to create a detached process
+	cmd := exec.Command("cmd.exe", "/C", "start", "/min", "cmd.exe", "/C", batchPath)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start update process: %w", err)
 	}
@@ -512,4 +615,80 @@ func CompareVersions(v1, v2 string) int {
 		}
 	}
 	return 0
+}
+
+// CheckAndReportUpdateResult checks for completed update status and reports to server.
+// This should be called on agent startup to report the outcome of any previous update.
+func (u *Updater) CheckAndReportUpdateResult(ctx context.Context) {
+	status, err := ipc.ReadUpdateStatus()
+	if err != nil {
+		log.Printf("Error reading update status: %v", err)
+		return
+	}
+
+	if status == nil {
+		return // No update status to report
+	}
+
+	// Only report terminal states
+	switch status.State {
+	case ipc.StateComplete, ipc.StateFailed, ipc.StateRolledBack:
+		// Report to server
+		log.Printf("Reporting update result: state=%s version=%s", status.State, status.Version)
+		u.reportUpdateResult(ctx, status)
+
+		// Clean up status file after reporting
+		if err := ipc.DeleteUpdateStatus(); err != nil {
+			log.Printf("Warning: failed to delete update status: %v", err)
+		}
+	default:
+		// Update still in progress or pending - don't clear
+		log.Printf("Update status: %s (not reporting yet)", status.State)
+	}
+}
+
+// reportUpdateResult sends the update result to the server
+func (u *Updater) reportUpdateResult(ctx context.Context, status *ipc.UpdateStatus) {
+	if u.deviceID == "" || u.serverURL == "" {
+		return
+	}
+
+	resultData := map[string]interface{}{
+		"deviceId":        u.deviceID,
+		"state":           string(status.State),
+		"version":         status.Version,
+		"previousVersion": status.PreviousVer,
+		"rolledBack":      status.RolledBack,
+		"error":           status.Error,
+		"startedAt":       status.StartedAt,
+		"completedAt":     status.CompletedAt,
+	}
+
+	jsonData, err := json.Marshal(resultData)
+	if err != nil {
+		log.Printf("Failed to marshal update result: %v", err)
+		return
+	}
+
+	url := fmt.Sprintf("%s/api/agent/update/result", u.serverURL)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonData))
+	if err != nil {
+		log.Printf("Failed to create update result request: %v", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Failed to report update result: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		log.Printf("Update result reported successfully")
+	} else {
+		log.Printf("Server returned status %d for update result", resp.StatusCode)
+	}
 }
