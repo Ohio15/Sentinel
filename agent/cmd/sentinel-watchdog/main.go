@@ -692,10 +692,15 @@ func (ws *watchdogService) applyUpdate(request *ipc.UpdateRequest) {
 	}
 	logMessage("Staged file verified")
 
-	// Step 2: Disable protection on target file FIRST (before stopping service)
+	// Step 2: Disable protection on target file AND directory FIRST (before stopping service)
+	// The directory has a DENY ACL on Everyone that prevents creating new files (like .backup)
 	protMgr := protection.NewManager(ws.installPath, ws.config.AgentService)
+	if err := protMgr.DisableProtectionForDir(ws.installPath); err != nil {
+		logMessage(fmt.Sprintf("Warning: failed to disable directory protection: %v", err))
+		// Continue anyway - might not have been protected
+	}
 	if err := protMgr.DisableProtectionForFile(request.TargetPath); err != nil {
-		logMessage(fmt.Sprintf("Warning: failed to disable protection: %v", err))
+		logMessage(fmt.Sprintf("Warning: failed to disable file protection: %v", err))
 		// Continue anyway - might not have been protected
 	}
 
@@ -723,9 +728,12 @@ func (ws *watchdogService) applyUpdate(request *ipc.UpdateRequest) {
 	}
 	logMessage("Binary replaced successfully")
 
-	// Step 6: Re-enable protection on the new file
+	// Step 6: Re-enable protection on the new file and directory
 	if err := protMgr.EnableProtectionForFile(request.TargetPath); err != nil {
-		logMessage(fmt.Sprintf("Warning: failed to re-enable protection: %v", err))
+		logMessage(fmt.Sprintf("Warning: failed to re-enable file protection: %v", err))
+	}
+	if err := protMgr.EnableProtectionForDir(ws.installPath); err != nil {
+		logMessage(fmt.Sprintf("Warning: failed to re-enable directory protection: %v", err))
 	}
 
 	// Step 7: Start the agent service
@@ -946,8 +954,9 @@ func (ws *watchdogService) rollbackUpdate(backupPath, targetPath string, status 
 	// Stop agent if running
 	ws.stopAgentService()
 
-	// Disable protection
+	// Disable protection on directory and file
 	protMgr := protection.NewManager(ws.installPath, ws.config.AgentService)
+	protMgr.DisableProtectionForDir(ws.installPath)
 	protMgr.DisableProtectionForFile(targetPath)
 
 	// Restore from backup
@@ -959,8 +968,9 @@ func (ws *watchdogService) rollbackUpdate(backupPath, targetPath string, status 
 		return
 	}
 
-	// Re-enable protection
+	// Re-enable protection on file and directory
 	protMgr.EnableProtectionForFile(targetPath)
+	protMgr.EnableProtectionForDir(ws.installPath)
 
 	// Start agent
 	if err := ws.startAgentService(); err != nil {

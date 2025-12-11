@@ -237,6 +237,9 @@ func (u *Updater) downloadOnce(ctx context.Context, info *VersionInfo, tempFile 
 	}
 
 	u.updateStatus(StateVerifying, "Verifying checksum...", 100)
+
+	// Close the file before renaming (required on Windows)
+	out.Close()
 	checksum := hex.EncodeToString(hasher.Sum(nil))
 	if info.Checksum != "" && checksum != info.Checksum {
 		os.Remove(tempFile)
@@ -264,7 +267,10 @@ func (u *Updater) ApplyUpdate(ctx context.Context, downloadPath string, info *Ve
 	if err != nil {
 		return fmt.Errorf("failed to get current executable path: %w", err)
 	}
-	currentExe, _ = filepath.EvalSymlinks(currentExe)
+	// Resolve symlinks if possible, but keep original path if EvalSymlinks fails
+	if resolved, err := filepath.EvalSymlinks(currentExe); err == nil {
+		currentExe = resolved
+	}
 
 	log.Printf("Applying update from %s to %s", downloadPath, currentExe)
 	u.status.TargetVersion = info.Version
@@ -292,6 +298,8 @@ func (u *Updater) applyUpdateWindows(currentExe, downloadPath, newVersion string
 
 // applyUpdateViaWatchdog uses the new watchdog-orchestrated update mechanism
 func (u *Updater) applyUpdateViaWatchdog(currentExe, downloadPath, newVersion string) error {
+	log.Printf("DEBUG applyUpdateViaWatchdog: currentExe=%q downloadPath=%q newVersion=%q", currentExe, downloadPath, newVersion)
+	
 	// Create update request for the watchdog
 	request := &ipc.UpdateRequest{
 		Version:     newVersion,
@@ -546,9 +554,9 @@ func (u *Updater) reportStatus(ctx context.Context) {
 		return
 	}
 	statusData := map[string]interface{}{
-		"deviceId": u.deviceID, "state": u.status.State, "currentVersion": u.status.CurrentVersion,
-		"targetVersion": u.status.TargetVersion, "progress": u.status.Progress,
-		"message": u.status.Message, "error": u.status.Error,
+		"agentId": u.deviceID, "fromVersion": u.status.CurrentVersion,
+		"toVersion": u.status.TargetVersion, "status": u.status.State,
+		"error": u.status.Error,
 	}
 	jsonData, err := json.Marshal(statusData)
 	if err != nil {
