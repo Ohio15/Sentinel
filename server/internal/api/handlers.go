@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -99,6 +100,14 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	// Update device status
 	r.db.Pool.Exec(ctx, "UPDATE devices SET status = 'online', last_seen = NOW() WHERE id = $1", deviceID)
 
+	// Broadcast online status to dashboards
+	onlineMsg, _ := json.Marshal(map[string]interface{}{
+		"type":     "device_status",
+		"deviceId": deviceID,
+		"status":   "online",
+	})
+	r.hub.BroadcastToDashboards(onlineMsg)
+
 	// Start read/write pumps
 	go client.WritePump(ctx)
 	client.ReadPump(ctx, func(msg []byte) {
@@ -107,6 +116,14 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 
 	// Update device status on disconnect
 	r.db.Pool.Exec(context.Background(), "UPDATE devices SET status = 'offline' WHERE id = $1", deviceID)
+
+	// Broadcast offline status to dashboards
+	offlineMsg, _ := json.Marshal(map[string]interface{}{
+		"type":     "device_status",
+		"deviceId": deviceID,
+		"status":   "offline",
+	})
+	r.hub.BroadcastToDashboards(offlineMsg)
 }
 
 func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message []byte) {
@@ -119,8 +136,21 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 
 	switch msg.Type {
 	case ws.MsgTypeHeartbeat:
-		// Update last seen
-		r.db.Pool.Exec(ctx, "UPDATE devices SET last_seen = NOW() WHERE id = $1", deviceID)
+		// Parse heartbeat to get agent version
+		var heartbeat struct {
+			AgentVersion string `json:"agentVersion"`
+		}
+		if err := json.Unmarshal(message, &heartbeat); err != nil {
+			log.Printf("Failed to unmarshal heartbeat: %v, raw: %s", err, string(message))
+		}
+		log.Printf("Heartbeat from %s: version=%q", agentID, heartbeat.AgentVersion)
+
+		// Update last seen (and agent version if provided)
+		if heartbeat.AgentVersion != "" {
+			r.db.Pool.Exec(ctx, "UPDATE devices SET last_seen = NOW(), agent_version = $1 WHERE id = $2", heartbeat.AgentVersion, deviceID)
+		} else {
+			r.db.Pool.Exec(ctx, "UPDATE devices SET last_seen = NOW() WHERE id = $1", deviceID)
+		}
 
 		// Send ack back to agent
 		ackMsg, _ := json.Marshal(ws.Message{Type: ws.MsgTypeHeartbeatAck})

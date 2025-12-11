@@ -71,10 +71,11 @@ type Client struct {
 	sendQueue       chan []byte
 	onConnect       func()
 	onDisconnect    func()
+	version         string
 }
 
 // New creates a new WebSocket client
-func New(cfg *config.Config) *Client {
+func New(cfg *config.Config, version string) *Client {
 	return &Client{
 		config:         cfg,
 		handlers:       make(map[string]MessageHandler),
@@ -82,6 +83,7 @@ func New(cfg *config.Config) *Client {
 		maxReconnect:   5 * time.Minute,
 		done:           make(chan struct{}),
 		sendQueue:      make(chan []byte, 100),
+		version:        version,
 	}
 }
 
@@ -232,8 +234,9 @@ func (c *Client) SendMetrics(metrics interface{}) error {
 // SendHeartbeat sends a heartbeat message
 func (c *Client) SendHeartbeat() error {
 	msg := map[string]interface{}{
-		"type":      MsgTypeHeartbeat,
-		"timestamp": time.Now().Format(time.RFC3339),
+		"type":         MsgTypeHeartbeat,
+		"timestamp":    time.Now().Format(time.RFC3339),
+		"agentVersion": c.version,
 	}
 	return c.SendJSON(msg)
 }

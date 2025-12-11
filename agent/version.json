@@ -1,7 +1,7 @@
 {
-  "version": "1.30.0",
+  "version": "1.32.0",
   "releaseDate": "2025-12-11",
-  "changelog": "- Confirm update mechanism works reliably",
+  "changelog": "- Real-time device status updates via WebSocket\n- Broadcast online/offline status to admin dashboard",
   "platforms": ["windows", "linux", "darwin"],
   "minAppVersion": "1.10.0"
 }

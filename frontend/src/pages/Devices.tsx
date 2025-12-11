@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -12,6 +12,8 @@ import {
 import { Header } from '@/components/layout';
 import { Card, CardContent, Badge, Button, Modal } from '@/components/ui';
 import api from '@/services/api';
+import wsService from '@/services/websocket';
+import { useDeviceStore } from '@/stores/deviceStore';
 import type { Device } from '@/types';
 import toast from 'react-hot-toast';
 
@@ -21,6 +23,8 @@ export function Devices() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+  const { devices: storeDevices, setDevices, updateDeviceStatus } = useDeviceStore();
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['devices', statusFilter, searchQuery],
@@ -32,8 +36,29 @@ export function Devices() {
       }),
   });
 
-  // API returns array directly, not { devices: [...] }
-  const devices: Device[] = Array.isArray(data) ? data : (data?.devices || []);
+  // Sync API data to store
+  useEffect(() => {
+    if (Array.isArray(data)) {
+      setDevices(data);
+    } else if (data?.devices) {
+      setDevices(data.devices);
+    }
+  }, [data, setDevices]);
+
+  // Listen for real-time status updates
+  useEffect(() => {
+    const unsubDeviceStatus = wsService.on('device_status', (wsData: unknown) => {
+      const { deviceId, status, lastSeen } = wsData as { deviceId: string; status: Device['status']; lastSeen?: string };
+      updateDeviceStatus(deviceId, status, lastSeen || new Date().toISOString());
+    });
+
+    return () => {
+      unsubDeviceStatus();
+    };
+  }, [updateDeviceStatus]);
+
+  // Use store devices for display (they get real-time updates)
+  const devices: Device[] = storeDevices;
 
   const handleDelete = async () => {
     if (!selectedDevice) return;

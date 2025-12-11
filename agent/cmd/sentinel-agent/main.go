@@ -29,7 +29,7 @@ import (
 	"github.com/sentinel/agent/internal/updater"
 )
 
-var Version = "1.19.0"
+var Version = "1.32.0"
 
 const ServiceName = "SentinelAgent"
 
@@ -262,7 +262,7 @@ func NewAgent(cfg *config.Config) *Agent {
 
 	return &Agent{
 		cfg:                  cfg,
-		client:               client.New(cfg),
+		client:               client.New(cfg, Version),
 		collector:            collector.New(),
 		executor:             executor.New(),
 		terminalManager:      terminal.NewManager(),
