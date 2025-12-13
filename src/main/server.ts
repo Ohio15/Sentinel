@@ -42,7 +42,7 @@ export class Server {
   private wss: WebSocketServer | null = null;
   private database: Database;
   private agentManager: AgentManager;
-  private port: number = 8080;
+  private port: number = 8085;
   private enrollmentToken: string = '';
 
   constructor(database: Database, agentManager: AgentManager) {
@@ -671,7 +671,7 @@ private setupWebSocket(): void {
   async start(): Promise<void> {
     // Load settings
     const settings = await this.database.getSettings();
-    this.port = settings.serverPort || 8080;
+    this.port = settings.serverPort || 8085;
     this.enrollmentToken = settings.enrollmentToken || uuidv4();
 
     // Update token if not set
