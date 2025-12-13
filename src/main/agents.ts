@@ -88,6 +88,40 @@ export class AgentManager {
     return this.connections.has(agentId);
   }
 
+
+  async pingAgent(deviceId: string): Promise<{ online: boolean; status: string; message: string }> {
+    const device = await this.database.getDevice(deviceId);
+    if (!device) {
+      return { online: false, status: 'error', message: 'Device not found' };
+    }
+
+    const isOnline = this.isAgentConnected(device.agentId);
+
+    if (!isOnline) {
+      await this.database.updateDeviceStatus(deviceId, 'offline');
+      this.notifyRenderer('devices:offline', { agentId: device.agentId, deviceId });
+      return {
+        online: false,
+        status: 'offline',
+        message: 'Agent is not connected. The agent service may need to be restarted.',
+      };
+    }
+
+    const sent = this.sendToAgent(device.agentId, { type: 'ping', requestId: uuidv4() });
+    if (!sent) {
+      return { online: false, status: 'error', message: 'Failed to send ping to agent' };
+    }
+
+    await this.database.updateDeviceStatus(deviceId, 'online');
+    this.notifyRenderer('devices:online', { agentId: device.agentId, deviceId });
+
+    return {
+      online: true,
+      status: 'online',
+      message: 'Agent is connected and responsive',
+    };
+  }
+
   sendToAgent(agentId: string, message: any): boolean {
     const conn = this.connections.get(agentId);
     if (conn && conn.ws.readyState === WebSocket.OPEN) {

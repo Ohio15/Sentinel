@@ -258,6 +258,11 @@ function setupIpcHandlers(): void {
     return database.updateDevice(id, updates);
   });
 
+  
+  ipcMain.handle('devices:ping', async (_, deviceId: string) => {
+    return agentManager.pingAgent(deviceId);
+  });
+
   ipcMain.handle('devices:getMetrics', async (_, deviceId: string, hours: number) => {
     return database.getDeviceMetrics(deviceId, hours);
   });

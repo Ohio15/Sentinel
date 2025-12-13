@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('api', {
   devices: {
     list: () => ipcRenderer.invoke('devices:list'),
     get: (id: string) => ipcRenderer.invoke('devices:get', id),
+    ping: (deviceId: string) => ipcRenderer.invoke('devices:ping', deviceId),
     delete: (id: string) => ipcRenderer.invoke('devices:delete', id),
     update: (id: string, updates: { displayName?: string; tags?: string[] }) =>
       ipcRenderer.invoke('devices:update', id, updates),

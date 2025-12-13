@@ -120,6 +120,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState('');
+  const [isPinging, setIsPinging] = useState(false);
 
   useEffect(() => {
     fetchDevice(deviceId);
@@ -158,6 +159,21 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
   const handleCancelEdit = () => {
     setIsEditingName(false);
     setEditedName('');
+  };
+
+  const handlePingAgent = async () => {
+    if (!selectedDevice) return;
+    setIsPinging(true);
+    try {
+      const result = await window.api.devices.ping(selectedDevice.id);
+      if (result.online) {
+        await fetchDevice(deviceId);
+      }
+    } catch (error) {
+      console.error('Failed to ping agent:', error);
+    } finally {
+      setIsPinging(false);
+    }
   };
 
   const executeCommand = async () => {
@@ -442,6 +458,17 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                       }`}></span>
                       {selectedDevice.status === 'online' ? 'Online' : 'Offline'}
                     </span>
+                    {selectedDevice.status !== 'online' && (
+                      <button
+                        onClick={handlePingAgent}
+                        disabled={isPinging}
+                        className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors disabled:opacity-50"
+                        title="Check if agent is actually online"
+                      >
+                        <RefreshIcon className={`w-4 h-4 ${isPinging ? 'animate-spin' : ''}`} />
+                        {isPinging ? 'Checking...' : 'Check Connection'}
+                      </button>
+                    )}
                     <span className="text-text-secondary text-sm">
                       Last seen: {new Date(selectedDevice.lastSeen).toLocaleString()}
                     </span>
@@ -723,6 +750,14 @@ function formatBytes(bytes: number): string {
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function RefreshIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+    </svg>
+  );
 }
 
 function QuickAction({ label, command, onExecute }: { label: string; command: string; onExecute: (cmd: string) => void }) {
