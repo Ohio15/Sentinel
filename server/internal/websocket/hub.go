@@ -25,6 +25,8 @@ const (
 	MsgTypeAuthResponse = "auth_response"
 	MsgTypeHeartbeat    = "heartbeat"
 	MsgTypeHeartbeatAck = "heartbeat_ack"
+	MsgTypePing         = "ping"
+	MsgTypePong         = "pong"
 	MsgTypeMetrics      = "metrics"
 	MsgTypeCommand      = "execute_command"
 	MsgTypeScript       = "execute_script"

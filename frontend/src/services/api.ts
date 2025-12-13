@@ -105,6 +105,12 @@ class ApiService {
     return response.data;
   }
 
+  // Ping agent to check connectivity
+  async pingAgent(deviceId: string) {
+    const response = await this.client.post(`/devices/${deviceId}/ping`);
+    return response.data;
+  }
+
   // Uninstall agent from device (admin only)
   async uninstallAgent(deviceId: string) {
     const response = await this.client.post(`/devices/${deviceId}/uninstall`);

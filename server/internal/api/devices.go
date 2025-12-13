@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -534,5 +535,89 @@ func (r *Router) uninstallAgent(c *gin.Context) {
 		"message":   "Uninstall command sent to agent",
 		"requestId": requestID,
 		"status":    "uninstalling",
+	})
+}
+
+// pingAgent sends a ping to the agent to check if it's responsive
+// This helps verify connectivity when the app shows the device as offline
+// but the agent service is actually running
+func (r *Router) pingAgent(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid device ID"})
+		return
+	}
+
+	ctx := context.Background()
+
+	// Get device agent ID
+	var agentID string
+	err = r.db.Pool.QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1", id).Scan(&agentID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
+		return
+	}
+
+	// Check if agent is in the WebSocket hub (connected)
+	isOnline := r.hub.IsAgentOnline(agentID)
+
+	if !isOnline {
+		// Agent is not connected to WebSocket - update status to offline
+		r.db.Pool.Exec(ctx, `
+			UPDATE devices SET status = 'offline', updated_at = NOW() WHERE id = $1
+		`, id)
+
+		// Broadcast offline status to dashboards
+		statusMsg, _ := json.Marshal(map[string]interface{}{
+			"type":     "device_status",
+			"deviceId": id.String(),
+			"status":   "offline",
+		})
+		r.hub.BroadcastToDashboards(statusMsg)
+
+		c.JSON(http.StatusOK, gin.H{
+			"online":  false,
+			"status":  "offline",
+			"message": "Agent is not connected. The agent service may need to be restarted.",
+		})
+		return
+	}
+
+	// Agent is connected - send a ping message
+	requestID := uuid.New().String()
+	msg := websocket.Message{
+		Type:      websocket.MsgTypePing,
+		RequestID: requestID,
+	}
+
+	msgBytes, _ := json.Marshal(msg)
+	if err := r.hub.SendToAgent(agentID, msgBytes); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"online":  false,
+			"status":  "error",
+			"message": "Failed to send ping to agent",
+		})
+		return
+	}
+
+	// Update device status to online and last_seen
+	r.db.Pool.Exec(ctx, `
+		UPDATE devices SET status = 'online', last_seen = NOW(), updated_at = NOW() WHERE id = $1
+	`, id)
+
+	// Broadcast online status to dashboards
+	statusMsg, _ := json.Marshal(map[string]interface{}{
+		"type":     "device_status",
+		"deviceId": id.String(),
+		"status":   "online",
+		"lastSeen": time.Now().UTC().Format(time.RFC3339),
+	})
+	r.hub.BroadcastToDashboards(statusMsg)
+
+	c.JSON(http.StatusOK, gin.H{
+		"online":    true,
+		"status":    "online",
+		"message":   "Agent is connected and responsive",
+		"requestId": requestID,
 	})
 }

@@ -20,6 +20,7 @@ import {
   Edit3,
   MemoryStick,
   Trash2,
+  RefreshCw,
 } from 'lucide-react';
 import { Header } from '@/components/layout';
 import { Terminal, FileBrowser, RemoteDesktop } from '@/components/device';
@@ -192,6 +193,22 @@ export function DeviceDetail() {
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.error || 'Failed to uninstall agent');
+    },
+  });
+
+
+  const pingAgentMutation = useMutation({
+    mutationFn: () => api.pingAgent(id!),
+    onSuccess: (data) => {
+      if (data.online) {
+        toast.success(data.message || 'Agent is online and responsive');
+      } else {
+        toast.error(data.message || 'Agent is offline');
+      }
+      queryClient.invalidateQueries({ queryKey: ['device', id] });
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.message || 'Failed to ping agent');
     },
   });
 
@@ -399,6 +416,19 @@ export function DeviceDetail() {
                       </Badge>
                       <span className="text-gray-500 text-sm">•</span>
                       <span className="text-gray-400 text-sm">{device.ipAddress}</span>
+                      {!isOnline && (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => pingAgentMutation.mutate()}
+                          disabled={pingAgentMutation.isPending}
+                          className="ml-2 bg-blue-600 hover:bg-blue-700 text-white"
+                        >
+                          <RefreshCw className={'w-3 h-3 mr-1' + (pingAgentMutation.isPending ? ' animate-spin' : '')} />
+                          {pingAgentMutation.isPending ? 'Checking...' : 'Check Connection'}
+                        </Button>
+                      )}
+
                     </div>
                   </div>
                 </div>

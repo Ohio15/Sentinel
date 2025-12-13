@@ -20,6 +20,8 @@ const (
 	MsgTypeHandshake     = "handshake"
 	MsgTypeHeartbeat     = "heartbeat"
 	MsgTypeHeartbeatAck  = "heartbeat_ack"
+	MsgTypePing          = "ping"
+	MsgTypePong          = "pong"
 	MsgTypeMetrics       = "metrics"
 	MsgTypeResponse      = "response"
 	MsgTypeExecuteCmd    = "execute_command"

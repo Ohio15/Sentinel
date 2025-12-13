@@ -29,7 +29,7 @@ import (
 	"github.com/sentinel/agent/internal/updater"
 )
 
-var Version = "1.32.0"
+var Version = "1.33.0"
 
 const ServiceName = "SentinelAgent"
 
@@ -394,6 +394,7 @@ func (a *Agent) registerHandlers() {
 	a.client.RegisterHandler(client.MsgTypeRemoteInput, a.handleRemoteInput)
 	a.client.RegisterHandler(client.MsgTypeCollectDiagnostics, a.handleCollectDiagnostics)
 	a.client.RegisterHandler(client.MsgTypeUninstallAgent, a.handleUninstallAgent)
+	a.client.RegisterHandler(client.MsgTypePing, a.handlePing)
 }
 
 func (a *Agent) onConnect() {
@@ -547,6 +548,15 @@ func (a *Agent) metricsLoop() {
 }
 
 // Message handlers
+
+func (a *Agent) handlePing(msg *client.Message) error {
+	// Respond to ping with pong
+	return a.client.SendJSON(map[string]interface{}{
+		"type": client.MsgTypePong,
+		"requestId": msg.RequestID,
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	})
+}
 
 func (a *Agent) handleHeartbeatAck(msg *client.Message) error {
 	// Heartbeat acknowledged
