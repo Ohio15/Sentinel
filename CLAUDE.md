@@ -1,5 +1,29 @@
 # Sentinel RMM - Project Guidelines
 
+## Development Philosophy
+
+**Autonomous Decision Making**: Make implementation decisions independently using:
+- Industry best practices for RMM/MSP software
+- Security-first approach (input validation, secure communications, least privilege)
+- Professional UX patterns from tools like ConnectWise, Datto, NinjaRMM
+- Clean code principles and maintainable architecture
+
+**When to proceed without asking:**
+- Implementation approach choices (use best practice)
+- Version bumps when releasing features/fixes
+- Building, committing, and creating GitHub releases after changes
+- Adding error handling, validation, logging
+- UI/UX improvements that follow standard patterns
+- Bug fixes and their associated version updates
+
+**Only ask when:**
+- Major architectural changes that affect the entire system
+- Removing existing features
+- Changes that could break backward compatibility
+- Unclear or ambiguous user requirements
+
+---
+
 ## Version Files (MUST Stay in Sync)
 
 | File | Purpose |
