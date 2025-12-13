@@ -1,0 +1,8 @@
+{
+  "agentPath": "D:\\Projects\\Sentinel\\installers\\sentinel-agent.exe",
+  "agentService": "SentinelAgent",
+  "checkIntervalSeconds": 10,
+  "maxRestarts": 5,
+  "serverUrl": "",
+  "reportEndpoint": ""
+}

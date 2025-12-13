@@ -121,3 +121,54 @@ When releasing a new version:
 ### Device shows offline but agent is running
 - Check `src/main/main.ts` - `devices:list` and `devices:get` handlers override status based on WebSocket connection
 - Verify `agentManager.isAgentConnected(device.agentId)` returns correct state
+
+---
+
+## Electron Auto-Updater
+
+The auto-updater uses `electron-updater` and checks GitHub releases.
+
+### Setup
+- Config in `src/main/main.ts` lines 45-138
+- Publish config in `package.json` → `build.publish`
+- For private repos: Set `GH_TOKEN` env var or create `update-config.json` with `githubToken`
+
+### Creating a GitHub Release (REQUIRED for auto-updater)
+```bash
+gh release create v{version} \
+  "release/app/Sentinel-Setup-{version}.exe" \
+  "release/app/Sentinel-Setup-{version}.exe.blockmap" \
+  "release/app/latest.yml" \
+  --title "v{version} - Title" \
+  --notes "Release notes..."
+```
+
+**IMPORTANT**: Without a GitHub release containing these 3 files, the auto-updater will NOT detect updates!
+
+---
+
+## WebSocket Message Types
+
+Defined in `agent/internal/client/client.go` and `src/main/agents.ts`:
+
+| Type | Direction | Purpose |
+|------|-----------|---------|
+| `ping` | Server → Agent | Check connectivity |
+| `pong` | Agent → Server | Response to ping |
+| `heartbeat` | Agent → Server | Keepalive (30s interval) |
+| `metrics` | Agent → Server | System metrics |
+| `command` | Server → Agent | Execute remote command |
+| `command_result` | Agent → Server | Command output |
+
+---
+
+## Electron IPC Channels
+
+| Channel | Purpose |
+|---------|---------|
+| `devices:ping` | Ping agent to check connectivity |
+| `devices:list` | Get all devices |
+| `devices:get` | Get single device by ID |
+| `devices:update` | Update device properties |
+| `commands:execute` | Execute command on agent |
+| `commands:getHistory` | Get command history for device |

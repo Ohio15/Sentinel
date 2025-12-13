@@ -121,6 +121,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState('');
   const [isPinging, setIsPinging] = useState(false);
+  const [pingResult, setPingResult] = useState<{ online: boolean; message: string } | null>(null);
 
   useEffect(() => {
     fetchDevice(deviceId);
@@ -164,13 +165,19 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
   const handlePingAgent = async () => {
     if (!selectedDevice) return;
     setIsPinging(true);
+    setPingResult(null);
     try {
       const result = await window.api.devices.ping(selectedDevice.id);
+      setPingResult({ online: result.online, message: result.message });
       if (result.online) {
         await fetchDevice(deviceId);
       }
+      // Clear the message after 5 seconds
+      setTimeout(() => setPingResult(null), 5000);
     } catch (error) {
       console.error('Failed to ping agent:', error);
+      setPingResult({ online: false, message: 'Failed to ping agent' });
+      setTimeout(() => setPingResult(null), 5000);
     } finally {
       setIsPinging(false);
     }
@@ -468,6 +475,13 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                         <RefreshIcon className={`w-4 h-4 ${isPinging ? 'animate-spin' : ''}`} />
                         {isPinging ? 'Checking...' : 'Check Connection'}
                       </button>
+                    )}
+                    {pingResult && (
+                      <span className={`text-sm px-2 py-1 rounded ${
+                        pingResult.online ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                      }`}>
+                        {pingResult.message}
+                      </span>
                     )}
                     <span className="text-text-secondary text-sm">
                       Last seen: {new Date(selectedDevice.lastSeen).toLocaleString()}

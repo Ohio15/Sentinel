@@ -201,6 +201,7 @@ export interface ElectronAPI {
   devices: {
     list: () => Promise<Device[]>;
     get: (id: string) => Promise<Device | null>;
+    ping: (deviceId: string) => Promise<{ online: boolean; status: string; message: string }>;
     delete: (id: string) => Promise<void>;
     update: (id: string, updates: { displayName?: string; tags?: string[] }) => Promise<Device | null>;
     getMetrics: (deviceId: string, hours: number) => Promise<DeviceMetrics[]>;
