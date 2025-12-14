@@ -612,6 +612,9 @@ function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('install-update', async () => {
+    // Set isQuitting flag BEFORE cleanup to prevent before-quit handler from interfering
+    isQuitting = true;
+
     // Clean up resources before quitting for update
     try {
       console.log('Preparing to install update...');
@@ -633,7 +636,8 @@ function setupIpcHandlers(): void {
     }
     // Small delay to ensure cleanup is complete
     await new Promise(resolve => setTimeout(resolve, 500));
-    autoUpdater.quitAndInstall(false, true);
+    // Use isSilent=true to prevent installer UI from blocking, isForceRunAfter=true to restart app
+    autoUpdater.quitAndInstall(true, true);
   });
 
   ipcMain.handle('get-app-version', () => {

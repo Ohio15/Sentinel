@@ -3,10 +3,11 @@ import React, { useState, useEffect } from 'react';
 interface FileEntry {
   name: string;
   path: string;
-  isDirectory: boolean;
+  is_dir: boolean;
   size: number;
-  modified: string;
-  permissions: string;
+  modified_time: string;
+  mode: string;
+  is_hidden?: boolean;
 }
 
 interface FileExplorerProps {
@@ -15,7 +16,7 @@ interface FileExplorerProps {
 }
 
 export function FileExplorer({ deviceId, isOnline }: FileExplorerProps) {
-  const [currentPath, setCurrentPath] = useState('/');
+  const [currentPath, setCurrentPath] = useState('');
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,14 +58,30 @@ export function FileExplorer({ deviceId, isOnline }: FileExplorerProps) {
   };
 
   const navigateUp = () => {
-    const parts = currentPath.split('/').filter(Boolean);
+    // Handle both Windows (C:\path) and Unix (/path) style paths
+    const isWindows = currentPath.includes('') || /^[A-Za-z]:/.test(currentPath);
+    const separator = isWindows ? '' : '/';
+    const parts = currentPath.split(/[\/]/).filter(Boolean);
+    
+    if (parts.length <= 1) {
+      // At root or drive root - load home directory
+      loadDirectory('');
+      return;
+    }
+    
     parts.pop();
-    const newPath = '/' + parts.join('/');
-    loadDirectory(newPath || '/');
+    let newPath = parts.join(separator);
+    if (isWindows && parts.length === 1) {
+      // Windows drive root (e.g., C:)
+      newPath = parts[0] + '';
+    } else if (!isWindows) {
+      newPath = '/' + newPath;
+    }
+    loadDirectory(newPath);
   };
 
   const navigateTo = (entry: FileEntry) => {
-    if (entry.isDirectory) {
+    if (entry.is_dir) {
       loadDirectory(entry.path);
     } else {
       setSelectedFile(entry);
@@ -186,12 +203,12 @@ export function FileExplorer({ deviceId, isOnline }: FileExplorerProps) {
                   >
                     <td>
                       <div className="flex items-center gap-2">
-                        {file.isDirectory ? (
+                        {file.is_dir ? (
                           <FolderIcon className="w-5 h-5 text-yellow-500" />
                         ) : (
                           <FileIcon className="w-5 h-5 text-gray-400" />
                         )}
-                        <span className={file.isDirectory ? 'font-medium' : ''}>
+                        <span className={file.is_dir ? 'font-medium' : ''}>
                           {file.name}
                         </span>
                       </div>
@@ -200,10 +217,10 @@ export function FileExplorer({ deviceId, isOnline }: FileExplorerProps) {
                       {formatSize(file.size)}
                     </td>
                     <td className="text-sm text-text-secondary">
-                      {formatDate(file.modified)}
+                      {formatDate(file.modified_time)}
                     </td>
                     <td onClick={e => e.stopPropagation()}>
-                      {!file.isDirectory && (
+                      {!file.is_dir && (
                         <button
                           onClick={() => handleDownload(file)}
                           className="p-1 text-text-secondary hover:text-primary transition-colors"
@@ -224,7 +241,7 @@ export function FileExplorer({ deviceId, isOnline }: FileExplorerProps) {
       {/* Status Bar */}
       <div className="px-4 py-2 bg-gray-50 border-t border-border text-sm text-text-secondary">
         {files.length} items
-        {selectedFile && !selectedFile.isDirectory && (
+        {selectedFile && !selectedFile.is_dir && (
           <span className="ml-4">
             Selected: {selectedFile.name} ({formatSize(selectedFile.size)})
           </span>
