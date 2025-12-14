@@ -31,7 +31,7 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('terminal:resize', sessionId, cols, rows),
     close: (sessionId: string) => ipcRenderer.invoke('terminal:close', sessionId),
     onData: (callback: (data: string) => void) => {
-      const handler = (_: any, data: string) => callback(data);
+      const handler = (_: any, payload: { sessionId: string; data: string }) => callback(payload.data);
       ipcRenderer.on('terminal:data', handler);
       return () => ipcRenderer.removeListener('terminal:data', handler);
     },
