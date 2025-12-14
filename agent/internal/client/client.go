@@ -32,6 +32,7 @@ const (
 	MsgTypeTerminalOutput = "terminal_output"
 	MsgTypeTerminalResize = "terminal_resize"
 	MsgTypeCloseTerminal = "close_terminal"
+	MsgTypeListDrives    = "list_drives"
 	MsgTypeListFiles     = "list_files"
 	MsgTypeScanDirectory = "scan_directory"
 	MsgTypeDownloadFile  = "download_file"

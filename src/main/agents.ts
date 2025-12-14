@@ -476,6 +476,23 @@ export class AgentManager {
   }
 
   // File operations
+  async listDrives(deviceId: string): Promise<any[]> {
+    const device = await this.database.getDevice(deviceId);
+    if (!device) {
+      throw new Error('Device not found');
+    }
+
+    if (!this.isAgentConnected(device.agentId)) {
+      throw new Error('Agent not connected');
+    }
+
+    const result = await this.sendRequest(device.agentId, {
+      type: 'list_drives',
+    });
+
+    return result.drives;
+  }
+
   async listFiles(deviceId: string, remotePath: string): Promise<any[]> {
     const device = await this.database.getDevice(deviceId);
     if (!device) {

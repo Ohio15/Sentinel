@@ -308,6 +308,10 @@ function setupIpcHandlers(): void {
   });
 
   // File transfer
+  ipcMain.handle('files:drives', async (_, deviceId: string) => {
+    return agentManager.listDrives(deviceId);
+  });
+
   ipcMain.handle('files:list', async (_, deviceId: string, remotePath: string) => {
     return agentManager.listFiles(deviceId, remotePath);
   });
