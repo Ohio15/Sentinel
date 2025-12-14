@@ -133,7 +133,14 @@ export class AgentManager {
 
   private async sendRequest(agentId: string, message: any, timeoutMs: number = 30000): Promise<any> {
     const requestId = uuidv4();
-    message.requestId = requestId;
+
+    // Extract type and wrap remaining fields in data object for agent compatibility
+    const { type, ...rest } = message;
+    const wrappedMessage = {
+      type,
+      requestId,
+      data: rest,
+    };
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -143,7 +150,7 @@ export class AgentManager {
 
       this.pendingRequests.set(requestId, { resolve, reject, timeout });
 
-      if (!this.sendToAgent(agentId, message)) {
+      if (!this.sendToAgent(agentId, wrappedMessage)) {
         clearTimeout(timeout);
         this.pendingRequests.delete(requestId);
         reject(new Error('Agent not connected'));
@@ -441,8 +448,7 @@ export class AgentManager {
 
     this.sendToAgent(session.agentId, {
       type: 'terminal_input',
-      sessionId,
-      data,
+      data: { sessionId, data },
     });
   }
 
@@ -454,9 +460,7 @@ export class AgentManager {
 
     this.sendToAgent(session.agentId, {
       type: 'terminal_resize',
-      sessionId,
-      cols,
-      rows,
+      data: { sessionId, cols, rows },
     });
   }
 
@@ -465,7 +469,7 @@ export class AgentManager {
     if (session) {
       this.sendToAgent(session.agentId, {
         type: 'close_terminal',
-        sessionId,
+        data: { sessionId },
       });
       this.terminalSessions.delete(sessionId);
     }
@@ -557,7 +561,7 @@ export class AgentManager {
     if (session) {
       this.sendToAgent(session.agentId, {
         type: 'stop_remote',
-        sessionId,
+        data: { sessionId },
       });
       this.remoteSessions.delete(sessionId);
     }
@@ -571,8 +575,7 @@ export class AgentManager {
 
     this.sendToAgent(session.agentId, {
       type: 'remote_input',
-      sessionId,
-      input,
+      data: { sessionId, input },
     });
   }
 
