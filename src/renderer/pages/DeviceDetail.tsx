@@ -347,7 +347,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                   {totalStorage ? `${formatBytes(usedStorage)} / ${formatBytes(totalStorage)}` : 'N/A'}
                 </div>
                 <div className="text-sm opacity-80 mt-1">
-                  {totalStorage && latestMetrics?.diskPercent !== undefined
+                  {totalStorage && latestMetrics?.diskPercent != null
                     ? `${(100 - latestMetrics.diskPercent).toFixed(0)}% free`
                     : ''}
                 </div>
@@ -377,7 +377,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                   {totalMemory ? formatBytes(totalMemory) : 'N/A'}
                 </div>
                 <div className="text-sm opacity-80 mt-1">
-                  {latestMetrics?.memoryPercent !== undefined
+                  {latestMetrics?.memoryPercent != null
                     ? `${latestMetrics.memoryPercent.toFixed(0)}% in use`
                     : ''}
                 </div>
@@ -393,7 +393,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                   {cpuModel}
                 </div>
                 <div className="text-sm opacity-80 mt-1">
-                  {latestMetrics?.cpuPercent !== undefined
+                  {latestMetrics?.cpuPercent != null
                     ? `${latestMetrics.cpuPercent.toFixed(0)}% utilization`
                     : ''}
                 </div>
