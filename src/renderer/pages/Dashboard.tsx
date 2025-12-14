@@ -73,7 +73,7 @@ export function Dashboard({ onDeviceSelect }: DashboardProps) {
                 {recentAlerts.map(alert => (
                   <div
                     key={alert.id}
-                    className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg"
+                    className="flex items-start gap-3 p-3 bg-gray-50 dark:bg-slate-700 rounded-lg"
                   >
                     <div className={`w-2 h-2 mt-2 rounded-full ${
                       alert.severity === 'critical' ? 'bg-danger' :
@@ -112,7 +112,7 @@ export function Dashboard({ onDeviceSelect }: DashboardProps) {
                   <button
                     key={device.id}
                     onClick={() => onDeviceSelect(device.id)}
-                    className="w-full flex items-center gap-3 p-3 hover:bg-gray-50 rounded-lg transition-colors text-left"
+                    className="w-full flex items-center gap-3 p-3 hover:bg-gray-50 dark:hover:bg-slate-700 rounded-lg transition-colors text-left"
                   >
                     <div className={`status-indicator ${
                       device.status === 'online' ? 'status-online' :
@@ -154,11 +154,11 @@ interface StatCardProps {
 
 function StatCard({ title, value, subtitle, icon, color }: StatCardProps) {
   const colors = {
-    blue: 'bg-blue-100 text-blue-600',
-    green: 'bg-green-100 text-green-600',
-    red: 'bg-red-100 text-red-600',
-    yellow: 'bg-yellow-100 text-yellow-600',
-    gray: 'bg-gray-100 text-gray-600',
+    blue: 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400',
+    green: 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400',
+    red: 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400',
+    yellow: 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-600 dark:text-yellow-400',
+    gray: 'bg-gray-100 dark:bg-slate-700 text-gray-600 dark:text-gray-400',
   };
 
   return (
