@@ -184,7 +184,7 @@ export function FileExplorer({ deviceId, isOnline }: FileExplorerProps) {
   const getDriveIcon = (driveType: string) => {
     switch (driveType) {
       case 'Fixed':
-        return <HardDriveIcon className="w-12 h-12 text-gray-600" />;
+        return <HardDriveIcon className="w-12 h-12 text-gray-600 dark:text-gray-400" />;
       case 'Removable':
         return <UsbIcon className="w-12 h-12 text-blue-500" />;
       case 'Network':
@@ -207,7 +207,7 @@ export function FileExplorer({ deviceId, isOnline }: FileExplorerProps) {
   return (
     <div className="flex flex-col h-96">
       {/* Toolbar */}
-      <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 border-b border-border">
+      <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 dark:bg-slate-800 border-b border-border">
         <button
           onClick={navigateUp}
           disabled={viewMode === 'drives'}
@@ -225,11 +225,11 @@ export function FileExplorer({ deviceId, isOnline }: FileExplorerProps) {
         </button>
 
         {/* Breadcrumb Path Bar */}
-        <div className="flex-1 flex items-center gap-1 px-3 py-1 bg-white border border-border rounded text-sm overflow-x-auto">
+        <div className="flex-1 flex items-center gap-1 px-3 py-1 bg-white dark:bg-slate-700 border border-border rounded text-sm overflow-x-auto">
           <button
             onClick={loadDrives}
-            className={`flex items-center gap-1 px-2 py-0.5 rounded hover:bg-gray-100 transition-colors whitespace-nowrap ${
-              viewMode === 'drives' ? 'bg-blue-50 text-blue-700' : 'text-text-primary'
+            className={`flex items-center gap-1 px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-slate-600 transition-colors whitespace-nowrap ${
+              viewMode === 'drives' ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400' : 'text-text-primary'
             }`}
           >
             <ComputerIcon className="w-4 h-4" />
@@ -238,10 +238,10 @@ export function FileExplorer({ deviceId, isOnline }: FileExplorerProps) {
 
           {viewMode === 'files' && getPathSegments().map((segment, index) => (
             <React.Fragment key={segment.path}>
-              <ChevronRightIcon className="w-4 h-4 text-gray-400 flex-shrink-0" />
+              <ChevronRightIcon className="w-4 h-4 text-gray-400 dark:text-gray-500 flex-shrink-0" />
               <button
                 onClick={() => loadDirectory(segment.path)}
-                className="px-2 py-0.5 rounded hover:bg-gray-100 transition-colors whitespace-nowrap font-mono"
+                className="px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-slate-600 transition-colors whitespace-nowrap font-mono text-text-primary"
               >
                 {segment.name}
               </button>
@@ -252,18 +252,18 @@ export function FileExplorer({ deviceId, isOnline }: FileExplorerProps) {
 
       {/* Transfer Progress */}
       {transferProgress && (
-        <div className="px-4 py-2 bg-blue-50 border-b border-blue-200">
+        <div className="px-4 py-2 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-800">
           <div className="flex items-center gap-2">
-            <span className="text-sm text-blue-700">
+            <span className="text-sm text-blue-700 dark:text-blue-400">
               Transferring: {transferProgress.filename}
             </span>
-            <div className="flex-1 h-2 bg-blue-200 rounded-full overflow-hidden">
+            <div className="flex-1 h-2 bg-blue-200 dark:bg-blue-800 rounded-full overflow-hidden">
               <div
                 className="h-full bg-blue-600 transition-all"
                 style={{ width: `${transferProgress.percentage}%` }}
               />
             </div>
-            <span className="text-sm text-blue-700">{transferProgress.percentage}%</span>
+            <span className="text-sm text-blue-700 dark:text-blue-400">{transferProgress.percentage}%</span>
           </div>
         </div>
       )}
@@ -287,7 +287,7 @@ export function FileExplorer({ deviceId, isOnline }: FileExplorerProps) {
                 <div
                   key={drive.path}
                   onClick={() => navigateToDrive(drive)}
-                  className="p-4 border border-border rounded-lg hover:bg-gray-50 hover:border-primary cursor-pointer transition-all"
+                  className="p-4 border border-border rounded-lg hover:bg-gray-50 dark:hover:bg-slate-700 hover:border-primary cursor-pointer transition-all"
                 >
                   <div className="flex items-start gap-3">
                     {getDriveIcon(drive.drive_type)}
@@ -300,7 +300,7 @@ export function FileExplorer({ deviceId, isOnline }: FileExplorerProps) {
                       </div>
                       {drive.total_size > 0 && (
                         <>
-                          <div className="mt-2 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                          <div className="mt-2 h-1.5 bg-gray-200 dark:bg-slate-600 rounded-full overflow-hidden">
                             <div
                               className={`h-full transition-all ${
                                 (drive.used_space / drive.total_size) > 0.9
@@ -326,11 +326,11 @@ export function FileExplorer({ deviceId, isOnline }: FileExplorerProps) {
         ) : (
           /* Files View */
           <table className="w-full">
-            <thead className="sticky top-0 bg-white">
+            <thead className="sticky top-0 bg-white dark:bg-slate-800">
               <tr>
-                <th className="text-left">Name</th>
-                <th className="text-right w-24">Size</th>
-                <th className="text-left w-48">Modified</th>
+                <th className="text-left text-text-primary">Name</th>
+                <th className="text-right w-24 text-text-primary">Size</th>
+                <th className="text-left w-48 text-text-primary">Modified</th>
                 <th className="w-20"></th>
               </tr>
             </thead>
@@ -345,8 +345,8 @@ export function FileExplorer({ deviceId, isOnline }: FileExplorerProps) {
                 files.map(file => (
                   <tr
                     key={file.path}
-                    className={`cursor-pointer ${
-                      selectedFile?.path === file.path ? 'bg-primary-light' : ''
+                    className={`cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-700 ${
+                      selectedFile?.path === file.path ? 'bg-primary-light dark:bg-primary/20' : ''
                     }`}
                     onClick={() => navigateTo(file)}
                   >
@@ -357,7 +357,7 @@ export function FileExplorer({ deviceId, isOnline }: FileExplorerProps) {
                         ) : (
                           <FileIcon className="w-5 h-5 text-gray-400" />
                         )}
-                        <span className={file.is_dir ? 'font-medium' : ''}>
+                        <span className={`text-text-primary ${file.is_dir ? 'font-medium' : ''}`}>
                           {file.name}
                         </span>
                       </div>
@@ -388,7 +388,7 @@ export function FileExplorer({ deviceId, isOnline }: FileExplorerProps) {
       </div>
 
       {/* Status Bar */}
-      <div className="px-4 py-2 bg-gray-50 border-t border-border text-sm text-text-secondary">
+      <div className="px-4 py-2 bg-gray-50 dark:bg-slate-800 border-t border-border text-sm text-text-secondary">
         {viewMode === 'drives' ? (
           <span>{drives.length} drive(s)</span>
         ) : (
