@@ -439,6 +439,13 @@ func (c *Client) readLoop(ctx context.Context) {
 		c.mu.Lock()
 		c.connected = false
 		c.authenticated = false
+		// Signal done channel to trigger reconnection in RunWithReconnect
+		select {
+		case <-c.done:
+			// Already closed
+		default:
+			close(c.done)
+		}
 		c.mu.Unlock()
 
 		if c.onDisconnect != nil {
