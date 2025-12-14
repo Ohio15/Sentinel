@@ -411,6 +411,7 @@ func (a *Agent) registerHandlers() {
 	a.client.RegisterHandler(client.MsgTypeTerminalInput, a.handleTerminalInput)
 	a.client.RegisterHandler(client.MsgTypeTerminalResize, a.handleTerminalResize)
 	a.client.RegisterHandler(client.MsgTypeCloseTerminal, a.handleCloseTerminal)
+	a.client.RegisterHandler(client.MsgTypeListDrives, a.handleListDrives)
 	a.client.RegisterHandler(client.MsgTypeListFiles, a.handleListFiles)
 	a.client.RegisterHandler(client.MsgTypeScanDirectory, a.handleScanDirectory)
 	a.client.RegisterHandler(client.MsgTypeDownloadFile, a.handleDownloadFile)
@@ -731,6 +732,17 @@ func (a *Agent) handleCloseTerminal(msg *client.Message) error {
 
 	sessionID, _ := data["sessionId"].(string)
 	return a.terminalManager.CloseSession(sessionID)
+}
+
+func (a *Agent) handleListDrives(msg *client.Message) error {
+	drives, err := a.fileTransfer.ListDrives()
+	if err != nil {
+		return a.client.SendResponse(msg.RequestID, false, nil, err.Error())
+	}
+
+	return a.client.SendResponse(msg.RequestID, true, map[string]interface{}{
+		"drives": drives,
+	}, "")
 }
 
 func (a *Agent) handleListFiles(msg *client.Message) error {

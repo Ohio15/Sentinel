@@ -39,6 +39,8 @@ contextBridge.exposeInMainWorld('api', {
 
   // Files
   files: {
+    drives: (deviceId: string) =>
+      ipcRenderer.invoke('files:drives', deviceId),
     list: (deviceId: string, path: string) =>
       ipcRenderer.invoke('files:list', deviceId, path),
     download: (deviceId: string, remotePath: string, localPath: string) =>
@@ -222,9 +224,12 @@ export interface ElectronAPI {
     onData: (callback: (data: string) => void) => () => void;
   };
   files: {
+    drives: (deviceId: string) => Promise<DriveInfo[]>;
     list: (deviceId: string, path: string) => Promise<FileEntry[]>;
     download: (deviceId: string, remotePath: string, localPath: string) => Promise<void>;
     upload: (deviceId: string, localPath: string, remotePath: string) => Promise<void>;
+    scan: (deviceId: string, path: string, maxDepth: number) => Promise<any>;
+    downloadToSandbox: (deviceId: string, remotePath: string) => Promise<SandboxDownloadResult>;
     onProgress: (callback: (progress: FileProgress) => void) => () => void;
   };
   remote: {
@@ -342,13 +347,34 @@ interface CommandResult {
   error?: string;
 }
 
+interface DriveInfo {
+  name: string;
+  path: string;
+  label: string;
+  drive_type: string;
+  file_system: string;
+  total_size: number;
+  free_space: number;
+  used_space: number;
+}
+
 interface FileEntry {
   name: string;
   path: string;
-  isDirectory: boolean;
+  is_dir: boolean;
   size: number;
-  modified: string;
-  permissions: string;
+  modified_time: string;
+  mode: string;
+  is_hidden?: boolean;
+}
+
+interface SandboxDownloadResult {
+  localPath: string;
+  sandboxDir: string;
+  filename: string;
+  originalName: string;
+  sha256: string;
+  size: number;
 }
 
 interface FileProgress {
