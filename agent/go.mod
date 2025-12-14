@@ -3,6 +3,7 @@ module github.com/sentinel/agent
 go 1.21
 
 require (
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/creack/pty v1.1.21
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.1
@@ -10,10 +11,11 @@ require (
 	github.com/kbinani/screenshot v0.0.0-20250624051815-089614a94018
 	github.com/shirou/gopsutil/v3 v3.24.1
 	golang.org/x/sys v0.24.0
+	google.golang.org/grpc v1.64.0
+	google.golang.org/protobuf v1.33.0
 )
 
 require (
-	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/gen2brain/shm v0.1.0 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
@@ -25,5 +27,7 @@ require (
 	github.com/tklauser/go-sysconf v0.3.13 // indirect
 	github.com/tklauser/numcpus v0.7.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.3 // indirect
-	golang.org/x/net v0.20.0 // indirect
+	golang.org/x/net v0.22.0 // indirect
+	golang.org/x/text v0.14.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20240318140521-94a12d6c2237 // indirect
 )

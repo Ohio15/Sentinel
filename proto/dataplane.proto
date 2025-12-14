@@ -1,0 +1,143 @@
+syntax = "proto3";
+
+package sentinel.dataplane;
+
+option go_package = "github.com/sentinel/agent/internal/grpc/dataplane";
+
+// System metrics streamed from agent
+message Metrics {
+  string agent_id = 1;
+  int64 timestamp = 2;
+  double cpu_percent = 3;
+  double memory_percent = 4;
+  uint64 memory_used = 5;
+  uint64 memory_available = 6;
+  double disk_percent = 7;
+  uint64 disk_used = 8;
+  uint64 disk_total = 9;
+  uint64 network_rx_bytes = 10;
+  uint64 network_tx_bytes = 11;
+  int32 process_count = 12;
+  uint64 uptime = 13;
+}
+
+// System information for inventory
+message SystemInfo {
+  string hostname = 1;
+  string os = 2;
+  string os_version = 3;
+  string platform = 4;
+  string architecture = 5;
+  string cpu_model = 6;
+  int32 cpu_cores = 7;
+  int32 cpu_threads = 8;
+  double cpu_speed = 9;
+  uint64 total_memory = 10;
+  repeated GPUInfo gpu = 11;
+  repeated StorageInfo storage = 12;
+  string serial_number = 13;
+  string manufacturer = 14;
+  string model = 15;
+}
+
+message GPUInfo {
+  string name = 1;
+  string vendor = 2;
+  uint64 memory = 3;
+  string driver_version = 4;
+}
+
+message StorageInfo {
+  string device = 1;
+  string mountpoint = 2;
+  string fs_type = 3;
+  uint64 total = 4;
+  uint64 used = 5;
+  uint64 free = 6;
+  double percent = 7;
+}
+
+message InstalledSoftware {
+  string name = 1;
+  string version = 2;
+  string publisher = 3;
+  string install_date = 4;
+}
+
+// Inventory data upload
+message InventoryData {
+  string agent_id = 1;
+  int64 timestamp = 2;
+  SystemInfo system_info = 3;
+  repeated InstalledSoftware software = 4;
+}
+
+// Log entry for streaming
+message LogEntry {
+  string agent_id = 1;
+  int64 timestamp = 2;
+  string level = 3;
+  string source = 4;
+  string message = 5;
+  map<string, string> metadata = 6;
+}
+
+// Batch of log entries
+message LogBatch {
+  string agent_id = 1;
+  repeated LogEntry entries = 2;
+}
+
+// File chunk for streaming file content
+message FileChunk {
+  string agent_id = 1;
+  string request_id = 2;
+  string file_path = 3;
+  bytes data = 4;
+  int64 offset = 5;
+  int64 total_size = 6;
+  bool is_last = 7;
+}
+
+// Bulk data chunk for diagnostics
+message BulkDataChunk {
+  string agent_id = 1;
+  string request_id = 2;
+  string data_type = 3;
+  bytes data = 4;
+  int32 chunk_index = 5;
+  int32 total_chunks = 6;
+  bool is_last = 7;
+}
+
+// Generic response
+message StreamResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+// Empty message for streams that don't need request data
+message Empty {}
+
+// DataPlane service - Data streaming only, NO command execution
+service DataPlaneService {
+  // Metrics streaming (client-side streaming)
+  // Agent continuously streams metrics to server
+  rpc StreamMetrics(stream Metrics) returns (StreamResponse);
+
+  // Inventory upload (unary)
+  // Agent uploads system inventory periodically
+  rpc UploadInventory(InventoryData) returns (StreamResponse);
+
+  // Log streaming (client-side streaming)
+  // Agent streams log batches to server
+  rpc StreamLogs(stream LogBatch) returns (StreamResponse);
+
+  // File content streaming (client-side streaming)
+  // Agent streams file content for downloads
+  rpc StreamFileContent(stream FileChunk) returns (StreamResponse);
+
+  // Bulk data upload (client-side streaming)
+  // Agent uploads diagnostic data in chunks
+  rpc UploadBulkData(stream BulkDataChunk) returns (StreamResponse);
+}

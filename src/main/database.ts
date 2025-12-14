@@ -1130,6 +1130,173 @@ export class Database {
   }
 
 
+  // ============================================================================
+  // GRPC DATA PLANE METHODS
+  // ============================================================================
+
+  // Insert a log entry from agent
+  async insertAgentLog(deviceId: string, log: {
+    timestamp?: Date;
+    level: string;
+    source?: string;
+    message: string;
+    metadata?: Record<string, string>;
+  }): Promise<void> {
+    await this.query(
+      `INSERT INTO agent_logs (device_id, timestamp, level, source, message, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        deviceId,
+        log.timestamp || new Date(),
+        log.level,
+        log.source || null,
+        log.message,
+        JSON.stringify(log.metadata || {})
+      ]
+    );
+  }
+
+  // Get agent logs for a device
+  async getAgentLogs(deviceId: string, options?: {
+    level?: string;
+    source?: string;
+    limit?: number;
+    offset?: number;
+    since?: Date;
+  }): Promise<any[]> {
+    let sql = `
+      SELECT id, device_id as "deviceId", timestamp, level, source, message, metadata, created_at as "createdAt"
+      FROM agent_logs
+      WHERE device_id = $1
+    `;
+    const values: any[] = [deviceId];
+    let paramIndex = 2;
+
+    if (options?.level) {
+      sql += ` AND level = \$${paramIndex++}`;
+      values.push(options.level);
+    }
+    if (options?.source) {
+      sql += ` AND source = \$${paramIndex++}`;
+      values.push(options.source);
+    }
+    if (options?.since) {
+      sql += ` AND timestamp >= \$${paramIndex++}`;
+      values.push(options.since);
+    }
+
+    sql += ' ORDER BY timestamp DESC';
+
+    if (options?.limit) {
+      sql += ` LIMIT \$${paramIndex++}`;
+      values.push(options.limit);
+    }
+    if (options?.offset) {
+      sql += ` OFFSET \$${paramIndex++}`;
+      values.push(options.offset);
+    }
+
+    const result = await this.query(sql, values);
+    return result.rows;
+  }
+
+  // Clean old agent logs
+  async cleanOldAgentLogs(retentionDays: number = 30): Promise<number> {
+    const result = await this.query(
+      `DELETE FROM agent_logs WHERE timestamp < NOW() - INTERVAL '1 day' * $1`,
+      [retentionDays]
+    );
+    return result.rowCount || 0;
+  }
+
+  // Update or insert software inventory for a device
+  async upsertSoftwareInventory(deviceId: string, software: {
+    name: string;
+    version?: string;
+    publisher?: string;
+    installDate?: string;
+    installLocation?: string;
+    sizeBytes?: number;
+    isSystemComponent?: boolean;
+  }): Promise<void> {
+    await this.query(
+      `INSERT INTO software_inventory (device_id, name, version, publisher, install_date, install_location, size_bytes, is_system_component)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (device_id, name, version) DO UPDATE SET
+         publisher = EXCLUDED.publisher,
+         install_date = EXCLUDED.install_date,
+         install_location = EXCLUDED.install_location,
+         size_bytes = EXCLUDED.size_bytes,
+         is_system_component = EXCLUDED.is_system_component,
+         updated_at = CURRENT_TIMESTAMP`,
+      [
+        deviceId,
+        software.name,
+        software.version || null,
+        software.publisher || null,
+        software.installDate || null,
+        software.installLocation || null,
+        software.sizeBytes || null,
+        software.isSystemComponent || false
+      ]
+    );
+  }
+
+  // Replace entire software inventory for a device
+  async replaceSoftwareInventory(deviceId: string, softwareList: Array<{
+    name: string;
+    version?: string;
+    publisher?: string;
+    installDate?: string;
+    installLocation?: string;
+    sizeBytes?: number;
+    isSystemComponent?: boolean;
+  }>): Promise<void> {
+    await this.query('DELETE FROM software_inventory WHERE device_id = $1', [deviceId]);
+    for (const software of softwareList) {
+      await this.upsertSoftwareInventory(deviceId, software);
+    }
+  }
+
+  // Get software inventory for a device
+  async getSoftwareInventory(deviceId: string): Promise<any[]> {
+    const result = await this.query(
+      `SELECT id, device_id as "deviceId", name, version, publisher,
+              install_date as "installDate", install_location as "installLocation",
+              size_bytes as "sizeBytes", is_system_component as "isSystemComponent",
+              created_at as "createdAt", updated_at as "updatedAt"
+       FROM software_inventory
+       WHERE device_id = $1
+       ORDER BY name`,
+      [deviceId]
+    );
+    return result.rows;
+  }
+
+  // Log bulk data upload
+  async logBulkDataUpload(deviceId: string, dataType: string, sizeBytes: number, requestId?: string, metadata?: Record<string, any>): Promise<void> {
+    await this.query(
+      `INSERT INTO bulk_data_uploads (device_id, data_type, request_id, size_bytes, metadata)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [deviceId, dataType, requestId || null, sizeBytes, JSON.stringify(metadata || {})]
+    );
+  }
+
+  // Update device gRPC connection status
+  async updateDeviceGrpcStatus(deviceId: string, connected: boolean): Promise<void> {
+    if (connected) {
+      await this.query(
+        `UPDATE devices SET grpc_connected = TRUE, grpc_last_seen = CURRENT_TIMESTAMP WHERE id = $1`,
+        [deviceId]
+      );
+    } else {
+      await this.query(
+        `UPDATE devices SET grpc_connected = FALSE WHERE id = $1`,
+        [deviceId]
+      );
+    }
+  }
+
   async close(): Promise<void> {
     if (this.pool) {
       await this.pool.end();

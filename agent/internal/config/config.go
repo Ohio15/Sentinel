@@ -48,6 +48,7 @@ func GetEmbeddedConfig() (serverURL, token string, hasEmbedded bool) {
 type Config struct {
 	AgentID           string `json:"agent_id"`
 	ServerURL         string `json:"server_url"`
+	GrpcAddress       string `json:"grpc_address"`       // gRPC Data Plane address (port 8082)
 	EnrollmentToken   string `json:"enrollment_token"`
 	HeartbeatInterval int    `json:"heartbeat_interval"` // seconds
 	MetricsInterval   int    `json:"metrics_interval"`   // seconds
@@ -174,4 +175,46 @@ func (c *Config) SetEnrolled(deviceID string) error {
 	c.Enrolled = true
 	c.DeviceID = deviceID
 	return c.Save()
+}
+
+// GetGrpcAddress returns the gRPC address, deriving it from ServerURL if not set
+// WebSocket runs on port 8081, gRPC runs on port 8082
+func (c *Config) GetGrpcAddress() string {
+	if c.GrpcAddress != "" {
+		return c.GrpcAddress
+	}
+
+	// Derive from ServerURL by replacing port 8081 with 8082
+	// ServerURL format: http://host:8081 or ws://host:8081/ws/agent
+	serverURL := c.ServerURL
+	if serverURL == "" {
+		return ""
+	}
+
+	// Remove protocol prefix
+	host := serverURL
+	host = strings.TrimPrefix(host, "http://")
+	host = strings.TrimPrefix(host, "https://")
+	host = strings.TrimPrefix(host, "ws://")
+	host = strings.TrimPrefix(host, "wss://")
+
+	// Remove path
+	if idx := strings.Index(host, "/"); idx != -1 {
+		host = host[:idx]
+	}
+
+	// Replace port 8081 with 8082
+	if strings.Contains(host, ":8081") {
+		host = strings.Replace(host, ":8081", ":8082", 1)
+	} else if strings.Contains(host, ":") {
+		// Has a different port, append :8082 after removing existing port
+		if colonIdx := strings.LastIndex(host, ":"); colonIdx != -1 {
+			host = host[:colonIdx] + ":8082"
+		}
+	} else {
+		// No port specified, add :8082
+		host = host + ":8082"
+	}
+
+	return host
 }

@@ -194,6 +194,11 @@ export class AgentManager {
   private async handleHeartbeat(agentId: string, message: any): Promise<void> {
     await this.database.updateDeviceLastSeen(agentId);
 
+    // Update agent version if provided in heartbeat
+    if (message.agentVersion) {
+      await this.database.updateDeviceAgentVersion(agentId, message.agentVersion);
+    }
+
     // Send heartbeat acknowledgment
     this.sendToAgent(agentId, {
       type: 'heartbeat_ack',
