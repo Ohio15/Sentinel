@@ -39,7 +39,7 @@ services:
       dockerfile: Dockerfile
     container_name: sentinel-backend
     ports:
-      - "8081:8080"
+      - "8090:8080"
     restart: unless-stopped
     environment:
       - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
@@ -50,7 +50,7 @@ services:
       - ALLOWED_ORIGINS=https://${DOMAIN}
       - RATE_LIMIT_REQUESTS=${RATE_LIMIT_REQUESTS:-100}
       - RATE_LIMIT_WINDOW=${RATE_LIMIT_WINDOW:-60}
-      - SERVER_URL=${SERVER_URL:-http://localhost:8081}
+      - SERVER_URL=${SERVER_URL:-http://localhost:8090}
     volumes:
       - ./installers:/app/installers:ro
       - ./agent/version.json:/app/agent/version.json:ro
