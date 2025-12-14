@@ -22,6 +22,7 @@ import (
 	"github.com/sentinel/agent/internal/executor"
 	"github.com/sentinel/agent/internal/filetransfer"
 	"github.com/sentinel/agent/internal/ipc"
+	agentgrpc "github.com/sentinel/agent/internal/grpc"
 	"github.com/sentinel/agent/internal/protection"
 	"github.com/sentinel/agent/internal/remote"
 	svc "github.com/sentinel/agent/internal/service"
@@ -29,7 +30,7 @@ import (
 	"github.com/sentinel/agent/internal/updater"
 )
 
-var Version = "1.33.0"
+var Version = "1.40.0"
 
 const ServiceName = "SentinelAgent"
 
@@ -47,6 +48,7 @@ var (
 type Agent struct {
 	cfg               *config.Config
 	client            *client.Client
+	dataPlane         *agentgrpc.DataPlaneClient // gRPC Data Plane connection
 	collector         *collector.Collector
 	executor          *executor.Executor
 	terminalManager   *terminal.Manager
@@ -260,9 +262,17 @@ func NewAgent(cfg *config.Config) *Agent {
 	installPath := filepath.Dir(exePath)
 	protMgr := protection.NewManager(installPath, ServiceName)
 
+	// Create Data Plane client (gRPC for metrics streaming)
+	grpcAddr := cfg.GetGrpcAddress()
+	var dataPlane *agentgrpc.DataPlaneClient
+	if grpcAddr != "" {
+		dataPlane = agentgrpc.NewDataPlaneClient(cfg.AgentID, grpcAddr)
+	}
+
 	return &Agent{
 		cfg:                  cfg,
 		client:               client.New(cfg, Version),
+		dataPlane:            dataPlane,
 		collector:            collector.New(),
 		executor:             executor.New(),
 		terminalManager:      terminal.NewManager(),
@@ -338,6 +348,14 @@ func (a *Agent) Start() error {
 	// Start connection with automatic reconnection
 	go a.client.RunWithReconnect(a.ctx)
 
+	// Start Data Plane (gRPC) connection in parallel
+	// This is optional - metrics will fallback to WebSocket if gRPC is unavailable
+	if a.dataPlane != nil {
+		grpcAddr := a.cfg.GetGrpcAddress()
+		log.Printf("Starting gRPC Data Plane connection to %s", grpcAddr)
+		go a.dataPlane.RunWithReconnect(a.ctx)
+	}
+
 	// Start heartbeat loop
 	go a.heartbeatLoop()
 
@@ -372,6 +390,13 @@ func (a *Agent) Stop() error {
 
 	a.cancel()
 	a.terminalManager.CloseAll()
+
+	// Stop Data Plane (gRPC) connection
+	if a.dataPlane != nil {
+		a.dataPlane.Stop()
+	}
+
+	// Stop Control Plane (WebSocket) connection
 	a.client.Close()
 
 	log.Println("Agent stopped")
@@ -533,12 +558,42 @@ func (a *Agent) metricsLoop() {
 		case <-a.ctx.Done():
 			return
 		case <-ticker.C:
-			if a.client.IsConnected() && a.client.IsAuthenticated() {
-				metrics, err := a.collector.Collect(a.ctx)
-				if err != nil {
-					log.Printf("Failed to collect metrics: %v", err)
-					continue
+			if !a.client.IsConnected() || !a.client.IsAuthenticated() {
+				continue
+			}
+
+			metrics, err := a.collector.Collect(a.ctx)
+			if err != nil {
+				log.Printf("Failed to collect metrics: %v", err)
+				continue
+			}
+
+			// Try gRPC Data Plane first (preferred for metrics streaming)
+			if a.dataPlane != nil && a.dataPlane.IsConnected() {
+				grpcMetrics := &agentgrpc.Metrics{
+					AgentID:         a.cfg.AgentID,
+					Timestamp:       time.Now().UnixMilli(),
+					CPUPercent:      metrics.CPUPercent,
+					MemoryPercent:   metrics.MemoryPercent,
+					MemoryUsed:      metrics.MemoryUsed,
+					MemoryAvailable: metrics.MemoryAvailable,
+					DiskPercent:     metrics.DiskPercent,
+					DiskUsed:        metrics.DiskUsed,
+					DiskTotal:       metrics.DiskTotal,
+					NetworkRxBytes:  metrics.NetworkRxBytes,
+					NetworkTxBytes:  metrics.NetworkTxBytes,
+					ProcessCount:    int32(metrics.ProcessCount),
+					Uptime:          metrics.Uptime,
 				}
+				if err := a.dataPlane.SendMetrics(a.ctx, grpcMetrics); err != nil {
+					log.Printf("gRPC metrics failed, falling back to WebSocket: %v", err)
+					// Fallback to WebSocket
+					if err := a.client.SendMetrics(metrics); err != nil {
+						log.Printf("Failed to send metrics via WebSocket: %v", err)
+					}
+				}
+			} else {
+				// gRPC not available, use WebSocket
 				if err := a.client.SendMetrics(metrics); err != nil {
 					log.Printf("Failed to send metrics: %v", err)
 				}

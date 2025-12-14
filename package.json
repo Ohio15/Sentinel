@@ -1,6 +1,6 @@
 {
   "name": "sentinel",
-  "version": "1.39.0",
+  "version": "1.40.0",
   "description": "Sentinel - Remote Monitoring and Management",
   "main": "dist/main/main.js",
   "author": "Sentinel",
@@ -20,6 +20,8 @@
     "agent:build:macos": "cd agent && powershell -ExecutionPolicy Bypass -File build.ps1 -Platform macos"
   },
   "dependencies": {
+    "@grpc/grpc-js": "^1.14.3",
+    "@grpc/proto-loader": "^0.8.0",
     "@types/pg": "^8.15.6",
     "electron-store": "^8.1.0",
     "electron-updater": "^6.6.2",

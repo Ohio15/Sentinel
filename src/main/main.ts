@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import { Database } from './database';
 import { Server } from './server';
 import { AgentManager } from './agents';
+import { GrpcServer } from './grpc-server';
 import * as os from 'os';
 
 // Disable GPU acceleration to prevent crashes on some systems
@@ -142,6 +143,7 @@ let mainWindow: BrowserWindow | null = null;
 let database: Database;
 let server: Server;
 let agentManager: AgentManager;
+let grpcServer: GrpcServer;
 let isQuitting = false;
 
 // Ensure single instance - focus existing window if already running
@@ -218,6 +220,18 @@ async function initialize(): Promise<void> {
   // Initialize embedded server
   server = new Server(database, agentManager);
   await server.start();
+
+  // Initialize gRPC server (Data Plane - port 8082)
+  grpcServer = new GrpcServer(database, agentManager, 8082);
+  try {
+    await grpcServer.start();
+    console.log('Dual-channel architecture initialized:');
+    console.log('  - WebSocket Control Plane: port 8081');
+    console.log('  - gRPC Data Plane: port 8082');
+  } catch (error) {
+    console.error('Failed to start gRPC server:', error);
+    // gRPC is optional, continue without it
+  }
 
   // Setup IPC handlers
   setupIpcHandlers();
@@ -445,7 +459,9 @@ function setupIpcHandlers(): void {
   ipcMain.handle('server:getInfo', async () => {
     return {
       port: server.getPort(),
+      grpcPort: grpcServer?.getPort() || 8082,
       agentCount: agentManager.getConnectedAgentCount(),
+      grpcAgentCount: grpcServer?.getConnectionCount() || 0,
       enrollmentToken: server.getEnrollmentToken(),
     };
   });
@@ -560,8 +576,12 @@ function setupIpcHandlers(): void {
     // Clean up resources before quitting for update
     try {
       console.log('Preparing to install update...');
+      if (grpcServer) {
+        console.log('Stopping gRPC server...');
+        await grpcServer.stop();
+      }
       if (server) {
-        console.log('Stopping server...');
+        console.log('Stopping WebSocket server...');
         await server.stop();
       }
       if (database) {
@@ -779,9 +799,13 @@ app.on('before-quit', async (event) => {
         win.close();
       });
 
-      // Stop server and close database
+      // Stop servers and close database
+      if (grpcServer) {
+        console.log('Stopping gRPC server...');
+        await grpcServer.stop();
+      }
       if (server) {
-        console.log('Stopping server...');
+        console.log('Stopping WebSocket server...');
         await server.stop();
       }
       if (database) {

@@ -1,7 +1,11 @@
 {
-  "version": "1.32.0",
-  "releaseDate": "2025-12-11",
-  "changelog": "- Real-time device status updates via WebSocket\n- Broadcast online/offline status to admin dashboard",
-  "platforms": ["windows", "linux", "darwin"],
+  "version": "1.40.0",
+  "releaseDate": "2025-12-14",
+  "changelog": "- Dual-channel architecture: WebSocket (Control) + gRPC (Data)\n- Agent version now synced via heartbeat",
+  "platforms": [
+    "windows",
+    "linux",
+    "darwin"
+  ],
   "minAppVersion": "1.10.0"
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -77,6 +78,8 @@ type Client struct {
 	lastPong        time.Time
 	pingInterval    time.Duration
 	pongTimeout     time.Duration
+	healthPollRate  time.Duration
+	httpClient      *http.Client
 }
 
 // New creates a new WebSocket client
@@ -84,13 +87,17 @@ func New(cfg *config.Config, version string) *Client {
 	return &Client{
 		config:         cfg,
 		handlers:       make(map[string]MessageHandler),
-		reconnectDelay: 5 * time.Second,
-		maxReconnect:   5 * time.Minute,
+		reconnectDelay: 500 * time.Millisecond,
+		maxReconnect:   2 * time.Second,
 		done:           make(chan struct{}),
 		sendQueue:      make(chan []byte, 100),
 		version:        version,
 		pingInterval:   15 * time.Second,
 		pongTimeout:    10 * time.Second,
+		healthPollRate: 250 * time.Millisecond,
+		httpClient: &http.Client{
+			Timeout: 2 * time.Second,
+		},
 	}
 }
 
@@ -110,6 +117,75 @@ func (c *Client) RegisterHandler(msgType string, handler MessageHandler) {
 	defer c.mu.Unlock()
 	c.handlers[msgType] = handler
 }
+
+// getHealthURL returns the HTTP health check URL from the server URL
+func (c *Client) getHealthURL() string {
+	serverURL := c.config.ServerURL
+	if serverURL == "" {
+		return ""
+	}
+
+	// Ensure http:// or https:// prefix
+	if !strings.HasPrefix(serverURL, "http://") && !strings.HasPrefix(serverURL, "https://") {
+		if strings.HasPrefix(serverURL, "ws://") {
+			serverURL = "http://" + serverURL[5:]
+		} else if strings.HasPrefix(serverURL, "wss://") {
+			serverURL = "https://" + serverURL[6:]
+		} else {
+			serverURL = "http://" + serverURL
+		}
+	}
+
+	// Remove any path suffix and add /health
+	if idx := strings.Index(serverURL[8:], "/"); idx > 0 {
+		serverURL = serverURL[:8+idx]
+	}
+
+	return serverURL + "/health"
+}
+
+// checkServerHealth performs an HTTP health check to see if server is available
+func (c *Client) checkServerHealth() bool {
+	healthURL := c.getHealthURL()
+	if healthURL == "" {
+		return false
+	}
+
+	resp, err := c.httpClient.Get(healthURL)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode == http.StatusOK
+}
+
+// waitForServer polls the server until it becomes available
+func (c *Client) waitForServer(ctx context.Context) bool {
+	log.Println("Waiting for server to become available...")
+
+	// Try immediately first
+	if c.checkServerHealth() {
+		log.Println("Server is available!")
+		return true
+	}
+
+	ticker := time.NewTicker(c.healthPollRate)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+			if c.checkServerHealth() {
+				log.Println("Server is available!")
+				return true
+			}
+		}
+	}
+}
+
 
 // Connect establishes a WebSocket connection to the server
 func (c *Client) Connect(ctx context.Context) error {
@@ -137,7 +213,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	log.Printf("Connecting to %s", wsURL)
 
 	dialer := websocket.Dialer{
-		HandshakeTimeout: 10 * time.Second,
+		HandshakeTimeout: 5 * time.Second,
 	}
 
 	headers := http.Header{}
@@ -528,9 +604,8 @@ func (c *Client) IsAuthenticated() bool {
 }
 
 // RunWithReconnect maintains a persistent connection with automatic reconnection
+// Uses HTTP health polling to detect server availability for immediate connection
 func (c *Client) RunWithReconnect(ctx context.Context) {
-	delay := c.reconnectDelay
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -538,31 +613,40 @@ func (c *Client) RunWithReconnect(ctx context.Context) {
 		default:
 		}
 
+		// Reset done channel before connecting
+		c.mu.Lock()
+		select {
+		case <-c.done:
+			c.done = make(chan struct{})
+		default:
+		}
+		c.mu.Unlock()
+
+		// Phase 1: Wait for server to be available via HTTP health check
+		// This ensures we connect IMMEDIATELY when server starts
+		if !c.waitForServer(ctx) {
+			return // Context cancelled
+		}
+
+		// Phase 2: Connect WebSocket immediately after server is detected
+		log.Println("Attempting WebSocket connection...")
 		err := c.Connect(ctx)
 		if err != nil {
-			log.Printf("Connection failed: %v, retrying in %v", err, delay)
-
+			log.Printf("WebSocket connection failed: %v, retrying...", err)
+			// Brief pause before retry - server might still be starting up
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(delay):
-			}
-
-			// Exponential backoff
-			delay = delay * 2
-			if delay > c.maxReconnect {
-				delay = c.maxReconnect
+			case <-time.After(c.reconnectDelay):
 			}
 			continue
 		}
 
-		// Reset delay on successful connection
-		delay = c.reconnectDelay
+		log.Println("Connection established successfully")
 
-		// Wait for disconnection
+		// Phase 3: Wait for disconnection
 		<-c.done
-		c.done = make(chan struct{})
 
-		log.Println("Disconnected, reconnecting...")
+		log.Println("Disconnected, checking server availability...")
 	}
 }
