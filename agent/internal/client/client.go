@@ -74,6 +74,9 @@ type Client struct {
 	onConnect       func()
 	onDisconnect    func()
 	version         string
+	lastPong        time.Time
+	pingInterval    time.Duration
+	pongTimeout     time.Duration
 }
 
 // New creates a new WebSocket client
@@ -86,6 +89,8 @@ func New(cfg *config.Config, version string) *Client {
 		done:           make(chan struct{}),
 		sendQueue:      make(chan []byte, 100),
 		version:        version,
+		pingInterval:   15 * time.Second,
+		pongTimeout:    10 * time.Second,
 	}
 }
 
@@ -144,7 +149,17 @@ func (c *Client) Connect(ctx context.Context) error {
 	c.mu.Lock()
 	c.conn = conn
 	c.connected = true
+	c.lastPong = time.Now()
 	c.mu.Unlock()
+
+	// Set up WebSocket-level pong handler to detect dead connections
+	conn.SetPongHandler(func(appData string) error {
+		c.mu.Lock()
+		c.lastPong = time.Now()
+		c.mu.Unlock()
+		log.Println("Received WebSocket pong")
+		return nil
+	})
 
 	log.Println("WebSocket connected")
 
@@ -170,12 +185,74 @@ func (c *Client) Connect(ctx context.Context) error {
 	// Start message handlers
 	go c.readLoop(ctx)
 	go c.writeLoop(ctx)
+	go c.pingLoop(ctx)
 
 	if c.onConnect != nil {
 		c.onConnect()
 	}
 
 	return nil
+}
+
+// pingLoop sends WebSocket-level ping frames to detect dead connections
+func (c *Client) pingLoop(ctx context.Context) {
+	ticker := time.NewTicker(c.pingInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.done:
+			return
+		case <-ticker.C:
+			c.mu.RLock()
+			conn := c.conn
+			connected := c.connected
+			lastPong := c.lastPong
+			c.mu.RUnlock()
+
+			if !connected || conn == nil {
+				return
+			}
+
+			// Check if we've received a pong recently
+			if time.Since(lastPong) > c.pingInterval+c.pongTimeout {
+				log.Printf("No pong received for %v, connection appears dead", time.Since(lastPong))
+				c.forceClose()
+				return
+			}
+
+			// Send WebSocket-level ping
+			if err := conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(5*time.Second)); err != nil {
+				log.Printf("Failed to send ping: %v", err)
+				c.forceClose()
+				return
+			}
+			log.Println("Sent WebSocket ping")
+		}
+	}
+}
+
+// forceClose forcefully closes the connection to trigger reconnection
+func (c *Client) forceClose() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.conn != nil {
+		c.conn.Close()
+		c.conn = nil
+	}
+	c.connected = false
+	c.authenticated = false
+
+	// Signal done to trigger reconnection
+	select {
+	case <-c.done:
+		// Already closed
+	default:
+		close(c.done)
+	}
 }
 
 // Authenticate sends authentication message to the server
@@ -310,10 +387,15 @@ func (c *Client) readLoop(ctx context.Context) {
 			return
 		}
 
+		// Set read deadline to detect dead connections
+		conn.SetReadDeadline(time.Now().Add(c.pingInterval + c.pongTimeout + 5*time.Second))
+
 		_, data, err := conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("WebSocket read error: %v", err)
+			} else {
+				log.Printf("WebSocket read error (timeout or closed): %v", err)
 			}
 			return
 		}
