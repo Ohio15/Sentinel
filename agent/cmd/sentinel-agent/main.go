@@ -30,7 +30,7 @@ import (
 	"github.com/sentinel/agent/internal/updater"
 )
 
-var Version = "1.42.0"
+var Version = "1.43.0"
 
 const ServiceName = "SentinelAgent"
 
