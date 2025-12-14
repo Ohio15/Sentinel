@@ -528,6 +528,25 @@ export class AgentManager {
     }, 300000); // 5 minute timeout for file transfers
   }
 
+  async scanDirectory(deviceId: string, path: string, maxDepth: number = 10): Promise<any> {
+    const device = await this.database.getDevice(deviceId);
+    if (!device) {
+      throw new Error('Device not found');
+    }
+
+    if (!this.isAgentConnected(device.agentId)) {
+      throw new Error('Agent not connected');
+    }
+
+    const result = await this.sendRequest(device.agentId, {
+      type: 'scan_directory',
+      path,
+      maxDepth,
+    }, 600000); // 10 minute timeout for large directory scans
+
+    return result.result;
+  }
+
   // Remote desktop
   async startRemoteSession(deviceId: string): Promise<{ sessionId: string }> {
     const device = await this.database.getDevice(deviceId);

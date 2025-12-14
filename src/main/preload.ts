@@ -45,6 +45,10 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('files:download', deviceId, remotePath, localPath),
     upload: (deviceId: string, localPath: string, remotePath: string) =>
       ipcRenderer.invoke('files:upload', deviceId, localPath, remotePath),
+    scan: (deviceId: string, path: string, maxDepth: number) =>
+      ipcRenderer.invoke('files:scan', deviceId, path, maxDepth),
+    downloadToSandbox: (deviceId: string, remotePath: string) =>
+      ipcRenderer.invoke('files:downloadToSandbox', deviceId, remotePath),
     onProgress: (callback: (progress: any) => void) => {
       const handler = (_: any, progress: any) => callback(progress);
       ipcRenderer.on('files:progress', handler);

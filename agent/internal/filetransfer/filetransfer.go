@@ -335,3 +335,142 @@ func (ft *FileTransfer) GetChecksum(path string) (string, error) {
 
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
+
+// ScanProgress is sent to report scan progress
+type ScanProgress struct {
+	ScannedFiles  int   `json:"scanned_files"`
+	ScannedDirs   int   `json:"scanned_dirs"`
+	TotalSize     int64 `json:"total_size"`
+	CurrentPath   string `json:"current_path"`
+	Complete      bool  `json:"complete"`
+}
+
+// ScanResult contains the complete scan results
+type ScanResult struct {
+	Files       []FileInfo `json:"files"`
+	TotalFiles  int        `json:"total_files"`
+	TotalDirs   int        `json:"total_dirs"`
+	TotalSize   int64      `json:"total_size"`
+	ScanPath    string     `json:"scan_path"`
+	Error       string     `json:"error,omitempty"`
+}
+
+// ScanDirectoryRecursive scans a directory recursively up to maxDepth
+// onProgress is called periodically to report scan progress
+func (ft *FileTransfer) ScanDirectoryRecursive(ctx context.Context, rootPath string, maxDepth int, onProgress func(ScanProgress)) (*ScanResult, error) {
+	// Expand home directory
+	if rootPath == "" || rootPath == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get home directory: %w", err)
+		}
+		rootPath = home
+	}
+
+	rootPath = filepath.Clean(rootPath)
+
+	result := &ScanResult{
+		Files:    make([]FileInfo, 0),
+		ScanPath: rootPath,
+	}
+
+	var scannedFiles, scannedDirs int
+	var totalSize int64
+	lastProgress := time.Now()
+
+	err := ft.scanDir(ctx, rootPath, 0, maxDepth, &result.Files, func(path string) {
+		// Send progress updates at most every 100ms
+		if time.Since(lastProgress) > 100*time.Millisecond && onProgress != nil {
+			onProgress(ScanProgress{
+				ScannedFiles: scannedFiles,
+				ScannedDirs:  scannedDirs,
+				TotalSize:    totalSize,
+				CurrentPath:  path,
+				Complete:     false,
+			})
+			lastProgress = time.Now()
+		}
+	}, &scannedFiles, &scannedDirs, &totalSize)
+
+	if err != nil {
+		result.Error = err.Error()
+	}
+
+	result.TotalFiles = scannedFiles
+	result.TotalDirs = scannedDirs
+	result.TotalSize = totalSize
+
+	// Send final progress
+	if onProgress != nil {
+		onProgress(ScanProgress{
+			ScannedFiles: scannedFiles,
+			ScannedDirs:  scannedDirs,
+			TotalSize:    totalSize,
+			CurrentPath:  rootPath,
+			Complete:     true,
+		})
+	}
+
+	return result, err
+}
+
+func (ft *FileTransfer) scanDir(ctx context.Context, path string, depth, maxDepth int, files *[]FileInfo, onPath func(string), scannedFiles, scannedDirs *int, totalSize *int64) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	if maxDepth > 0 && depth >= maxDepth {
+		return nil
+	}
+
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		// Skip directories we can't read (permission denied, etc.)
+		return nil
+	}
+
+	*scannedDirs++
+	onPath(path)
+
+	for _, entry := range entries {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		fullPath := filepath.Join(path, entry.Name())
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		isHidden := len(entry.Name()) > 0 && entry.Name()[0] == '.'
+
+		fileInfo := FileInfo{
+			Name:         entry.Name(),
+			Path:         fullPath,
+			Size:         info.Size(),
+			IsDir:        entry.IsDir(),
+			Mode:         info.Mode().String(),
+			ModifiedTime: info.ModTime(),
+			IsHidden:     isHidden,
+		}
+
+		*files = append(*files, fileInfo)
+
+		if entry.IsDir() {
+			// Recursively scan subdirectory
+			if err := ft.scanDir(ctx, fullPath, depth+1, maxDepth, files, onPath, scannedFiles, scannedDirs, totalSize); err != nil {
+				return err
+			}
+		} else {
+			*scannedFiles++
+			*totalSize += info.Size()
+		}
+	}
+
+	return nil
+}

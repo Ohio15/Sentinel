@@ -412,6 +412,7 @@ func (a *Agent) registerHandlers() {
 	a.client.RegisterHandler(client.MsgTypeTerminalResize, a.handleTerminalResize)
 	a.client.RegisterHandler(client.MsgTypeCloseTerminal, a.handleCloseTerminal)
 	a.client.RegisterHandler(client.MsgTypeListFiles, a.handleListFiles)
+	a.client.RegisterHandler(client.MsgTypeScanDirectory, a.handleScanDirectory)
 	a.client.RegisterHandler(client.MsgTypeDownloadFile, a.handleDownloadFile)
 	a.client.RegisterHandler(client.MsgTypeUploadFile, a.handleUploadFile)
 	a.client.RegisterHandler(client.MsgTypeStartRemote, a.handleStartRemote)
@@ -747,6 +748,37 @@ func (a *Agent) handleListFiles(msg *client.Message) error {
 
 	return a.client.SendResponse(msg.RequestID, true, map[string]interface{}{
 		"files": files,
+	}, "")
+}
+
+func (a *Agent) handleScanDirectory(msg *client.Message) error {
+	data, ok := msg.Data.(map[string]interface{})
+	if !ok {
+		return a.client.SendResponse(msg.RequestID, false, nil, "Invalid message data")
+	}
+
+	path, _ := data["path"].(string)
+	maxDepth := 10 // Default depth
+	if depth, ok := data["maxDepth"].(float64); ok {
+		maxDepth = int(depth)
+	}
+
+	// Send progress updates via scan_progress messages
+	onProgress := func(progress filetransfer.ScanProgress) {
+		a.client.SendJSON(map[string]interface{}{
+			"type":      client.MsgTypeScanProgress,
+			"requestId": msg.RequestID,
+			"progress":  progress,
+		})
+	}
+
+	result, err := a.fileTransfer.ScanDirectoryRecursive(a.ctx, path, maxDepth, onProgress)
+	if err != nil {
+		return a.client.SendResponse(msg.RequestID, false, nil, err.Error())
+	}
+
+	return a.client.SendResponse(msg.RequestID, true, map[string]interface{}{
+		"result": result,
 	}, "")
 }
 

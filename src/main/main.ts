@@ -320,6 +320,45 @@ function setupIpcHandlers(): void {
     return agentManager.uploadFile(deviceId, localPath, remotePath);
   });
 
+  ipcMain.handle('files:scan', async (_, deviceId: string, path: string, maxDepth: number) => {
+    return agentManager.scanDirectory(deviceId, path, maxDepth);
+  });
+
+  ipcMain.handle('files:downloadToSandbox', async (_, deviceId: string, remotePath: string) => {
+    const path = await import('path');
+    const fs = await import('fs');
+    const os = await import('os');
+    const crypto = await import('crypto');
+    
+    // Create sandbox directory in user's app data
+    const sandboxDir = path.join(os.homedir(), '.sentinel', 'sandbox');
+    if (!fs.existsSync(sandboxDir)) {
+      fs.mkdirSync(sandboxDir, { recursive: true });
+    }
+    
+    // Generate unique filename with timestamp and hash
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const hash = crypto.randomBytes(4).toString('hex');
+    const originalName = path.basename(remotePath);
+    const sandboxFilename = `${timestamp}_${hash}_${originalName}`;
+    const localPath = path.join(sandboxDir, sandboxFilename);
+    
+    await agentManager.downloadFile(deviceId, remotePath, localPath);
+    
+    // Calculate SHA256 hash of downloaded file
+    const fileBuffer = fs.readFileSync(localPath);
+    const sha256Hash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+    
+    return {
+      localPath,
+      sandboxDir,
+      filename: sandboxFilename,
+      originalName,
+      sha256: sha256Hash,
+      size: fileBuffer.length,
+    };
+  });
+
   // Remote desktop
   ipcMain.handle('remote:startSession', async (_, deviceId: string) => {
     return agentManager.startRemoteSession(deviceId);
