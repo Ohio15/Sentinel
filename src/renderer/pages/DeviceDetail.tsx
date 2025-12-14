@@ -118,6 +118,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
   const [isExecuting, setIsExecuting] = useState(false);
   const [commandHistory, setCommandHistory] = useState<Command[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [expandedCommands, setExpandedCommands] = useState<Set<string>>(new Set());
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState('');
   const [isPinging, setIsPinging] = useState(false);
@@ -726,25 +727,72 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                   </thead>
                   <tbody>
                     {commandHistory.map((cmd) => (
-                      <tr key={cmd.id} className="border-b border-border hover:bg-gray-50">
-                        <td className="py-2 px-3 text-sm text-text-secondary">
-                          {new Date(cmd.createdAt).toLocaleString()}
-                        </td>
-                        <td className="py-2 px-3 text-sm text-text-primary capitalize">{cmd.commandType}</td>
-                        <td className="py-2 px-3 text-sm font-mono text-text-primary truncate max-w-xs" title={cmd.command}>
-                          {cmd.command}
-                        </td>
-                        <td className="py-2 px-3">
-                          <span className={`px-2 py-0.5 text-xs rounded-full ${
-                            cmd.status === 'completed' ? 'bg-green-100 text-green-800' :
-                            cmd.status === 'failed' ? 'bg-red-100 text-red-800' :
-                            cmd.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-                            'bg-gray-100 text-gray-800'
-                          }`}>
-                            {cmd.status}
-                          </span>
-                        </td>
-                      </tr>
+                      <React.Fragment key={cmd.id}>
+                        <tr
+                          className={`border-b border-border hover:bg-gray-50 cursor-pointer ${expandedCommands.has(cmd.id) ? 'bg-gray-50' : ''}`}
+                          onClick={() => {
+                            const newExpanded = new Set(expandedCommands);
+                            if (newExpanded.has(cmd.id)) {
+                              newExpanded.delete(cmd.id);
+                            } else {
+                              newExpanded.add(cmd.id);
+                            }
+                            setExpandedCommands(newExpanded);
+                          }}
+                        >
+                          <td className="py-2 px-3 text-sm text-text-secondary">
+                            <span className="inline-flex items-center gap-2">
+                              <span className={`transition-transform ${expandedCommands.has(cmd.id) ? 'rotate-90' : ''}`}>▶</span>
+                              {new Date(cmd.createdAt).toLocaleString()}
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 text-sm text-text-primary capitalize">{cmd.commandType}</td>
+                          <td className="py-2 px-3 text-sm font-mono text-text-primary truncate max-w-xs" title={cmd.command}>
+                            {cmd.command}
+                          </td>
+                          <td className="py-2 px-3">
+                            <span className={`px-2 py-0.5 text-xs rounded-full ${
+                              cmd.status === 'completed' ? 'bg-green-100 text-green-800' :
+                              cmd.status === 'failed' ? 'bg-red-100 text-red-800' :
+                              cmd.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                              'bg-gray-100 text-gray-800'
+                            }`}>
+                              {cmd.status}
+                            </span>
+                          </td>
+                        </tr>
+                        {expandedCommands.has(cmd.id) && (
+                          <tr className="bg-gray-50">
+                            <td colSpan={4} className="p-4">
+                              <div className="space-y-2">
+                                <div className="text-xs text-text-secondary">
+                                  Started: {cmd.startedAt ? new Date(cmd.startedAt).toLocaleString() : 'N/A'} |
+                                  Completed: {cmd.completedAt ? new Date(cmd.completedAt).toLocaleString() : 'N/A'}
+                                </div>
+                                {cmd.output && (
+                                  <div>
+                                    <div className="text-xs font-semibold text-text-secondary mb-1">Output:</div>
+                                    <pre className="bg-gray-900 text-gray-100 p-3 rounded-lg text-xs overflow-auto max-h-48 font-mono whitespace-pre-wrap">
+                                      {cmd.output}
+                                    </pre>
+                                  </div>
+                                )}
+                                {cmd.errorMessage && (
+                                  <div>
+                                    <div className="text-xs font-semibold text-red-600 mb-1">Error:</div>
+                                    <pre className="bg-red-50 text-red-800 p-3 rounded-lg text-xs overflow-auto max-h-48 font-mono whitespace-pre-wrap">
+                                      {cmd.errorMessage}
+                                    </pre>
+                                  </div>
+                                )}
+                                {!cmd.output && !cmd.errorMessage && (
+                                  <div className="text-xs text-text-secondary italic">No output recorded</div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     ))}
                   </tbody>
                 </table>
