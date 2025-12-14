@@ -44,7 +44,7 @@ Electron App
     └── Local API server for UI
     └── Bundles agent binaries in resources/agent/
 
-Docker Backend (localhost:8081)
+Docker Backend (localhost:8090)
     └── Container: sentinel-backend
     └── Agent API: /api/agent/version, /api/agent/update/download
     └── Volume mounts:
@@ -109,7 +109,7 @@ When releasing a new version:
 
 ---
 
-## API Endpoints (Docker :8081)
+## API Endpoints (Docker :8090)
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
@@ -140,7 +140,7 @@ When releasing a new version:
 ### Agent not seeing updates
 1. Check `agent/version.json` has correct version
 2. Restart Docker: `docker restart sentinel-backend`
-3. Verify API: `curl "http://localhost:8081/api/agent/version?current=1.0.0&platform=windows&arch=amd64"`
+3. Verify API: `curl "http://localhost:8090/api/agent/version?current=1.0.0&platform=windows&arch=amd64"`
 
 ### Device shows offline but agent is running
 - Check `src/main/main.ts` - `devices:list` and `devices:get` handlers override status based on WebSocket connection
