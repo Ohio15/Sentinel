@@ -31,7 +31,7 @@ import (
 	"github.com/sentinel/agent/internal/webrtc"
 )
 
-var Version = "1.44.0"
+var Version = "1.45.0"
 
 const ServiceName = "SentinelAgent"
 
@@ -67,7 +67,12 @@ type Agent struct {
 func main() {
 	flag.Parse()
 
-	// Set up logging
+	// Set up logging to file for debugging
+	logFile, err := os.OpenFile("C:\\ProgramData\\Sentinel\\agent.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err == nil {
+		log.SetOutput(logFile)
+		defer logFile.Close()
+	}
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
 	if *showVersion {
@@ -1012,16 +1017,31 @@ func (a *Agent) handleUninstallAgent(msg *client.Message) error {
 // WebRTC handlers
 
 func (a *Agent) handleWebRTCStart(msg *client.Message) error {
+	log.Printf("[WebRTC] handleWebRTCStart called, RequestID=%s", msg.RequestID)
+	log.Printf("[WebRTC] msg.Data type: %T", msg.Data)
+
 	data, ok := msg.Data.(map[string]interface{})
 	if !ok {
+		log.Printf("[WebRTC] ERROR: Invalid message data type")
 		return a.client.SendResponse(msg.RequestID, false, nil, "Invalid message data")
 	}
 
+	log.Printf("[WebRTC] data keys: %v", func() []string {
+		keys := make([]string, 0, len(data))
+		for k := range data {
+			keys = append(keys, k)
+		}
+		return keys
+	}())
+
 	sessionID, _ := data["sessionId"].(string)
+	offerSdp, _ := data["offerSdp"].(string)
 	quality, _ := data["quality"].(string)
 	if quality == "" {
 		quality = "medium"
 	}
+
+	log.Printf("[WebRTC] Parsed: sessionId=%s, quality=%s, offerSdp length=%d", sessionID, quality, len(offerSdp))
 
 	// Parse ICE servers if provided
 	var iceServers []webrtc.ICEServer
@@ -1053,34 +1073,50 @@ func (a *Agent) handleWebRTCStart(msg *client.Message) error {
 		Quality:    quality,
 	}
 
-	// Callback for signaling messages
+	// Callback for signaling messages (ICE candidates)
 	onSignal := func(signal webrtc.SignalMessage) {
 		a.client.SendWebRTCSignal(signal.SessionID, signal.Type, signal.SDP, signal.Candidate)
 	}
 
 	// Callback for input events (mouse/keyboard from viewer)
 	onInput := func(input webrtc.InputEvent) {
-		// Reuse existing remote input handling
-		if session, ok := a.remoteManager.GetSession(sessionID); ok {
-			session.HandleInput(input.Type, map[string]interface{}{
-				"type":      input.Type,
-				"event":     input.Event,
-				"x":         input.X,
-				"y":         input.Y,
-				"button":    input.Button,
-				"key":       input.Key,
-				"modifiers": input.Modifiers,
-				"deltaY":    input.DeltaY,
-			})
-		}
+		// Handle input directly via webrtc session's input handler
+		log.Printf("WebRTC input event: type=%s, event=%s", input.Type, input.Event)
 	}
 
 	session, err := a.webrtcManager.CreateSession(config, onSignal, onInput)
 	if err != nil {
+		log.Printf("Failed to create WebRTC session: %v", err)
 		return a.client.SendResponse(msg.RequestID, false, nil, err.Error())
 	}
 
-	// Create SDP offer
+	// Set the remote offer from the browser
+	if offerSdp != "" {
+		log.Printf("Setting remote description (offer)")
+		if err := session.SetRemoteDescription("offer", offerSdp); err != nil {
+			log.Printf("Failed to set remote offer: %v", err)
+			a.webrtcManager.StopSession(sessionID)
+			return a.client.SendResponse(msg.RequestID, false, nil, err.Error())
+		}
+
+		// Create answer
+		log.Printf("Creating SDP answer")
+		answerSdp, err := session.CreateAnswer()
+		if err != nil {
+			log.Printf("Failed to create answer: %v", err)
+			a.webrtcManager.StopSession(sessionID)
+			return a.client.SendResponse(msg.RequestID, false, nil, err.Error())
+		}
+
+		log.Printf("WebRTC session started successfully, returning answer")
+		return a.client.SendResponse(msg.RequestID, true, map[string]interface{}{
+			"sessionId": sessionID,
+			"answerSdp": answerSdp,
+		}, "")
+	}
+
+	// Fallback: create offer if no remote offer provided (legacy mode)
+	log.Printf("No offer provided, creating offer (legacy mode)")
 	offer, err := session.CreateOffer()
 	if err != nil {
 		a.webrtcManager.StopSession(sessionID)

@@ -13,6 +13,10 @@ app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('disable-gpu');
 app.commandLine.appendSwitch('disable-software-rasterizer');
 
+// Set custom userData path to avoid permission issues
+const customUserData = path.join(os.tmpdir(), 'sentinel-electron');
+app.setPath('userData', customUserData);
+
 // Helper function to embed configuration into agent binary
 function embedConfigInBinary(binaryData: Buffer, serverUrl: string, token: string): Buffer {
   const serverPlaceholder = 'SENTINEL_EMBEDDED_SERVER:' + '_'.repeat(64) + ':END';
@@ -221,13 +225,15 @@ async function initialize(): Promise<void> {
   server = new Server(database, agentManager);
   await server.start();
 
-  // Initialize gRPC server (Data Plane - port 8082)
-  grpcServer = new GrpcServer(database, agentManager, 8082);
+  // Initialize gRPC server (Data Plane - HTTP port + 1)
+  const httpPort = server.getPort();
+  const grpcPort = httpPort + 1;
+  grpcServer = new GrpcServer(database, agentManager, grpcPort);
   try {
     await grpcServer.start();
     console.log('Dual-channel architecture initialized:');
-    console.log('  - WebSocket Control Plane: port 8081');
-    console.log('  - gRPC Data Plane: port 8082');
+    console.log(`  - WebSocket Control Plane: port ${httpPort}`);
+    console.log(`  - gRPC Data Plane: port ${grpcPort}`);
   } catch (error) {
     console.error('Failed to start gRPC server:', error);
     // gRPC is optional, continue without it

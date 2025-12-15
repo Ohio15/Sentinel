@@ -1,7 +1,7 @@
 {
-  "version": "1.40.0",
-  "releaseDate": "2025-12-14",
-  "changelog": "- Dual-channel architecture: WebSocket (Control) + gRPC (Data)\n- Agent version now synced via heartbeat",
+  "version": "1.46.0",
+  "releaseDate": "2025-12-15",
+  "changelog": "- Fix GPU cache permission issues with custom userData path\n- Implement port offset pattern: gRPC port = HTTP port + 1\n- Prevent server port conflicts",
   "platforms": [
     "windows",
     "linux",
