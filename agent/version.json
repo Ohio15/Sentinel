@@ -1,7 +1,7 @@
 {
-  "version": "1.46.0",
+  "version": "1.46.1",
   "releaseDate": "2025-12-15",
-  "changelog": "- Fix GPU cache permission issues with custom userData path\n- Implement port offset pattern: gRPC port = HTTP port + 1\n- Prevent server port conflicts",
+  "changelog": "- Fix agent gRPC port calculation to use HTTP port + 1 offset pattern",
   "platforms": [
     "windows",
     "linux",
