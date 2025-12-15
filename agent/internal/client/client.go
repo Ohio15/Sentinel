@@ -47,6 +47,10 @@ const (
 	MsgTypeError              = "error"
 	MsgTypeCollectDiagnostics = "collect_diagnostics"
 	MsgTypeUninstallAgent     = "uninstall_agent"
+	// WebRTC signaling messages
+	MsgTypeWebRTCStart     = "webrtc_start"
+	MsgTypeWebRTCSignal    = "webrtc_signal"
+	MsgTypeWebRTCStop      = "webrtc_stop"
 )
 
 // Message represents a WebSocket message
@@ -659,4 +663,19 @@ func (c *Client) RunWithReconnect(ctx context.Context) {
 
 		log.Println("Disconnected, checking server availability...")
 	}
+}
+
+// SendWebRTCSignal sends a WebRTC signaling message (SDP offer/answer or ICE candidate)
+func (c *Client) SendWebRTCSignal(sessionID, signalType, sdp, candidate string) error {
+	msg := map[string]interface{}{
+		"type":      MsgTypeWebRTCSignal,
+		"sessionId": sessionID,
+		"signal": map[string]interface{}{
+			"type":      signalType,
+			"sessionId": sessionID,
+			"sdp":       sdp,
+			"candidate": candidate,
+		},
+	}
+	return c.SendJSON(msg)
 }

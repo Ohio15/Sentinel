@@ -376,6 +376,23 @@ function setupIpcHandlers(): void {
     return agentManager.sendRemoteInput(sessionId, input);
   });
 
+  // WebRTC Remote Desktop
+  ipcMain.handle('webrtc:start', async (_, deviceId: string, offer: any) => {
+    return agentManager.startWebRTCSession(deviceId, offer);
+  });
+
+  ipcMain.handle('webrtc:stop', async (_, deviceId: string) => {
+    return agentManager.stopWebRTCSession(deviceId);
+  });
+
+  ipcMain.handle('webrtc:signal', async (_, deviceId: string, signal: any) => {
+    return agentManager.sendWebRTCSignal(deviceId, signal);
+  });
+
+  ipcMain.handle('webrtc:setQuality', async (_, deviceId: string, quality: string) => {
+    return agentManager.setWebRTCQuality(deviceId, quality);
+  });
+
   // Alerts
   ipcMain.handle('alerts:list', async () => {
     return database.getAlerts();

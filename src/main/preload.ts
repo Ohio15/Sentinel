@@ -58,7 +58,7 @@ contextBridge.exposeInMainWorld('api', {
     },
   },
 
-  // Remote Desktop
+  // Remote Desktop (legacy)
   remote: {
     startSession: (deviceId: string) =>
       ipcRenderer.invoke('remote:startSession', deviceId),
@@ -73,6 +73,23 @@ contextBridge.exposeInMainWorld('api', {
     },
   },
 
+
+  // WebRTC Remote Desktop
+  webrtc: {
+    start: (deviceId: string, offer: { type: string; sdp?: string; quality: string }) =>
+      ipcRenderer.invoke('webrtc:start', deviceId, offer),
+    stop: (deviceId: string) =>
+      ipcRenderer.invoke('webrtc:stop', deviceId),
+    sendSignal: (deviceId: string, signal: any) =>
+      ipcRenderer.invoke('webrtc:signal', deviceId, signal),
+    setQuality: (deviceId: string, quality: string) =>
+      ipcRenderer.invoke('webrtc:setQuality', deviceId, quality),
+    onSignal: (callback: (signal: any) => void) => {
+      const handler = (_: any, signal: any) => callback(signal);
+      ipcRenderer.on('webrtc:signal', handler);
+      return () => ipcRenderer.removeListener('webrtc:signal', handler);
+    },
+  },
   // Alerts
   alerts: {
     list: () => ipcRenderer.invoke('alerts:list'),
@@ -190,6 +207,7 @@ contextBridge.exposeInMainWorld('api', {
       'terminal:data',
       'files:progress',
       'remote:frame',
+      'webrtc:signal',
       'command:output',
       'tickets:updated',
     ];
@@ -237,6 +255,13 @@ export interface ElectronAPI {
     stopSession: (sessionId: string) => Promise<void>;
     sendInput: (sessionId: string, input: RemoteInput) => Promise<void>;
     onFrame: (callback: (frame: RemoteFrame) => void) => () => void;
+  };
+  webrtc: {
+    start: (deviceId: string, offer: WebRTCOffer) => Promise<void>;
+    stop: (deviceId: string) => Promise<void>;
+    sendSignal: (deviceId: string, signal: WebRTCSignal) => Promise<void>;
+    setQuality: (deviceId: string, quality: string) => Promise<void>;
+    onSignal: (callback: (signal: WebRTCSignal) => void) => () => void;
   };
   alerts: {
     list: () => Promise<Alert[]>;
@@ -383,6 +408,19 @@ interface FileProgress {
   bytesTransferred: number;
   totalBytes: number;
   percentage: number;
+}
+
+interface WebRTCOffer {
+  type: string;
+  sdp?: string;
+  quality: string;
+}
+
+interface WebRTCSignal {
+  deviceId: string;
+  type: string;
+  sdp?: string;
+  candidate?: any;
 }
 
 interface RemoteInput {

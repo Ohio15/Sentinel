@@ -28,9 +28,10 @@ import (
 	svc "github.com/sentinel/agent/internal/service"
 	"github.com/sentinel/agent/internal/terminal"
 	"github.com/sentinel/agent/internal/updater"
+	"github.com/sentinel/agent/internal/webrtc"
 )
 
-var Version = "1.43.0"
+var Version = "1.44.0"
 
 const ServiceName = "SentinelAgent"
 
@@ -54,6 +55,7 @@ type Agent struct {
 	terminalManager   *terminal.Manager
 	fileTransfer      *filetransfer.FileTransfer
 	remoteManager     *remote.Manager
+	webrtcManager     *webrtc.Manager // WebRTC for remote desktop
 	updater           *updater.Updater
 	protectionManager    *protection.Manager
 	diagnosticsCollector *diagnostics.Collector
@@ -278,6 +280,7 @@ func NewAgent(cfg *config.Config) *Agent {
 		terminalManager:      terminal.NewManager(),
 		fileTransfer:         ft,
 		remoteManager:        remote.NewManager(),
+		webrtcManager:        webrtc.NewManager(),
 		updater:              agentUpdater,
 		protectionManager:    protMgr,
 		diagnosticsCollector: diagnostics.New(),
@@ -422,6 +425,10 @@ func (a *Agent) registerHandlers() {
 	a.client.RegisterHandler(client.MsgTypeCollectDiagnostics, a.handleCollectDiagnostics)
 	a.client.RegisterHandler(client.MsgTypeUninstallAgent, a.handleUninstallAgent)
 	a.client.RegisterHandler(client.MsgTypePing, a.handlePing)
+	// WebRTC handlers
+	a.client.RegisterHandler(client.MsgTypeWebRTCStart, a.handleWebRTCStart)
+	a.client.RegisterHandler(client.MsgTypeWebRTCSignal, a.handleWebRTCSignal)
+	a.client.RegisterHandler(client.MsgTypeWebRTCStop, a.handleWebRTCStop)
 }
 
 func (a *Agent) onConnect() {
@@ -1000,4 +1007,127 @@ func (a *Agent) handleUninstallAgent(msg *client.Message) error {
 	}()
 
 	return nil
+}
+
+// WebRTC handlers
+
+func (a *Agent) handleWebRTCStart(msg *client.Message) error {
+	data, ok := msg.Data.(map[string]interface{})
+	if !ok {
+		return a.client.SendResponse(msg.RequestID, false, nil, "Invalid message data")
+	}
+
+	sessionID, _ := data["sessionId"].(string)
+	quality, _ := data["quality"].(string)
+	if quality == "" {
+		quality = "medium"
+	}
+
+	// Parse ICE servers if provided
+	var iceServers []webrtc.ICEServer
+	if servers, ok := data["iceServers"].([]interface{}); ok {
+		for _, s := range servers {
+			if serverMap, ok := s.(map[string]interface{}); ok {
+				server := webrtc.ICEServer{}
+				if urls, ok := serverMap["urls"].([]interface{}); ok {
+					for _, u := range urls {
+						if urlStr, ok := u.(string); ok {
+							server.URLs = append(server.URLs, urlStr)
+						}
+					}
+				}
+				if username, ok := serverMap["username"].(string); ok {
+					server.Username = username
+				}
+				if credential, ok := serverMap["credential"].(string); ok {
+					server.Credential = credential
+				}
+				iceServers = append(iceServers, server)
+			}
+		}
+	}
+
+	config := webrtc.SessionConfig{
+		SessionID:  sessionID,
+		ICEServers: iceServers,
+		Quality:    quality,
+	}
+
+	// Callback for signaling messages
+	onSignal := func(signal webrtc.SignalMessage) {
+		a.client.SendWebRTCSignal(signal.SessionID, signal.Type, signal.SDP, signal.Candidate)
+	}
+
+	// Callback for input events (mouse/keyboard from viewer)
+	onInput := func(input webrtc.InputEvent) {
+		// Reuse existing remote input handling
+		if session, ok := a.remoteManager.GetSession(sessionID); ok {
+			session.HandleInput(input.Type, map[string]interface{}{
+				"type":      input.Type,
+				"event":     input.Event,
+				"x":         input.X,
+				"y":         input.Y,
+				"button":    input.Button,
+				"key":       input.Key,
+				"modifiers": input.Modifiers,
+				"deltaY":    input.DeltaY,
+			})
+		}
+	}
+
+	session, err := a.webrtcManager.CreateSession(config, onSignal, onInput)
+	if err != nil {
+		return a.client.SendResponse(msg.RequestID, false, nil, err.Error())
+	}
+
+	// Create SDP offer
+	offer, err := session.CreateOffer()
+	if err != nil {
+		a.webrtcManager.StopSession(sessionID)
+		return a.client.SendResponse(msg.RequestID, false, nil, err.Error())
+	}
+
+	return a.client.SendResponse(msg.RequestID, true, map[string]interface{}{
+		"sessionId": sessionID,
+		"offer":     offer,
+	}, "")
+}
+
+func (a *Agent) handleWebRTCSignal(msg *client.Message) error {
+	data, ok := msg.Data.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("invalid message data")
+	}
+
+	signalData, ok := data["signal"].(map[string]interface{})
+	if !ok {
+		// Try flat structure
+		signalData = data
+	}
+
+	signal := webrtc.SignalMessage{
+		Type:      signalData["type"].(string),
+		SessionID: signalData["sessionId"].(string),
+	}
+
+	if sdp, ok := signalData["sdp"].(string); ok {
+		signal.SDP = sdp
+	}
+	if candidate, ok := signalData["candidate"].(string); ok {
+		signal.Candidate = candidate
+	}
+
+	return a.webrtcManager.HandleSignal(signal)
+}
+
+func (a *Agent) handleWebRTCStop(msg *client.Message) error {
+	data, ok := msg.Data.(map[string]interface{})
+	if !ok {
+		return a.client.SendResponse(msg.RequestID, false, nil, "Invalid message data")
+	}
+
+	sessionID, _ := data["sessionId"].(string)
+	a.webrtcManager.StopSession(sessionID)
+
+	return a.client.SendResponse(msg.RequestID, true, nil, "")
 }
