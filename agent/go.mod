@@ -9,6 +9,7 @@ require (
 	github.com/gorilla/websocket v1.5.1
 	github.com/kardianos/service v1.2.2
 	github.com/kbinani/screenshot v0.0.0-20250624051815-089614a94018
+	github.com/pion/ice/v4 v4.1.0
 	github.com/pion/interceptor v0.1.42
 	github.com/pion/webrtc/v4 v4.1.8
 	github.com/shirou/gopsutil/v3 v3.24.1
@@ -27,8 +28,7 @@ require (
 	github.com/lufia/plan9stats v0.0.0-20231016141302-07b5767bb0ed // indirect
 	github.com/lxn/win v0.0.0-20210218163916-a377121e959e // indirect
 	github.com/pion/datachannel v1.5.10 // indirect
-	github.com/pion/dtls/v3 v3.0.8 // indirect
-	github.com/pion/ice/v4 v4.0.13 // indirect
+	github.com/pion/dtls/v3 v3.0.9 // indirect
 	github.com/pion/logging v0.2.4 // indirect
 	github.com/pion/mdns/v2 v2.1.0 // indirect
 	github.com/pion/randutil v0.1.0 // indirect

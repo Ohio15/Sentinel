@@ -11,11 +11,14 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 	"unsafe"
 
 	"github.com/kbinani/screenshot"
+	"github.com/pion/ice/v4"
 	"github.com/pion/interceptor"
 	"github.com/pion/interceptor/pkg/intervalpli"
 	"github.com/pion/webrtc/v4"
@@ -89,14 +92,143 @@ type Manager struct {
 	sessions     map[string]*Session
 	mu           sync.RWMutex
 	h264Loaded   bool
+	h264LoadErr  error
 	h264LoadOnce sync.Once
 }
 
 // NewManager creates a new WebRTC manager
+// Pre-loads OpenH264 at startup and tests encoder creation to fail gracefully
 func NewManager() *Manager {
-	return &Manager{
+	m := &Manager{
 		sessions: make(map[string]*Session),
 	}
+	// Pre-load OpenH264 at startup to catch loading issues early
+	log.Printf("[WebRTC] NewManager: Pre-loading OpenH264...")
+	if err := m.loadOpenH264(); err != nil {
+		log.Printf("[WebRTC] NewManager: OpenH264 pre-load failed: %v", err)
+		m.h264LoadErr = err
+		return m
+	}
+	log.Printf("[WebRTC] NewManager: OpenH264 pre-loaded successfully")
+	
+	// Test encoder creation twice to verify re-creation works
+	log.Printf("[WebRTC] NewManager: Testing encoder creation (1st)...")
+	testEncoder, err := newH264EncoderWithTimeout(1920, 1080, 1500000, 15*time.Second)
+	if err != nil {
+		log.Printf("[WebRTC] NewManager: Test encoder 1st creation failed: %v", err)
+		m.h264LoadErr = fmt.Errorf("encoder test failed: %w", err)
+		return m
+	}
+	log.Printf("[WebRTC] NewManager: Test encoder 1st created, closing...")
+	testEncoder.close()
+	
+	// Test second encoder creation after closing first
+	log.Printf("[WebRTC] NewManager: Testing encoder creation (2nd)...")
+	testEncoder2, err := newH264EncoderWithTimeout(1920, 1080, 1500000, 15*time.Second)
+	if err != nil {
+		log.Printf("[WebRTC] NewManager: Test encoder 2nd creation failed: %v", err)
+		m.h264LoadErr = fmt.Errorf("encoder re-creation test failed: %w", err)
+		return m
+	}
+	testEncoder2.close()
+	log.Printf("[WebRTC] NewManager: Both test encoders created and closed successfully")
+
+	// Test peer connection creation to catch issues early
+	log.Printf("[WebRTC] NewManager: Testing peer connection creation...")
+	if err := m.testPeerConnection(); err != nil {
+		log.Printf("[WebRTC] NewManager: Peer connection test failed: %v", err)
+		m.h264LoadErr = fmt.Errorf("peer connection test failed: %w", err)
+		return m
+	}
+	log.Printf("[WebRTC] NewManager: Peer connection test passed")
+	return m
+}
+
+// testPeerConnection tests if we can create a basic peer connection and call SetRemoteDescription
+func (m *Manager) testPeerConnection() error {
+	// Create minimal media engine
+	mediaEngine := &webrtc.MediaEngine{}
+	if err := mediaEngine.RegisterCodec(webrtc.RTPCodecParameters{
+		RTPCodecCapability: webrtc.RTPCodecCapability{
+			MimeType:    webrtc.MimeTypeH264,
+			ClockRate:   90000,
+			SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f",
+		},
+		PayloadType: 96,
+	}, webrtc.RTPCodecTypeVideo); err != nil {
+		return fmt.Errorf("failed to register H264 codec: %w", err)
+	}
+
+	// Create interceptor registry
+	interceptorRegistry := &interceptor.Registry{}
+	if err := webrtc.RegisterDefaultInterceptors(mediaEngine, interceptorRegistry); err != nil {
+		return fmt.Errorf("failed to register interceptors: %w", err)
+	}
+
+	// Create SettingEngine to avoid hangs in Windows services
+	settingEngine := webrtc.SettingEngine{}
+	settingEngine.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
+	settingEngine.SetICETimeouts(5*time.Second, 25*time.Second, 2*time.Second)
+
+	// Create API with ICE settings
+	api := webrtc.NewAPI(
+		webrtc.WithMediaEngine(mediaEngine),
+		webrtc.WithInterceptorRegistry(interceptorRegistry),
+		webrtc.WithSettingEngine(settingEngine),
+	)
+
+	// Create peer connection with no ICE servers (local only)
+	log.Printf("[WebRTC] testPeerConnection: Creating peer connection...")
+	pc, err := api.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		return fmt.Errorf("failed to create peer connection: %w", err)
+	}
+
+	// Test SetRemoteDescription with a minimal SDP offer
+	log.Printf("[WebRTC] testPeerConnection: Testing SetRemoteDescription with minimal SDP...")
+	minimalSDP := "v=0\r\n" +
+		"o=- 0 0 IN IP4 127.0.0.1\r\n" +
+		"s=-\r\n" +
+		"t=0 0\r\n" +
+		"a=group:BUNDLE 0\r\n" +
+		"a=msid-semantic:WMS\r\n" +
+		"m=video 9 UDP/TLS/RTP/SAVPF 96\r\n" +
+		"c=IN IP4 0.0.0.0\r\n" +
+		"a=rtcp:9 IN IP4 0.0.0.0\r\n" +
+		"a=ice-ufrag:test\r\n" +
+		"a=ice-pwd:testpasswordtestpassword\r\n" +
+		"a=fingerprint:sha-256 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00\r\n" +
+		"a=setup:actpass\r\n" +
+		"a=mid:0\r\n" +
+		"a=sendrecv\r\n" +
+		"a=rtpmap:96 H264/90000\r\n" +
+		"a=fmtp:96 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n"
+
+	done := make(chan error, 1)
+	go func() {
+		done <- pc.SetRemoteDescription(webrtc.SessionDescription{
+			Type: webrtc.SDPTypeOffer,
+			SDP:  minimalSDP,
+		})
+	}()
+
+	select {
+	case err = <-done:
+		if err != nil {
+			log.Printf("[WebRTC] testPeerConnection: SetRemoteDescription returned error (expected for minimal SDP): %v", err)
+			// Error is OK - we just want to make sure it doesn't hang/crash
+		} else {
+			log.Printf("[WebRTC] testPeerConnection: SetRemoteDescription succeeded")
+		}
+	case <-time.After(10 * time.Second):
+		pc.Close()
+		return fmt.Errorf("SetRemoteDescription test timed out after 10 seconds")
+	}
+
+	log.Printf("[WebRTC] testPeerConnection: Peer connection created, closing...")
+	pc.Close()
+	log.Printf("[WebRTC] testPeerConnection: Peer connection closed")
+	return nil
 }
 
 // loadOpenH264 loads the OpenH264 DLL
@@ -149,6 +281,8 @@ func getVideoConstraints(quality string) (int, int, int, int) {
 
 // newH264EncoderWithTimeout creates a new H.264 encoder with a timeout to prevent hanging
 func newH264EncoderWithTimeout(width, height, bitrate int, timeout time.Duration) (*h264Encoder, error) {
+	log.Printf("[H264Encoder] newH264EncoderWithTimeout called: %dx%d @ %d bps, timeout=%v", width, height, bitrate, timeout)
+
 	type result struct {
 		encoder *h264Encoder
 		err     error
@@ -156,14 +290,20 @@ func newH264EncoderWithTimeout(width, height, bitrate int, timeout time.Duration
 
 	done := make(chan result, 1)
 	go func() {
+		log.Printf("[H264Encoder] Goroutine: starting newH264EncoderInternal...")
 		enc, err := newH264EncoderInternal(width, height, bitrate)
+		log.Printf("[H264Encoder] Goroutine: newH264EncoderInternal returned, err=%v, sending to channel...", err)
 		done <- result{enc, err}
+		log.Printf("[H264Encoder] Goroutine: sent to channel")
 	}()
 
+	log.Printf("[H264Encoder] Waiting on select...")
 	select {
 	case res := <-done:
+		log.Printf("[H264Encoder] Received from channel, returning encoder (err=%v)...", res.err)
 		return res.encoder, res.err
 	case <-time.After(timeout):
+		log.Printf("[H264Encoder] TIMEOUT waiting for encoder")
 		return nil, fmt.Errorf("encoder creation timed out after %v", timeout)
 	}
 }
@@ -410,10 +550,18 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Load OpenH264 if not already loaded
-	log.Printf("[WebRTC] Loading OpenH264...")
-	if err := m.loadOpenH264(); err != nil {
-		return nil, fmt.Errorf("failed to load OpenH264: %w", err)
+	// Check if OpenH264 pre-loading failed
+	if m.h264LoadErr != nil {
+		log.Printf("[WebRTC] OpenH264 not available (pre-load failed): %v", m.h264LoadErr)
+		return nil, fmt.Errorf("WebRTC remote desktop not available: H.264 encoder failed to initialize: %w", m.h264LoadErr)
+	}
+
+	// Load OpenH264 if not already loaded (should be pre-loaded but just in case)
+	if !m.h264Loaded {
+		log.Printf("[WebRTC] Loading OpenH264...")
+		if err := m.loadOpenH264(); err != nil {
+			return nil, fmt.Errorf("failed to load OpenH264: %w", err)
+		}
 	}
 	log.Printf("[WebRTC] OpenH264 loaded successfully")
 
@@ -447,16 +595,19 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 	// Get quality settings for fps and bitrate
 	_, _, fps, bitrate := getVideoConstraints(config.Quality)
 
-	// Use actual screen dimensions for the encoder (aligned to 16-pixel boundaries)
-	screenBounds := screenshot.GetDisplayBounds(0)
-	screenWidth := screenBounds.Dx()
-	screenHeight := screenBounds.Dy()
-	log.Printf("[WebRTC] Screen dimensions: %dx%d", screenWidth, screenHeight)
+	// Use quality-based dimensions for the encoder
+	// We don't call GetDisplayBounds here because it can cause native crashes
+	// when running as a Windows service. The actual screen bounds are obtained
+	// later in startScreenCapture where we can handle failures more gracefully.
+	screenWidth, screenHeight, _, _ := getVideoConstraints(config.Quality)
+	log.Printf("[WebRTC] Using quality-based dimensions: %dx%d", screenWidth, screenHeight)
 	log.Printf("[WebRTC] Quality settings: fps=%d, bitrate=%d", fps, bitrate)
 
 	// Create H.264 encoder with actual screen dimensions (alignment happens inside)
-	log.Printf("[WebRTC] Creating H.264 encoder...")
+	log.Printf("[WebRTC] Creating H.264 encoder with dims %dx%d, bitrate %d...", screenWidth, screenHeight, bitrate)
+	log.Printf("[WebRTC] About to call newH264Encoder...")
 	encoder, err := newH264Encoder(screenWidth, screenHeight, bitrate)
+	log.Printf("[WebRTC] newH264Encoder returned, err=%v", err)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create encoder: %w", err)
 	}
@@ -492,10 +643,18 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 		return nil, fmt.Errorf("failed to register interceptors: %w", err)
 	}
 
-	// Create API with media engine
+	// Create SettingEngine to avoid hangs in Windows services
+	settingEngine := webrtc.SettingEngine{}
+	settingEngine.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
+	// Note: ICE Lite removed - incompatible with sending media tracks
+	settingEngine.SetICETimeouts(5*time.Second, 25*time.Second, 2*time.Second) // Disconnected, Failed, Keepalive
+	log.Printf("[WebRTC] ICE settings: mDNS=disabled, timeouts=5s/25s/2s")
+
+	// Create API with media engine and setting engine
 	api := webrtc.NewAPI(
 		webrtc.WithMediaEngine(mediaEngine),
 		webrtc.WithInterceptorRegistry(interceptorRegistry),
+		webrtc.WithSettingEngine(settingEngine),
 	)
 
 	// Create peer connection
@@ -521,19 +680,23 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 		"screen",
 	)
 	if err != nil {
+		log.Printf("[WebRTC] ERROR: Failed to create video track: %v", err)
 		encoder.close()
 		peerConnection.Close()
 		return nil, fmt.Errorf("failed to create video track: %w", err)
 	}
-	log.Printf("[WebRTC] Video track created")
+	log.Printf("[WebRTC] Video track created successfully")
 
 	// Add video track to peer connection
+	log.Printf("[WebRTC] Adding video track to peer connection...")
 	rtpSender, err := peerConnection.AddTrack(videoTrack)
 	if err != nil {
+		log.Printf("[WebRTC] ERROR: Failed to add video track: %v", err)
 		encoder.close()
 		peerConnection.Close()
 		return nil, fmt.Errorf("failed to add video track: %w", err)
 	}
+	log.Printf("[WebRTC] Video track added to peer connection")
 
 	// Read incoming RTCP packets for PLI handling
 	go func() {
@@ -561,17 +724,21 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 	}
 
 	// Create data channel for input events
+	log.Printf("[WebRTC] Creating data channel...")
 	ordered := true
 	dataChannel, err := peerConnection.CreateDataChannel("input", &webrtc.DataChannelInit{
 		Ordered: &ordered,
 	})
 	if err != nil {
+		log.Printf("[WebRTC] ERROR: Failed to create data channel: %v", err)
 		encoder.close()
 		peerConnection.Close()
 		cancel()
 		return nil, fmt.Errorf("failed to create data channel: %w", err)
 	}
+	log.Printf("[WebRTC] Data channel created")
 	session.DataChannel = dataChannel
+	log.Printf("[WebRTC] Setting up data channel event handlers...")
 
 	// Handle data channel events
 	dataChannel.OnOpen(func() {
@@ -598,8 +765,10 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 			session.OnInput(input)
 		}
 	})
+	log.Printf("[WebRTC] Data channel event handlers set up")
 
 	// Handle ICE candidates
+	log.Printf("[WebRTC] Setting up ICE candidate handler...")
 	peerConnection.OnICECandidate(func(candidate *webrtc.ICECandidate) {
 		if candidate == nil {
 			return
@@ -617,8 +786,10 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 			})
 		}
 	})
+	log.Printf("[WebRTC] ICE candidate handler set up")
 
 	// Handle connection state changes
+	log.Printf("[WebRTC] Setting up connection state handler...")
 	peerConnection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		log.Printf("WebRTC connection state for session %s: %s", session.ID, state.String())
 		switch state {
@@ -634,11 +805,15 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 			log.Printf("WebRTC connection closed for session %s", session.ID)
 		}
 	})
+	log.Printf("[WebRTC] Connection state handler set up")
 
+	log.Printf("[WebRTC] Setting up ICE connection state handler...")
 	peerConnection.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		log.Printf("WebRTC ICE state for session %s: %s", session.ID, state.String())
 	})
+	log.Printf("[WebRTC] ICE connection state handler set up")
 
+	log.Printf("[WebRTC] Storing session in manager...")
 	m.sessions[config.SessionID] = session
 
 	log.Printf("WebRTC session %s created (quality: %s, %dx%d@%dfps, %dkbps)",
@@ -652,10 +827,28 @@ func (s *Session) startScreenCapture(fps int) {
 	ticker := time.NewTicker(frameDuration)
 	defer ticker.Stop()
 
-	// Get primary display bounds
-	bounds := screenshot.GetDisplayBounds(0)
-	screenWidth := bounds.Dx()
-	screenHeight := bounds.Dy()
+	// Get primary display bounds safely
+	// Use encoder dimensions as fallback if GetDisplayBounds fails
+	var bounds image.Rectangle
+	screenWidth := int(s.encoder.width)
+	screenHeight := int(s.encoder.height)
+
+	// Try to get actual screen bounds, but use encoder dimensions if it fails
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[WebRTC] PANIC in GetDisplayBounds: %v, using encoder dimensions", r)
+			}
+		}()
+		bounds = screenshot.GetDisplayBounds(0)
+		screenWidth = bounds.Dx()
+		screenHeight = bounds.Dy()
+	}()
+
+	// If bounds is empty, create bounds from encoder dimensions
+	if bounds.Empty() {
+		bounds = image.Rect(0, 0, screenWidth, screenHeight)
+	}
 
 	// Get encoder's aligned dimensions
 	encoderWidth := int(s.encoder.width)
@@ -742,8 +935,53 @@ func (s *Session) CreateOffer() (string, error) {
 	return offer.SDP, nil
 }
 
+
+// filterMDNSCandidates removes mDNS candidates (*.local) from SDP to prevent hangs
+func filterMDNSCandidates(sdp string) string {
+	lines := strings.Split(sdp, "\r\n")
+	filtered := make([]string, 0, len(lines))
+	mdnsPattern := regexp.MustCompile(`\.local\s`)
+	removedCount := 0
+
+	for _, line := range lines {
+		// Remove ICE candidates that contain .local (mDNS)
+		if strings.HasPrefix(line, "a=candidate:") && mdnsPattern.MatchString(line) {
+			log.Printf("[WebRTC] Filtering mDNS candidate: %s", line[:min(len(line), 80)])
+			removedCount++
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+
+	if removedCount > 0 {
+		log.Printf("[WebRTC] Filtered %d mDNS candidates from SDP", removedCount)
+	}
+	return strings.Join(filtered, "\r\n")
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // SetRemoteDescription sets the remote SDP (offer or answer)
 func (s *Session) SetRemoteDescription(sdpType, sdp string) error {
+	log.Printf("[WebRTC] SetRemoteDescription called, type=%s, sdp length=%d", sdpType, len(sdp))
+
+	// Write SDP to file for debugging
+	sdpFile := "C:\\ProgramData\\Sentinel\\last_sdp.txt"
+	if err := os.WriteFile(sdpFile, []byte(sdp), 0644); err != nil {
+		log.Printf("[WebRTC] Failed to write SDP to file: %v", err)
+	} else {
+		log.Printf("[WebRTC] SDP written to %s", sdpFile)
+	}
+
+	// Filter out mDNS candidates to prevent hangs in Windows services
+	sdp = filterMDNSCandidates(sdp)
+	log.Printf("[WebRTC] After filtering, sdp length=%d", len(sdp))
+
 	var sdpTypeEnum webrtc.SDPType
 	switch sdpType {
 	case "answer":
@@ -753,14 +991,31 @@ func (s *Session) SetRemoteDescription(sdpType, sdp string) error {
 	default:
 		sdpTypeEnum = webrtc.SDPTypeAnswer
 	}
+	log.Printf("[WebRTC] SetRemoteDescription: sdpTypeEnum=%v", sdpTypeEnum)
 
-	err := s.PeerConnection.SetRemoteDescription(webrtc.SessionDescription{
-		Type: sdpTypeEnum,
-		SDP:  sdp,
-	})
+	log.Printf("[WebRTC] SetRemoteDescription: Calling PeerConnection.SetRemoteDescription...")
+	
+	// Use a channel to add timeout protection
+	done := make(chan error, 1)
+	go func() {
+		done <- s.PeerConnection.SetRemoteDescription(webrtc.SessionDescription{
+			Type: sdpTypeEnum,
+			SDP:  sdp,
+		})
+	}()
+	
+	var err error
+	select {
+	case err = <-done:
+		log.Printf("[WebRTC] SetRemoteDescription: returned, err=%v", err)
+	case <-time.After(15 * time.Second):
+		log.Printf("[WebRTC] SetRemoteDescription: TIMEOUT after 15 seconds!")
+		return fmt.Errorf("SetRemoteDescription timeout after 15 seconds")
+	}
 	if err != nil {
 		return fmt.Errorf("failed to set remote description: %w", err)
 	}
+	log.Printf("[WebRTC] SetRemoteDescription: Success")
 	return nil
 }
 
