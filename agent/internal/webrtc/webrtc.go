@@ -168,9 +168,22 @@ func newH264EncoderWithTimeout(width, height, bitrate int, timeout time.Duration
 	}
 }
 
+// alignTo16 rounds up to nearest multiple of 16 (macroblock size for H.264)
+func alignTo16(val int) int {
+	if val%16 == 0 {
+		return val
+	}
+	return ((val / 16) + 1) * 16
+}
+
 // newH264EncoderInternal creates a new H.264 encoder (internal implementation)
 func newH264EncoderInternal(width, height, bitrate int) (*h264Encoder, error) {
-	log.Printf("[H264Encoder] Creating encoder: %dx%d @ %d bps", width, height, bitrate)
+	// Align dimensions to 16-pixel boundaries (H.264 macroblock requirement)
+	alignedWidth := alignTo16(width)
+	alignedHeight := alignTo16(height)
+
+	log.Printf("[H264Encoder] Creating encoder: %dx%d (aligned: %dx%d) @ %d bps",
+		width, height, alignedWidth, alignedHeight, bitrate)
 
 	var ppEnc *openh264.ISVCEncoder
 	log.Printf("[H264Encoder] Calling WelsCreateSVCEncoder...")
@@ -179,16 +192,21 @@ func newH264EncoderInternal(width, height, bitrate int) (*h264Encoder, error) {
 	}
 	log.Printf("[H264Encoder] WelsCreateSVCEncoder returned successfully")
 
+	// Use CAMERA_VIDEO_REAL_TIME for better compatibility
+	// SCREEN_CONTENT_REAL_TIME can cause crashes on some systems
 	encParam := openh264.SEncParamBase{
-		IUsageType:     openh264.SCREEN_CONTENT_REAL_TIME,
-		IPicWidth:      int32(width),
-		IPicHeight:     int32(height),
+		IUsageType:     openh264.CAMERA_VIDEO_REAL_TIME,
+		IPicWidth:      int32(alignedWidth),
+		IPicHeight:     int32(alignedHeight),
 		ITargetBitrate: int32(bitrate),
 		FMaxFrameRate:  30.0,
 	}
-	log.Printf("[H264Encoder] Encoder params configured, calling Initialize...")
+	log.Printf("[H264Encoder] Encoder params: UsageType=%d, Width=%d, Height=%d, Bitrate=%d, FPS=%.1f",
+		encParam.IUsageType, encParam.IPicWidth, encParam.IPicHeight, encParam.ITargetBitrate, encParam.FMaxFrameRate)
+	log.Printf("[H264Encoder] Calling Initialize...")
 
 	if ret := ppEnc.Initialize(&encParam); ret != 0 {
+		log.Printf("[H264Encoder] Initialize failed with code: %d", ret)
 		openh264.WelsDestroySVCEncoder(ppEnc)
 		return nil, fmt.Errorf("failed to initialize H264 encoder: %d", ret)
 	}
@@ -196,8 +214,8 @@ func newH264EncoderInternal(width, height, bitrate int) (*h264Encoder, error) {
 
 	return &h264Encoder{
 		encoder:    ppEnc,
-		width:      int32(width),
-		height:     int32(height),
+		width:      int32(alignedWidth),
+		height:     int32(alignedHeight),
 		frameIndex: 0,
 		pinner:     &runtime.Pinner{},
 	}, nil
@@ -251,6 +269,71 @@ func rgbaToYCbCr(rgba *image.RGBA) *image.YCbCr {
 			// Subsample Cb and Cr (4:2:0)
 			if x%2 == 0 && y%2 == 0 {
 				cIndex := ((y-bounds.Min.Y)/2)*ycbcr.CStride + (x-bounds.Min.X)/2
+				ycbcr.Cb[cIndex] = uint8(cbVal)
+				ycbcr.Cr[cIndex] = uint8(crVal)
+			}
+		}
+	}
+
+	return ycbcr
+}
+
+// rgbaToYCbCrPadded converts RGBA image to YCbCr 4:2:0 format with padding to target dimensions
+// targetWidth and targetHeight must be >= the source image dimensions
+func rgbaToYCbCrPadded(rgba *image.RGBA, targetWidth, targetHeight int) *image.YCbCr {
+	bounds := rgba.Bounds()
+	srcWidth := bounds.Dx()
+	srcHeight := bounds.Dy()
+
+	// Create YCbCr with target (padded) dimensions
+	targetBounds := image.Rect(0, 0, targetWidth, targetHeight)
+	ycbcr := image.NewYCbCr(targetBounds, image.YCbCrSubsampleRatio420)
+
+	// Initialize all Y values to black (16 in YCbCr) and Cb/Cr to neutral (128)
+	for i := range ycbcr.Y {
+		ycbcr.Y[i] = 16 // Black in Y
+	}
+	for i := range ycbcr.Cb {
+		ycbcr.Cb[i] = 128 // Neutral Cb
+		ycbcr.Cr[i] = 128 // Neutral Cr
+	}
+
+	// Convert source pixels
+	for y := 0; y < srcHeight; y++ {
+		for x := 0; x < srcWidth; x++ {
+			offset := (y-bounds.Min.Y)*rgba.Stride + (x-bounds.Min.X)*4
+			r := float64(rgba.Pix[offset])
+			g := float64(rgba.Pix[offset+1])
+			b := float64(rgba.Pix[offset+2])
+
+			// ITU-R BT.601 conversion
+			yVal := 16 + (65.481*r+128.553*g+24.966*b)/255.0
+			cbVal := 128 + (-37.797*r-74.203*g+112.0*b)/255.0
+			crVal := 128 + (112.0*r-93.786*g-18.214*b)/255.0
+
+			// Clamp values
+			if yVal < 0 {
+				yVal = 0
+			} else if yVal > 255 {
+				yVal = 255
+			}
+			if cbVal < 0 {
+				cbVal = 0
+			} else if cbVal > 255 {
+				cbVal = 255
+			}
+			if crVal < 0 {
+				crVal = 0
+			} else if crVal > 255 {
+				crVal = 255
+			}
+
+			yIndex := y*ycbcr.YStride + x
+			ycbcr.Y[yIndex] = uint8(yVal)
+
+			// Subsample Cb and Cr (4:2:0)
+			if x%2 == 0 && y%2 == 0 {
+				cIndex := (y/2)*ycbcr.CStride + x/2
 				ycbcr.Cb[cIndex] = uint8(cbVal)
 				ycbcr.Cr[cIndex] = uint8(crVal)
 			}
@@ -361,17 +444,23 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 		}
 	}
 
-	// Get quality settings
-	width, height, fps, bitrate := getVideoConstraints(config.Quality)
-	log.Printf("[WebRTC] Quality settings: %dx%d @ %dfps, %d bitrate", width, height, fps, bitrate)
+	// Get quality settings for fps and bitrate
+	_, _, fps, bitrate := getVideoConstraints(config.Quality)
 
-	// Create H.264 encoder
+	// Use actual screen dimensions for the encoder (aligned to 16-pixel boundaries)
+	screenBounds := screenshot.GetDisplayBounds(0)
+	screenWidth := screenBounds.Dx()
+	screenHeight := screenBounds.Dy()
+	log.Printf("[WebRTC] Screen dimensions: %dx%d", screenWidth, screenHeight)
+	log.Printf("[WebRTC] Quality settings: fps=%d, bitrate=%d", fps, bitrate)
+
+	// Create H.264 encoder with actual screen dimensions (alignment happens inside)
 	log.Printf("[WebRTC] Creating H.264 encoder...")
-	encoder, err := newH264Encoder(width, height, bitrate)
+	encoder, err := newH264Encoder(screenWidth, screenHeight, bitrate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create encoder: %w", err)
 	}
-	log.Printf("[WebRTC] H.264 encoder created successfully")
+	log.Printf("[WebRTC] H.264 encoder created successfully (internal dims: %dx%d)", encoder.width, encoder.height)
 
 	// Create media engine with H.264 codec
 	log.Printf("[WebRTC] Creating media engine...")
@@ -553,7 +642,7 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 	m.sessions[config.SessionID] = session
 
 	log.Printf("WebRTC session %s created (quality: %s, %dx%d@%dfps, %dkbps)",
-		config.SessionID, config.Quality, width, height, fps, bitrate/1000)
+		config.SessionID, config.Quality, screenWidth, screenHeight, fps, bitrate/1000)
 	return session, nil
 }
 
@@ -565,10 +654,18 @@ func (s *Session) startScreenCapture(fps int) {
 
 	// Get primary display bounds
 	bounds := screenshot.GetDisplayBounds(0)
-	width := bounds.Dx()
-	height := bounds.Dy()
+	screenWidth := bounds.Dx()
+	screenHeight := bounds.Dy()
 
-	log.Printf("Starting screen capture: %dx%d @ %d fps", width, height, fps)
+	// Get encoder's aligned dimensions
+	encoderWidth := int(s.encoder.width)
+	encoderHeight := int(s.encoder.height)
+
+	// Check if we need to pad (encoder dimensions might be larger due to alignment)
+	needsPadding := encoderWidth != screenWidth || encoderHeight != screenHeight
+
+	log.Printf("Starting screen capture: screen=%dx%d, encoder=%dx%d, padding=%v @ %d fps",
+		screenWidth, screenHeight, encoderWidth, encoderHeight, needsPadding, fps)
 
 	for {
 		select {
@@ -587,8 +684,13 @@ func (s *Session) startScreenCapture(fps int) {
 				continue
 			}
 
-			// Convert to YCbCr
-			ycbcr := rgbaToYCbCr(img)
+			// Convert to YCbCr (with padding if needed for encoder alignment)
+			var ycbcr *image.YCbCr
+			if needsPadding {
+				ycbcr = rgbaToYCbCrPadded(img, encoderWidth, encoderHeight)
+			} else {
+				ycbcr = rgbaToYCbCr(img)
+			}
 
 			// Encode to H.264
 			data, err := s.encoder.encode(ycbcr)

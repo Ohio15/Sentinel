@@ -31,7 +31,7 @@ import (
 	"github.com/sentinel/agent/internal/webrtc"
 )
 
-var Version = "1.45.0"
+var Version = "1.46.2"
 
 const ServiceName = "SentinelAgent"
 
