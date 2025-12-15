@@ -1,7 +1,8 @@
 {
-  "version": "1.47.0",
+  "version": "1.47.1",
   "releaseDate": "2025-12-15",
-  "changelog": "- Major: Split WebRTC architecture into Service + Helper process\n- Service (Session 0) coordinates, Helper (user session) handles WebRTC\n- Fixes Session 0 isolation issues causing WebRTC timeouts\n- New sentinel-desktop.exe helper for screen capture and encoding\n- IPC via named pipes between service and helper",
+  "changelog": "- Fix: Enable required Windows privileges for CreateProcessAsUser
+- Fixes Access Denied error when spawning helper process",
   "platforms": [
     "windows",
     "linux",
