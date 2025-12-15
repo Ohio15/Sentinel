@@ -150,6 +150,8 @@ export class AgentManager {
       data: rest,
     };
 
+    console.log(`[sendRequest] Sending to agent ${agentId}:`, JSON.stringify(wrappedMessage, null, 2));
+
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pendingRequests.delete(requestId);
@@ -736,6 +738,12 @@ export class AgentManager {
       throw new Error('Agent not connected');
     }
 
+    // Generate a session ID
+    const sessionId = uuidv4();
+    console.log(`[WebRTC] Starting session ${sessionId} for device ${deviceId}`);
+    console.log(`[WebRTC] Agent ID: ${device.agentId}, Quality: ${offer.quality || 'medium'}`);
+    console.log(`[WebRTC] Offer SDP length: ${offer.sdp?.length || 0}`);
+
     // Store the session
     this.webrtcSessions.set(deviceId, {
       deviceId,
@@ -744,17 +752,29 @@ export class AgentManager {
       active: true,
     });
 
-    // Send WebRTC start command to agent
-    await this.sendRequest(device.agentId, {
+    // Send WebRTC start command to agent with offer SDP
+    console.log(`[WebRTC] Sending webrtc_start to agent...`);
+    const result = await this.sendRequest(device.agentId, {
       type: 'webrtc_start',
-      offer: {
-        type: offer.type,
-        sdp: offer.sdp,
-      },
+      sessionId,
+      offerSdp: offer.sdp,
       quality: offer.quality || 'medium',
     });
+    console.log(`[WebRTC] Got result from agent:`, result);
 
-    console.log(`Started WebRTC session for device ${deviceId}`);
+    // Forward the answer SDP back to the renderer
+    if (result && result.answerSdp) {
+      console.log(`[WebRTC] Forwarding answer SDP to renderer (length: ${result.answerSdp.length})`);
+      this.notifyRenderer('webrtc:signal', {
+        deviceId,
+        type: 'answer',
+        sdp: result.answerSdp,
+      });
+    } else {
+      console.log(`[WebRTC] WARNING: No answerSdp in result`);
+    }
+
+    console.log(`[WebRTC] Session ${sessionId} started successfully`);
   }
 
   async stopWebRTCSession(deviceId: string): Promise<void> {

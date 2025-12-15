@@ -103,19 +103,30 @@ func NewManager() *Manager {
 func (m *Manager) loadOpenH264() error {
 	var loadErr error
 	m.h264LoadOnce.Do(func() {
+		// Get executable path
+		exePath, _ := os.Executable()
+		exeDir := filepath.Dir(exePath)
+		log.Printf("[OpenH264] Executable path: %s", exePath)
+		log.Printf("[OpenH264] Executable dir: %s", exeDir)
+
 		// Try multiple possible locations for the OpenH264 DLL
 		possiblePaths := []string{
+			filepath.Join(exeDir, "openh264-2.4.1-win64.dll"),
+			"C:\\ProgramData\\Sentinel\\openh264-2.4.1-win64.dll",
+			"C:\\Program Files\\Sentinel Agent\\openh264-2.4.1-win64.dll",
 			"openh264-2.4.1-win64.dll",
 			"./openh264-2.4.1-win64.dll",
 			filepath.Join(filepath.Dir(os.Args[0]), "openh264-2.4.1-win64.dll"),
-			"C:\\Program Files\\Sentinel Agent\\openh264-2.4.1-win64.dll",
 		}
 
 		for _, path := range possiblePaths {
+			log.Printf("[OpenH264] Trying path: %s", path)
 			if err := openh264.Open(path); err == nil {
-				log.Printf("Loaded OpenH264 from: %s", path)
+				log.Printf("[OpenH264] SUCCESS: Loaded from %s", path)
 				m.h264Loaded = true
 				return
+			} else {
+				log.Printf("[OpenH264] Failed: %v", err)
 			}
 		}
 
@@ -136,12 +147,37 @@ func getVideoConstraints(quality string) (int, int, int, int) {
 	}
 }
 
-// newH264Encoder creates a new H.264 encoder
-func newH264Encoder(width, height, bitrate int) (*h264Encoder, error) {
+// newH264EncoderWithTimeout creates a new H.264 encoder with a timeout to prevent hanging
+func newH264EncoderWithTimeout(width, height, bitrate int, timeout time.Duration) (*h264Encoder, error) {
+	type result struct {
+		encoder *h264Encoder
+		err     error
+	}
+
+	done := make(chan result, 1)
+	go func() {
+		enc, err := newH264EncoderInternal(width, height, bitrate)
+		done <- result{enc, err}
+	}()
+
+	select {
+	case res := <-done:
+		return res.encoder, res.err
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("encoder creation timed out after %v", timeout)
+	}
+}
+
+// newH264EncoderInternal creates a new H.264 encoder (internal implementation)
+func newH264EncoderInternal(width, height, bitrate int) (*h264Encoder, error) {
+	log.Printf("[H264Encoder] Creating encoder: %dx%d @ %d bps", width, height, bitrate)
+
 	var ppEnc *openh264.ISVCEncoder
+	log.Printf("[H264Encoder] Calling WelsCreateSVCEncoder...")
 	if ret := openh264.WelsCreateSVCEncoder(&ppEnc); ret != 0 || ppEnc == nil {
 		return nil, fmt.Errorf("failed to create H264 encoder: %d", ret)
 	}
+	log.Printf("[H264Encoder] WelsCreateSVCEncoder returned successfully")
 
 	encParam := openh264.SEncParamBase{
 		IUsageType:     openh264.SCREEN_CONTENT_REAL_TIME,
@@ -150,11 +186,13 @@ func newH264Encoder(width, height, bitrate int) (*h264Encoder, error) {
 		ITargetBitrate: int32(bitrate),
 		FMaxFrameRate:  30.0,
 	}
+	log.Printf("[H264Encoder] Encoder params configured, calling Initialize...")
 
 	if ret := ppEnc.Initialize(&encParam); ret != 0 {
 		openh264.WelsDestroySVCEncoder(ppEnc)
 		return nil, fmt.Errorf("failed to initialize H264 encoder: %d", ret)
 	}
+	log.Printf("[H264Encoder] Initialize returned successfully")
 
 	return &h264Encoder{
 		encoder:    ppEnc,
@@ -163,6 +201,11 @@ func newH264Encoder(width, height, bitrate int) (*h264Encoder, error) {
 		frameIndex: 0,
 		pinner:     &runtime.Pinner{},
 	}, nil
+}
+
+// newH264Encoder creates a new H.264 encoder with default 10 second timeout
+func newH264Encoder(width, height, bitrate int) (*h264Encoder, error) {
+	return newH264EncoderWithTimeout(width, height, bitrate, 10*time.Second)
 }
 
 // rgbaToYCbCr converts RGBA image to YCbCr 4:2:0 format
@@ -280,13 +323,16 @@ func (e *h264Encoder) close() {
 
 // CreateSession creates a new WebRTC session with H.264 video encoding
 func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal SignalMessage), onInput func(input InputEvent)) (*Session, error) {
+	log.Printf("[WebRTC] CreateSession starting for session %s", config.SessionID)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	// Load OpenH264 if not already loaded
+	log.Printf("[WebRTC] Loading OpenH264...")
 	if err := m.loadOpenH264(); err != nil {
 		return nil, fmt.Errorf("failed to load OpenH264: %w", err)
 	}
+	log.Printf("[WebRTC] OpenH264 loaded successfully")
 
 	// Stop existing session if any
 	if existing, ok := m.sessions[config.SessionID]; ok {
@@ -317,14 +363,18 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 
 	// Get quality settings
 	width, height, fps, bitrate := getVideoConstraints(config.Quality)
+	log.Printf("[WebRTC] Quality settings: %dx%d @ %dfps, %d bitrate", width, height, fps, bitrate)
 
 	// Create H.264 encoder
+	log.Printf("[WebRTC] Creating H.264 encoder...")
 	encoder, err := newH264Encoder(width, height, bitrate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create encoder: %w", err)
 	}
+	log.Printf("[WebRTC] H.264 encoder created successfully")
 
 	// Create media engine with H.264 codec
+	log.Printf("[WebRTC] Creating media engine...")
 	mediaEngine := &webrtc.MediaEngine{}
 	if err := mediaEngine.RegisterCodec(webrtc.RTPCodecParameters{
 		RTPCodecCapability: webrtc.RTPCodecCapability{
@@ -337,6 +387,7 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 		encoder.close()
 		return nil, fmt.Errorf("failed to register H264 codec: %w", err)
 	}
+	log.Printf("[WebRTC] Media engine created")
 
 	// Create interceptor registry for PLI support
 	interceptorRegistry := &interceptor.Registry{}
@@ -359,6 +410,7 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 	)
 
 	// Create peer connection
+	log.Printf("[WebRTC] Creating peer connection...")
 	peerConnection, err := api.NewPeerConnection(webrtc.Configuration{
 		ICEServers: iceServers,
 	})
@@ -366,8 +418,10 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 		encoder.close()
 		return nil, fmt.Errorf("failed to create peer connection: %w", err)
 	}
+	log.Printf("[WebRTC] Peer connection created")
 
 	// Create video track
+	log.Printf("[WebRTC] Creating video track...")
 	videoTrack, err := webrtc.NewTrackLocalStaticSample(
 		webrtc.RTPCodecCapability{
 			MimeType:    webrtc.MimeTypeH264,
@@ -382,6 +436,7 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 		peerConnection.Close()
 		return nil, fmt.Errorf("failed to create video track: %w", err)
 	}
+	log.Printf("[WebRTC] Video track created")
 
 	// Add video track to peer connection
 	rtpSender, err := peerConnection.AddTrack(videoTrack)
@@ -585,7 +640,7 @@ func (s *Session) CreateOffer() (string, error) {
 	return offer.SDP, nil
 }
 
-// SetRemoteDescription sets the remote SDP (answer from viewer)
+// SetRemoteDescription sets the remote SDP (offer or answer)
 func (s *Session) SetRemoteDescription(sdpType, sdp string) error {
 	var sdpTypeEnum webrtc.SDPType
 	switch sdpType {
@@ -605,6 +660,33 @@ func (s *Session) SetRemoteDescription(sdpType, sdp string) error {
 		return fmt.Errorf("failed to set remote description: %w", err)
 	}
 	return nil
+}
+
+// CreateAnswer creates an SDP answer after setting remote offer
+func (s *Session) CreateAnswer() (string, error) {
+	answer, err := s.PeerConnection.CreateAnswer(nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create answer: %w", err)
+	}
+
+	err = s.PeerConnection.SetLocalDescription(answer)
+	if err != nil {
+		return "", fmt.Errorf("failed to set local description: %w", err)
+	}
+
+	// Wait for ICE gathering to complete
+	gatherComplete := webrtc.GatheringCompletePromise(s.PeerConnection)
+	select {
+	case <-gatherComplete:
+	case <-time.After(10 * time.Second):
+		log.Printf("ICE gathering timed out, continuing with available candidates")
+	}
+
+	localDesc := s.PeerConnection.LocalDescription()
+	if localDesc != nil {
+		return localDesc.SDP, nil
+	}
+	return answer.SDP, nil
 }
 
 // AddICECandidate adds a remote ICE candidate
