@@ -18,6 +18,7 @@ import (
 	"github.com/sentinel/agent/internal/client"
 	"github.com/sentinel/agent/internal/collector"
 	"github.com/sentinel/agent/internal/config"
+	"github.com/sentinel/agent/internal/desktop"
 	"github.com/sentinel/agent/internal/diagnostics"
 	"github.com/sentinel/agent/internal/executor"
 	"github.com/sentinel/agent/internal/filetransfer"
@@ -31,7 +32,7 @@ import (
 	"github.com/sentinel/agent/internal/webrtc"
 )
 
-var Version = "1.46.2"
+var Version = "1.47.0"
 
 const ServiceName = "SentinelAgent"
 
@@ -55,7 +56,8 @@ type Agent struct {
 	terminalManager   *terminal.Manager
 	fileTransfer      *filetransfer.FileTransfer
 	remoteManager     *remote.Manager
-	webrtcManager     *webrtc.Manager // WebRTC for remote desktop
+	webrtcManager     *webrtc.Manager // WebRTC for remote desktop (legacy)
+	desktopManager    *desktop.Manager // Desktop helper manager for WebRTC
 	updater           *updater.Updater
 	protectionManager    *protection.Manager
 	diagnosticsCollector *diagnostics.Collector
@@ -286,6 +288,7 @@ func NewAgent(cfg *config.Config) *Agent {
 		fileTransfer:         ft,
 		remoteManager:        remote.NewManager(),
 		webrtcManager:        webrtc.NewManager(),
+		desktopManager:       desktop.NewManager(""),
 		updater:              agentUpdater,
 		protectionManager:    protMgr,
 		diagnosticsCollector: diagnostics.New(),
@@ -340,6 +343,18 @@ func (a *Agent) Start() error {
 
 	// Register message handlers
 	a.registerHandlers()
+
+	// Set up desktop manager callbacks for WebRTC signaling
+	a.desktopManager.SetCallbacks(
+		nil, // onSessionAnswer not needed, we use synchronous return
+		func(sessionID uint32, connectionID, candidate, sdpMid string, sdpMLineIndex *int) {
+			// Forward ICE candidate to server
+			a.client.SendWebRTCSignal(connectionID, "candidate", "", candidate)
+		},
+		func(sessionID uint32, state desktop.HelperState, message, connectionID string) {
+			log.Printf("[Desktop] Status update: sessionID=%d, state=%s, message=%s", sessionID, state, message)
+		},
+	)
 
 	// Set up connection callbacks
 	a.client.OnConnect(a.onConnect)
@@ -397,6 +412,11 @@ func (a *Agent) Stop() error {
 	log.Println("Stopping agent...")
 
 	a.cancel()
+
+	// Shutdown desktop manager (kills helper processes)
+	if a.desktopManager != nil {
+		a.desktopManager.Shutdown()
+	}
 	a.terminalManager.CloseAll()
 
 	// Stop Data Plane (gRPC) connection
@@ -1004,6 +1024,11 @@ func (a *Agent) handleUninstallAgent(msg *client.Message) error {
 		// Stop the agent
 		a.cancel()
 
+	// Shutdown desktop manager (kills helper processes)
+	if a.desktopManager != nil {
+		a.desktopManager.Shutdown()
+	}
+
 		// Give time for cleanup
 		time.Sleep(1 * time.Second)
 
@@ -1018,7 +1043,6 @@ func (a *Agent) handleUninstallAgent(msg *client.Message) error {
 
 func (a *Agent) handleWebRTCStart(msg *client.Message) error {
 	log.Printf("[WebRTC] handleWebRTCStart called, RequestID=%s", msg.RequestID)
-	log.Printf("[WebRTC] msg.Data type: %T", msg.Data)
 
 	data, ok := msg.Data.(map[string]interface{})
 	if !ok {
@@ -1026,106 +1050,32 @@ func (a *Agent) handleWebRTCStart(msg *client.Message) error {
 		return a.client.SendResponse(msg.RequestID, false, nil, "Invalid message data")
 	}
 
-	log.Printf("[WebRTC] data keys: %v", func() []string {
-		keys := make([]string, 0, len(data))
-		for k := range data {
-			keys = append(keys, k)
-		}
-		return keys
-	}())
-
-	sessionID, _ := data["sessionId"].(string)
+	connectionID, _ := data["sessionId"].(string)
 	offerSdp, _ := data["offerSdp"].(string)
-	quality, _ := data["quality"].(string)
-	if quality == "" {
-		quality = "medium"
+
+	log.Printf("[WebRTC] Parsed: connectionID=%s, offerSdp length=%d", connectionID, len(offerSdp))
+
+	if offerSdp == "" {
+		return a.client.SendResponse(msg.RequestID, false, nil, "No SDP offer provided")
 	}
 
-	log.Printf("[WebRTC] Parsed: sessionId=%s, quality=%s, offerSdp length=%d", sessionID, quality, len(offerSdp))
+	// Get the active Windows session ID (the user's desktop session)
+	winSessionID := desktop.GetActiveConsoleSessionID()
+	log.Printf("[WebRTC] Using Windows session ID: %d", winSessionID)
 
-	// Parse ICE servers if provided
-	var iceServers []webrtc.ICEServer
-	if servers, ok := data["iceServers"].([]interface{}); ok {
-		for _, s := range servers {
-			if serverMap, ok := s.(map[string]interface{}); ok {
-				server := webrtc.ICEServer{}
-				if urls, ok := serverMap["urls"].([]interface{}); ok {
-					for _, u := range urls {
-						if urlStr, ok := u.(string); ok {
-							server.URLs = append(server.URLs, urlStr)
-						}
-					}
-				}
-				if username, ok := serverMap["username"].(string); ok {
-					server.Username = username
-				}
-				if credential, ok := serverMap["credential"].(string); ok {
-					server.Credential = credential
-				}
-				iceServers = append(iceServers, server)
-			}
-		}
-	}
-
-	config := webrtc.SessionConfig{
-		SessionID:  sessionID,
-		ICEServers: iceServers,
-		Quality:    quality,
-	}
-
-	// Callback for signaling messages (ICE candidates)
-	onSignal := func(signal webrtc.SignalMessage) {
-		a.client.SendWebRTCSignal(signal.SessionID, signal.Type, signal.SDP, signal.Candidate)
-	}
-
-	// Callback for input events (mouse/keyboard from viewer)
-	onInput := func(input webrtc.InputEvent) {
-		// Handle input directly via webrtc session's input handler
-		log.Printf("WebRTC input event: type=%s, event=%s", input.Type, input.Event)
-	}
-
-	session, err := a.webrtcManager.CreateSession(config, onSignal, onInput)
+	// Use the desktop manager to spawn helper and start WebRTC session
+	// The helper runs in the user's session where it has display access
+	answerType, answerSdp, err := a.desktopManager.StartSession(a.ctx, winSessionID, connectionID, "offer", offerSdp)
 	if err != nil {
-		log.Printf("Failed to create WebRTC session: %v", err)
+		log.Printf("[WebRTC] Failed to start session via desktop helper: %v", err)
 		return a.client.SendResponse(msg.RequestID, false, nil, err.Error())
 	}
 
-	// Set the remote offer from the browser
-	if offerSdp != "" {
-		log.Printf("Setting remote description (offer)")
-		if err := session.SetRemoteDescription("offer", offerSdp); err != nil {
-			log.Printf("Failed to set remote offer: %v", err)
-			a.webrtcManager.StopSession(sessionID)
-			return a.client.SendResponse(msg.RequestID, false, nil, err.Error())
-		}
-
-		// Create answer
-		log.Printf("Creating SDP answer")
-		answerSdp, err := session.CreateAnswer()
-		if err != nil {
-			log.Printf("Failed to create answer: %v", err)
-			a.webrtcManager.StopSession(sessionID)
-			return a.client.SendResponse(msg.RequestID, false, nil, err.Error())
-		}
-
-		log.Printf("WebRTC session started successfully, returning answer")
-		return a.client.SendResponse(msg.RequestID, true, map[string]interface{}{
-			"sessionId": sessionID,
-			"answerSdp": answerSdp,
-		}, "")
-	}
-
-	// Fallback: create offer if no remote offer provided (legacy mode)
-	log.Printf("No offer provided, creating offer (legacy mode)")
-	offer, err := session.CreateOffer()
-	if err != nil {
-		a.webrtcManager.StopSession(sessionID)
-		return a.client.SendResponse(msg.RequestID, false, nil, err.Error())
-	}
+	log.Printf("[WebRTC] Got answer from helper: type=%s, sdp length=%d", answerType, len(answerSdp))
 
 	return a.client.SendResponse(msg.RequestID, true, map[string]interface{}{
-		"sessionId": sessionID,
-		"offer":     offer,
+		"sessionId": connectionID,
+		"answerSdp": answerSdp,
 	}, "")
 }
 
@@ -1137,23 +1087,28 @@ func (a *Agent) handleWebRTCSignal(msg *client.Message) error {
 
 	signalData, ok := data["signal"].(map[string]interface{})
 	if !ok {
-		// Try flat structure
 		signalData = data
 	}
 
-	signal := webrtc.SignalMessage{
-		Type:      signalData["type"].(string),
-		SessionID: signalData["sessionId"].(string),
+	signalType, _ := signalData["type"].(string)
+	connectionID, _ := signalData["sessionId"].(string)
+
+	// Handle ICE candidates - forward to desktop helper
+	if signalType == "candidate" {
+		candidate, _ := signalData["candidate"].(string)
+		sdpMid, _ := signalData["sdpMid"].(string)
+		var sdpMLineIndex *int
+		if idx, ok := signalData["sdpMLineIndex"].(float64); ok {
+			i := int(idx)
+			sdpMLineIndex = &i
+		}
+
+		winSessionID := desktop.GetActiveConsoleSessionID()
+		return a.desktopManager.AddICECandidate(winSessionID, connectionID, candidate, sdpMid, sdpMLineIndex)
 	}
 
-	if sdp, ok := signalData["sdp"].(string); ok {
-		signal.SDP = sdp
-	}
-	if candidate, ok := signalData["candidate"].(string); ok {
-		signal.Candidate = candidate
-	}
-
-	return a.webrtcManager.HandleSignal(signal)
+	log.Printf("[WebRTC] Ignoring signal type: %s", signalType)
+	return nil
 }
 
 func (a *Agent) handleWebRTCStop(msg *client.Message) error {
@@ -1162,8 +1117,12 @@ func (a *Agent) handleWebRTCStop(msg *client.Message) error {
 		return a.client.SendResponse(msg.RequestID, false, nil, "Invalid message data")
 	}
 
-	sessionID, _ := data["sessionId"].(string)
-	a.webrtcManager.StopSession(sessionID)
+	connectionID, _ := data["sessionId"].(string)
+	winSessionID := desktop.GetActiveConsoleSessionID()
+	
+	if err := a.desktopManager.StopSession(winSessionID, connectionID, "user requested stop"); err != nil {
+		log.Printf("[WebRTC] Stop session error: %v", err)
+	}
 
 	return a.client.SendResponse(msg.RequestID, true, nil, "")
 }
