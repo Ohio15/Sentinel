@@ -23,6 +23,13 @@ interface RemoteSession {
   active: boolean;
 }
 
+interface WebRTCSession {
+  deviceId: string;
+  agentId: string;
+  quality: string;
+  active: boolean;
+}
+
 interface PendingRequest {
   resolve: (value: any) => void;
   reject: (reason: any) => void;
@@ -34,6 +41,7 @@ export class AgentManager {
   private terminalSessions: Map<string, TerminalSession> = new Map();
   private dashboardSessions: Map<string, WebSocket> = new Map();
   private remoteSessions: Map<string, RemoteSession> = new Map();
+  private webrtcSessions: Map<string, WebRTCSession> = new Map();
   private pendingRequests: Map<string, PendingRequest> = new Map();
   private database: Database;
   private alertCooldowns: Map<string, Date> = new Map();
@@ -191,6 +199,10 @@ export class AgentManager {
 
       case 'event':
         this.handleEvent(agentId, message);
+        break;
+
+      case 'webrtc_signal':
+        this.handleWebRTCSignal(agentId, message);
         break;
 
       default:
@@ -711,6 +723,88 @@ export class AgentManager {
     }
 
     return { success, failed };
+  }
+
+  // WebRTC Remote Desktop
+  async startWebRTCSession(deviceId: string, offer: any): Promise<void> {
+    const device = await this.database.getDevice(deviceId);
+    if (!device) {
+      throw new Error('Device not found');
+    }
+
+    if (!this.isAgentConnected(device.agentId)) {
+      throw new Error('Agent not connected');
+    }
+
+    // Store the session
+    this.webrtcSessions.set(deviceId, {
+      deviceId,
+      agentId: device.agentId,
+      quality: offer.quality || 'medium',
+      active: true,
+    });
+
+    // Send WebRTC start command to agent
+    await this.sendRequest(device.agentId, {
+      type: 'webrtc_start',
+      offer: {
+        type: offer.type,
+        sdp: offer.sdp,
+      },
+      quality: offer.quality || 'medium',
+    });
+
+    console.log(`Started WebRTC session for device ${deviceId}`);
+  }
+
+  async stopWebRTCSession(deviceId: string): Promise<void> {
+    const session = this.webrtcSessions.get(deviceId);
+    if (session) {
+      this.sendToAgent(session.agentId, {
+        type: 'webrtc_stop',
+        data: { deviceId },
+      });
+      this.webrtcSessions.delete(deviceId);
+      console.log(`Stopped WebRTC session for device ${deviceId}`);
+    }
+  }
+
+  async sendWebRTCSignal(deviceId: string, signal: any): Promise<void> {
+    const session = this.webrtcSessions.get(deviceId);
+    if (!session) {
+      throw new Error('WebRTC session not found');
+    }
+
+    this.sendToAgent(session.agentId, {
+      type: 'webrtc_signal',
+      data: signal,
+    });
+  }
+
+  async setWebRTCQuality(deviceId: string, quality: string): Promise<void> {
+    const session = this.webrtcSessions.get(deviceId);
+    if (!session) {
+      throw new Error('WebRTC session not found');
+    }
+
+    session.quality = quality;
+    this.sendToAgent(session.agentId, {
+      type: 'webrtc_quality',
+      data: { quality },
+    });
+  }
+
+  private handleWebRTCSignal(agentId: string, message: any): void {
+    // Find the device for this agent and forward the signal to the renderer
+    for (const [deviceId, session] of this.webrtcSessions) {
+      if (session.agentId === agentId) {
+        this.notifyRenderer('webrtc:signal', {
+          deviceId,
+          ...message.data,
+        });
+        break;
+      }
+    }
   }
 
 }
