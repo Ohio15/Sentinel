@@ -234,7 +234,9 @@ export class AgentManager {
       this.notifyRenderer('metrics:updated', {
         deviceId: device.id,
         metrics: message.data,
+        source: 'websocket',
       });
+      console.log(`[WebSocket] Metrics received for device ${device.id}, CPU: ${message.data?.cpuPercent?.toFixed(1)}%`);
 
       // Check alert rules
       await this.checkAlertRules(device, message.data);
