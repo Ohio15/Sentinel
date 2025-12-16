@@ -33,7 +33,7 @@ import (
 	"github.com/sentinel/agent/internal/admin"
 )
 
-var Version = "1.48.0"
+var Version = "1.51.0"
 
 const ServiceName = "SentinelAgent"
 
@@ -64,6 +64,7 @@ type Agent struct {
 	diagnosticsCollector *diagnostics.Collector
 	adminManager         *admin.Manager
 	tamperChan           chan string
+	metricsIntervalChan  chan time.Duration // Channel for dynamic metrics interval changes
 	ctx                  context.Context
 	cancel               context.CancelFunc
 }
@@ -296,6 +297,7 @@ func NewAgent(cfg *config.Config) *Agent {
 		diagnosticsCollector: diagnostics.New(),
 		adminManager:         admin.NewManager(Version),
 		tamperChan:           make(chan string, 10),
+		metricsIntervalChan:  make(chan time.Duration, 1),
 		ctx:                  ctx,
 		cancel:               cancel,
 	}
@@ -460,6 +462,8 @@ func (a *Agent) registerHandlers() {
 	a.client.RegisterHandler(client.MsgTypeWebRTCStart, a.handleWebRTCStart)
 	a.client.RegisterHandler(client.MsgTypeWebRTCSignal, a.handleWebRTCSignal)
 	a.client.RegisterHandler(client.MsgTypeWebRTCStop, a.handleWebRTCStop)
+	// Configuration handlers
+	a.client.RegisterHandler(client.MsgTypeSetMetricsInterval, a.handleSetMetricsInterval)
 }
 
 func (a *Agent) onConnect() {
@@ -593,10 +597,19 @@ func (a *Agent) metricsLoop() {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	log.Printf("Starting metrics loop with interval: %v", interval)
+
 	for {
 		select {
 		case <-a.ctx.Done():
 			return
+		case newInterval := <-a.metricsIntervalChan:
+			// Dynamic interval change requested
+			if newInterval > 0 && newInterval != interval {
+				interval = newInterval
+				ticker.Reset(interval)
+				log.Printf("Metrics interval changed to: %v", interval)
+			}
 		case <-ticker.C:
 			if !a.client.IsConnected() || !a.client.IsAuthenticated() {
 				continue
@@ -1224,4 +1237,33 @@ func (a *Agent) handleAdminDemote(msg *client.Message) error {
 
 	// Send result
 	return a.client.SendAdminDemotionResult(msg.RequestID, result)
+}
+
+// handleSetMetricsInterval handles dynamic metrics interval changes
+func (a *Agent) handleSetMetricsInterval(msg *client.Message) error {
+	data, ok := msg.Data.(map[string]interface{})
+	if !ok {
+		return a.client.SendResponse(msg.RequestID, false, nil, "Invalid message data")
+	}
+
+	// Interval is in milliseconds
+	intervalMs, ok := data["intervalMs"].(float64)
+	if !ok || intervalMs < 100 {
+		return a.client.SendResponse(msg.RequestID, false, nil, "Invalid interval (minimum 100ms)")
+	}
+
+	// Convert milliseconds to duration
+	newInterval := time.Duration(intervalMs) * time.Millisecond
+
+	log.Printf("Received request to change metrics interval to %v", newInterval)
+
+	// Send to the metrics loop (non-blocking)
+	select {
+	case a.metricsIntervalChan <- newInterval:
+		return a.client.SendResponse(msg.RequestID, true, map[string]interface{}{
+			"intervalMs": intervalMs,
+		}, "")
+	default:
+		return a.client.SendResponse(msg.RequestID, false, nil, "Metrics interval change already pending")
+	}
 }

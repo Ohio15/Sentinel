@@ -827,4 +827,24 @@ export class AgentManager {
     }
   }
 
+
+  // Set metrics interval for real-time updates (for Performance tab high-frequency mode)
+  async setMetricsInterval(deviceId: string, intervalMs: number): Promise<void> {
+    const device = await this.database.getDevice(deviceId);
+    if (!device) {
+      throw new Error('Device not found');
+    }
+
+    if (!this.isAgentConnected(device.agentId)) {
+      throw new Error('Agent not connected');
+    }
+
+    console.log(`Setting metrics interval for device ${deviceId} to ${intervalMs}ms`);
+
+    await this.sendRequest(device.agentId, {
+      type: 'set_metrics_interval',
+      intervalMs,
+    });
+  }
+
 }
