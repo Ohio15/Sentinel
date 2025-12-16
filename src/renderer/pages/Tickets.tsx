@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useTicketStore, Ticket, TicketFilters } from '../stores/ticketStore';
+import { useDeviceStore, Device } from '../stores/deviceStore';
 
 interface TicketsProps {
   onTicketSelect: (ticketId: string) => void;
@@ -319,6 +320,7 @@ function CreateTicketModal({
   onClose: () => void;
   onCreate: (ticket: Partial<Ticket>) => Promise<void>;
 }) {
+  const { devices, fetchDevices } = useDeviceStore();
   const [formData, setFormData] = useState({
     subject: '',
     description: '',
@@ -327,8 +329,13 @@ function CreateTicketModal({
     requesterName: '',
     requesterEmail: '',
     assignedTo: '',
+    deviceId: '',
   });
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetchDevices();
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -336,7 +343,11 @@ function CreateTicketModal({
 
     setSaving(true);
     try {
-      await onCreate(formData);
+      const ticketData = {
+        ...formData,
+        deviceId: formData.deviceId || undefined,
+      };
+      await onCreate(ticketData);
     } catch (error) {
       console.error('Failed to create ticket:', error);
     } finally {
@@ -433,6 +444,24 @@ function CreateTicketModal({
                 placeholder="john@example.com"
               />
             </div>
+          </div>
+          <div>
+            <label className="label">Device</label>
+            <select
+              value={formData.deviceId}
+              onChange={(e) => setFormData({ ...formData, deviceId: e.target.value })}
+              className="input"
+            >
+              <option value="">No device selected</option>
+              {devices.map((device) => (
+                <option key={device.id} value={device.id}>
+                  {device.displayName || device.hostname} ({device.osType})
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-text-secondary mt-1">
+              Selecting a device will automatically collect diagnostics when the ticket is created.
+            </p>
           </div>
           <div>
             <label className="label">Assigned To</label>
