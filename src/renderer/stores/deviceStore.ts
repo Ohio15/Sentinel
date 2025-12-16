@@ -114,8 +114,10 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
   },
 
   fetchMetrics: async (deviceId: string, hours: number = 24) => {
+    console.log('[DeviceStore] fetchMetrics called for device:', deviceId, 'hours:', hours);
     try {
       const metrics = await window.api.devices.getMetrics(deviceId, hours);
+      console.log('[DeviceStore] fetchMetrics returned', metrics.length, 'metrics');
       set({ metrics });
     } catch (error: any) {
       console.error('Failed to fetch metrics:', error);
@@ -153,27 +155,34 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
       get().fetchDevices();
     });
 
+    let metricsReceivedCount = 0;
     const unsubMetrics = window.api.on('metrics:updated', (data: any) => {
+      metricsReceivedCount++;
       const { selectedDevice, metrics } = get();
 
-      // Debug logging to trace metrics flow
-      console.log('[DeviceStore] metrics:updated received', {
+      // Log every metric with a counter
+      console.log(`[DeviceStore] metrics:updated #${metricsReceivedCount}`, {
         dataDeviceId: data.deviceId,
         selectedDeviceId: selectedDevice?.id,
-        hasSelectedDevice: !!selectedDevice,
-        currentMetricsCount: metrics.length,
-        cpuPercent: data.metrics?.cpuPercent,
+        match: selectedDevice?.id === data.deviceId,
+        cpu: data.metrics?.cpuPercent?.toFixed(1),
         source: data.source,
       });
 
       if (selectedDevice && selectedDevice.id === data.deviceId) {
+        // Validate metrics data before adding
+        if (!data.metrics || typeof data.metrics.cpuPercent !== 'number') {
+          console.warn('[DeviceStore] Invalid metrics data received:', data.metrics);
+          return;
+        }
+
         // Sliding window - keep only what fits on the graph (120 points = 1 min at 500ms)
         const newMetrics = [{
           timestamp: new Date().toISOString(),
           ...data.metrics,
         }, ...metrics.slice(0, 119)];
         set({ metrics: newMetrics });
-        console.log('[DeviceStore] metrics updated, new count:', newMetrics.length);
+        console.log('[DeviceStore] metrics updated, count:', newMetrics.length, 'CPU:', data.metrics.cpuPercent?.toFixed(1));
       } else {
         console.log('[DeviceStore] metrics:updated skipped - device mismatch or no selection');
       }
