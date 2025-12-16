@@ -210,7 +210,7 @@ func SpawnInSession(sessionID uint32, exePath string, args []string) (*os.Proces
 
 	var si windows.StartupInfo
 	si.Cb = uint32(unsafe.Sizeof(si))
-	si.Desktop, _ = syscall.UTF16PtrFromString("winsta0default")
+	si.Desktop, _ = syscall.UTF16PtrFromString("winsta0\\default")
 
 	var pi windows.ProcessInformation
 
