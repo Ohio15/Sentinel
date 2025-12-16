@@ -66,7 +66,7 @@ var (
 func DefaultConfig() *Config {
 	return &Config{
 		AgentID:           uuid.New().String(),
-		HeartbeatInterval: 30,
+		HeartbeatInterval: 10,
 		MetricsInterval:   5, // 5 seconds default, can be reduced on-demand for real-time view
 		Enrolled:          false,
 	}
