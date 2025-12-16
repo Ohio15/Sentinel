@@ -268,7 +268,7 @@ function CPUDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProps) 
         <StatRow label="Processes" value={latestMetrics?.processCount?.toString() ?? 'N/A'} />
         <StatRow label="Threads" value="N/A" />
         <StatRow label="Handles" value="N/A" />
-        <StatRow label="Up time" value={formatUptime(systemInfo?.bootTime ? Math.floor((Date.now() - systemInfo.bootTime * 1000) / 1000) : 0)} />
+        <StatRow label="Up time" value={formatUptime(latestMetrics?.uptime ?? 0)} />
         <div className="col-span-2 border-t border-border my-2" />
         <StatRow label="Base speed" value={systemInfo?.cpuSpeed ? `${(systemInfo.cpuSpeed / 1000).toFixed(2)} GHz` : 'N/A'} />
         <StatRow label="Sockets" value="1" />

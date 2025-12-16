@@ -100,7 +100,7 @@ function SpecRow({ label, value }: { label: string; value: string | undefined })
 }
 
 export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
-  const { selectedDevice, metrics, loading, error, fetchDevice, fetchMetrics } = useDeviceStore();
+  const { selectedDevice, metrics, loading, error, fetchDevice, fetchMetrics, subscribeToUpdates } = useDeviceStore();
   const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [command, setCommand] = useState('');
   const [commandType, setCommandType] = useState('shell');
@@ -111,6 +111,12 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
   const [expandedCommands, setExpandedCommands] = useState<Set<string>>(new Set());
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState('');
+
+  // Subscribe to real-time metric updates
+  useEffect(() => {
+    const unsubscribe = subscribeToUpdates();
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     fetchDevice(deviceId);

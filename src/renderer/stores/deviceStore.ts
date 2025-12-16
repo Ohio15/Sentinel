@@ -64,6 +64,7 @@ export interface DeviceMetrics {
   networkRxBytes: number;
   networkTxBytes: number;
   processCount: number;
+  uptime: number; // System uptime in seconds
 }
 
 interface DeviceState {
