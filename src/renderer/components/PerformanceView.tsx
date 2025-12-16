@@ -48,7 +48,7 @@ export function PerformanceView({ metrics, systemInfo }: PerformanceViewProps) {
         id: 'memory',
         type: 'memory',
         label: 'Memory',
-        sublabel: systemInfo?.totalMemory ? `${formatBytes(latestMetrics?.memoryUsed ?? 0)}/${formatBytes(systemInfo.totalMemory)}` : undefined,
+        sublabel: systemInfo?.totalMemory ? `${formatBytes(latestMetrics?.memoryUsedBytes ?? 0)}/${formatBytes(systemInfo.totalMemory)}` : undefined,
         value: latestMetrics?.memoryPercent ?? 0,
         unit: '%',
         color: '#8764b8',
@@ -118,9 +118,9 @@ export function PerformanceView({ metrics, systemInfo }: PerformanceViewProps) {
   }, [metrics]);
 
   return (
-    <div className="flex h-full bg-[#202020] text-white">
+    <div className="flex h-full bg-background text-text-primary">
       {/* Left sidebar - resource list */}
-      <div className="w-72 bg-[#1a1a1a] border-r border-[#333] overflow-y-auto">
+      <div className="w-72 bg-surface border-r border-border overflow-y-auto">
         {resources.map((resource) => (
           <ResourceSidebarItem
             key={resource.id}
@@ -196,8 +196,8 @@ function ResourceSidebarItem({ resource, isSelected, onClick, metrics }: Resourc
     <div
       className={`p-3 cursor-pointer border-l-2 transition-colors ${
         isSelected
-          ? 'bg-[#2a2a2a] border-[#0078d4]'
-          : 'border-transparent hover:bg-[#252525]'
+          ? 'bg-primary-light border-primary'
+          : 'border-transparent hover:bg-gray-100'
       }`}
       onClick={onClick}
     >
@@ -205,7 +205,7 @@ function ResourceSidebarItem({ resource, isSelected, onClick, metrics }: Resourc
         <div className="flex-1 min-w-0">
           <div className="font-medium text-sm">{resource.label}</div>
           {resource.sublabel && (
-            <div className="text-xs text-gray-400 truncate">{resource.sublabel}</div>
+            <div className="text-xs text-text-secondary truncate">{resource.sublabel}</div>
           )}
           <div className="text-xs mt-1" style={{ color: resource.color }}>
             {resource.value.toFixed(0)}{resource.unit}
@@ -213,7 +213,7 @@ function ResourceSidebarItem({ resource, isSelected, onClick, metrics }: Resourc
         </div>
         <div className="w-16 h-8 ml-2">
           <svg viewBox="0 0 60 30" className="w-full h-full">
-            <rect x="0" y="0" width="60" height="30" fill="#1a1a1a" stroke="#333" strokeWidth="1" />
+            <rect x="0" y="0" width="60" height="30" fill="#f8fafc" stroke="#e2e8f0" strokeWidth="1" />
             {miniGraphPath && (
               <path d={miniGraphPath} fill="none" stroke={resource.color} strokeWidth="1.5" />
             )}
@@ -239,11 +239,11 @@ function CPUDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProps) 
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-2xl font-light">CPU</h2>
-          <div className="text-sm text-gray-400">{systemInfo?.cpuModel || 'Unknown CPU'}</div>
+          <div className="text-sm text-text-secondary">{systemInfo?.cpuModel || 'Unknown CPU'}</div>
         </div>
         <div className="text-right">
           <div className="text-4xl font-light">{cpuPercent.toFixed(0)}%</div>
-          <div className="text-sm text-gray-400">Utilization</div>
+          <div className="text-sm text-text-secondary">Utilization</div>
         </div>
       </div>
 
@@ -262,7 +262,7 @@ function CPUDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProps) 
         <StatRow label="Threads" value="N/A" />
         <StatRow label="Handles" value="N/A" />
         <StatRow label="Up time" value={formatUptime(latestMetrics?.uptime ?? 0)} />
-        <div className="col-span-2 border-t border-[#333] my-2" />
+        <div className="col-span-2 border-t border-border my-2" />
         <StatRow label="Base speed" value={systemInfo?.cpuSpeed ? `${(systemInfo.cpuSpeed / 1000).toFixed(2)} GHz` : 'N/A'} />
         <StatRow label="Sockets" value="1" />
         <StatRow label="Cores" value={systemInfo?.cpuCores?.toString() ?? 'N/A'} />
@@ -275,8 +275,8 @@ function CPUDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProps) 
 // Memory Detail View
 function MemoryDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProps) {
   const memPercent = latestMetrics?.memoryPercent ?? 0;
-  const memUsed = latestMetrics?.memoryUsed ?? 0;
-  const memAvailable = latestMetrics?.memoryAvailable ?? 0;
+  const memUsed = latestMetrics?.memoryUsedBytes ?? 0;
+  const memAvailable = memTotal - memUsed;
   const memTotal = systemInfo?.totalMemory ?? 0;
 
   return (
@@ -284,11 +284,11 @@ function MemoryDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProp
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-2xl font-light">Memory</h2>
-          <div className="text-sm text-gray-400">{formatBytes(memTotal)} Total</div>
+          <div className="text-sm text-text-secondary">{formatBytes(memTotal)} Total</div>
         </div>
         <div className="text-right">
           <div className="text-4xl font-light">{memPercent.toFixed(0)}%</div>
-          <div className="text-sm text-gray-400">{formatBytes(memUsed)} in use</div>
+          <div className="text-sm text-text-secondary">{formatBytes(memUsed)} in use</div>
         </div>
       </div>
 
@@ -301,7 +301,7 @@ function MemoryDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProp
       />
 
       {/* Memory composition bar */}
-      <div className="mt-4 h-12 bg-[#1a1a1a] rounded flex overflow-hidden">
+      <div className="mt-4 h-12 bg-gray-100 border border-border rounded flex overflow-hidden">
         <div
           className="bg-[#8764b8] flex items-center justify-center text-xs"
           style={{ width: `${memPercent}%` }}
@@ -309,7 +309,7 @@ function MemoryDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProp
           In Use
         </div>
         <div
-          className="bg-[#444] flex items-center justify-center text-xs"
+          className="bg-gray-200 flex items-center justify-center text-xs text-text-secondary"
           style={{ width: `${100 - memPercent}%` }}
         >
           Available
@@ -342,11 +342,11 @@ function DiskDetailView({ metrics, systemInfo, latestMetrics, diskIndex }: DiskD
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-2xl font-light">Disk {diskIndex}</h2>
-          <div className="text-sm text-gray-400">{disk?.mountpoint ?? 'C:'} - {disk?.fstype ?? 'NTFS'}</div>
+          <div className="text-sm text-text-secondary">{disk?.mountpoint ?? 'C:'} - {disk?.fstype ?? 'NTFS'}</div>
         </div>
         <div className="text-right">
           <div className="text-4xl font-light">{diskPercent.toFixed(0)}%</div>
-          <div className="text-sm text-gray-400">Active time</div>
+          <div className="text-sm text-text-secondary">Active time</div>
         </div>
       </div>
 
@@ -363,9 +363,9 @@ function DiskDetailView({ metrics, systemInfo, latestMetrics, diskIndex }: DiskD
         <StatRow label="Average response time" value="N/A" />
         <StatRow label="Read speed" value="N/A" />
         <StatRow label="Write speed" value="N/A" />
-        <div className="col-span-2 border-t border-[#333] my-2" />
-        <StatRow label="Capacity" value={formatBytes(disk?.total ?? latestMetrics?.diskTotal ?? 0)} />
-        <StatRow label="Used" value={formatBytes(disk?.used ?? latestMetrics?.diskUsed ?? 0)} />
+        <div className="col-span-2 border-t border-border my-2" />
+        <StatRow label="Capacity" value={formatBytes(disk?.total ?? latestMetrics?.diskTotalBytes ?? 0)} />
+        <StatRow label="Used" value={formatBytes(disk?.used ?? latestMetrics?.diskUsedBytes ?? 0)} />
         <StatRow label="Free" value={formatBytes(disk?.free ?? 0)} />
         <StatRow label="Type" value={disk?.fstype ?? 'NTFS'} />
       </div>
@@ -385,17 +385,17 @@ function NetworkDetailView({ metrics, latestMetrics }: NetworkDetailViewProps) {
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-2xl font-light">Ethernet</h2>
-          <div className="text-sm text-gray-400">Network Adapter</div>
+          <div className="text-sm text-text-secondary">Network Adapter</div>
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4 mb-6">
-        <div className="bg-[#1a1a1a] p-4 rounded">
-          <div className="text-sm text-gray-400 mb-2">Send</div>
+        <div className="bg-gray-50 border border-border p-4 rounded">
+          <div className="text-sm text-text-secondary mb-2">Send</div>
           <div className="text-2xl font-light">{formatBytesPerSec(latestMetrics?.networkTxBytes ?? 0)}</div>
         </div>
-        <div className="bg-[#1a1a1a] p-4 rounded">
-          <div className="text-sm text-gray-400 mb-2">Receive</div>
+        <div className="bg-gray-50 border border-border p-4 rounded">
+          <div className="text-sm text-text-secondary mb-2">Receive</div>
           <div className="text-2xl font-light">{formatBytesPerSec(latestMetrics?.networkRxBytes ?? 0)}</div>
         </div>
       </div>
@@ -424,17 +424,17 @@ function GPUDetailView({ systemInfo, gpuIndex }: GPUDetailViewProps) {
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-2xl font-light">GPU {gpuIndex}</h2>
-          <div className="text-sm text-gray-400">{gpu?.name ?? 'Unknown GPU'}</div>
+          <div className="text-sm text-text-secondary">{gpu?.name ?? 'Unknown GPU'}</div>
         </div>
         <div className="text-right">
           <div className="text-4xl font-light">0%</div>
-          <div className="text-sm text-gray-400">Utilization</div>
+          <div className="text-sm text-text-secondary">Utilization</div>
         </div>
       </div>
 
-      <div className="bg-[#1a1a1a] p-4 rounded mb-6">
-        <div className="text-sm text-gray-400 mb-2">GPU utilization data not available</div>
-        <div className="text-xs text-gray-500">GPU monitoring requires additional drivers</div>
+      <div className="bg-gray-50 border border-border p-4 rounded mb-6">
+        <div className="text-sm text-text-secondary mb-2">GPU utilization data not available</div>
+        <div className="text-xs text-text-secondary">GPU monitoring requires additional drivers</div>
       </div>
 
       <div className="grid grid-cols-2 gap-x-12 gap-y-2 mt-6 text-sm">
@@ -485,9 +485,9 @@ function PerformanceGraph({ metrics, dataKey, color, label, maxValue }: Performa
 
   return (
     <div className="relative">
-      <div className="absolute top-2 left-2 text-xs text-gray-400">{label}</div>
-      <div className="absolute top-2 right-2 text-xs text-gray-400">60 seconds</div>
-      <div className="bg-[#1a1a1a] rounded overflow-hidden" style={{ height: '200px' }}>
+      <div className="absolute top-2 left-2 text-xs text-text-secondary">{label}</div>
+      <div className="absolute top-2 right-2 text-xs text-text-secondary">60 seconds</div>
+      <div className="bg-gray-50 border border-border rounded overflow-hidden" style={{ height: '200px' }}>
         <svg viewBox="0 0 800 200" className="w-full h-full" preserveAspectRatio="none">
           {/* Grid lines */}
           {[25, 50, 75].map(pct => (
@@ -497,7 +497,7 @@ function PerformanceGraph({ metrics, dataKey, color, label, maxValue }: Performa
               y1={200 - (pct / 100) * 196}
               x2="800"
               y2={200 - (pct / 100) * 196}
-              stroke="#333"
+              stroke="#e2e8f0"
               strokeWidth="1"
             />
           ))}
@@ -515,7 +515,7 @@ function PerformanceGraph({ metrics, dataKey, color, label, maxValue }: Performa
       </div>
 
       {/* Y-axis labels */}
-      <div className="absolute right-2 top-8 bottom-2 flex flex-col justify-between text-xs text-gray-500">
+      <div className="absolute right-2 top-8 bottom-2 flex flex-col justify-between text-xs text-text-secondary">
         <span>100%</span>
         <span>50%</span>
         <span>0%</span>
@@ -528,8 +528,8 @@ function PerformanceGraph({ metrics, dataKey, color, label, maxValue }: Performa
 function StatRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between">
-      <span className="text-gray-400">{label}</span>
-      <span className="text-white">{value}</span>
+      <span className="text-text-secondary">{label}</span>
+      <span className="text-text-primary font-medium">{value}</span>
     </div>
   );
 }
