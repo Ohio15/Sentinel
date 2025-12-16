@@ -112,10 +112,9 @@ export function PerformanceView({ metrics, systemInfo }: PerformanceViewProps) {
 
   const selectedItem = resources.find(r => r.id === selectedResource) ?? resources[0];
 
-  // Get metrics for graph (last 60 seconds worth)
+  // Get metrics for graph - show all available (store handles the sliding window)
   const graphMetrics = useMemo(() => {
-    const sorted = [...metrics].reverse();
-    return sorted.slice(-60);
+    return [...metrics].reverse();
   }, [metrics]);
 
   return (

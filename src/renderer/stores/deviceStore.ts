@@ -156,10 +156,11 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
     const unsubMetrics = window.api.on('metrics:updated', (data: any) => {
       const { selectedDevice, metrics } = get();
       if (selectedDevice && selectedDevice.id === data.deviceId) {
+        // Sliding window - keep only what fits on the graph (120 points = 1 min at 500ms)
         const newMetrics = [{
           timestamp: new Date().toISOString(),
           ...data.metrics,
-        }, ...metrics.slice(0, 99)];
+        }, ...metrics.slice(0, 119)];
         set({ metrics: newMetrics });
       }
     });
