@@ -155,6 +155,17 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
 
     const unsubMetrics = window.api.on('metrics:updated', (data: any) => {
       const { selectedDevice, metrics } = get();
+
+      // Debug logging to trace metrics flow
+      console.log('[DeviceStore] metrics:updated received', {
+        dataDeviceId: data.deviceId,
+        selectedDeviceId: selectedDevice?.id,
+        hasSelectedDevice: !!selectedDevice,
+        currentMetricsCount: metrics.length,
+        cpuPercent: data.metrics?.cpuPercent,
+        source: data.source,
+      });
+
       if (selectedDevice && selectedDevice.id === data.deviceId) {
         // Sliding window - keep only what fits on the graph (120 points = 1 min at 500ms)
         const newMetrics = [{
@@ -162,6 +173,9 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
           ...data.metrics,
         }, ...metrics.slice(0, 119)];
         set({ metrics: newMetrics });
+        console.log('[DeviceStore] metrics updated, new count:', newMetrics.length);
+      } else {
+        console.log('[DeviceStore] metrics:updated skipped - device mismatch or no selection');
       }
     });
 

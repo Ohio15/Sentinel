@@ -143,7 +143,7 @@ export class GrpcServer {
         });
 
         // Notify renderer
-        this.notifyRenderer('metrics:updated', {
+        const metricsPayload = {
           deviceId: device.id,
           metrics: {
             cpuPercent: metrics.cpuPercent,
@@ -159,9 +159,14 @@ export class GrpcServer {
             uptime: parseInt(metrics.uptime) || 0,
           },
           source: 'grpc',
-        });
+        };
+        this.notifyRenderer('metrics:updated', metricsPayload);
 
         metricsCount++;
+        // Log every 10th metric to avoid spam
+        if (metricsCount % 10 === 0) {
+          console.log(`[gRPC] Sent ${metricsCount} metrics for device ${device.id}, CPU: ${metrics.cpuPercent?.toFixed(1)}%`);
+        }
       } catch (error) {
         console.error('gRPC: Error processing metrics:', error);
       }

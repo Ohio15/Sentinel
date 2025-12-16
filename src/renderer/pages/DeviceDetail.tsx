@@ -147,8 +147,9 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
   useEffect(() => {
     if (activeTab !== 'performance') return;
 
-    // Immediately fetch on tab switch
-    fetchMetrics(deviceId, 24);
+    // Don't fetch historical metrics here - we want fresh real-time data
+    // The metrics subscription will provide live updates
+    console.log('[DeviceDetail] Performance tab active, requesting high-frequency metrics');
 
     // Request high-frequency metrics (500ms) from the agent
     window.api.devices.setMetricsInterval(deviceId, 500).catch(err => {
@@ -157,6 +158,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
 
     // Cleanup: reset to default interval (5000ms) when leaving Performance tab
     return () => {
+      console.log('[DeviceDetail] Leaving Performance tab, resetting to normal interval');
       window.api.devices.setMetricsInterval(deviceId, 5000).catch(err => {
         console.log('Failed to reset metrics interval:', err);
       });
