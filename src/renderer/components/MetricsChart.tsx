@@ -60,40 +60,91 @@ interface MetricLineProps {
 }
 
 function MetricLine({ data, dataKey, label, color, unit }: MetricLineProps) {
-  const { path, area, points, max, avg, current } = useMemo(() => {
-    const values = data.map(d => (d[dataKey] as number) ?? 0);
+  const { paths, areas, max, avg, current } = useMemo(() => {
+    // Filter out null/undefined values and get valid data points
+    const validPoints: { index: number; value: number; timestamp: number }[] = [];
+
+    for (let i = 0; i < data.length; i++) {
+      const value = data[i][dataKey] as number;
+      const timestamp = data[i].timestamp ? new Date(data[i].timestamp).getTime() : i * 60000;
+
+      if (value !== null && value !== undefined && !isNaN(value)) {
+        validPoints.push({ index: i, value, timestamp });
+      }
+    }
+
+    if (validPoints.length === 0) {
+      return { paths: [], areas: [], max: 0, avg: 0, current: 0 };
+    }
+
+    const values = validPoints.map(p => p.value);
     const max = Math.max(...values);
-    const min = Math.min(...values);
     const avg = values.reduce((a, b) => a + b, 0) / values.length;
     const current = values[values.length - 1] ?? 0;
 
-    // Create SVG path
+    // Create SVG paths - break into segments when there's a time gap > 5 minutes
     const width = 800;
     const height = 60;
     const padding = 2;
+    const maxGapMs = 5 * 60 * 1000; // 5 minutes
 
-    const xScale = (width - padding * 2) / (data.length - 1);
+    // Calculate time range for proper x-axis scaling
+    const timeRange = validPoints.length > 1
+      ? validPoints[validPoints.length - 1].timestamp - validPoints[0].timestamp
+      : 1;
+
+    const xScale = (width - padding * 2) / (timeRange || 1);
     const yScale = (height - padding * 2) / 100; // 0-100% scale
+    const startTime = validPoints[0].timestamp;
 
-    const pathPoints = values.map((v, i) => ({
-      x: padding + i * xScale,
-      y: height - padding - (v ?? 0) * yScale,
-    }));
+    // Break data into segments based on time gaps
+    const segments: { x: number; y: number }[][] = [];
+    let currentSegment: { x: number; y: number }[] = [];
 
-    const pathD = pathPoints
-      .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`)
-      .join(' ');
+    for (let i = 0; i < validPoints.length; i++) {
+      const point = validPoints[i];
+      const x = padding + (point.timestamp - startTime) * xScale;
+      const y = height - padding - point.value * yScale;
 
-    const areaD = `${pathD} L ${width - padding} ${height - padding} L ${padding} ${height - padding} Z`;
+      // Check for time gap
+      if (i > 0) {
+        const gap = point.timestamp - validPoints[i - 1].timestamp;
+        if (gap > maxGapMs && currentSegment.length > 0) {
+          // Start new segment
+          segments.push(currentSegment);
+          currentSegment = [];
+        }
+      }
 
-    return {
-      path: pathD,
-      area: areaD,
-      points: pathPoints,
-      max,
-      avg,
-      current,
-    };
+      currentSegment.push({ x, y });
+    }
+
+    if (currentSegment.length > 0) {
+      segments.push(currentSegment);
+    }
+
+    // Generate paths and areas for each segment
+    const paths: string[] = [];
+    const areas: string[] = [];
+
+    for (const segment of segments) {
+      if (segment.length < 1) continue;
+
+      const pathD = segment
+        .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
+        .join(' ');
+      paths.push(pathD);
+
+      if (segment.length >= 2) {
+        const firstX = segment[0].x.toFixed(1);
+        const lastX = segment[segment.length - 1].x.toFixed(1);
+        const bottomY = (height - padding).toFixed(1);
+        const areaD = `${pathD} L ${lastX} ${bottomY} L ${firstX} ${bottomY} Z`;
+        areas.push(areaD);
+      }
+    }
+
+    return { paths, areas, max, avg, current };
   }, [data, dataKey]);
 
   return (
@@ -126,22 +177,28 @@ function MetricLine({ data, dataKey, label, color, unit }: MetricLineProps) {
           <line x1="0" y1="30" x2="800" y2="30" stroke="#e2e8f0" strokeWidth="1" />
           <line x1="0" y1="45" x2="800" y2="45" stroke="#e2e8f0" strokeWidth="1" />
 
-          {/* Area fill */}
-          <path
-            d={area}
-            fill={color}
-            fillOpacity="0.1"
-          />
+          {/* Area fills */}
+          {areas.map((area, i) => (
+            <path
+              key={`area-${i}`}
+              d={area}
+              fill={color}
+              fillOpacity="0.1"
+            />
+          ))}
 
-          {/* Line */}
-          <path
-            d={path}
-            fill="none"
-            stroke={color}
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
+          {/* Lines */}
+          {paths.map((path, i) => (
+            <path
+              key={`line-${i}`}
+              d={path}
+              fill="none"
+              stroke={color}
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          ))}
         </svg>
 
         {/* Y-axis labels */}

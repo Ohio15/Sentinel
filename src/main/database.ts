@@ -170,7 +170,11 @@ export class Database {
         UPDATE devices SET
           hostname = $1, display_name = $2, os_type = $3, os_version = $4,
           os_build = $5, architecture = $6, agent_version = $7, last_seen = $8,
-          status = $9, ip_address = $10, mac_address = $11, metadata = $12
+          status = $9, ip_address = $10, mac_address = $11, metadata = $12,
+          platform = $14, platform_family = $15, cpu_model = $16, cpu_cores = $17,
+          cpu_threads = $18, cpu_speed = $19, total_memory = $20, boot_time = $21,
+          gpu = $22, storage = $23, serial_number = $24, manufacturer = $25,
+          model = $26, domain = $27
         WHERE agent_id = $13
       `,
         [
@@ -187,6 +191,20 @@ export class Database {
           device.macAddress,
           JSON.stringify(device.metadata || {}),
           device.agentId,
+          device.platform || null,
+          device.platformFamily || null,
+          device.cpuModel || null,
+          device.cpuCores || null,
+          device.cpuThreads || null,
+          device.cpuSpeed || null,
+          device.totalMemory || null,
+          device.bootTime || null,
+          device.gpu ? JSON.stringify(device.gpu) : null,
+          device.storage ? JSON.stringify(device.storage) : null,
+          device.serialNumber || null,
+          device.manufacturer || null,
+          device.model || null,
+          device.domain || null,
         ]
       );
       return this.getDeviceByAgentId(device.agentId);
@@ -197,8 +215,11 @@ export class Database {
         INSERT INTO devices (
           id, agent_id, hostname, display_name, os_type, os_version,
           os_build, architecture, agent_version, last_seen, status,
-          ip_address, mac_address, tags, metadata
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+          ip_address, mac_address, tags, metadata, platform, platform_family,
+          cpu_model, cpu_cores, cpu_threads, cpu_speed, total_memory, boot_time,
+          gpu, storage, serial_number, manufacturer, model, domain
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+                  $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
       `,
         [
           id,
@@ -216,6 +237,20 @@ export class Database {
           device.macAddress,
           JSON.stringify(device.tags || []),
           JSON.stringify(device.metadata || {}),
+          device.platform || null,
+          device.platformFamily || null,
+          device.cpuModel || null,
+          device.cpuCores || null,
+          device.cpuThreads || null,
+          device.cpuSpeed || null,
+          device.totalMemory || null,
+          device.bootTime || null,
+          device.gpu ? JSON.stringify(device.gpu) : null,
+          device.storage ? JSON.stringify(device.storage) : null,
+          device.serialNumber || null,
+          device.manufacturer || null,
+          device.model || null,
+          device.domain || null,
         ]
       );
       return this.getDevice(id);
@@ -289,6 +324,18 @@ export class Database {
         metrics.networkTxBytes,
         metrics.processCount,
       ]
+    );
+
+    // Update storage if provided in metrics
+    if (metrics.storage) {
+      await this.updateDeviceStorage(deviceId, metrics.storage);
+    }
+  }
+
+  async updateDeviceStorage(deviceId: string, storage: any[]): Promise<void> {
+    await this.query(
+      "UPDATE devices SET storage = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+      [JSON.stringify(storage), deviceId]
     );
   }
 

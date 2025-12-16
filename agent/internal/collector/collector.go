@@ -60,18 +60,19 @@ type StorageInfo struct {
 
 // Metrics contains current system metrics
 type Metrics struct {
-	Timestamp       time.Time `json:"timestamp"`
-	CPUPercent      float64   `json:"cpu_percent"`
-	MemoryPercent   float64   `json:"memory_percent"`
-	MemoryUsed      uint64    `json:"memory_used"`
-	MemoryAvailable uint64    `json:"memory_available"`
-	DiskPercent     float64   `json:"disk_percent"`
-	DiskUsed        uint64    `json:"disk_used"`
-	DiskTotal       uint64    `json:"disk_total"`
-	NetworkRxBytes  uint64    `json:"network_rx_bytes"`
-	NetworkTxBytes  uint64    `json:"network_tx_bytes"`
-	ProcessCount    int       `json:"process_count"`
-	Uptime          uint64    `json:"uptime"`
+	Timestamp       time.Time     `json:"timestamp"`
+	CPUPercent      float64       `json:"cpu_percent"`
+	MemoryPercent   float64       `json:"memory_percent"`
+	MemoryUsed      uint64        `json:"memory_used"`
+	MemoryAvailable uint64        `json:"memory_available"`
+	DiskPercent     float64       `json:"disk_percent"`
+	DiskUsed        uint64        `json:"disk_used"`
+	DiskTotal       uint64        `json:"disk_total"`
+	NetworkRxBytes  uint64        `json:"network_rx_bytes"`
+	NetworkTxBytes  uint64        `json:"network_tx_bytes"`
+	ProcessCount    int           `json:"process_count"`
+	Uptime          uint64        `json:"uptime"`
+	Storage         []StorageInfo `json:"storage,omitempty"`
 }
 
 // Collector handles system metrics collection
@@ -279,6 +280,9 @@ func (c *Collector) Collect(ctx context.Context) (*Metrics, error) {
 	if err == nil {
 		metrics.Uptime = hostInfo.Uptime
 	}
+
+	// Storage info (updated with each metrics collection)
+	metrics.Storage = c.getStorageInfo()
 
 	c.lastCheck = time.Now()
 	return metrics, nil
