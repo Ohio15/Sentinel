@@ -3,164 +3,140 @@
 package desktop
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
-var (
-	modAdvapi32 = windows.NewLazySystemDLL("advapi32.dll")
-	modKernel32 = windows.NewLazySystemDLL("kernel32.dll")
-	modUserenv  = windows.NewLazySystemDLL("userenv.dll")
-	modWtsapi32 = windows.NewLazySystemDLL("wtsapi32.dll")
-
-	procCreateProcessAsUserW    = modAdvapi32.NewProc("CreateProcessAsUserW")
-	procWTSQueryUserToken       = modWtsapi32.NewProc("WTSQueryUserToken")
-	procCreateEnvironmentBlock  = modUserenv.NewProc("CreateEnvironmentBlock")
-	procDestroyEnvironmentBlock = modUserenv.NewProc("DestroyEnvironmentBlock")
-	procDuplicateTokenEx        = modAdvapi32.NewProc("DuplicateTokenEx")
-	procGetTokenInformation     = modAdvapi32.NewProc("GetTokenInformation")
-	procLookupPrivilegeValueW   = modAdvapi32.NewProc("LookupPrivilegeValueW")
-	procAdjustTokenPrivileges   = modAdvapi32.NewProc("AdjustTokenPrivileges")
-)
-
-// Token security levels
 const (
-	SecurityAnonymous      = 0
-	SecurityIdentification = 1
-	SecurityImpersonation  = 2
-	SecurityDelegation     = 3
+	TaskName = "SentinelDesktopHelper"
 )
 
-// Token types
-const (
-	TokenPrimary       = 1
-	TokenImpersonation = 2
-)
-
-// Token information classes
-const (
-	TokenUser      = 1
-	TokenSessionId = 12
-)
-
-// CREATE_PROCESS flags
-const (
-	CREATE_UNICODE_ENVIRONMENT = 0x00000400
-	CREATE_NEW_CONSOLE         = 0x00000010
-	CREATE_NO_WINDOW           = 0x08000000
-)
-
-// Privilege constants
-const (
-	SE_PRIVILEGE_ENABLED = 0x00000002
-)
-
-// Privilege names required for CreateProcessAsUser
-const (
-	SE_ASSIGNPRIMARYTOKEN_NAME = "SeAssignPrimaryTokenPrivilege"
-	SE_INCREASE_QUOTA_NAME     = "SeIncreaseQuotaPrivilege"
-	SE_TCB_NAME                = "SeTcbPrivilege"
-)
-
-// LUID structure for privilege lookup
-type LUID struct {
-	LowPart  uint32
-	HighPart int32
+// HelperConfig is written to a file for the helper to read
+type HelperConfig struct {
+	SessionID uint32 `json:"sessionId"`
+	Token     string `json:"token"`
+	PipeName  string `json:"pipeName"`
 }
 
-// LUID_AND_ATTRIBUTES for token privileges
-type LUID_AND_ATTRIBUTES struct {
-	Luid       LUID
-	Attributes uint32
-}
-
-// TOKEN_PRIVILEGES structure
-type TOKEN_PRIVILEGES struct {
-	PrivilegeCount uint32
-	Privileges     [1]LUID_AND_ATTRIBUTES
-}
-
-// enablePrivilege enables a named privilege on the current process token
-func enablePrivilege(privilegeName string) error {
-	var token windows.Token
-	err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES|windows.TOKEN_QUERY, &token)
-	if err != nil {
-		return fmt.Errorf("OpenProcessToken failed: %w", err)
-	}
-	defer token.Close()
-
-	privNamePtr, err := syscall.UTF16PtrFromString(privilegeName)
-	if err != nil {
-		return fmt.Errorf("failed to convert privilege name: %w", err)
+// EnsureScheduledTask creates the scheduled task if it doesn't exist
+func EnsureScheduledTask(helperPath string) error {
+	// Check if task already exists
+	checkCmd := exec.Command("schtasks", "/Query", "/TN", TaskName)
+	if err := checkCmd.Run(); err == nil {
+		log.Printf("[Spawn] Scheduled task %s already exists", TaskName)
+		return nil
 	}
 
-	var luid LUID
-	ret, _, err := procLookupPrivilegeValueW.Call(
-		0,
-		uintptr(unsafe.Pointer(privNamePtr)),
-		uintptr(unsafe.Pointer(&luid)),
+	log.Printf("[Spawn] Creating scheduled task %s...", TaskName)
+
+	// Create the task
+	// /SC ONCE /ST 00:00 creates a task that won't run automatically
+	// /RL LIMITED runs with normal user privileges
+	// /F forces creation if exists
+	createCmd := exec.Command("schtasks", "/Create",
+		"/TN", TaskName,
+		"/TR", fmt.Sprintf(`"%s" --from-task`, helperPath),
+		"/SC", "ONCE",
+		"/ST", "00:00",
+		"/SD", "01/01/2099",
+		"/RL", "LIMITED",
+		"/F",
 	)
-	if ret == 0 {
-		return fmt.Errorf("LookupPrivilegeValue failed for %s: %w", privilegeName, err)
+
+	output, err := createCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to create scheduled task: %w, output: %s", err, string(output))
 	}
 
-	var tp TOKEN_PRIVILEGES
-	tp.PrivilegeCount = 1
-	tp.Privileges[0].Luid = luid
-	tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED
-
-	ret, _, err = procAdjustTokenPrivileges.Call(
-		uintptr(token),
-		0,
-		uintptr(unsafe.Pointer(&tp)),
-		0,
-		0,
-		0,
-	)
-	if ret == 0 {
-		return fmt.Errorf("AdjustTokenPrivileges failed for %s: %w", privilegeName, err)
-	}
-
-	lastErr := windows.GetLastError()
-	if lastErr == windows.ERROR_NOT_ALL_ASSIGNED {
-		return fmt.Errorf("privilege %s not held by process", privilegeName)
-	}
-
-	log.Printf("[Spawn] Enabled privilege: %s", privilegeName)
+	log.Printf("[Spawn] Created scheduled task: %s", string(output))
 	return nil
 }
 
-// enableRequiredPrivileges enables all privileges needed for CreateProcessAsUser
-func enableRequiredPrivileges() error {
-	privileges := []string{
-		SE_ASSIGNPRIMARYTOKEN_NAME,
-		SE_INCREASE_QUOTA_NAME,
-		SE_TCB_NAME,
+// SpawnViaScheduledTask launches the helper using a scheduled task
+func SpawnViaScheduledTask(sessionID uint32, helperPath string, token string) error {
+	// Write config file for the helper to read
+	configPath := filepath.Join(os.TempDir(), fmt.Sprintf("sentinel-helper-%d.json", sessionID))
+
+	config := HelperConfig{
+		SessionID: sessionID,
+		Token:     token,
+		PipeName:  fmt.Sprintf(`\\.\pipe\SentinelDesktop_%d`, sessionID),
 	}
 
-	for _, priv := range privileges {
-		if err := enablePrivilege(priv); err != nil {
-			log.Printf("[Spawn] Warning: could not enable %s: %v", priv, err)
-		}
+	configData, err := json.Marshal(config)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
+	if err := os.WriteFile(configPath, configData, 0644); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	log.Printf("[Spawn] Wrote helper config to %s", configPath)
+
+	// Run the scheduled task
+	// /I flag runs it interactively in the current user's session
+	runCmd := exec.Command("schtasks", "/Run", "/TN", TaskName, "/I")
+	output, err := runCmd.CombinedOutput()
+	if err != nil {
+		os.Remove(configPath)
+		return fmt.Errorf("failed to run scheduled task: %w, output: %s", err, string(output))
+	}
+
+	log.Printf("[Spawn] Triggered scheduled task: %s", strings.TrimSpace(string(output)))
 	return nil
 }
 
 // SpawnInSession spawns a process in the specified Windows session
+// Now uses scheduled task approach which is more reliable
 func SpawnInSession(sessionID uint32, exePath string, args []string) (*os.Process, error) {
 	log.Printf("[Spawn] SpawnInSession called: sessionID=%d, exePath=%s", sessionID, exePath)
 
-	// Enable required privileges first
-	if err := enableRequiredPrivileges(); err != nil {
-		log.Printf("[Spawn] Warning: enableRequiredPrivileges: %v", err)
+	// Extract token from args
+	var token string
+	for i, arg := range args {
+		if arg == "--token" && i+1 < len(args) {
+			token = args[i+1]
+			break
+		}
 	}
 
+	// Ensure the scheduled task exists
+	if err := EnsureScheduledTask(exePath); err != nil {
+		log.Printf("[Spawn] Warning: failed to ensure scheduled task: %v", err)
+		// Fall through to try direct spawn
+	} else {
+		// Try scheduled task approach first
+		if err := SpawnViaScheduledTask(sessionID, exePath, token); err != nil {
+			log.Printf("[Spawn] Scheduled task failed: %v, trying direct spawn...", err)
+		} else {
+			log.Printf("[Spawn] Scheduled task triggered successfully")
+			// Return nil process - the helper will connect via IPC
+			// We can't get the PID from schtasks easily
+			return nil, nil
+		}
+	}
+
+	// Fallback: try CreateProcessAsUser (may fail but worth trying)
+	log.Printf("[Spawn] Falling back to CreateProcessAsUser...")
+	return spawnDirect(sessionID, exePath, args)
+}
+
+// spawnDirect tries to spawn using CreateProcessAsUser (fallback)
+func spawnDirect(sessionID uint32, exePath string, args []string) (*os.Process, error) {
+	// Enable privileges
+	enableRequiredPrivileges()
+
+	// Get user token
 	var userToken windows.Token
 	ret, _, err := procWTSQueryUserToken.Call(
 		uintptr(sessionID),
@@ -171,28 +147,11 @@ func SpawnInSession(sessionID uint32, exePath string, args []string) (*os.Proces
 	}
 	defer userToken.Close()
 
-	log.Printf("[Spawn] Got user token for session %d", sessionID)
-
-	var duplicatedToken windows.Token
-	ret, _, err = procDuplicateTokenEx.Call(
-		uintptr(userToken),
-		uintptr(windows.TOKEN_ALL_ACCESS),
-		0,
-		uintptr(SecurityImpersonation),
-		uintptr(TokenPrimary),
-		uintptr(unsafe.Pointer(&duplicatedToken)),
-	)
-	if ret == 0 {
-		return nil, fmt.Errorf("DuplicateTokenEx failed: %w", err)
-	}
-	defer duplicatedToken.Close()
-
-	log.Printf("[Spawn] Duplicated token")
-
+	// Create environment block
 	var envBlock unsafe.Pointer
 	ret, _, err = procCreateEnvironmentBlock.Call(
 		uintptr(unsafe.Pointer(&envBlock)),
-		uintptr(duplicatedToken),
+		uintptr(userToken),
 		0,
 	)
 	if ret == 0 {
@@ -200,13 +159,12 @@ func SpawnInSession(sessionID uint32, exePath string, args []string) (*os.Proces
 	}
 	defer procDestroyEnvironmentBlock.Call(uintptr(envBlock))
 
-	log.Printf("[Spawn] Created environment block")
-
+	// Prepare command
+	exePathPtr, _ := syscall.UTF16PtrFromString(exePath)
+	workingDir := filepath.Dir(exePath)
+	workingDirPtr, _ := syscall.UTF16PtrFromString(workingDir)
 	cmdLine := buildCommandLine(exePath, args)
-	cmdLinePtr, err := syscall.UTF16PtrFromString(cmdLine)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert command line: %w", err)
-	}
+	cmdLinePtr, _ := syscall.UTF16PtrFromString(cmdLine)
 
 	var si windows.StartupInfo
 	si.Cb = uint32(unsafe.Sizeof(si))
@@ -214,81 +172,125 @@ func SpawnInSession(sessionID uint32, exePath string, args []string) (*os.Proces
 
 	var pi windows.ProcessInformation
 
-	log.Printf("[Spawn] Calling CreateProcessAsUserW: %s", cmdLine)
-
 	ret, _, err = procCreateProcessAsUserW.Call(
-		uintptr(duplicatedToken),
-		0,
+		uintptr(userToken),
+		uintptr(unsafe.Pointer(exePathPtr)),
 		uintptr(unsafe.Pointer(cmdLinePtr)),
-		0,
-		0,
-		0,
-		uintptr(CREATE_UNICODE_ENVIRONMENT|CREATE_NO_WINDOW),
+		0, 0, 0,
+		uintptr(CREATE_UNICODE_ENVIRONMENT|CREATE_NEW_CONSOLE),
 		uintptr(envBlock),
-		0,
+		uintptr(unsafe.Pointer(workingDirPtr)),
 		uintptr(unsafe.Pointer(&si)),
 		uintptr(unsafe.Pointer(&pi)),
 	)
 	if ret == 0 {
-		return nil, fmt.Errorf("CreateProcessAsUserW failed: %w", err)
+		return nil, fmt.Errorf("CreateProcessAsUserW failed: %w (LastError=%d)", err, windows.GetLastError())
 	}
 
-	log.Printf("[Spawn] Process created: PID=%d", pi.ProcessId)
-
+	log.Printf("[Spawn] CreateProcessAsUserW succeeded: PID=%d", pi.ProcessId)
 	windows.CloseHandle(pi.Thread)
+	proc, _ := os.FindProcess(int(pi.ProcessId))
+	return proc, nil
+}
 
-	proc, err := os.FindProcess(int(pi.ProcessId))
-	if err != nil {
-		windows.CloseHandle(pi.Process)
-		return nil, fmt.Errorf("failed to find process: %w", err)
+var (
+	modAdvapi32 = windows.NewLazySystemDLL("advapi32.dll")
+	modUserenv  = windows.NewLazySystemDLL("userenv.dll")
+	modWtsapi32 = windows.NewLazySystemDLL("wtsapi32.dll")
+	modKernel32 = windows.NewLazySystemDLL("kernel32.dll")
+
+	procCreateProcessAsUserW    = modAdvapi32.NewProc("CreateProcessAsUserW")
+	procWTSQueryUserToken       = modWtsapi32.NewProc("WTSQueryUserToken")
+	procCreateEnvironmentBlock  = modUserenv.NewProc("CreateEnvironmentBlock")
+	procDestroyEnvironmentBlock = modUserenv.NewProc("DestroyEnvironmentBlock")
+	procLookupPrivilegeValueW   = modAdvapi32.NewProc("LookupPrivilegeValueW")
+	procAdjustTokenPrivileges   = modAdvapi32.NewProc("AdjustTokenPrivileges")
+)
+
+const (
+	CREATE_UNICODE_ENVIRONMENT = 0x00000400
+	CREATE_NEW_CONSOLE         = 0x00000010
+	SE_PRIVILEGE_ENABLED       = 0x00000002
+)
+
+type LUID struct {
+	LowPart  uint32
+	HighPart int32
+}
+
+type LUID_AND_ATTRIBUTES struct {
+	Luid       LUID
+	Attributes uint32
+}
+
+type TOKEN_PRIVILEGES struct {
+	PrivilegeCount uint32
+	Privileges     [1]LUID_AND_ATTRIBUTES
+}
+
+func enableRequiredPrivileges() {
+	privileges := []string{
+		"SeAssignPrimaryTokenPrivilege",
+		"SeIncreaseQuotaPrivilege",
+		"SeTcbPrivilege",
+		"SeImpersonatePrivilege",
 	}
 
-	return proc, nil
+	for _, priv := range privileges {
+		enablePrivilege(priv)
+	}
+}
+
+func enablePrivilege(privilegeName string) error {
+	var token windows.Token
+	err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES|windows.TOKEN_QUERY, &token)
+	if err != nil {
+		return err
+	}
+	defer token.Close()
+
+	privNamePtr, _ := syscall.UTF16PtrFromString(privilegeName)
+
+	var luid LUID
+	ret, _, err := procLookupPrivilegeValueW.Call(0, uintptr(unsafe.Pointer(privNamePtr)), uintptr(unsafe.Pointer(&luid)))
+	if ret == 0 {
+		return err
+	}
+
+	var tp TOKEN_PRIVILEGES
+	tp.PrivilegeCount = 1
+	tp.Privileges[0].Luid = luid
+	tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED
+
+	procAdjustTokenPrivileges.Call(uintptr(token), 0, uintptr(unsafe.Pointer(&tp)), 0, 0, 0)
+	return nil
 }
 
 func buildCommandLine(exePath string, args []string) string {
 	cmdLine := "\"" + exePath + "\""
-
 	for _, arg := range args {
-		if containsSpace(arg) {
+		if strings.ContainsAny(arg, " \t") {
 			cmdLine += " \"" + arg + "\""
 		} else {
 			cmdLine += " " + arg
 		}
 	}
-
 	return cmdLine
-}
-
-func containsSpace(s string) bool {
-	for _, c := range s {
-		if c == ' ' || c == '	' {
-			return true
-		}
-	}
-	return false
 }
 
 func GetCurrentSessionID() (uint32, error) {
 	var sessionID uint32
 	err := windows.ProcessIdToSessionId(windows.GetCurrentProcessId(), &sessionID)
-	if err != nil {
-		return 0, fmt.Errorf("ProcessIdToSessionId failed: %w", err)
-	}
-	return sessionID, nil
+	return sessionID, err
 }
 
 func GetActiveConsoleSessionID() uint32 {
-	modKernel32 := windows.NewLazySystemDLL("kernel32.dll")
 	proc := modKernel32.NewProc("WTSGetActiveConsoleSessionId")
 	ret, _, _ := proc.Call()
 	return uint32(ret)
 }
 
 func IsServiceRunning() bool {
-	sessionID, err := GetCurrentSessionID()
-	if err != nil {
-		return false
-	}
+	sessionID, _ := GetCurrentSessionID()
 	return sessionID == 0
 }

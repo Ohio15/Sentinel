@@ -7,11 +7,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/sentinel/agent/internal/desktop"
@@ -25,10 +27,18 @@ var (
 	buildTime = "development"
 )
 
+// HelperConfig matches the config written by the service
+type HelperConfig struct {
+	SessionID uint32 `json:"sessionId"`
+	Token     string `json:"token"`
+	PipeName  string `json:"pipeName"`
+}
+
 func main() {
 	// Parse command line arguments
 	sessionID := flag.Uint("session-id", 0, "Windows session ID")
 	token := flag.String("token", "", "Authorization token from service")
+	fromTask := flag.Bool("from-task", false, "Started from scheduled task, read config from file")
 	showVersion := flag.Bool("version", false, "Show version and exit")
 	flag.Parse()
 
@@ -46,18 +56,52 @@ func main() {
 		defer logFile.Close()
 	}
 
-	log.Printf("sentinel-desktop starting, version=%s, sessionID=%d", version, *sessionID)
+	var actualSessionID uint32
+	var actualToken string
 
-	// Validate required arguments
-	if *sessionID == 0 {
-		log.Fatal("--session-id is required")
-	}
-	if *token == "" {
-		log.Fatal("--token is required")
+	if *fromTask {
+		// Started from scheduled task - read config from file
+		log.Printf("sentinel-desktop starting from scheduled task, version=%s", version)
+
+		// Get current session ID from Windows
+		currentSessionID, err := getCurrentSessionID()
+		if err != nil {
+			log.Fatalf("Failed to get current session ID: %v", err)
+		}
+		log.Printf("Current Windows session ID: %d", currentSessionID)
+
+		// Read config file
+		configPath := filepath.Join(os.TempDir(), fmt.Sprintf("sentinel-helper-%d.json", currentSessionID))
+		config, err := readConfig(configPath)
+		if err != nil {
+			log.Fatalf("Failed to read config from %s: %v", configPath, err)
+		}
+
+		// Clean up config file after reading
+		os.Remove(configPath)
+
+		actualSessionID = config.SessionID
+		actualToken = config.Token
+
+		log.Printf("Loaded config: sessionID=%d, pipeName=%s", config.SessionID, config.PipeName)
+	} else {
+		// Started with command line args
+		log.Printf("sentinel-desktop starting, version=%s, sessionID=%d", version, *sessionID)
+
+		// Validate required arguments
+		if *sessionID == 0 {
+			log.Fatal("--session-id is required (or use --from-task)")
+		}
+		if *token == "" {
+			log.Fatal("--token is required (or use --from-task)")
+		}
+
+		actualSessionID = uint32(*sessionID)
+		actualToken = *token
 	}
 
 	// Try to acquire session-scoped mutex
-	mutexName := fmt.Sprintf("%s%d", desktop.MutexNamePrefix, *sessionID)
+	mutexName := fmt.Sprintf("%s%d", desktop.MutexNamePrefix, actualSessionID)
 	mutex, err := acquireMutex(mutexName)
 	if err != nil {
 		log.Printf("Failed to acquire mutex %s: %v", mutexName, err)
@@ -81,10 +125,10 @@ func main() {
 	}()
 
 	// Create IPC client
-	client := desktop.NewIPCClient(uint32(*sessionID), *token)
+	client := desktop.NewIPCClient(actualSessionID, actualToken)
 
 	// Create helper instance
-	h := NewHelper(ctx, client, uint32(*sessionID))
+	h := NewHelper(ctx, client, actualSessionID)
 
 	// Set IPC handlers
 	client.SetHandlers(
@@ -117,6 +161,31 @@ func main() {
 
 	log.Printf("Helper exiting with code %d", exitCode)
 	os.Exit(exitCode)
+}
+
+// getCurrentSessionID gets the Windows session ID for the current process
+func getCurrentSessionID() (uint32, error) {
+	var sessionID uint32
+	err := windows.ProcessIdToSessionId(windows.GetCurrentProcessId(), &sessionID)
+	if err != nil {
+		return 0, fmt.Errorf("ProcessIdToSessionId failed: %w", err)
+	}
+	return sessionID, nil
+}
+
+// readConfig reads the helper config from a JSON file
+func readConfig(path string) (*HelperConfig, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file: %w", err)
+	}
+
+	var config HelperConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	return &config, nil
 }
 
 // Helper manages the WebRTC session and screen capture
