@@ -105,8 +105,8 @@ func New(cfg *config.Config, version string) *Client {
 		done:           make(chan struct{}),
 		sendQueue:      make(chan []byte, 100),
 		version:        version,
-		pingInterval:   15 * time.Second,
-		pongTimeout:    10 * time.Second,
+		pingInterval:   5 * time.Second,
+		pongTimeout:    5 * time.Second,
 		healthPollRate: 250 * time.Millisecond,
 		httpClient: &http.Client{
 			Timeout: 2 * time.Second,
