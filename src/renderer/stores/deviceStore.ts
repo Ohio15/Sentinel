@@ -170,19 +170,34 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
       });
 
       if (selectedDevice && selectedDevice.id === data.deviceId) {
-        // Validate metrics data before adding
-        if (!data.metrics || typeof data.metrics.cpuPercent !== 'number') {
-          console.warn('[DeviceStore] Invalid metrics data received:', data.metrics);
+        // Validate all required metrics fields
+        const m = data.metrics;
+        if (!m ||
+            typeof m.cpuPercent !== 'number' ||
+            typeof m.memoryPercent !== 'number' ||
+            typeof m.diskPercent !== 'number') {
+          console.warn('[DeviceStore] Invalid metrics data received:', m);
           return;
         }
 
-        // Sliding window - keep only what fits on the graph (120 points = 1 min at 500ms)
+        // Sliding window - 60 points = 60 seconds at 1s intervals (matches Windows Task Manager)
         const newMetrics = [{
           timestamp: new Date().toISOString(),
-          ...data.metrics,
-        }, ...metrics.slice(0, 119)];
+          cpuPercent: m.cpuPercent,
+          memoryPercent: m.memoryPercent,
+          memoryUsedBytes: m.memoryUsedBytes || 0,
+          memoryTotalBytes: m.memoryTotalBytes,
+          diskPercent: m.diskPercent,
+          diskUsedBytes: m.diskUsedBytes || 0,
+          diskTotalBytes: m.diskTotalBytes,
+          networkRxBytes: m.networkRxBytes || 0,
+          networkTxBytes: m.networkTxBytes || 0,
+          processCount: m.processCount || 0,
+          uptime: m.uptime || 0,
+        }, ...metrics.slice(0, 59)];
         set({ metrics: newMetrics });
-        console.log('[DeviceStore] metrics updated, count:', newMetrics.length, 'CPU:', data.metrics.cpuPercent?.toFixed(1));
+        console.log('[DeviceStore] metrics updated, count:', newMetrics.length,
+          'CPU:', m.cpuPercent?.toFixed(1), 'MEM:', m.memoryPercent?.toFixed(1));
       } else {
         console.log('[DeviceStore] metrics:updated skipped - device mismatch or no selection');
       }
