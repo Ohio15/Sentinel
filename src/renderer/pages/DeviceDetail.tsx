@@ -1,19 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useDeviceStore } from '../stores/deviceStore';
 import { Terminal } from '../components/Terminal';
 import { FileExplorer } from '../components/FileExplorer';
 import { RemoteDesktop } from '../components/RemoteDesktop';
-import { MetricsChart } from '../components/MetricsChart';
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Legend,
-} from 'recharts';
+import { PerformanceView } from '../components/PerformanceView';
 
 interface DeviceDetailProps {
   deviceId: string;
@@ -34,7 +24,7 @@ interface Command {
   completedAt: string | null;
 }
 
-type Tab = 'overview' | 'terminal' | 'files' | 'remote' | 'commands' | 'history';
+type Tab = 'overview' | 'performance' | 'terminal' | 'files' | 'remote' | 'commands' | 'history';
 
 // Collapsible Section Component - Light Theme
 function CollapsibleSection({
@@ -121,15 +111,25 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
   const [expandedCommands, setExpandedCommands] = useState<Set<string>>(new Set());
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState('');
-  const [isPinging, setIsPinging] = useState(false);
-  const [pingResult, setPingResult] = useState<{ online: boolean; message: string } | null>(null);
 
   useEffect(() => {
     fetchDevice(deviceId);
     fetchMetrics(deviceId, 24);
-    const interval = setInterval(() => fetchMetrics(deviceId, 24), 60000);
-    return () => clearInterval(interval);
   }, [deviceId]);
+
+  // Real-time polling for Performance tab (every 5 seconds when active)
+  useEffect(() => {
+    if (activeTab !== 'performance') return;
+    
+    // Immediately fetch on tab switch
+    fetchMetrics(deviceId, 24);
+    
+    const interval = setInterval(() => {
+      fetchMetrics(deviceId, 24);
+    }, 5000);
+    
+    return () => clearInterval(interval);
+  }, [activeTab, deviceId]);
   // Fetch command history when history tab is active
   useEffect(() => {
     if (activeTab === 'history' && deviceId) {
@@ -163,28 +163,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
     setEditedName('');
   };
 
-  const handlePingAgent = async () => {
-    if (!selectedDevice) return;
-    setIsPinging(true);
-    setPingResult(null);
-    try {
-      const result = await window.api.devices.ping(selectedDevice.id);
-      setPingResult({ online: result.online, message: result.message });
-      if (result.online) {
-        await fetchDevice(deviceId);
-      }
-      // Clear the message after 5 seconds
-      setTimeout(() => setPingResult(null), 5000);
-    } catch (error) {
-      console.error('Failed to ping agent:', error);
-      setPingResult({ online: false, message: 'Failed to ping agent' });
-      setTimeout(() => setPingResult(null), 5000);
-    } finally {
-      setIsPinging(false);
-    }
-  };
-
-  const executeCommand = async () => {
+    const executeCommand = async () => {
     if (!command.trim() || !selectedDevice) return;
 
     setIsExecuting(true);
@@ -254,6 +233,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
 
   const tabs = [
     { id: 'overview', label: 'Overview', icon: MonitorIcon },
+    { id: 'performance', label: 'Performance', icon: ChartIcon },
     { id: 'terminal', label: 'Terminal', icon: TerminalTabIcon },
     { id: 'files', label: 'Files', icon: FolderIcon },
     { id: 'remote', label: 'Remote Desktop', icon: DesktopIcon },
@@ -455,39 +435,9 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                   <p className="text-text-secondary mb-4">
                     {selectedDevice.model || selectedDevice.manufacturer || selectedDevice.osType}
                   </p>
-                  <div className="flex gap-4">
-                    <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm ${
-                      selectedDevice.status === 'online'
-                        ? 'bg-green-100 text-green-700'
-                        : 'bg-red-100 text-red-700'
-                    }`}>
-                      <span className={`w-2 h-2 rounded-full ${
-                        selectedDevice.status === 'online' ? 'bg-green-500' : 'bg-red-500'
-                      }`}></span>
-                      {selectedDevice.status === 'online' ? 'Online' : 'Offline'}
-                    </span>
-                    {selectedDevice.status !== 'online' && (
-                      <button
-                        onClick={handlePingAgent}
-                        disabled={isPinging}
-                        className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm bg-blue-100 text-blue-700 hover:bg-blue-200 transition-colors disabled:opacity-50"
-                        title="Check if agent is actually online"
-                      >
-                        <RefreshIcon className={`w-4 h-4 ${isPinging ? 'animate-spin' : ''}`} />
-                        {isPinging ? 'Checking...' : 'Check Connection'}
-                      </button>
-                    )}
-                    {pingResult && (
-                      <span className={`text-sm px-2 py-1 rounded ${
-                        pingResult.online ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                      }`}>
-                        {pingResult.message}
-                      </span>
-                    )}
-                    <span className="text-text-secondary text-sm">
-                      Last seen: {new Date(selectedDevice.lastSeen).toLocaleString()}
-                    </span>
-                  </div>
+                  <span className="text-text-secondary text-sm">
+                    Last seen: {new Date(selectedDevice.lastSeen).toLocaleString()}
+                  </span>
                 </div>
               </div>
             </div>
@@ -528,28 +478,35 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
               </div>
             </CollapsibleSection>
 
-            {/* Storage Info */}
+                        {/* Storage Info - Windows This PC Style */}
             {selectedDevice.storage && selectedDevice.storage.length > 0 && (
-              <CollapsibleSection title="Storage Drives">
-                <div className="space-y-3">
-                  {selectedDevice.storage.map((drive, idx) => (
-                    <div key={idx} className="p-3 bg-gray-50 dark:bg-slate-700 rounded-lg">
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="font-medium text-text-primary">{drive.mountpoint || drive.device}</span>
-                        <span className="text-text-secondary text-sm">{drive.fstype}</span>
+              <CollapsibleSection title="Devices and drives">
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+                  {selectedDevice.storage.map((drive, idx) => {
+                    const usagePercent = drive.percent || 0;
+                    const isNearFull = usagePercent > 90;
+                    const driveLetter = drive.mountpoint?.match(/([A-Z]:)/)?.[1] || drive.mountpoint || drive.device;
+                    const driveName = driveLetter === 'C:' ? 'Local Disk' : driveLetter === 'D:' ? 'Data' : 'Volume';
+                    return (
+                      <div key={idx} className="p-4 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-700 cursor-pointer transition-colors">
+                        <div className="flex items-start gap-3">
+                          <div className="flex-shrink-0">
+                            <svg className="w-12 h-12 text-blue-500" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M4 4h16v16H4V4zm2 2v12h12V6H6zm2 2h8v2H8V8zm0 4h8v2H8v-2z" />
+                            </svg>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium text-text-primary truncate">{driveName} ({driveLetter})</div>
+                            <div className="w-full bg-gray-200 dark:bg-slate-600 h-4 mt-2 rounded-sm overflow-hidden">
+                              <div className={`h-full transition-all ${isNearFull ? 'bg-red-500' : 'bg-blue-500'}`} style={{ width: `${usagePercent}%` }} />
+                            </div>
+                            <div className="text-xs text-text-secondary mt-1">{formatBytes(drive.free)} free of {formatBytes(drive.total)}</div>
+                            <div className="text-xs text-text-secondary">{drive.fstype || 'NTFS'}</div>
+                          </div>
+                        </div>
                       </div>
-                      <div className="w-full bg-gray-200 dark:bg-slate-600 rounded-full h-2 mb-2">
-                        <div
-                          className="bg-primary h-2 rounded-full"
-                          style={{ width: `${drive.percent || 0}%` }}
-                        />
-                      </div>
-                      <div className="flex justify-between text-sm text-text-secondary">
-                        <span>{formatBytes(drive.used)} used</span>
-                        <span>{formatBytes(drive.free)} free of {formatBytes(drive.total)}</span>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </CollapsibleSection>
             )}
@@ -563,58 +520,24 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
               </div>
             </CollapsibleSection>
 
-            {/* Real-time Metrics Chart */}
-            {metrics.length > 0 && (
-              <div className="bg-surface border border-border rounded-xl p-6">
-                <h3 className="text-lg font-semibold text-text-primary mb-4">Resource Usage (24h)</h3>
-                <div className="h-64">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={[...metrics].reverse()}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                      <XAxis
-                        dataKey="timestamp"
-                        stroke="#64748b"
-                        tickFormatter={(value) => new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      />
-                      <YAxis stroke="#64748b" domain={[0, 100]} />
-                      <Tooltip
-                        contentStyle={{
-                          backgroundColor: '#ffffff',
-                          border: '1px solid #e2e8f0',
-                          borderRadius: '8px'
-                        }}
-                        labelFormatter={(value) => new Date(value).toLocaleString()}
-                      />
-                      <Legend />
-                      <Line
-                        type="monotone"
-                        dataKey="cpuPercent"
-                        name="CPU %"
-                        stroke="#f97316"
-                        strokeWidth={2}
-                        dot={false}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="memoryPercent"
-                        name="Memory %"
-                        stroke="#14b8a6"
-                        strokeWidth={2}
-                        dot={false}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="diskPercent"
-                        name="Disk %"
-                        stroke="#3b82f6"
-                        strokeWidth={2}
-                        dot={false}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            )}
+            
+          </div>
+        )}
+
+                {activeTab === 'performance' && (
+          <div className="card overflow-hidden" style={{ height: 'calc(100vh - 250px)' }}>
+            <PerformanceView
+              metrics={metrics}
+              systemInfo={{
+                cpuModel: selectedDevice.cpuModel,
+                cpuCores: selectedDevice.cpuCores,
+                cpuThreads: selectedDevice.cpuThreads,
+                cpuSpeed: selectedDevice.cpuSpeed,
+                totalMemory: selectedDevice.totalMemory,
+                gpu: selectedDevice.gpu,
+                storage: selectedDevice.storage,
+              }}
+            />
           </div>
         )}
 
@@ -890,6 +813,7 @@ function HistoryIcon({ className }: { className?: string }) {
     </svg>
   );
 }
+function ChartIcon({ className }: { className?: string }) {  return (    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />    </svg>  );}
 
 function HardDriveIcon({ className }: { className?: string }) {
   return (
