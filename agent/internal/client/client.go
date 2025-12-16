@@ -55,6 +55,8 @@ const (
 	MsgTypeAdminDiscover   = "admin_discover"
 	MsgTypeAdminDemote     = "admin_demote"
 	MsgTypeAdminEvent      = "admin_event"
+	// Configuration messages
+	MsgTypeSetMetricsInterval = "set_metrics_interval"
 )
 
 // Message represents a WebSocket message

@@ -290,6 +290,10 @@ function setupIpcHandlers(): void {
     return database.getDeviceMetrics(deviceId, hours);
   });
 
+  ipcMain.handle('devices:setMetricsInterval', async (_, deviceId: string, intervalMs: number) => {
+    return agentManager.setMetricsInterval(deviceId, intervalMs);
+  });
+
   // Commands
   ipcMain.handle('commands:execute', async (_, deviceId: string, command: string, type: string) => {
     return agentManager.executeCommand(deviceId, command, type);

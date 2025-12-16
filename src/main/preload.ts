@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('devices:update', id, updates),
     getMetrics: (deviceId: string, hours: number) =>
       ipcRenderer.invoke('devices:getMetrics', deviceId, hours),
+    setMetricsInterval: (deviceId: string, intervalMs: number) =>
+      ipcRenderer.invoke('devices:setMetricsInterval', deviceId, intervalMs),
   },
 
   // Commands
@@ -229,6 +231,7 @@ export interface ElectronAPI {
     delete: (id: string) => Promise<void>;
     update: (id: string, updates: { displayName?: string; tags?: string[] }) => Promise<Device | null>;
     getMetrics: (deviceId: string, hours: number) => Promise<DeviceMetrics[]>;
+    setMetricsInterval: (deviceId: string, intervalMs: number) => Promise<void>;
   };
   commands: {
     execute: (deviceId: string, command: string, type: string) => Promise<CommandResult>;

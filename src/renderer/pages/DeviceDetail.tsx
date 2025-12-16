@@ -117,18 +117,25 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
     fetchMetrics(deviceId, 24);
   }, [deviceId]);
 
-  // Real-time polling for Performance tab (every 5 seconds when active)
+
+  // Real-time high-frequency metrics for Performance tab
   useEffect(() => {
     if (activeTab !== 'performance') return;
-    
+
     // Immediately fetch on tab switch
     fetchMetrics(deviceId, 24);
-    
-    const interval = setInterval(() => {
-      fetchMetrics(deviceId, 24);
-    }, 5000);
-    
-    return () => clearInterval(interval);
+
+    // Request high-frequency metrics (500ms) from the agent
+    window.api.devices.setMetricsInterval(deviceId, 500).catch(err => {
+      console.log('Failed to set high-frequency metrics:', err);
+    });
+
+    // Cleanup: reset to default interval (5000ms) when leaving Performance tab
+    return () => {
+      window.api.devices.setMetricsInterval(deviceId, 5000).catch(err => {
+        console.log('Failed to reset metrics interval:', err);
+      });
+    };
   }, [activeTab, deviceId]);
   // Fetch command history when history tab is active
   useEffect(() => {
