@@ -463,63 +463,122 @@ interface PerformanceGraphProps {
 }
 
 function PerformanceGraph({ metrics, dataKey, color, label, maxValue }: PerformanceGraphProps) {
-  const { path, areaPath } = useMemo(() => {
-    if (metrics.length < 2) return { path: '', areaPath: '' };
+  const canvasRef = React.useRef<HTMLCanvasElement>(null);
+  const animatedValuesRef = React.useRef<number[]>([]);
+  const animationRef = React.useRef<number>(0);
+  const TOTAL_POINTS = 60;
 
-    const width = 800;
-    const height = 200;
-    const padding = 2;
+  // Get target values (padded to 60 points)
+  const targetValues = useMemo(() => {
+    const vals = metrics.map(m => (m[dataKey] as number) ?? 0);
+    while (vals.length < TOTAL_POINTS) {
+      vals.unshift(0);
+    }
+    return vals.slice(-TOTAL_POINTS);
+  }, [metrics, dataKey]);
 
-    const values = metrics.map(m => (m[dataKey] as number) ?? 0);
-    const step = (width - padding * 2) / (values.length - 1);
+  // Animation loop for smooth flowing effect
+  React.useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
 
-    const points = values.map((v, i) => {
-      const x = padding + i * step;
-      const y = height - padding - (v / maxValue) * (height - padding * 2);
-      return { x, y };
-    });
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
-    const pathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+    // Initialize animated values if empty
+    if (animatedValuesRef.current.length !== TOTAL_POINTS) {
+      animatedValuesRef.current = new Array(TOTAL_POINTS).fill(0);
+    }
 
-    const firstX = points[0].x.toFixed(1);
-    const lastX = points[points.length - 1].x.toFixed(1);
-    const bottomY = (height - padding).toFixed(1);
-    const areaD = `${pathD} L ${lastX} ${bottomY} L ${firstX} ${bottomY} Z`;
+    const width = canvas.width;
+    const height = canvas.height;
+    const padding = 4;
+    const lerp = 0.15; // Interpolation speed (higher = faster)
 
-    return { path: pathD, areaPath: areaD };
-  }, [metrics, dataKey, maxValue]);
+    const draw = () => {
+      // Interpolate animated values toward target values
+      let needsAnimation = false;
+      for (let i = 0; i < TOTAL_POINTS; i++) {
+        const target = targetValues[i] ?? 0;
+        const current = animatedValuesRef.current[i];
+        const diff = target - current;
+        if (Math.abs(diff) > 0.1) {
+          animatedValuesRef.current[i] = current + diff * lerp;
+          needsAnimation = true;
+        } else {
+          animatedValuesRef.current[i] = target;
+        }
+      }
+
+      // Clear and draw background
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(0, 0, width, height);
+
+      // Draw grid lines
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 1;
+      [25, 50, 75].forEach(pct => {
+        const y = height - (pct / 100) * (height - padding * 2) - padding;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+      });
+
+      const values = animatedValuesRef.current;
+      const step = (width - padding * 2) / (TOTAL_POINTS - 1);
+      const points = values.map((v, i) => ({
+        x: padding + i * step,
+        y: height - padding - (v / maxValue) * (height - padding * 2),
+      }));
+
+      // Draw filled area
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, height - padding);
+      points.forEach(p => ctx.lineTo(p.x, p.y));
+      ctx.lineTo(points[points.length - 1].x, height - padding);
+      ctx.closePath();
+      ctx.fillStyle = color + '33';
+      ctx.fill();
+
+      // Draw line
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      points.forEach((p, i) => {
+        if (i > 0) ctx.lineTo(p.x, p.y);
+      });
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Continue animation if needed
+      if (needsAnimation) {
+        animationRef.current = requestAnimationFrame(draw);
+      }
+    };
+
+    // Start animation
+    animationRef.current = requestAnimationFrame(draw);
+
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, [targetValues, color, maxValue]);
 
   return (
     <div className="relative">
-      <div className="absolute top-2 left-2 text-xs text-text-secondary">{label}</div>
-      <div className="absolute top-2 right-2 text-xs text-text-secondary">60 seconds</div>
+      <div className="absolute top-2 left-2 text-xs text-text-secondary z-10">{label}</div>
+      <div className="absolute top-2 right-2 text-xs text-text-secondary z-10">60 seconds</div>
       <div className="bg-gray-50 border border-border rounded overflow-hidden" style={{ height: '200px' }}>
-        <svg viewBox="0 0 800 200" className="w-full h-full" preserveAspectRatio="none">
-          {/* Grid lines */}
-          {[25, 50, 75].map(pct => (
-            <line
-              key={pct}
-              x1="0"
-              y1={200 - (pct / 100) * 196}
-              x2="800"
-              y2={200 - (pct / 100) * 196}
-              stroke="#e2e8f0"
-              strokeWidth="1"
-            />
-          ))}
-
-          {/* Area fill */}
-          {areaPath && (
-            <path d={areaPath} fill={color} fillOpacity="0.2" />
-          )}
-
-          {/* Line */}
-          {path && (
-            <path d={path} fill="none" stroke={color} strokeWidth="2" />
-          )}
-        </svg>
+        <canvas
+          ref={canvasRef}
+          width={800}
+          height={200}
+          className="w-full h-full"
+        />
       </div>
-
       {/* Y-axis labels */}
       <div className="absolute right-2 top-8 bottom-2 flex flex-col justify-between text-xs text-text-secondary">
         <span>100%</span>
