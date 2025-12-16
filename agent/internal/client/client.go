@@ -51,6 +51,10 @@ const (
 	MsgTypeWebRTCStart     = "webrtc_start"
 	MsgTypeWebRTCSignal    = "webrtc_signal"
 	MsgTypeWebRTCStop      = "webrtc_stop"
+	// Admin management messages
+	MsgTypeAdminDiscover   = "admin_discover"
+	MsgTypeAdminDemote     = "admin_demote"
+	MsgTypeAdminEvent      = "admin_event"
 )
 
 // Message represents a WebSocket message
@@ -676,6 +680,39 @@ func (c *Client) SendWebRTCSignal(sessionID, signalType, sdp, candidate string) 
 			"sdp":       sdp,
 			"candidate": candidate,
 		},
+	}
+	return c.SendJSON(msg)
+}
+
+// SendAdminDiscovery sends the admin discovery results to the server
+func (c *Client) SendAdminDiscovery(requestID string, admins interface{}, safetyCheck interface{}) error {
+	msg := map[string]interface{}{
+		"type":      MsgTypeAdminDiscover,
+		"requestId": requestID,
+		"data": map[string]interface{}{
+			"admins":      admins,
+			"safetyCheck": safetyCheck,
+		},
+	}
+	return c.SendJSON(msg)
+}
+
+// SendAdminDemotionResult sends the result of an admin demotion operation
+func (c *Client) SendAdminDemotionResult(requestID string, result interface{}) error {
+	msg := map[string]interface{}{
+		"type":      MsgTypeResponse,
+		"requestId": requestID,
+		"success":   true,
+		"data":      result,
+	}
+	return c.SendJSON(msg)
+}
+
+// SendAdminEvent sends an admin management event (for telemetry)
+func (c *Client) SendAdminEvent(event interface{}) error {
+	msg := map[string]interface{}{
+		"type":  MsgTypeAdminEvent,
+		"event": event,
 	}
 	return c.SendJSON(msg)
 }

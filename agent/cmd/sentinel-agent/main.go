@@ -30,9 +30,10 @@ import (
 	"github.com/sentinel/agent/internal/terminal"
 	"github.com/sentinel/agent/internal/updater"
 	"github.com/sentinel/agent/internal/webrtc"
+	"github.com/sentinel/agent/internal/admin"
 )
 
-var Version = "1.47.3"
+var Version = "1.48.0"
 
 const ServiceName = "SentinelAgent"
 
@@ -61,6 +62,7 @@ type Agent struct {
 	updater           *updater.Updater
 	protectionManager    *protection.Manager
 	diagnosticsCollector *diagnostics.Collector
+	adminManager         *admin.Manager
 	tamperChan           chan string
 	ctx                  context.Context
 	cancel               context.CancelFunc
@@ -292,6 +294,7 @@ func NewAgent(cfg *config.Config) *Agent {
 		updater:              agentUpdater,
 		protectionManager:    protMgr,
 		diagnosticsCollector: diagnostics.New(),
+		adminManager:         admin.NewManager(Version),
 		tamperChan:           make(chan string, 10),
 		ctx:                  ctx,
 		cancel:               cancel,
@@ -450,6 +453,9 @@ func (a *Agent) registerHandlers() {
 	a.client.RegisterHandler(client.MsgTypeCollectDiagnostics, a.handleCollectDiagnostics)
 	a.client.RegisterHandler(client.MsgTypeUninstallAgent, a.handleUninstallAgent)
 	a.client.RegisterHandler(client.MsgTypePing, a.handlePing)
+	// Admin management handlers
+	a.client.RegisterHandler(client.MsgTypeAdminDiscover, a.handleAdminDiscover)
+	a.client.RegisterHandler(client.MsgTypeAdminDemote, a.handleAdminDemote)
 	// WebRTC handlers
 	a.client.RegisterHandler(client.MsgTypeWebRTCStart, a.handleWebRTCStart)
 	a.client.RegisterHandler(client.MsgTypeWebRTCSignal, a.handleWebRTCSignal)
@@ -1125,4 +1131,97 @@ func (a *Agent) handleWebRTCStop(msg *client.Message) error {
 	}
 
 	return a.client.SendResponse(msg.RequestID, true, nil, "")
+}
+
+// Admin management handlers
+
+func (a *Agent) handleAdminDiscover(msg *client.Message) error {
+	log.Println("[Admin] Discovering local administrators...")
+
+	// Discover all local admins
+	admins, err := a.adminManager.DiscoverAdmins()
+	if err != nil {
+		log.Printf("[Admin] Discovery error: %v", err)
+		return a.client.SendResponse(msg.RequestID, false, nil, err.Error())
+	}
+
+	log.Printf("[Admin] Found %d administrator accounts", len(admins))
+
+	// Perform safety validation
+	safetyCheck, err := a.adminManager.ValidateSafety(admins)
+	if err != nil {
+		log.Printf("[Admin] Safety validation error: %v", err)
+		return a.client.SendResponse(msg.RequestID, false, nil, err.Error())
+	}
+
+	log.Printf("[Admin] Safety check: safe=%v, canProceed=%v, currentUser=%s",
+		safetyCheck.Safe, safetyCheck.CanProceed, safetyCheck.CurrentUser)
+
+	// Send discovery results back
+	return a.client.SendAdminDiscovery(msg.RequestID, admins, safetyCheck)
+}
+
+func (a *Agent) handleAdminDemote(msg *client.Message) error {
+	log.Println("[Admin] Processing demotion request...")
+
+	// Parse demotion request
+	data, ok := msg.Data.(map[string]interface{})
+	if !ok {
+		return a.client.SendResponse(msg.RequestID, false, nil, "Invalid message data")
+	}
+
+	// Extract accounts to demote
+	var accountsToDemote []string
+	if accounts, ok := data["accountsToDemote"].([]interface{}); ok {
+		for _, acc := range accounts {
+			if sid, ok := acc.(string); ok {
+				accountsToDemote = append(accountsToDemote, sid)
+			}
+		}
+	}
+
+	confirmed, _ := data["confirmed"].(bool)
+
+	if !confirmed {
+		return a.client.SendResponse(msg.RequestID, false, nil, "Demotion must be confirmed")
+	}
+
+	if len(accountsToDemote) == 0 {
+		return a.client.SendResponse(msg.RequestID, false, nil, "No accounts specified for demotion")
+	}
+
+	log.Printf("[Admin] Demoting %d accounts: %v", len(accountsToDemote), accountsToDemote)
+
+	// Get current admin list for validation
+	admins, err := a.adminManager.DiscoverAdmins()
+	if err != nil {
+		return a.client.SendResponse(msg.RequestID, false, nil, err.Error())
+	}
+
+	// Execute demotion
+	request := &admin.DemotionRequest{
+		AccountsToDemote: accountsToDemote,
+		Confirmed:        confirmed,
+	}
+
+	result, err := a.adminManager.Demote(request, admins)
+	if err != nil {
+		log.Printf("[Admin] Demotion error: %v", err)
+		return a.client.SendResponse(msg.RequestID, false, nil, err.Error())
+	}
+
+	log.Printf("[Admin] Demotion result: success=%v, demoted=%v, remaining=%v",
+		result.Success, result.DemotedAccounts, result.RemainingAdmins)
+
+	// Get hostname for telemetry
+	hostname, _ := os.Hostname()
+
+	// Create and send telemetry event
+	event := a.adminManager.CreateDemotionEvent(result, hostname)
+	if eventErr := a.client.SendAdminEvent(event); eventErr != nil {
+		log.Printf("[Admin] Failed to send telemetry event: %v", eventErr)
+	}
+
+	// Send result
+	return a.client.SendAdminDemotionResult(msg.RequestID, result)
 }
