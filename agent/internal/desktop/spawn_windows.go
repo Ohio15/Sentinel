@@ -18,6 +18,14 @@ import (
 
 const (
 	TaskName = "SentinelDesktopHelper"
+
+	// WTS info classes
+	WTSUserName   = 5
+	WTSDomainName = 7
+
+	// Token constants for DuplicateTokenEx
+	SecurityImpersonation = 2
+	TokenPrimary          = 1
 )
 
 // HelperConfig is written to a file for the helper to read
@@ -27,7 +35,83 @@ type HelperConfig struct {
 	PipeName  string `json:"pipeName"`
 }
 
-// EnsureScheduledTask creates the scheduled task if it doesn't exist
+// GetSessionUsername gets the username for a Windows session using WTS API
+func GetSessionUsername(sessionID uint32) (string, string, error) {
+	var buffer uintptr
+	var bytesReturned uint32
+
+	// Get username
+	ret, _, err := procWTSQuerySessionInformationW.Call(
+		0, // WTS_CURRENT_SERVER_HANDLE
+		uintptr(sessionID),
+		uintptr(WTSUserName),
+		uintptr(unsafe.Pointer(&buffer)),
+		uintptr(unsafe.Pointer(&bytesReturned)),
+	)
+	if ret == 0 {
+		return "", "", fmt.Errorf("WTSQuerySessionInformationW (username) failed: %w", err)
+	}
+
+	username := windows.UTF16PtrToString((*uint16)(unsafe.Pointer(buffer)))
+	procWTSFreeMemory.Call(buffer)
+
+	// Get domain
+	ret, _, err = procWTSQuerySessionInformationW.Call(
+		0,
+		uintptr(sessionID),
+		uintptr(WTSDomainName),
+		uintptr(unsafe.Pointer(&buffer)),
+		uintptr(unsafe.Pointer(&bytesReturned)),
+	)
+	if ret == 0 {
+		return username, "", fmt.Errorf("WTSQuerySessionInformationW (domain) failed: %w", err)
+	}
+
+	domain := windows.UTF16PtrToString((*uint16)(unsafe.Pointer(buffer)))
+	procWTSFreeMemory.Call(buffer)
+
+	return username, domain, nil
+}
+
+// EnsureScheduledTaskForUser creates the scheduled task for a specific user
+func EnsureScheduledTaskForUser(helperPath string, username, domain string) error {
+	// Delete any existing task first to ensure clean state
+	deleteCmd := exec.Command("schtasks", "/Delete", "/TN", TaskName, "/F")
+	deleteCmd.Run() // Ignore error if task doesn't exist
+
+	log.Printf("[Spawn] Creating scheduled task %s for user %s\\%s...", TaskName, domain, username)
+
+	// Build the run-as user string
+	var runAsUser string
+	if domain != "" && domain != "." {
+		runAsUser = domain + "\\" + username
+	} else {
+		runAsUser = username
+	}
+
+	// Create the task with /RU (run as user) and /IT (interactive)
+	// This runs the task as the specified user in their interactive session
+	createCmd := exec.Command("schtasks", "/Create",
+		"/TN", TaskName,
+		"/TR", fmt.Sprintf(`"%s" --from-task`, helperPath),
+		"/SC", "ONCE",
+		"/ST", "00:00",
+		"/SD", "01/01/2099",
+		"/RU", runAsUser,
+		"/IT",
+		"/F",
+	)
+
+	output, err := createCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to create scheduled task: %w, output: %s", err, string(output))
+	}
+
+	log.Printf("[Spawn] Created scheduled task: %s", strings.TrimSpace(string(output)))
+	return nil
+}
+
+// EnsureScheduledTask creates the scheduled task if it doesn't exist (legacy fallback)
 func EnsureScheduledTask(helperPath string) error {
 	// Check if task already exists
 	checkCmd := exec.Command("schtasks", "/Query", "/TN", TaskName)
@@ -97,7 +181,7 @@ func SpawnViaScheduledTask(sessionID uint32, helperPath string, token string) er
 }
 
 // SpawnInSession spawns a process in the specified Windows session
-// Now uses scheduled task approach which is more reliable
+// Uses scheduled task approach with proper user context
 func SpawnInSession(sessionID uint32, exePath string, args []string) (*os.Process, error) {
 	log.Printf("[Spawn] SpawnInSession called: sessionID=%d, exePath=%s", sessionID, exePath)
 
@@ -110,28 +194,34 @@ func SpawnInSession(sessionID uint32, exePath string, args []string) (*os.Proces
 		}
 	}
 
-	// Ensure the scheduled task exists
-	if err := EnsureScheduledTask(exePath); err != nil {
-		log.Printf("[Spawn] Warning: failed to ensure scheduled task: %v", err)
-		// Fall through to try direct spawn
+	// Get the session username for proper task creation
+	username, domain, err := GetSessionUsername(sessionID)
+	if err != nil {
+		log.Printf("[Spawn] Warning: failed to get session username: %v", err)
+		// Fall through to try legacy approach or direct spawn
 	} else {
-		// Try scheduled task approach first
-		if err := SpawnViaScheduledTask(sessionID, exePath, token); err != nil {
-			log.Printf("[Spawn] Scheduled task failed: %v, trying direct spawn...", err)
+		log.Printf("[Spawn] Session %d user: %s\\%s", sessionID, domain, username)
+
+		// Create task for this specific user
+		if err := EnsureScheduledTaskForUser(exePath, username, domain); err != nil {
+			log.Printf("[Spawn] Warning: failed to create user-specific task: %v", err)
 		} else {
-			log.Printf("[Spawn] Scheduled task triggered successfully")
-			// Return nil process - the helper will connect via IPC
-			// We can't get the PID from schtasks easily
-			return nil, nil
+			// Try scheduled task approach
+			if err := SpawnViaScheduledTask(sessionID, exePath, token); err != nil {
+				log.Printf("[Spawn] Scheduled task failed: %v, trying direct spawn...", err)
+			} else {
+				log.Printf("[Spawn] Scheduled task triggered successfully")
+				return nil, nil
+			}
 		}
 	}
 
-	// Fallback: try CreateProcessAsUser (may fail but worth trying)
+	// Fallback: try CreateProcessAsUser
 	log.Printf("[Spawn] Falling back to CreateProcessAsUser...")
 	return spawnDirect(sessionID, exePath, args)
 }
 
-// spawnDirect tries to spawn using CreateProcessAsUser (fallback)
+// spawnDirect tries to spawn using CreateProcessAsUser with proper token duplication
 func spawnDirect(sessionID uint32, exePath string, args []string) (*os.Process, error) {
 	// Enable privileges
 	enableRequiredPrivileges()
@@ -147,11 +237,29 @@ func spawnDirect(sessionID uint32, exePath string, args []string) (*os.Process, 
 	}
 	defer userToken.Close()
 
-	// Create environment block
+	// Duplicate the token to create a primary token
+	// This is required for CreateProcessAsUser to work properly
+	var primaryToken windows.Token
+	ret, _, err = procDuplicateTokenEx.Call(
+		uintptr(userToken),
+		uintptr(windows.MAXIMUM_ALLOWED),
+		0, // No security attributes
+		uintptr(SecurityImpersonation),
+		uintptr(TokenPrimary),
+		uintptr(unsafe.Pointer(&primaryToken)),
+	)
+	if ret == 0 {
+		return nil, fmt.Errorf("DuplicateTokenEx failed: %w", err)
+	}
+	defer primaryToken.Close()
+
+	log.Printf("[Spawn] Duplicated token successfully")
+
+	// Create environment block using the primary token
 	var envBlock unsafe.Pointer
 	ret, _, err = procCreateEnvironmentBlock.Call(
 		uintptr(unsafe.Pointer(&envBlock)),
-		uintptr(userToken),
+		uintptr(primaryToken),
 		0,
 	)
 	if ret == 0 {
@@ -172,8 +280,9 @@ func spawnDirect(sessionID uint32, exePath string, args []string) (*os.Process, 
 
 	var pi windows.ProcessInformation
 
+	// Use the primary token for CreateProcessAsUser
 	ret, _, err = procCreateProcessAsUserW.Call(
-		uintptr(userToken),
+		uintptr(primaryToken),
 		uintptr(unsafe.Pointer(exePathPtr)),
 		uintptr(unsafe.Pointer(cmdLinePtr)),
 		0, 0, 0,
@@ -199,12 +308,15 @@ var (
 	modWtsapi32 = windows.NewLazySystemDLL("wtsapi32.dll")
 	modKernel32 = windows.NewLazySystemDLL("kernel32.dll")
 
-	procCreateProcessAsUserW    = modAdvapi32.NewProc("CreateProcessAsUserW")
-	procWTSQueryUserToken       = modWtsapi32.NewProc("WTSQueryUserToken")
-	procCreateEnvironmentBlock  = modUserenv.NewProc("CreateEnvironmentBlock")
-	procDestroyEnvironmentBlock = modUserenv.NewProc("DestroyEnvironmentBlock")
-	procLookupPrivilegeValueW   = modAdvapi32.NewProc("LookupPrivilegeValueW")
-	procAdjustTokenPrivileges   = modAdvapi32.NewProc("AdjustTokenPrivileges")
+	procCreateProcessAsUserW        = modAdvapi32.NewProc("CreateProcessAsUserW")
+	procWTSQueryUserToken           = modWtsapi32.NewProc("WTSQueryUserToken")
+	procCreateEnvironmentBlock      = modUserenv.NewProc("CreateEnvironmentBlock")
+	procDestroyEnvironmentBlock     = modUserenv.NewProc("DestroyEnvironmentBlock")
+	procLookupPrivilegeValueW       = modAdvapi32.NewProc("LookupPrivilegeValueW")
+	procAdjustTokenPrivileges       = modAdvapi32.NewProc("AdjustTokenPrivileges")
+	procDuplicateTokenEx            = modAdvapi32.NewProc("DuplicateTokenEx")
+	procWTSQuerySessionInformationW = modWtsapi32.NewProc("WTSQuerySessionInformationW")
+	procWTSFreeMemory               = modWtsapi32.NewProc("WTSFreeMemory")
 )
 
 const (
