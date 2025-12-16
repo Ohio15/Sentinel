@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAlertStore } from '../../stores/alertStore';
+import { ClientSelector } from '../ClientSelector';
 
 export function Header() {
   const [serverInfo, setServerInfo] = useState<{ port: number; agentCount: number } | null>(null);
@@ -24,10 +25,13 @@ export function Header() {
   return (
     <header className="h-16 bg-surface border-b border-border flex items-center justify-between px-6">
       <div className="flex items-center gap-4">
+        {/* Client selector */}
+        <ClientSelector />
+        <div className="h-4 w-px bg-border" />
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 bg-success rounded-full animate-pulse" />
           <span className="text-sm text-text-secondary">
-            Server running on port {serverInfo?.port || '...'}
+            Port {serverInfo?.port || '...'}
           </span>
         </div>
         <div className="h-4 w-px bg-border" />

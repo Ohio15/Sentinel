@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useDeviceStore } from '../stores/deviceStore';
+import { useClientStore } from '../stores/clientStore';
 import { Terminal } from '../components/Terminal';
 import { FileExplorer } from '../components/FileExplorer';
 import { RemoteDesktop } from '../components/RemoteDesktop';
@@ -101,6 +102,7 @@ function SpecRow({ label, value }: { label: string; value: string | undefined })
 
 export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
   const { selectedDevice, metrics, loading, error, fetchDevice, fetchMetrics, subscribeToUpdates } = useDeviceStore();
+  const { clients, fetchClients } = useClientStore();
   const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [command, setCommand] = useState('');
   const [commandType, setCommandType] = useState('shell');
@@ -111,6 +113,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
   const [expandedCommands, setExpandedCommands] = useState<Set<string>>(new Set());
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState('');
+  const [isAssigningClient, setIsAssigningClient] = useState(false);
 
   // Subscribe to real-time metric updates
   useEffect(() => {
@@ -121,7 +124,23 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
   useEffect(() => {
     fetchDevice(deviceId);
     fetchMetrics(deviceId, 24);
+    fetchClients();
   }, [deviceId]);
+
+  const handleAssignClient = async (clientId: string | null) => {
+    if (!selectedDevice) return;
+    try {
+      await window.api.clients.assignDevice(selectedDevice.id, clientId);
+      await fetchDevice(deviceId); // Refresh device data
+      setIsAssigningClient(false);
+    } catch (error) {
+      console.error('Failed to assign client:', error);
+    }
+  };
+
+  const currentClient = selectedDevice?.clientId
+    ? clients.find(c => c.id === selectedDevice.clientId)
+    : null;
 
 
   // Real-time high-frequency metrics for Performance tab
@@ -452,6 +471,60 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                     Last seen: {new Date(selectedDevice.lastSeen).toLocaleString()}
                   </span>
                 </div>
+              </div>
+            </div>
+
+            {/* Client Assignment */}
+            <div className="bg-surface border border-border rounded-xl p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-text-primary mb-1">Client</h3>
+                  <p className="text-sm text-text-secondary">
+                    Assign this device to a client organization
+                  </p>
+                </div>
+                {isAssigningClient ? (
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={selectedDevice.clientId || ''}
+                      onChange={(e) => handleAssignClient(e.target.value || null)}
+                      className="input min-w-[200px]"
+                      autoFocus
+                    >
+                      <option value="">No Client</option>
+                      {clients.map((client) => (
+                        <option key={client.id} value={client.id}>
+                          {client.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => setIsAssigningClient(false)}
+                      className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                      title="Cancel"
+                    >
+                      <CloseIcon className="w-4 h-4 text-text-secondary" />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setIsAssigningClient(true)}
+                    className="flex items-center gap-2 px-4 py-2 bg-surface-secondary rounded-lg border border-border hover:border-primary transition-colors"
+                  >
+                    {currentClient ? (
+                      <>
+                        <div
+                          className="w-3 h-3 rounded-full"
+                          style={{ backgroundColor: currentClient.color || '#6366f1' }}
+                        />
+                        <span className="text-sm text-text-primary">{currentClient.name}</span>
+                      </>
+                    ) : (
+                      <span className="text-sm text-text-secondary">No client assigned</span>
+                    )}
+                    <EditIcon className="w-4 h-4 text-text-secondary" />
+                  </button>
+                )}
               </div>
             </div>
 

@@ -48,6 +48,7 @@ export interface Device {
   macAddress: string;
   tags: string[];
   metadata: Record<string, any>;
+  clientId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -74,7 +75,7 @@ interface DeviceState {
   loading: boolean;
   error: string | null;
 
-  fetchDevices: () => Promise<void>;
+  fetchDevices: (clientId?: string | null) => Promise<void>;
   fetchDevice: (id: string) => Promise<void>;
   fetchMetrics: (deviceId: string, hours?: number) => Promise<void>;
   deleteDevice: (id: string) => Promise<void>;
@@ -88,10 +89,11 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
   loading: false,
   error: null,
 
-  fetchDevices: async () => {
+  fetchDevices: async (clientId?: string | null) => {
     set({ loading: true, error: null });
     try {
-      const devices = await window.api.devices.list();
+      // Pass undefined instead of null to get all devices
+      const devices = await window.api.devices.list(clientId || undefined);
       set({ devices, loading: false });
     } catch (error: any) {
       set({ error: error.message, loading: false });

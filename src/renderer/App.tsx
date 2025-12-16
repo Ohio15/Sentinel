@@ -9,11 +9,13 @@ import { Scripts } from './pages/Scripts';
 import { Settings } from './pages/Settings';
 import { Tickets } from './pages/Tickets';
 import { TicketDetail } from './pages/TicketDetail';
+import { Clients } from './pages/Clients';
 import { useDeviceStore } from './stores/deviceStore';
 import { useAlertStore } from './stores/alertStore';
+import { useClientStore } from './stores/clientStore';
 import { UpdateNotification } from './components/UpdateNotification';
 
-type Page = 'dashboard' | 'devices' | 'device-detail' | 'alerts' | 'scripts' | 'settings' | 'tickets' | 'ticket-detail';
+type Page = 'dashboard' | 'devices' | 'device-detail' | 'alerts' | 'scripts' | 'settings' | 'tickets' | 'ticket-detail' | 'clients';
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('dashboard');
@@ -21,11 +23,11 @@ function App() {
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
   const { fetchDevices, subscribeToUpdates } = useDeviceStore();
   const { fetchAlerts, subscribeToAlerts } = useAlertStore();
+  const { currentClientId, fetchClients } = useClientStore();
 
+  // Initial setup - fetch clients and subscribe to updates
   useEffect(() => {
-    // Initial data fetch
-    fetchDevices();
-    fetchAlerts();
+    fetchClients();
 
     // Subscribe to real-time updates
     const unsubDevices = subscribeToUpdates();
@@ -36,6 +38,12 @@ function App() {
       unsubAlerts();
     };
   }, []);
+
+  // Re-fetch data when client context changes
+  useEffect(() => {
+    fetchDevices(currentClientId);
+    fetchAlerts();
+  }, [currentClientId]);
 
   const handleNavigate = (page: Page) => {
     setCurrentPage(page);
@@ -93,6 +101,8 @@ function App() {
         ) : (
           <Tickets onTicketSelect={handleTicketSelect} />
         );
+      case 'clients':
+        return <Clients />;
       default:
         return <Dashboard onDeviceSelect={handleDeviceSelect} />;
     }
