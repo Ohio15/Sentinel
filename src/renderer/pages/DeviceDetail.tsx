@@ -536,6 +536,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                 totalMemory: selectedDevice.totalMemory,
                 gpu: selectedDevice.gpu,
                 storage: selectedDevice.storage,
+                bootTime: selectedDevice.bootTime,
               }}
             />
           </div>
