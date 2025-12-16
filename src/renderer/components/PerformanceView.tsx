@@ -11,6 +11,7 @@ interface PerformanceViewProps {
     totalMemory?: number;
     gpu?: Array<{ name: string; vendor: string; memory: number; driverVersion: string }>;
     storage?: Array<{ device: string; mountpoint: string; fstype: string; total: number; used: number; free: number; percent: number }>;
+    bootTime?: number;
   };
 }
 
@@ -134,6 +135,12 @@ export function PerformanceView({ metrics, systemInfo }: PerformanceViewProps) {
 
       {/* Main content area */}
       <div className="flex-1 p-6 overflow-y-auto">
+        {/* Debug info - remove after testing */}
+        {metrics.length === 0 && (
+          <div className="mb-4 p-3 bg-yellow-100 border border-yellow-300 rounded text-yellow-800 text-sm">
+            No metrics data received. Make sure the agent is connected and sending heartbeats.
+          </div>
+        )}
         {selectedItem.type === 'cpu' && (
           <CPUDetailView metrics={graphMetrics} systemInfo={systemInfo} latestMetrics={latestMetrics} />
         )}
@@ -261,7 +268,7 @@ function CPUDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProps) 
         <StatRow label="Processes" value={latestMetrics?.processCount?.toString() ?? 'N/A'} />
         <StatRow label="Threads" value="N/A" />
         <StatRow label="Handles" value="N/A" />
-        <StatRow label="Up time" value={formatUptime(latestMetrics?.uptime ?? 0)} />
+        <StatRow label="Up time" value={formatUptime(systemInfo?.bootTime ? Math.floor((Date.now() - systemInfo.bootTime * 1000) / 1000) : 0)} />
         <div className="col-span-2 border-t border-border my-2" />
         <StatRow label="Base speed" value={systemInfo?.cpuSpeed ? `${(systemInfo.cpuSpeed / 1000).toFixed(2)} GHz` : 'N/A'} />
         <StatRow label="Sockets" value="1" />
