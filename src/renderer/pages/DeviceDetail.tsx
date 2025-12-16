@@ -143,17 +143,17 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
     : null;
 
 
-  // Real-time high-frequency metrics for Performance tab
+  // Real-time metrics for Performance tab (1 second intervals like Windows Task Manager)
   useEffect(() => {
     if (activeTab !== 'performance') return;
 
     // Don't fetch historical metrics here - we want fresh real-time data
     // The metrics subscription will provide live updates
-    console.log('[DeviceDetail] Performance tab active, requesting high-frequency metrics');
+    console.log('[DeviceDetail] Performance tab active, requesting 1s metrics interval');
 
-    // Request high-frequency metrics (500ms) from the agent
-    window.api.devices.setMetricsInterval(deviceId, 500).catch(err => {
-      console.log('Failed to set high-frequency metrics:', err);
+    // Request 1-second interval metrics from the agent (matches Windows Task Manager)
+    window.api.devices.setMetricsInterval(deviceId, 1000).catch(err => {
+      console.log('Failed to set metrics interval:', err);
     });
 
     // Cleanup: reset to default interval (5000ms) when leaving Performance tab
