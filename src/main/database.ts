@@ -306,6 +306,7 @@ export class Database {
 
   // Metrics methods
   async insertMetrics(deviceId: string, metrics: any): Promise<void> {
+    // Support both snake_case (from agent) and camelCase field names
     await this.query(
       `
       INSERT INTO device_metrics (
@@ -315,14 +316,14 @@ export class Database {
     `,
       [
         deviceId,
-        metrics.cpuPercent,
-        metrics.memoryPercent,
-        metrics.memoryUsedBytes,
-        metrics.diskPercent,
-        metrics.diskUsedBytes,
-        metrics.networkRxBytes,
-        metrics.networkTxBytes,
-        metrics.processCount,
+        metrics.cpu_percent ?? metrics.cpuPercent ?? 0,
+        metrics.memory_percent ?? metrics.memoryPercent ?? 0,
+        metrics.memory_used ?? metrics.memoryUsedBytes ?? 0,
+        metrics.disk_percent ?? metrics.diskPercent ?? 0,
+        metrics.disk_used ?? metrics.diskUsedBytes ?? 0,
+        metrics.network_rx_bytes ?? metrics.networkRxBytes ?? 0,
+        metrics.network_tx_bytes ?? metrics.networkTxBytes ?? 0,
+        metrics.process_count ?? metrics.processCount ?? 0,
       ]
     );
 
