@@ -13,8 +13,11 @@ app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('disable-gpu');
 app.commandLine.appendSwitch('disable-software-rasterizer');
 
-// Set custom userData path to avoid permission issues
-const customUserData = path.join(os.tmpdir(), 'sentinel-electron');
+// Set custom userData path - use appData for persistence (required for auto-updates)
+const customUserData = path.join(app.getPath('appData'), 'Sentinel');
+if (!fs.existsSync(customUserData)) {
+  fs.mkdirSync(customUserData, { recursive: true });
+}
 app.setPath('userData', customUserData);
 
 // Helper function to embed configuration into agent binary
