@@ -248,8 +248,8 @@ async function initialize(): Promise<void> {
 
 function setupIpcHandlers(): void {
   // Device management
-  ipcMain.handle('devices:list', async () => {
-    const devices = await database.getDevices();
+  ipcMain.handle('devices:list', async (_, clientId?: string) => {
+    const devices = await database.getDevices(clientId);
     // Override status based on actual WebSocket connection state
     return devices.map(device => ({
       ...device,
@@ -526,6 +526,38 @@ function setupIpcHandlers(): void {
 
   ipcMain.handle('settings:update', async (_, settings: any) => {
     return database.updateSettings(settings);
+  });
+
+
+  // Clients
+  ipcMain.handle('clients:list', async () => {
+    return database.getClientsWithCounts();
+  });
+
+  ipcMain.handle('clients:get', async (_, id: string) => {
+    return database.getClient(id);
+  });
+
+  ipcMain.handle('clients:create', async (_, client: { name: string; description?: string; color?: string; logoUrl?: string }) => {
+    return database.createClient(client);
+  });
+
+  ipcMain.handle('clients:update', async (_, id: string, client: { name?: string; description?: string; color?: string; logoUrl?: string }) => {
+    return database.updateClient(id, client);
+  });
+
+  ipcMain.handle('clients:delete', async (_, id: string) => {
+    return database.deleteClient(id);
+  });
+
+  ipcMain.handle('devices:assignToClient', async (_, deviceId: string, clientId: string | null) => {
+    await database.assignDeviceToClient(deviceId, clientId);
+    return database.getDevice(deviceId);
+  });
+
+  ipcMain.handle('devices:bulkAssignToClient', async (_, deviceIds: string[], clientId: string | null) => {
+    await database.bulkAssignDevicesToClient(deviceIds, clientId);
+    return { success: true, count: deviceIds.length };
   });
 
   // Server info

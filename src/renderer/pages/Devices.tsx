@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useDeviceStore, Device } from '../stores/deviceStore';
+import { useClientStore } from '../stores/clientStore';
 
 interface DevicesProps {
   onDeviceSelect: (deviceId: string) => void;
@@ -13,8 +14,14 @@ interface ServerInfo {
 
 export function Devices({ onDeviceSelect }: DevicesProps) {
   const { devices, loading, deleteDevice } = useDeviceStore();
+  const { clients, currentClientId } = useClientStore();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+
+  const getClientName = (clientId?: string) => {
+    if (!clientId) return null;
+    return clients.find(c => c.id === clientId);
+  };
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'devices' | 'installation'>('devices');
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null);
@@ -188,6 +195,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                   <tr>
                     <th>Status</th>
                     <th>Hostname</th>
+                    {!currentClientId && <th>Client</th>}
                     <th>OS</th>
                     <th>IP Address</th>
                     <th>Last Seen</th>
@@ -211,6 +219,25 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                           )}
                         </div>
                       </td>
+                      {!currentClientId && (
+                        <td>
+                          {(() => {
+                            const client = getClientName(device.clientId);
+                            if (client) {
+                              return (
+                                <div className="flex items-center gap-2">
+                                  <div
+                                    className="w-2.5 h-2.5 rounded-full"
+                                    style={{ backgroundColor: client.color || '#6366f1' }}
+                                  />
+                                  <span className="text-sm">{client.name}</span>
+                                </div>
+                              );
+                            }
+                            return <span className="text-sm text-text-secondary">-</span>;
+                          })()}
+                        </td>
+                      )}
                       <td>
                         <div className="flex items-center gap-2">
                           <OsIcon osType={device.osType} />

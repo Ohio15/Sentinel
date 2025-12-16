@@ -4,7 +4,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('api', {
   // Devices
   devices: {
-    list: () => ipcRenderer.invoke('devices:list'),
+    list: (clientId?: string) => ipcRenderer.invoke('devices:list', clientId),
     get: (id: string) => ipcRenderer.invoke('devices:get', id),
     ping: (deviceId: string) => ipcRenderer.invoke('devices:ping', deviceId),
     delete: (id: string) => ipcRenderer.invoke('devices:delete', id),
@@ -151,6 +151,22 @@ contextBridge.exposeInMainWorld('api', {
     update: (settings: any) => ipcRenderer.invoke('settings:update', settings),
   },
 
+
+  // Clients
+  clients: {
+    list: () => ipcRenderer.invoke('clients:list'),
+    get: (id: string) => ipcRenderer.invoke('clients:get', id),
+    create: (client: { name: string; description?: string; color?: string; logoUrl?: string }) =>
+      ipcRenderer.invoke('clients:create', client),
+    update: (id: string, client: { name?: string; description?: string; color?: string; logoUrl?: string }) =>
+      ipcRenderer.invoke('clients:update', id, client),
+    delete: (id: string) => ipcRenderer.invoke('clients:delete', id),
+    assignDevice: (deviceId: string, clientId: string | null) =>
+      ipcRenderer.invoke('devices:assignToClient', deviceId, clientId),
+    bulkAssignDevices: (deviceIds: string[], clientId: string | null) =>
+      ipcRenderer.invoke('devices:bulkAssignToClient', deviceIds, clientId),
+  },
+
   // Server
   server: {
     getInfo: () => ipcRenderer.invoke('server:getInfo'),
@@ -225,7 +241,7 @@ contextBridge.exposeInMainWorld('api', {
 // Type definitions for the exposed API
 export interface ElectronAPI {
   devices: {
-    list: () => Promise<Device[]>;
+    list: (clientId?: string) => Promise<Device[]>;
     get: (id: string) => Promise<Device | null>;
     ping: (deviceId: string) => Promise<{ online: boolean; status: string; message: string }>;
     delete: (id: string) => Promise<void>;
@@ -301,6 +317,15 @@ export interface ElectronAPI {
   settings: {
     get: () => Promise<Settings>;
     update: (settings: Partial<Settings>) => Promise<Settings>;
+  };
+  clients: {
+    list: () => Promise<Client[]>;
+    get: (id: string) => Promise<Client | null>;
+    create: (client: Omit<Client, 'id' | 'createdAt' | 'updatedAt' | 'deviceCount' | 'openTicketCount'>) => Promise<Client>;
+    update: (id: string, client: Partial<Client>) => Promise<Client | null>;
+    delete: (id: string) => Promise<void>;
+    assignDevice: (deviceId: string, clientId: string | null) => Promise<Device | null>;
+    bulkAssignDevices: (deviceIds: string[], clientId: string | null) => Promise<{ success: boolean; count: number }>;
   };
   server: {
     getInfo: () => Promise<ServerInfo>;
@@ -576,6 +601,20 @@ interface TicketStats {
   resolvedCount: number;
   closedCount: number;
   totalCount: number;
+}
+
+
+
+interface Client {
+  id: string;
+  name: string;
+  description?: string;
+  color?: string;
+  logoUrl?: string;
+  deviceCount?: number;
+  openTicketCount?: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 declare global {

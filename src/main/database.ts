@@ -114,8 +114,8 @@ export class Database {
   }
 
   // Device methods
-  async getDevices(): Promise<any[]> {
-    const result = await this.query(`
+  async getDevices(clientId?: string): Promise<any[]> {
+    let sql = `
       SELECT
         id, agent_id as "agentId", hostname, display_name as "displayName",
         os_type as "osType", os_version as "osVersion", os_build as "osBuild",
@@ -125,10 +125,19 @@ export class Database {
         gpu, storage, serial_number as "serialNumber", manufacturer, model, domain,
         agent_version as "agentVersion", last_seen as "lastSeen",
         status, ip_address as "ipAddress", public_ip as "publicIp", mac_address as "macAddress",
-        tags, metadata, created_at as "createdAt", updated_at as "updatedAt"
+        tags, metadata, client_id as "clientId", created_at as "createdAt", updated_at as "updatedAt"
       FROM devices
-      ORDER BY hostname
-    `);
+    `;
+    const values: any[] = [];
+
+    if (clientId) {
+      sql += ' WHERE client_id = $1';
+      values.push(clientId);
+    }
+
+    sql += ' ORDER BY hostname';
+
+    const result = await this.query(sql, values);
     return result.rows;
   }
 
@@ -144,7 +153,7 @@ export class Database {
         gpu, storage, serial_number as "serialNumber", manufacturer, model, domain,
         agent_version as "agentVersion", last_seen as "lastSeen",
         status, ip_address as "ipAddress", public_ip as "publicIp", mac_address as "macAddress",
-        tags, metadata, created_at as "createdAt", updated_at as "updatedAt"
+        tags, metadata, client_id as "clientId", created_at as "createdAt", updated_at as "updatedAt"
       FROM devices WHERE id = $1
     `,
       [id]
@@ -1343,6 +1352,116 @@ export class Database {
         [deviceId]
       );
     }
+  }
+
+
+  // ============================================================================
+  // CLIENT METHODS
+  // ============================================================================
+
+  async getClients(): Promise<any[]> {
+    const result = await this.query(`
+      SELECT
+        id, name, description, color, logo_url as "logoUrl",
+        created_at as "createdAt", updated_at as "updatedAt"
+      FROM clients
+      ORDER BY name
+    `);
+    return result.rows;
+  }
+
+  async getClient(id: string): Promise<any | null> {
+    const result = await this.query(
+      `SELECT id, name, description, color, logo_url as "logoUrl",
+              created_at as "createdAt", updated_at as "updatedAt"
+       FROM clients WHERE id = $1`,
+      [id]
+    );
+    return result.rows[0] || null;
+  }
+
+  async createClient(client: { name: string; description?: string; color?: string; logoUrl?: string }): Promise<any> {
+    const id = uuidv4();
+    await this.query(
+      `INSERT INTO clients (id, name, description, color, logo_url)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [id, client.name, client.description || null, client.color || null, client.logoUrl || null]
+    );
+    return this.getClient(id);
+  }
+
+  async updateClient(id: string, client: { name?: string; description?: string; color?: string; logoUrl?: string }): Promise<any | null> {
+    const updates: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    if (client.name !== undefined) {
+      updates.push(`name = $${paramIndex++}`);
+      values.push(client.name);
+    }
+    if (client.description !== undefined) {
+      updates.push(`description = $${paramIndex++}`);
+      values.push(client.description);
+    }
+    if (client.color !== undefined) {
+      updates.push(`color = $${paramIndex++}`);
+      values.push(client.color);
+    }
+    if (client.logoUrl !== undefined) {
+      updates.push(`logo_url = $${paramIndex++}`);
+      values.push(client.logoUrl);
+    }
+
+    if (updates.length > 0) {
+      values.push(id);
+      await this.query(
+        `UPDATE clients SET ${updates.join(', ')} WHERE id = $${paramIndex}`,
+        values
+      );
+    }
+    return this.getClient(id);
+  }
+
+  async deleteClient(id: string): Promise<void> {
+    await this.query('DELETE FROM clients WHERE id = $1', [id]);
+  }
+
+  async getClientDeviceCount(clientId: string): Promise<number> {
+    const result = await this.query(
+      'SELECT COUNT(*) as count FROM devices WHERE client_id = $1',
+      [clientId]
+    );
+    return parseInt(result.rows[0].count, 10);
+  }
+
+  async getClientsWithCounts(): Promise<any[]> {
+    const result = await this.query(`
+      SELECT
+        c.id, c.name, c.description, c.color, c.logo_url as "logoUrl",
+        c.created_at as "createdAt", c.updated_at as "updatedAt",
+        COUNT(DISTINCT d.id) as "deviceCount",
+        COUNT(DISTINCT t.id) FILTER (WHERE t.status NOT IN ('closed', 'resolved')) as "openTicketCount"
+      FROM clients c
+      LEFT JOIN devices d ON d.client_id = c.id
+      LEFT JOIN tickets t ON t.client_id = c.id
+      GROUP BY c.id
+      ORDER BY c.name
+    `);
+    return result.rows;
+  }
+
+  async assignDeviceToClient(deviceId: string, clientId: string | null): Promise<void> {
+    await this.query(
+      'UPDATE devices SET client_id = $1 WHERE id = $2',
+      [clientId, deviceId]
+    );
+  }
+
+  async bulkAssignDevicesToClient(deviceIds: string[], clientId: string | null): Promise<void> {
+    await this.query(
+      'UPDATE devices SET client_id = $1 WHERE id = ANY($2)',
+      [clientId, deviceIds]
+    );
   }
 
   async close(): Promise<void> {
