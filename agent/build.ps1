@@ -235,3 +235,42 @@ Write-Host "Copied version.json to output directory" -ForegroundColor Gray
 
 # List built files
 Get-ChildItem $OutputDir -Filter "sentinel-agent*" | Format-Table Name, @{N='Size (MB)';E={[math]::Round($_.Length/1MB, 2)}}
+
+# Copy binaries to installers/ directory for agent auto-update system
+$InstallersDir = "..\installers"
+if (-not (Test-Path $InstallersDir)) {
+    New-Item -ItemType Directory -Path $InstallersDir | Out-Null
+}
+
+Write-Host "`nCopying binaries to installers/ for auto-update system..." -ForegroundColor Cyan
+
+# Map of source files to installer naming convention
+$InstallerMappings = @{
+    "sentinel-agent.exe" = "sentinel-agent-windows-amd64.exe"
+    "sentinel-agent-linux" = "sentinel-agent-linux-amd64"
+    "sentinel-agent-linux-arm64" = "sentinel-agent-linux-arm64"
+    "sentinel-agent-macos" = "sentinel-agent-darwin-amd64"
+    "sentinel-agent-macos-arm64" = "sentinel-agent-darwin-arm64"
+}
+
+foreach ($mapping in $InstallerMappings.GetEnumerator()) {
+    $sourcePath = Join-Path $OutputDir $mapping.Key
+    $destPath = Join-Path $InstallersDir $mapping.Value
+
+    if (Test-Path $sourcePath) {
+        Copy-Item $sourcePath -Destination $destPath -Force
+        Write-Host "  Copied $($mapping.Key) -> $($mapping.Value)" -ForegroundColor Green
+    }
+}
+
+# Also copy version.json to installers for server reference
+Copy-Item $VersionFile -Destination $InstallersDir -Force
+Write-Host "  Copied version.json to installers/" -ForegroundColor Green
+
+# Copy main binary to agent/ directory for GitHub releases
+$AgentRootBinary = "..\agent\sentinel-agent.exe"
+$WindowsBinary = Join-Path $OutputDir "sentinel-agent.exe"
+if (Test-Path $WindowsBinary) {
+    Copy-Item $WindowsBinary -Destination $AgentRootBinary -Force
+    Write-Host "  Copied to agent/sentinel-agent.exe for GitHub releases" -ForegroundColor Green
+}

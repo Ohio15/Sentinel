@@ -19,7 +19,9 @@
     "agent:build:linux": "cd agent && powershell -ExecutionPolicy Bypass -File build.ps1 -Platform linux",
     "agent:build:macos": "cd agent && powershell -ExecutionPolicy Bypass -File build.ps1 -Platform macos",
     "lint": "eslint src --ext .ts,.tsx",
-    "lint:fix": "eslint src --ext .ts,.tsx --fix"
+    "lint:fix": "eslint src --ext .ts,.tsx --fix",
+    "sync-version": "node scripts/sync-version.js",
+    "release:agent": "npm run sync-version && npm run agent:build:win"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.14.3",
