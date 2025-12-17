@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+﻿import { contextBridge, ipcRenderer } from 'electron';
 
 // Expose protected methods to renderer
 contextBridge.exposeInMainWorld('api', {
@@ -175,6 +175,25 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('agent:getInstallerCommand', platform),
   },
 
+  // Certificates
+  certs: {
+    list: () => ipcRenderer.invoke('certs:list'),
+    renew: () => ipcRenderer.invoke('certs:renew'),
+    distribute: () => ipcRenderer.invoke('certs:distribute'),
+    getAgentStatus: () => ipcRenderer.invoke('certs:getAgentStatus'),
+    getCurrent: () => ipcRenderer.invoke('certs:getCurrent'),
+    onDistributed: (callback: (result: { success: number; failed: number; total: number }) => void) => {
+      const handler = (_: any, result: any) => callback(result);
+      ipcRenderer.on('certs:distributed', handler);
+      return () => ipcRenderer.removeListener('certs:distributed', handler);
+    },
+    onAgentConfirmed: (callback: (data: { agentId: string; certHash: string }) => void) => {
+      const handler = (_: any, data: any) => callback(data);
+      ipcRenderer.on('certs:agentConfirmed', handler);
+      return () => ipcRenderer.removeListener('certs:agentConfirmed', handler);
+    },
+  },
+
   // Agent
   agent: {
     download: (platform: string) => ipcRenderer.invoke('agent:download', platform),
@@ -231,6 +250,8 @@ contextBridge.exposeInMainWorld('api', {
       'webrtc:signal',
       'command:output',
       'tickets:updated',
+      'certs:distributed',
+      'certs:agentConfirmed',
     ];
     if (validChannels.includes(channel)) {
       const handler = (_: any, ...args: any[]) => callback(...args);
@@ -334,6 +355,15 @@ export interface ElectronAPI {
     getInfo: () => Promise<ServerInfo>;
     regenerateToken: () => Promise<string>;
     getAgentInstallerCommand: (platform: string) => Promise<string>;
+  };
+  certs: {
+    list: () => Promise<CertificateInfo[]>;
+    renew: () => Promise<{ success: boolean; error?: string }>;
+    distribute: () => Promise<{ success: number; failed: number; total: number }>;
+    getAgentStatus: () => Promise<AgentCertStatus[]>;
+    getCurrent: () => Promise<{ content: string; hash: string } | null>;
+    onDistributed: (callback: (result: { success: number; failed: number; total: number }) => void) => () => void;
+    onAgentConfirmed: (callback: (data: { agentId: string; certHash: string }) => void) => () => void;
   };
   agent: {
     download: (platform: string) => Promise<{
@@ -624,6 +654,26 @@ interface TicketStats {
 }
 
 
+
+interface CertificateInfo {
+  name: string;
+  subject: string;
+  issuer: string;
+  validFrom: string;
+  validTo: string;
+  serialNumber: string;
+  fingerprint: string;
+  path: string;
+  daysUntilExpiry: number;
+}
+
+interface AgentCertStatus {
+  agentId: string;
+  agentName?: string;
+  caCertHash: string;
+  distributedAt: string | null;
+  confirmedAt: string | null;
+}
 
 interface Client {
   id: string;

@@ -1,4 +1,4 @@
-package client
+﻿package client
 
 import (
 	"context"
@@ -57,6 +57,9 @@ const (
 	MsgTypeAdminEvent      = "admin_event"
 	// Configuration messages
 	MsgTypeSetMetricsInterval = "set_metrics_interval"
+	// Certificate management messages
+	MsgTypeUpdateCertificate = "update_certificate"
+	MsgTypeCertUpdateAck     = "cert_update_ack"
 )
 
 // Message represents a WebSocket message
@@ -715,6 +718,19 @@ func (c *Client) SendAdminEvent(event interface{}) error {
 	msg := map[string]interface{}{
 		"type":  MsgTypeAdminEvent,
 		"event": event,
+	}
+	return c.SendJSON(msg)
+}
+
+// SendCertUpdateAck sends a certificate update acknowledgment to the server
+func (c *Client) SendCertUpdateAck(certHash string, success bool, errMsg string) error {
+	msg := map[string]interface{}{
+		"type": MsgTypeCertUpdateAck,
+		"data": map[string]interface{}{
+			"certHash": certHash,
+			"success":  success,
+			"error":    errMsg,
+		},
 	}
 	return c.SendJSON(msg)
 }

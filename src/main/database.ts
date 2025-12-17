@@ -1488,6 +1488,64 @@ export class Database {
     );
   }
 
+  // ============================================================================
+  // CERTIFICATE STATUS METHODS
+  // ============================================================================
+
+  async setAgentCertStatus(agentId: string, caCertHash: string, distributed: boolean, confirmed: boolean): Promise<void> {
+    const updates: string[] = ['ca_cert_hash = $2'];
+    const values: any[] = [agentId, caCertHash];
+
+    if (distributed) {
+      updates.push('distributed_at = CURRENT_TIMESTAMP');
+    }
+    if (confirmed) {
+      updates.push('confirmed_at = CURRENT_TIMESTAMP');
+    }
+
+    await this.query(
+      `INSERT INTO agent_cert_status (agent_id, ca_cert_hash, distributed_at, confirmed_at)
+       VALUES ($1, $2, ${distributed ? 'CURRENT_TIMESTAMP' : 'NULL'}, ${confirmed ? 'CURRENT_TIMESTAMP' : 'NULL'})
+       ON CONFLICT (agent_id) DO UPDATE SET ${updates.join(', ')}`,
+      values
+    );
+  }
+
+  async getAgentCertStatuses(): Promise<any[]> {
+    const result = await this.query(`
+      SELECT
+        acs.id, acs.agent_id as "agentId", acs.ca_cert_hash as "caCertHash",
+        acs.distributed_at as "distributedAt", acs.confirmed_at as "confirmedAt",
+        acs.created_at as "createdAt", acs.updated_at as "updatedAt",
+        d.hostname, d.display_name as "displayName", d.status as "deviceStatus"
+      FROM agent_cert_status acs
+      LEFT JOIN devices d ON d.agent_id = acs.agent_id
+      ORDER BY acs.updated_at DESC
+    `);
+    return result.rows;
+  }
+
+  async getAgentCertStatus(agentId: string): Promise<any | null> {
+    const result = await this.query(
+      `SELECT
+        id, agent_id as "agentId", ca_cert_hash as "caCertHash",
+        distributed_at as "distributedAt", confirmed_at as "confirmedAt",
+        created_at as "createdAt", updated_at as "updatedAt"
+       FROM agent_cert_status WHERE agent_id = $1`,
+      [agentId]
+    );
+    return result.rows[0] || null;
+  }
+
+  async clearAgentCertStatuses(): Promise<void> {
+    await this.query('DELETE FROM agent_cert_status');
+  }
+
+  async deleteAgentCertStatus(agentId: string): Promise<void> {
+    await this.query('DELETE FROM agent_cert_status WHERE agent_id = $1', [agentId]);
+  }
+
+
   async close(): Promise<void> {
     if (this.pool) {
       await this.pool.end();
