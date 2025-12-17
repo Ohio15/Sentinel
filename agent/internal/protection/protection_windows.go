@@ -1,4 +1,4 @@
-//go:build windows
+﻿//go:build windows
 
 package protection
 
@@ -491,13 +491,21 @@ func (m *Manager) MonitorTamperAttempts(reportChan chan<- string) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
+	// Config is stored in ProgramData, not install path
+	configPath := filepath.Join(os.Getenv("ProgramData"), "Sentinel", "config.json")
+
 	for range ticker.C {
-		// Check if files have been modified
-		for _, file := range []string{"sentinel-agent.exe", "sentinel-watchdog.exe", "config.json"} {
+		// Check if executable files exist in install path
+		for _, file := range []string{"sentinel-agent.exe", "sentinel-watchdog.exe"} {
 			path := filepath.Join(m.installPath, file)
 			if _, err := os.Stat(path); os.IsNotExist(err) {
 				reportChan <- fmt.Sprintf("TAMPER: File missing: %s", file)
 			}
+		}
+
+		// Check config file in correct location (ProgramData)
+		if _, err := os.Stat(configPath); os.IsNotExist(err) {
+			reportChan <- "TAMPER: Config file missing"
 		}
 
 		// Check if service is still registered
