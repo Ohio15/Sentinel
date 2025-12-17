@@ -643,6 +643,37 @@ function setupIpcHandlers(): void {
     return server.regenerateEnrollmentToken();
   });
 
+  // Certificate management
+  ipcMain.handle('certs:list', async () => {
+    return listCertificates();
+  });
+
+  ipcMain.handle('certs:renew', async () => {
+    try {
+      const result = await renewCertificates();
+      return { success: result.success, error: result.success ? undefined : result.message };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('certs:distribute', async () => {
+    const caCert = getCACertificate();
+    if (!caCert) {
+      return { success: 0, failed: 0, total: 0, error: 'CA certificate not found' };
+    }
+    return agentManager.broadcastCertificate(caCert.content, caCert.hash);
+  });
+
+  ipcMain.handle('certs:getAgentStatus', async () => {
+    return database.getAgentCertStatuses();
+  });
+
+  ipcMain.handle('certs:getCurrent', async () => {
+    return getCACertificate();
+  });
+
+
   // Agent installer
   ipcMain.handle('agent:getInstallerCommand', async (_, platform: string) => {
     return server.getAgentInstallerCommand(platform);
