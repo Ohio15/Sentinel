@@ -367,6 +367,7 @@ func (a *Agent) Start() error {
 	// Set up connection callbacks
 	a.client.OnConnect(a.onConnect)
 	a.client.OnDisconnect(a.onDisconnect)
+	a.client.OnNeedsEnrollment(a.onNeedsEnrollment)
 
 	// Enroll if not already enrolled
 	if !a.cfg.Enrolled {
@@ -480,6 +481,13 @@ func (a *Agent) onConnect() {
 
 func (a *Agent) onDisconnect() {
 	log.Println("Disconnected from server")
+}
+
+func (a *Agent) onNeedsEnrollment() {
+	log.Println("Re-enrolling with server...")
+	if err := a.enroll(); err != nil {
+		log.Printf("Re-enrollment failed: %v", err)
+	}
 }
 
 func (a *Agent) enroll() error {
