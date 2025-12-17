@@ -8,7 +8,7 @@ param(
 )
 
 # Ensure output directory exists
-$CertsPath = Join-Path $PSScriptRoot ".." $OutputDir
+$CertsPath = Join-Path (Join-Path $PSScriptRoot "..") $OutputDir
 if (-not (Test-Path $CertsPath)) {
     New-Item -ItemType Directory -Path $CertsPath -Force | Out-Null
     Write-Host "Created certificates directory: $CertsPath" -ForegroundColor Green
