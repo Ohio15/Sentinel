@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,6 +35,13 @@ func New() *Executor {
 
 // Execute runs a shell command and returns the result
 func (e *Executor) Execute(ctx context.Context, command string, cmdType string) (*CommandResult, error) {
+	// Validate command before execution
+	if err := ValidateCommand(command, cmdType); err != nil {
+		log.Printf("[SECURITY] Command validation failed: %v | Command: %s | Type: %s", err, command, cmdType)
+		return nil, fmt.Errorf("command validation failed: %w", err)
+	}
+
+	log.Printf("[EXECUTOR] Executing command: %s | Type: %s", command, cmdType)
 	start := time.Now()
 
 	var cmd *exec.Cmd
@@ -96,6 +104,13 @@ func (e *Executor) Execute(ctx context.Context, command string, cmdType string) 
 
 // ExecuteScript runs a script with the specified language
 func (e *Executor) ExecuteScript(ctx context.Context, script string, language string) (*CommandResult, error) {
+	// Validate script before execution
+	if err := ValidateScript(script, language); err != nil {
+		log.Printf("[SECURITY] Script validation failed: %v | Language: %s | Script length: %d", err, language, len(script))
+		return nil, fmt.Errorf("script validation failed: %w", err)
+	}
+
+	log.Printf("[EXECUTOR] Executing script | Language: %s | Script length: %d bytes", language, len(script))
 	start := time.Now()
 
 	// Create temp file for script

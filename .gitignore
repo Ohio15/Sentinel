@@ -25,3 +25,10 @@ npm-debug.log*
 
 # Agent binaries (built separately)
 downloads/sentinel-agent*
+
+# TLS Certificates (never commit private keys!)
+certs/*.key
+certs/*.pem
+certs/*.crt
+certs/*.srl
+certs/*.cnf

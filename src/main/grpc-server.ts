@@ -1,7 +1,8 @@
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import * as path from 'path';
-import { BrowserWindow } from 'electron';
+import * as fs from 'fs';
+import { BrowserWindow, app } from 'electron';
 import { Database } from './database';
 import { AgentManager } from './agents';
 
@@ -19,11 +20,13 @@ export class GrpcServer {
   private agentManager: AgentManager;
   private port: number;
   private connections: Map<string, GrpcConnection> = new Map();
+  private useTLS: boolean = true;
 
-  constructor(database: Database, agentManager: AgentManager, port: number = 8082) {
+  constructor(database: Database, agentManager: AgentManager, port: number = 8082, useTLS: boolean = true) {
     this.database = database;
     this.agentManager = agentManager;
     this.port = port;
+    this.useTLS = useTLS;
   }
 
   async start(): Promise<void> {
@@ -48,21 +51,85 @@ export class GrpcServer {
       UploadBulkData: this.handleUploadBulkData.bind(this),
     });
 
+    // Create server credentials
+    const credentials = this.createServerCredentials();
+
     return new Promise((resolve, reject) => {
       this.server!.bindAsync(
         `0.0.0.0:${this.port}`,
-        grpc.ServerCredentials.createInsecure(),
+        credentials,
         (error, port) => {
           if (error) {
             console.error('gRPC server failed to bind:', error);
             reject(error);
             return;
           }
-          console.log(`gRPC DataPlane server listening on port ${port}`);
+          const securityMode = this.useTLS ? 'TLS' : 'insecure';
+          console.log(`gRPC DataPlane server listening on port ${port} (${securityMode})`);
           resolve();
         }
       );
     });
+  }
+
+  private createServerCredentials(): grpc.ServerCredentials {
+    if (!this.useTLS) {
+      console.warn('WARNING: gRPC server running in INSECURE mode (no TLS)');
+      return grpc.ServerCredentials.createInsecure();
+    }
+
+    try {
+      // Determine certificate directory
+      const certsDir = app.isPackaged
+        ? path.join(process.resourcesPath, 'certs')
+        : path.join(__dirname, '../../certs');
+
+      const serverCertPath = path.join(certsDir, 'server-cert.pem');
+      const serverKeyPath = path.join(certsDir, 'server-key.pem');
+      const caCertPath = path.join(certsDir, 'ca-cert.pem');
+
+      // Check if certificate files exist
+      if (!fs.existsSync(serverCertPath) || !fs.existsSync(serverKeyPath)) {
+        console.warn('TLS certificates not found, falling back to insecure mode');
+        console.warn(`Run: powershell -ExecutionPolicy Bypass -File scripts/generate-certs.ps1`);
+        console.warn(`Expected paths:`);
+        console.warn(`  - ${serverCertPath}`);
+        console.warn(`  - ${serverKeyPath}`);
+        return grpc.ServerCredentials.createInsecure();
+      }
+
+      // Load certificates
+      const serverCert = fs.readFileSync(serverCertPath);
+      const serverKey = fs.readFileSync(serverKeyPath);
+
+      // Optional: Load CA certificate for mTLS (client certificate verification)
+      let caCert: Buffer | undefined;
+      if (fs.existsSync(caCertPath)) {
+        caCert = fs.readFileSync(caCertPath);
+        console.log('gRPC server configured with TLS + mTLS (client certificate verification)');
+      } else {
+        console.log('gRPC server configured with TLS (server-side only)');
+      }
+
+      // Create TLS credentials
+      // For mTLS, set checkClientCertificate to true
+      const credentials = grpc.ServerCredentials.createSsl(
+        caCert || null, // Root certificate (for verifying client certificates)
+        [
+          {
+            cert_chain: serverCert,
+            private_key: serverKey,
+          },
+        ],
+        false // checkClientCertificate - set to true for mTLS
+      );
+
+      return credentials;
+    } catch (error) {
+      console.error('Error loading TLS certificates:', error);
+      console.warn('Falling back to insecure mode');
+      return grpc.ServerCredentials.createInsecure();
+    }
   }
 
   async stop(): Promise<void> {

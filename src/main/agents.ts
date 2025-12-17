@@ -304,6 +304,28 @@ export class AgentManager {
     });
   }
 
+  private async handleTamperAlert(agentId: string, message: any): Promise<void> {
+    const device = await this.database.getDeviceByAgentId(agentId);
+    if (device) {
+      console.log(`[SECURITY] Tamper alert from ${agentId}:`, message.report || message.data);
+
+      // Create a critical alert for tamper detection
+      const alert = await this.database.createAlert({
+        deviceId: device.id,
+        severity: 'critical',
+        title: 'Tamper Detection Alert',
+        message: message.report || message.data || 'Tampering attempt detected on agent',
+      });
+      this.notifyRenderer('alerts:new', alert);
+      this.notifyRenderer('security:tamper', {
+        deviceId: device.id,
+        agentId,
+        report: message.report || message.data,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
   private async handleEvent(agentId: string, message: any): Promise<void> {
     const device = await this.database.getDeviceByAgentId(agentId);
     if (device) {
