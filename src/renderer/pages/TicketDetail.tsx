@@ -132,9 +132,6 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
           </button>
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold text-text-primary">
-                #{selectedTicket.ticketNumber}
-              </h1>
               <span className={`badge ${getStatusBadgeClass(selectedTicket.status)}`}>
                 {selectedTicket.status.replace('_', ' ')}
               </span>
@@ -466,7 +463,7 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
               Delete Ticket?
             </h3>
             <p className="text-text-secondary mb-4">
-              Are you sure you want to delete ticket #{selectedTicket.ticketNumber}? This
+              Are you sure you want to delete this ticket? This
               action cannot be undone.
             </p>
             <div className="flex justify-end gap-3">
@@ -524,7 +521,7 @@ function EditTicketModal({
       <div className="bg-surface rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-auto">
         <div className="p-6 border-b border-border">
           <h2 className="text-xl font-semibold text-text-primary">
-            Edit Ticket #{ticket.ticketNumber}
+            Edit Ticket
           </h2>
         </div>
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
