@@ -262,6 +262,58 @@ async function initialize(): Promise<void> {
   setupIpcHandlers();
 }
 
+
+// Auto-updater IPC handlers - registered early so updates work even if DB fails
+function setupUpdaterHandlers(): void {
+  // Auto-updater IPC handlers
+  ipcMain.handle('check-for-updates', async () => {
+    try {
+      const result = await autoUpdater.checkForUpdates();
+      return { success: true, updateInfo: result?.updateInfo };
+    } catch (error) {
+      return { success: false, error: (error as Error).message };
+    }
+  });
+
+  ipcMain.handle('download-update', async () => {
+    try {
+      await autoUpdater.downloadUpdate();
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: (error as Error).message };
+    }
+  });
+
+  ipcMain.handle('install-update', async () => {
+    // Set isQuitting flag BEFORE cleanup to prevent before-quit handler from interfering
+    isQuitting = true;
+
+    // Clean up resources before quitting for update
+    try {
+      console.log('Preparing to install update...');
+      if (grpcServer) {
+        console.log('Stopping gRPC server...');
+        await grpcServer.stop();
+      }
+      if (server) {
+        console.log('Stopping WebSocket server...');
+        await server.stop();
+      }
+      if (database) {
+        console.log('Closing database...');
+        await database.close();
+      }
+      console.log('Cleanup complete, installing update...');
+    } catch (error) {
+      console.error('Error during cleanup:', error);
+    }
+    // Small delay to ensure cleanup is complete
+    await new Promise(resolve => setTimeout(resolve, 500));
+    // Use isSilent=true to prevent installer UI from blocking, isForceRunAfter=true to restart app
+    autoUpdater.quitAndInstall(true, true);
+  });
+}
+
 function setupIpcHandlers(): void {
   // Device management
   ipcMain.handle('devices:list', async (_, clientId?: string) => {
@@ -791,53 +843,7 @@ Read-Host 'Press Enter to close'
     }
   });
 
-  // Auto-updater IPC handlers
-  ipcMain.handle('check-for-updates', async () => {
-    try {
-      const result = await autoUpdater.checkForUpdates();
-      return { success: true, updateInfo: result?.updateInfo };
-    } catch (error) {
-      return { success: false, error: (error as Error).message };
-    }
-  });
 
-  ipcMain.handle('download-update', async () => {
-    try {
-      await autoUpdater.downloadUpdate();
-      return { success: true };
-    } catch (error) {
-      return { success: false, error: (error as Error).message };
-    }
-  });
-
-  ipcMain.handle('install-update', async () => {
-    // Set isQuitting flag BEFORE cleanup to prevent before-quit handler from interfering
-    isQuitting = true;
-
-    // Clean up resources before quitting for update
-    try {
-      console.log('Preparing to install update...');
-      if (grpcServer) {
-        console.log('Stopping gRPC server...');
-        await grpcServer.stop();
-      }
-      if (server) {
-        console.log('Stopping WebSocket server...');
-        await server.stop();
-      }
-      if (database) {
-        console.log('Closing database...');
-        await database.close();
-      }
-      console.log('Cleanup complete, installing update...');
-    } catch (error) {
-      console.error('Error during cleanup:', error);
-    }
-    // Small delay to ensure cleanup is complete
-    await new Promise(resolve => setTimeout(resolve, 500));
-    // Use isSilent=true to prevent installer UI from blocking, isForceRunAfter=true to restart app
-    autoUpdater.quitAndInstall(true, true);
-  });
 
   ipcMain.handle('get-app-version', () => {
     return app.getVersion();
@@ -999,6 +1005,9 @@ function formatActivePrograms(programs: any[]): string {
 app.whenReady().then(async () => {
   // Create window first so user sees something immediately
   createWindow();
+
+  // Register updater handlers early (before DB init) so updates work even if DB fails
+  setupUpdaterHandlers();
 
   try {
     await initialize();
