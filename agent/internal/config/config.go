@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	"github.com/sentinel/agent/internal/crypto"
 )
 
 // Embedded configuration placeholders - these get replaced in the binary at download time
@@ -121,8 +123,38 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
+	// Check if config is encrypted
+	var jsonData []byte
+	if crypto.IsEncrypted(data) {
+		// Decrypt the config
+		decrypted, err := crypto.DecryptConfig(data)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt config: %w", err)
+		}
+		jsonData = decrypted
+	} else {
+		// Unencrypted config - migrate to encrypted format
+		log.Println("[CONFIG] Migrating unencrypted config to encrypted format")
+		jsonData = data
+
+		// Parse the config first to ensure it's valid
+		cfg := &Config{}
+		if err := json.Unmarshal(jsonData, cfg); err != nil {
+			return nil, fmt.Errorf("failed to parse config file: %w", err)
+		}
+
+		// Save encrypted version immediately
+		instance = cfg
+		if err := cfg.Save(); err != nil {
+			log.Printf("[CONFIG] Warning: Failed to save encrypted config during migration: %v", err)
+		} else {
+			log.Println("[CONFIG] Successfully migrated config to encrypted format")
+		}
+		return cfg, nil
+	}
+
 	cfg := &Config{}
-	if err := json.Unmarshal(data, cfg); err != nil {
+	if err := json.Unmarshal(jsonData, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
@@ -130,7 +162,7 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// Save writes the configuration to disk
+// Save writes the configuration to disk (encrypted)
 func (c *Config) Save() error {
 	mu.Lock()
 	defer mu.Unlock()
@@ -143,12 +175,20 @@ func (c *Config) Save() error {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
-	data, err := json.MarshalIndent(c, "", "  ")
+	// Serialize config to JSON
+	jsonData, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to serialize config: %w", err)
 	}
 
-	if err := os.WriteFile(configPath, data, 0600); err != nil {
+	// Encrypt the JSON data
+	encryptedData, err := crypto.EncryptConfig(jsonData)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt config: %w", err)
+	}
+
+	// Write encrypted data to file with restrictive permissions
+	if err := os.WriteFile(configPath, encryptedData, 0600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 

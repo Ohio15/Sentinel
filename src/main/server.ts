@@ -1,4 +1,4 @@
-import express, { Express, Request, Response } from 'express';
+import express, { Express, Request, Response, NextFunction } from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as http from 'http';
 import * as fs from 'fs';
@@ -8,6 +8,50 @@ import { Database } from './database';
 import { AgentManager } from './agents';
 import * as os from 'os';
 import * as crypto from 'crypto';
+
+// Rate limiter class
+class RateLimiter {
+  private requests: Map<string, { count: number; resetTime: number }> = new Map();
+  private cleanupInterval: NodeJS.Timeout;
+
+  constructor() {
+    // Clean up expired entries every minute
+    this.cleanupInterval = setInterval(() => this.cleanup(), 60000);
+  }
+
+  private cleanup(): void {
+    const now = Date.now();
+    for (const [key, value] of this.requests.entries()) {
+      if (now > value.resetTime) {
+        this.requests.delete(key);
+      }
+    }
+  }
+
+  checkLimit(identifier: string, maxRequests: number, windowMs: number): { allowed: boolean; remaining: number; resetTime: number } {
+    const now = Date.now();
+    const record = this.requests.get(identifier);
+
+    if (!record || now > record.resetTime) {
+      // New window
+      const resetTime = now + windowMs;
+      this.requests.set(identifier, { count: 1, resetTime });
+      return { allowed: true, remaining: maxRequests - 1, resetTime };
+    }
+
+    // Existing window
+    if (record.count >= maxRequests) {
+      return { allowed: false, remaining: 0, resetTime: record.resetTime };
+    }
+
+    record.count++;
+    return { allowed: true, remaining: maxRequests - record.count, resetTime: record.resetTime };
+  }
+
+  destroy(): void {
+    clearInterval(this.cleanupInterval);
+  }
+}
 
 // Helper function to embed configuration into agent binary
 function embedConfigInBinary(binaryData: Buffer, serverUrl: string, token: string): Buffer {
@@ -44,11 +88,15 @@ export class Server {
   private agentManager: AgentManager;
   private port: number = 8081;
   private enrollmentToken: string = '';
+  private dashboardToken: string = '';
+  private rateLimiter: RateLimiter;
+  private allowedOrigins: string[] = [];
 
   constructor(database: Database, agentManager: AgentManager) {
     this.database = database;
     this.agentManager = agentManager;
     this.app = express();
+    this.rateLimiter = new RateLimiter();
     this.setupMiddleware();
     this.setupRoutes();
   }
@@ -57,11 +105,21 @@ export class Server {
     this.app.use(express.json());
     this.app.use(express.urlencoded({ extended: true }));
 
-    // CORS for local development
-    this.app.use((req, res, next) => {
-      res.header('Access-Control-Allow-Origin', '*');
+    // CORS middleware with origin validation
+    this.app.use((req: Request, res: Response, next: NextFunction) => {
+      const origin = req.headers.origin;
+
+      // Check if origin is allowed
+      const isAllowed = this.isOriginAllowed(origin);
+
+      if (isAllowed && origin) {
+        res.header('Access-Control-Allow-Origin', origin);
+        res.header('Access-Control-Allow-Credentials', 'true');
+      }
+
       res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
       res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Enrollment-Token');
+
       if (req.method === 'OPTIONS') {
         res.sendStatus(200);
       } else {
@@ -70,16 +128,78 @@ export class Server {
     });
   }
 
+  // Check if origin is allowed based on whitelist
+  private isOriginAllowed(origin: string | undefined): boolean {
+    if (!origin) return true; // Allow requests without origin (like curl)
+
+    // If no specific origins configured, allow localhost on any port
+    if (this.allowedOrigins.length === 0) {
+      return origin.match(/^http:\/\/localhost(:\d+)?$/) !== null ||
+             origin.match(/^http:\/\/127\.0\.0\.1(:\d+)?$/) !== null;
+    }
+
+    // Check against whitelist
+    for (const allowed of this.allowedOrigins) {
+      if (allowed === origin) return true;
+
+      // Support wildcard port: http://localhost:*
+      if (allowed.endsWith(':*')) {
+        const baseOrigin = allowed.slice(0, -2);
+        if (origin.startsWith(baseOrigin)) return true;
+      }
+    }
+
+    return false;
+  }
+
+  // Session-based authentication middleware
+  private requireAuth(req: Request, res: Response, next: NextFunction): void {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+    if (!token || (token !== this.enrollmentToken && token !== this.dashboardToken)) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    next();
+  }
+
   private setupRoutes(): void {
     // Health check
     this.app.get('/health', (req: Request, res: Response) => {
       res.json({ status: 'ok', timestamp: new Date().toISOString() });
     });
 
-    // Agent enrollment
+    // Agent enrollment with rate limiting
     this.app.post('/api/agent/enroll', async (req: Request, res: Response) => {
+      const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+
+      // Rate limit: 5 requests per minute per IP
+      const enrollLimit = this.rateLimiter.checkLimit(`enroll:${clientIp}`, 5, 60000);
+      res.header('X-RateLimit-Remaining', enrollLimit.remaining.toString());
+      res.header('X-RateLimit-Reset', new Date(enrollLimit.resetTime).toISOString());
+
+      if (!enrollLimit.allowed) {
+        res.status(429).json({
+          error: 'Too many enrollment requests',
+          retryAfter: Math.ceil((enrollLimit.resetTime - Date.now()) / 1000)
+        });
+        return;
+      }
+
       const token = req.headers['x-enrollment-token'];
       if (token !== this.enrollmentToken) {
+        // Track auth failures
+        const authLimit = this.rateLimiter.checkLimit(`auth:${clientIp}`, 10, 60000);
+        if (!authLimit.allowed) {
+          res.status(429).json({
+            error: 'Too many authentication failures',
+            retryAfter: Math.ceil((authLimit.resetTime - Date.now()) / 1000)
+          });
+          return;
+        }
+
         res.status(401).json({ error: 'Invalid enrollment token' });
         return;
       }
@@ -155,8 +275,8 @@ export class Server {
       res.send(modifiedBinary);
     });
 
-    // List available agent downloads
-    this.app.get('/api/agent/downloads', (req: Request, res: Response) => {
+    // List available agent downloads (requires authentication)
+    this.app.get('/api/agent/downloads', this.requireAuth.bind(this), (req: Request, res: Response) => {
       const downloadsDir = electronApp.isPackaged
         ? path.join(process.resourcesPath, 'downloads')
         : path.join(__dirname, '..', '..', 'downloads');
@@ -384,8 +504,8 @@ export class Server {
       }
     });
 
-    // Create a new agent release
-    this.app.post('/api/agent/releases', async (req: Request, res: Response) => {
+    // Create a new agent release (requires authentication)
+    this.app.post('/api/agent/releases', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
         const release = await this.database.createAgentRelease(req.body);
         res.json(release);
@@ -412,6 +532,21 @@ export class Server {
       if (p1 < p2) return -1;
     }
     return 0;
+  }
+
+  // Timing-safe comparison to prevent timing attacks
+  private timingSafeEqual(a: Buffer, b: Buffer): boolean {
+    try {
+      // Ensure buffers are the same length by padding
+      const maxLen = Math.max(a.length, b.length);
+      const bufA = Buffer.alloc(maxLen);
+      const bufB = Buffer.alloc(maxLen);
+      a.copy(bufA);
+      b.copy(bufB);
+      return crypto.timingSafeEqual(bufA, bufB);
+    } catch {
+      return false;
+    }
   }
 
   // Get agent binary info (checksum, size)
@@ -455,10 +590,23 @@ private setupWebSocket(): void {
 
     // Handle upgrade requests to support multiple paths
     this.server.on('upgrade', (request, socket, head) => {
-      const pathname = new URL(request.url || '', `http://${request.headers.host}`).pathname;
+      const url = new URL(request.url || '', `http://${request.headers.host}`);
+      const pathname = url.pathname;
 
       // Accept /ws, /ws/agent for agents, and /ws/dashboard for dashboard
       const isDashboard = pathname === '/ws/dashboard';
+
+      // Validate dashboard token in URL
+      if (isDashboard) {
+        const token = url.searchParams.get('token');
+        if (token !== this.dashboardToken) {
+          console.log('Dashboard connection rejected: invalid token');
+          socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+          socket.destroy();
+          return;
+        }
+      }
+
       if (pathname === '/ws' || pathname === '/ws/agent' || isDashboard) {
         this.wss!.handleUpgrade(request, socket, head, (ws) => {
           this.wss!.emit('connection', ws, request);
@@ -476,7 +624,8 @@ private setupWebSocket(): void {
       console.log('New WebSocket connection from path:', req.url, 'isDashboard:', isDashboardConnection);
 
       let agentId: string | null = null;
-      let authenticated = isDashboardConnection; // Dashboard connections are authenticated via token in URL
+      // Dashboard connections are pre-authenticated via token in URL
+      let authenticated = isDashboardConnection;
 
       // For dashboard connections, store the ws for sending responses
       let dashboardWs: WebSocket | null = isDashboardConnection ? ws : null;
@@ -494,12 +643,17 @@ private setupWebSocket(): void {
           // Handle authentication - support both direct fields and payload format
           if (message.type === 'auth') {
             console.log('=== AUTH MESSAGE RECEIVED ===');
-            console.log('Raw auth message:', JSON.stringify(message, null, 2));
             // Extract agentId and token from either top-level or payload (agent sends in payload)
             const authAgentId = message.agentId || message.payload?.agentId;
             const authToken = message.token || message.payload?.token;
 
-            if (authToken === this.enrollmentToken || authAgentId) {
+            // Use timing-safe comparison for token validation to prevent timing attacks
+            const isValidToken = authToken && this.timingSafeEqual(
+              Buffer.from(authToken, 'utf8'),
+              Buffer.from(this.enrollmentToken, 'utf8')
+            );
+
+            if (isValidToken || authAgentId) {
               agentId = authAgentId;
               authenticated = true;
 
@@ -673,15 +827,34 @@ private setupWebSocket(): void {
     const settings = await this.database.getSettings();
     this.port = settings.serverPort || 8081;
     this.enrollmentToken = settings.enrollmentToken || uuidv4();
+    this.dashboardToken = settings.dashboardToken || uuidv4();
 
-    // Update token if not set
+    // Update tokens if not set
+    const updates: any = {};
     if (!settings.enrollmentToken) {
-      await this.database.updateSettings({ enrollmentToken: this.enrollmentToken });
+      updates.enrollmentToken = this.enrollmentToken;
+    }
+    if (!settings.dashboardToken) {
+      updates.dashboardToken = this.dashboardToken;
+      console.log(`Generated new dashboard token: ${this.dashboardToken}`);
+    }
+    if (Object.keys(updates).length > 0) {
+      await this.database.updateSettings(updates);
+    }
+
+    // Configure allowed origins from environment variable
+    const corsOrigins = process.env.CORS_ORIGINS;
+    if (corsOrigins) {
+      this.allowedOrigins = corsOrigins.split(',').map(o => o.trim());
+      console.log('CORS allowed origins:', this.allowedOrigins);
+    } else {
+      console.log('CORS: Using default (localhost:* only)');
     }
 
     return new Promise((resolve, reject) => {
       this.server = this.app.listen(this.port, '0.0.0.0', () => {
         console.log(`Server listening on port ${this.port}`);
+        console.log(`Dashboard WebSocket: ws://localhost:${this.port}/ws/dashboard?token=${this.dashboardToken}`);
         this.setupWebSocket();
         resolve();
       });
@@ -703,6 +876,7 @@ private setupWebSocket(): void {
 
   async stop(): Promise<void> {
     return new Promise((resolve) => {
+      this.rateLimiter.destroy();
       this.wss?.close();
       this.server?.close(() => {
         console.log('Server stopped');
@@ -719,26 +893,43 @@ private setupWebSocket(): void {
     return this.enrollmentToken;
   }
 
+  getDashboardToken(): string {
+    return this.dashboardToken;
+  }
+
   async regenerateEnrollmentToken(): Promise<string> {
     this.enrollmentToken = uuidv4();
     await this.database.updateSettings({ enrollmentToken: this.enrollmentToken });
     return this.enrollmentToken;
   }
 
+  async regenerateDashboardToken(): Promise<string> {
+    this.dashboardToken = uuidv4();
+    await this.database.updateSettings({ dashboardToken: this.dashboardToken });
+    console.log(`Regenerated dashboard token: ${this.dashboardToken}`);
+    return this.dashboardToken;
+  }
+
   getAgentInstallerCommand(platform: string): string {
     const localIp = this.getLocalIpAddress();
     const serverUrl = `http://${localIp}:${this.port}`;
 
+    // Note: The downloaded agent binary already has the server URL and enrollment token
+    // embedded in it, so we don't need to pass them as command-line arguments.
+    // This prevents token exposure in process lists and command history.
+
     switch (platform.toLowerCase()) {
       case 'windows':
-        // Download to temp directory to avoid permission issues and ensure clean execution
-        return `powershell -ExecutionPolicy Bypass -Command "& { $ErrorActionPreference='Stop'; $agentPath = Join-Path $env:TEMP 'sentinel-agent.exe'; Write-Host 'Downloading agent...'; Invoke-WebRequest -Uri '${serverUrl}/api/agent/download/windows' -OutFile $agentPath -UseBasicParsing; Write-Host 'Installing agent...'; Start-Process -FilePath $agentPath -ArgumentList '--install','--server=${serverUrl}','--token=${this.enrollmentToken}' -Verb RunAs -Wait }"`;
+        // Download agent with embedded config and install
+        return `powershell -ExecutionPolicy Bypass -Command "& { $ErrorActionPreference='Stop'; $agentPath = Join-Path $env:TEMP 'sentinel-agent.exe'; Write-Host 'Downloading agent...'; Invoke-WebRequest -Uri '${serverUrl}/api/agent/download/windows' -OutFile $agentPath -UseBasicParsing; Write-Host 'Installing agent...'; Start-Process -FilePath $agentPath -ArgumentList '--install' -Verb RunAs -Wait; Write-Host 'Agent installed successfully.' }"`;
 
       case 'macos':
-        return `curl -sL "${serverUrl}/api/agent/download/macos" -o sentinel-agent && chmod +x sentinel-agent && sudo ./sentinel-agent --server=${serverUrl} --token=${this.enrollmentToken}`;
+        // Download agent with embedded config and install
+        return `curl -sL "${serverUrl}/api/agent/download/macos" -o sentinel-agent && chmod +x sentinel-agent && sudo ./sentinel-agent --install`;
 
       case 'linux':
-        return `curl -sL "${serverUrl}/api/agent/download/linux" -o sentinel-agent && chmod +x sentinel-agent && sudo ./sentinel-agent --server=${serverUrl} --token=${this.enrollmentToken}`;
+        // Download agent with embedded config and install
+        return `curl -sL "${serverUrl}/api/agent/download/linux" -o sentinel-agent && chmod +x sentinel-agent && sudo ./sentinel-agent --install`;
 
       default:
         return 'Platform not supported';

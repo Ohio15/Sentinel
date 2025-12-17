@@ -1,0 +1,91 @@
+# Sentinel Agent Configuration Example
+# Copy this file to config.yaml and customize for your deployment
+
+# Server connection settings
+server:
+  # Server address (hostname:port or IP:port)
+  address: "localhost:8082"
+
+  # Enable TLS encryption (recommended for production)
+  tls:
+    enabled: true
+
+    # Path to CA certificate for server verification
+    # Leave empty to auto-detect from standard locations:
+    # - Windows: C:\ProgramData\Sentinel\certs\ca-cert.pem
+    # - Linux: /etc/sentinel/certs/ca-cert.pem
+    # - macOS: /usr/local/sentinel/certs/ca-cert.pem
+    ca_cert_path: ""
+
+    # Client certificate for mTLS (mutual TLS)
+    # Only required if server enforces client certificate verification
+    # client_cert_path: ""
+    # client_key_path: ""
+
+    # Skip certificate verification (INSECURE - only for testing!)
+    # insecure_skip_verify: false
+
+    # Server name for certificate verification
+    # Override if server certificate uses different hostname
+    # server_name: "sentinel.example.com"
+
+# Agent identification
+agent:
+  # Agent ID (auto-generated if not specified)
+  # id: ""
+
+  # Agent name/label for dashboard display
+  # name: ""
+
+  # Enrollment token (required for first-time registration)
+  # Can be embedded in binary or provided here
+  enrollment_token: ""
+
+# Metrics collection
+metrics:
+  # Collection interval in seconds
+  interval: 30
+
+  # Enable detailed metrics
+  detailed: false
+
+# Logging configuration
+logging:
+  # Log level: debug, info, warn, error
+  level: "info"
+
+  # Log output: stdout, file, or both
+  output: "stdout"
+
+  # Log file path (if output includes 'file')
+  # file_path: "/var/log/sentinel-agent.log"
+
+  # Maximum log file size in MB
+  # max_size_mb: 100
+
+  # Maximum number of log files to retain
+  # max_backups: 3
+
+# Advanced settings
+advanced:
+  # Reconnection settings
+  reconnect:
+    # Initial retry delay in seconds
+    initial_delay: 1
+
+    # Maximum retry delay in seconds
+    max_delay: 30
+
+    # Backoff multiplier
+    multiplier: 2
+
+  # Keepalive settings (gRPC)
+  keepalive:
+    # Time between keepalive pings in seconds
+    time: 10
+
+    # Keepalive timeout in seconds
+    timeout: 3
+
+    # Send keepalive pings even without active streams
+    permit_without_stream: true

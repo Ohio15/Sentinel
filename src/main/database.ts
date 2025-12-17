@@ -19,12 +19,22 @@ export class Database {
 
   constructor(config?: Partial<DatabaseConfig>) {
     // Default configuration - can be overridden by environment variables or passed config
+    const password = process.env.DB_PASSWORD || config?.password;
+
+    if (!password) {
+      throw new Error(
+        'Database password is required. Please set DB_PASSWORD environment variable.\n' +
+        'For production: Set a strong password in your environment configuration.\n' +
+        'For development: Create a .env file with DB_PASSWORD=your_secure_password'
+      );
+    }
+
     this.config = {
       host: process.env.DB_HOST || config?.host || 'localhost',
       port: parseInt(process.env.DB_PORT || '') || config?.port || 5432,
       database: process.env.DB_NAME || config?.database || 'sentinel',
       user: process.env.DB_USER || config?.user || 'sentinel',
-      password: process.env.DB_PASSWORD || config?.password || 'sentinel_dev_password_32chars!!',
+      password: password,
       ssl: process.env.DB_SSL === 'true' || config?.ssl || false,
       max: parseInt(process.env.DB_POOL_MAX || '') || config?.max || 20,
     };
@@ -43,7 +53,21 @@ export class Database {
     };
 
     if (this.config.ssl) {
-      poolConfig.ssl = { rejectUnauthorized: false };
+      const sslConfig: any = { rejectUnauthorized: true };
+
+      // Load CA certificate if provided
+      const caCertPath = process.env.DB_CA_CERT;
+      if (caCertPath) {
+        try {
+          sslConfig.ca = fs.readFileSync(caCertPath, 'utf-8');
+          console.log('SSL CA certificate loaded from:', caCertPath);
+        } catch (error) {
+          console.error('Failed to load CA certificate:', error);
+          throw new Error(`Failed to load CA certificate from ${caCertPath}: ${error}`);
+        }
+      }
+
+      poolConfig.ssl = sslConfig;
     }
 
     this.pool = new Pool(poolConfig);

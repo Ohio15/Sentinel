@@ -2,13 +2,18 @@ package grpc
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	pb "github.com/sentinel/agent/internal/grpc/dataplane"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 )
@@ -22,6 +27,8 @@ type DataPlaneClient struct {
 	connected     bool
 	mu            sync.RWMutex
 	stopCh        chan struct{}
+	useTLS        bool
+	caCertPath    string
 
 	// Metrics streaming
 	metricsStream pb.DataPlaneService_StreamMetricsClient
@@ -30,11 +37,52 @@ type DataPlaneClient struct {
 
 // NewDataPlaneClient creates a new Data Plane gRPC client
 func NewDataPlaneClient(agentID, serverAddress string) *DataPlaneClient {
+	return NewDataPlaneClientWithTLS(agentID, serverAddress, true, "")
+}
+
+// NewDataPlaneClientWithTLS creates a new Data Plane gRPC client with TLS configuration
+func NewDataPlaneClientWithTLS(agentID, serverAddress string, useTLS bool, caCertPath string) *DataPlaneClient {
+	// If no CA cert path provided, try to find it in default locations
+	if useTLS && caCertPath == "" {
+		caCertPath = findCACertificate()
+	}
+
 	return &DataPlaneClient{
 		agentID:       agentID,
 		serverAddress: serverAddress,
 		stopCh:        make(chan struct{}),
+		useTLS:        useTLS,
+		caCertPath:    caCertPath,
 	}
+}
+
+// findCACertificate looks for CA certificate in common locations
+func findCACertificate() string {
+	// Get executable directory
+	execPath, err := os.Executable()
+	if err != nil {
+		log.Printf("[gRPC] Failed to get executable path: %v", err)
+		return ""
+	}
+	execDir := filepath.Dir(execPath)
+
+	// Try different possible locations
+	possiblePaths := []string{
+		filepath.Join(execDir, "ca-cert.pem"),
+		filepath.Join(execDir, "certs", "ca-cert.pem"),
+		"/etc/sentinel/certs/ca-cert.pem",           // Linux
+		"C:\\ProgramData\\Sentinel\\certs\\ca-cert.pem", // Windows
+	}
+
+	for _, path := range possiblePaths {
+		if _, err := os.Stat(path); err == nil {
+			log.Printf("[gRPC] Found CA certificate at: %s", path)
+			return path
+		}
+	}
+
+	log.Printf("[gRPC] CA certificate not found in standard locations")
+	return ""
 }
 
 // Connect establishes a connection to the gRPC server
@@ -58,11 +106,17 @@ func (c *DataPlaneClient) Connect() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	// Create transport credentials
+	creds, err := c.createTransportCredentials()
+	if err != nil {
+		return fmt.Errorf("failed to create credentials: %w", err)
+	}
+
 	// Dial with options
 	conn, err := grpc.DialContext(
 		ctx,
 		c.serverAddress,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(creds),
 		grpc.WithKeepaliveParams(kacp),
 		grpc.WithBlock(),
 	)
@@ -73,9 +127,59 @@ func (c *DataPlaneClient) Connect() error {
 	c.conn = conn
 	c.client = pb.NewDataPlaneServiceClient(conn)
 	c.connected = true
-	log.Printf("[gRPC] Connected to Data Plane at %s", c.serverAddress)
+
+	securityMode := "insecure"
+	if c.useTLS {
+		securityMode = "TLS"
+	}
+	log.Printf("[gRPC] Connected to Data Plane at %s (%s)", c.serverAddress, securityMode)
 
 	return nil
+}
+
+// createTransportCredentials creates the appropriate transport credentials
+func (c *DataPlaneClient) createTransportCredentials() (credentials.TransportCredentials, error) {
+	if !c.useTLS {
+		log.Printf("[gRPC] WARNING: Using insecure connection (no TLS)")
+		return insecure.NewCredentials(), nil
+	}
+
+	// Load CA certificate
+	if c.caCertPath == "" {
+		log.Printf("[gRPC] WARNING: No CA certificate found, using insecure connection")
+		return insecure.NewCredentials(), nil
+	}
+
+	// Read CA certificate
+	caCert, err := os.ReadFile(c.caCertPath)
+	if err != nil {
+		log.Printf("[gRPC] ERROR: Failed to read CA certificate from %s: %v", c.caCertPath, err)
+		log.Printf("[gRPC] Falling back to insecure connection")
+		return insecure.NewCredentials(), nil
+	}
+
+	// Create certificate pool
+	certPool := x509.NewCertPool()
+	if !certPool.AppendCertsFromPEM(caCert) {
+		log.Printf("[gRPC] ERROR: Failed to parse CA certificate")
+		log.Printf("[gRPC] Falling back to insecure connection")
+		return insecure.NewCredentials(), nil
+	}
+
+	// Create TLS config
+	tlsConfig := &tls.Config{
+		RootCAs:    certPool,
+		MinVersion: tls.VersionTLS12,
+		// For self-signed certificates in development, you might need to skip verification
+		// In production, remove this line and use proper certificates
+		// InsecureSkipVerify: false,
+	}
+
+	// Create and return credentials
+	creds := credentials.NewTLS(tlsConfig)
+	log.Printf("[gRPC] TLS enabled with CA certificate: %s", c.caCertPath)
+
+	return creds, nil
 }
 
 // Disconnect closes the gRPC connection
