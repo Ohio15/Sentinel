@@ -1,9 +1,10 @@
 # Sentinel Agent Build Script for Windows
-# Usage: .\build.ps1 [-Platform <windows|linux|macos|all>] [-Arch <amd64|386|arm64>]
+# Usage: .\build.ps1 [-Platform <windows|linux|macos|all>] [-Arch <amd64|386|arm64>] [-BuildMsi]
 
 param(
     [string]$Platform = "windows",
-    [string]$Arch = "amd64"
+    [string]$Arch = "amd64",
+    [switch]$BuildMsi
 )
 
 $ErrorActionPreference = "Stop"
@@ -83,6 +84,103 @@ function Build-Agent {
     }
 }
 
+# MSI Build function
+function Build-Msi {
+    Write-Host "`nBuilding MSI installer..." -ForegroundColor Cyan
+
+    # Check for WiX toolset
+    $WixPath = $null
+    $PossibleWixPaths = @(
+        "${env:ProgramFiles(x86)}\WiX Toolset v3.11\bin",
+        "${env:ProgramFiles(x86)}\WiX Toolset v3.14\bin",
+        "${env:ProgramFiles}\WiX Toolset v3.11\bin",
+        "${env:ProgramFiles}\WiX Toolset v3.14\bin",
+        "$env:USERPROFILE\.dotnet\tools"
+    )
+
+    foreach ($path in $PossibleWixPaths) {
+        if (Test-Path "$path\candle.exe") {
+            $WixPath = $path
+            break
+        }
+    }
+
+    # Check for WiX via dotnet tool
+    $DotnetWix = Get-Command wix -ErrorAction SilentlyContinue
+    if ($DotnetWix) {
+        Write-Host "  Found WiX via dotnet tool" -ForegroundColor Gray
+        $UseDotnetWix = $true
+    } elseif ($WixPath) {
+        Write-Host "  Found WiX at: $WixPath" -ForegroundColor Gray
+        $UseDotnetWix = $false
+    } else {
+        Write-Host "  WiX Toolset not found. Skipping MSI build." -ForegroundColor Yellow
+        Write-Host "  Install WiX: winget install WiX.WiX3 OR dotnet tool install --global wix" -ForegroundColor Yellow
+        return
+    }
+
+    $InstallerDir = Join-Path $PSScriptRoot "installer"
+    $WxsFile = Join-Path $InstallerDir "sentinel-agent.wxs"
+    $SourceDir = Resolve-Path $OutputDir
+    $MsiOutput = Join-Path $OutputDir "sentinel-agent.msi"
+
+    if (-not (Test-Path $WxsFile)) {
+        Write-Host "  WXS file not found at: $WxsFile" -ForegroundColor Red
+        return
+    }
+
+    # Check that Windows binary exists
+    $WindowsBinary = Join-Path $SourceDir "sentinel-agent.exe"
+    if (-not (Test-Path $WindowsBinary)) {
+        Write-Host "  Windows binary not found. Build Windows first." -ForegroundColor Red
+        return
+    }
+
+    # Create temp directory for build
+    $TempDir = Join-Path $env:TEMP "sentinel-msi-build"
+    if (Test-Path $TempDir) {
+        Remove-Item $TempDir -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $TempDir | Out-Null
+
+    try {
+        if ($UseDotnetWix) {
+            # Use dotnet wix tool (WiX v4+)
+            Write-Host "  Compiling with WiX v4..." -ForegroundColor Yellow
+            wix build $WxsFile -d SourceDir="$SourceDir" -o $MsiOutput
+        } else {
+            # Use WiX v3 toolset
+            $Candle = Join-Path $WixPath "candle.exe"
+            $Light = Join-Path $WixPath "light.exe"
+            $WixobjFile = Join-Path $TempDir "sentinel-agent.wixobj"
+
+            Write-Host "  Compiling WXS..." -ForegroundColor Yellow
+            & $Candle $WxsFile -dSourceDir="$SourceDir" -out $WixobjFile -arch x64
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "  Candle failed!" -ForegroundColor Red
+                return
+            }
+
+            Write-Host "  Linking MSI..." -ForegroundColor Yellow
+            & $Light $WixobjFile -out $MsiOutput -sice:ICE61
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "  Light failed!" -ForegroundColor Red
+                return
+            }
+        }
+
+        if (Test-Path $MsiOutput) {
+            $size = (Get-Item $MsiOutput).Length / 1MB
+            Write-Host "  Built: $MsiOutput ($([math]::Round($size, 2)) MB)" -ForegroundColor Green
+        }
+    } finally {
+        # Clean up temp directory
+        if (Test-Path $TempDir) {
+            Remove-Item $TempDir -Recurse -Force
+        }
+    }
+}
+
 # Download dependencies
 Write-Host "Downloading dependencies..." -ForegroundColor Yellow
 go mod download
@@ -92,6 +190,9 @@ go mod tidy
 switch ($Platform.ToLower()) {
     "windows" {
         Build-Agent -OS "windows" -Architecture $Arch -OutputName "$BinaryName.exe"
+        if ($BuildMsi) {
+            Build-Msi
+        }
     }
     "linux" {
         Build-Agent -OS "linux" -Architecture $Arch -OutputName "$BinaryName-linux"
@@ -112,6 +213,11 @@ switch ($Platform.ToLower()) {
         # macOS
         Build-Agent -OS "darwin" -Architecture "amd64" -OutputName "$BinaryName-macos"
         Build-Agent -OS "darwin" -Architecture "arm64" -OutputName "$BinaryName-macos-arm64"
+
+        # Build MSI if requested
+        if ($BuildMsi) {
+            Build-Msi
+        }
     }
     default {
         Write-Host "Unknown platform: $Platform" -ForegroundColor Red

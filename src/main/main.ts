@@ -658,6 +658,123 @@ function setupIpcHandlers(): void {
       };
     }
   });
+
+  // MSI download with save dialog
+  ipcMain.handle('agent:downloadMsi', async () => {
+    const agentDir = app.isPackaged
+      ? path.join(process.resourcesPath, 'agent')
+      : path.join(__dirname, '..', '..', 'release', 'agent');
+
+    const sourcePath = path.join(agentDir, 'sentinel-agent.msi');
+    console.log('MSI download - sourcePath:', sourcePath);
+
+    // Check if MSI file exists
+    if (!fs.existsSync(sourcePath)) {
+      return {
+        success: false,
+        error: `MSI installer not found. Build with: cd agent && .\\build.ps1 -Platform windows -BuildMsi`,
+      };
+    }
+
+    // Show save dialog
+    const result = await dialog.showSaveDialog(mainWindow!, {
+      title: 'Save Agent MSI Installer',
+      defaultPath: 'sentinel-agent.msi',
+      filters: [{ name: 'Windows Installer', extensions: ['msi'] }],
+    });
+
+    if (result.canceled || !result.filePath) {
+      return { success: false, canceled: true };
+    }
+
+    try {
+      // Read MSI file
+      let msiData = fs.readFileSync(sourcePath);
+
+      // Get server info for embedding in the MSI
+      // For MSI, we'll create a transform file or embed via property table
+      // For now, we copy and provide install command with parameters
+      const localIp = getLocalIpAddress();
+      const serverPort = server.getPort();
+      const serverUrl = `http://${localIp}:${serverPort}`;
+      const enrollmentToken = server.getEnrollmentToken();
+
+      // Write the MSI file
+      await fs.promises.writeFile(result.filePath, msiData);
+
+      return {
+        success: true,
+        filePath: result.filePath,
+        size: msiData.length,
+        installCommand: `msiexec /i "${result.filePath}" SERVERURL="${serverUrl}" ENROLLMENTTOKEN="${enrollmentToken}" /qn`,
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: `Failed to save MSI: ${error.message}`,
+      };
+    }
+  });
+
+  // Get MSI install command
+  ipcMain.handle('agent:getMsiCommand', async () => {
+    const localIp = getLocalIpAddress();
+    const serverPort = server.getPort();
+    const serverUrl = `http://${localIp}:${serverPort}`;
+    const enrollmentToken = server.getEnrollmentToken();
+
+    return {
+      serverUrl,
+      enrollmentToken,
+      command: `msiexec /i "sentinel-agent.msi" SERVERURL="${serverUrl}" ENROLLMENTTOKEN="${enrollmentToken}" /qn`,
+    };
+  });
+
+  // Execute PowerShell install script with UAC elevation
+  ipcMain.handle('agent:runPowerShellInstall', async () => {
+    const localIp = getLocalIpAddress();
+    const serverPort = server.getPort();
+    const serverUrl = `http://${localIp}:${serverPort}`;
+    const enrollmentToken = server.getEnrollmentToken();
+
+    // PowerShell script that downloads and installs the agent
+    const psScript = `
+$ErrorActionPreference = 'Stop'
+$agentPath = Join-Path $env:TEMP 'sentinel-agent.exe'
+Write-Host 'Downloading Sentinel Agent...' -ForegroundColor Cyan
+Invoke-WebRequest -Uri '${serverUrl}/api/agent/download/windows' -OutFile $agentPath -UseBasicParsing
+Write-Host 'Installing agent...' -ForegroundColor Green
+Start-Process -FilePath $agentPath -ArgumentList '--install','--server=${serverUrl}','--token=${enrollmentToken}' -Wait
+Write-Host 'Installation complete!' -ForegroundColor Green
+Read-Host 'Press Enter to close'
+`;
+
+    // Create a temp script file
+    const tempScriptPath = path.join(app.getPath('temp'), 'sentinel-install.ps1');
+    fs.writeFileSync(tempScriptPath, psScript, 'utf8');
+
+    try {
+      // Launch PowerShell with UAC elevation
+      const { spawn } = require('child_process');
+      spawn('powershell.exe', [
+        '-ExecutionPolicy', 'Bypass',
+        '-Command',
+        `Start-Process powershell -Verb RunAs -ArgumentList '-ExecutionPolicy','Bypass','-NoExit','-File','${tempScriptPath.replace(/\\/g, '\\\\')}'`
+      ], {
+        detached: true,
+        stdio: 'ignore',
+        shell: true,
+      }).unref();
+
+      return { success: true };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: `Failed to launch PowerShell: ${error.message}`,
+      };
+    }
+  });
+
   // Auto-updater IPC handlers
   ipcMain.handle('check-for-updates', async () => {
     try {
