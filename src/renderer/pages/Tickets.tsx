@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { useTicketStore, Ticket, TicketFilters } from '../stores/ticketStore';
 import { useDeviceStore, Device } from '../stores/deviceStore';
 
@@ -223,7 +223,7 @@ export function Tickets({ onTicketSelect }: TicketsProps) {
                   <td>
                     <div>
                       <div className="font-medium text-text-primary">
-                        #{ticket.ticketNumber} - {ticket.subject}
+                        {ticket.subject}
                       </div>
                       {ticket.description && (
                         <div className="text-sm text-text-secondary truncate max-w-md">
