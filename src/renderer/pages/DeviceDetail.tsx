@@ -566,39 +566,6 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
               </div>
             </CollapsibleSection>
 
-                        {/* Storage Info - Windows This PC Style */}
-            {selectedDevice.storage && selectedDevice.storage.length > 0 && (
-              <CollapsibleSection title="Devices and drives">
-                <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-                  {selectedDevice.storage.map((drive, idx) => {
-                    const usagePercent = drive.percent || 0;
-                    const isNearFull = usagePercent > 90;
-                    const driveLetter = drive.mountpoint?.match(/([A-Z]:)/)?.[1] || drive.mountpoint || drive.device;
-                    const driveName = driveLetter === 'C:' ? 'Local Disk' : driveLetter === 'D:' ? 'Data' : 'Volume';
-                    return (
-                      <div key={idx} className="p-4 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-700 cursor-pointer transition-colors">
-                        <div className="flex items-start gap-3">
-                          <div className="flex-shrink-0">
-                            <svg className="w-12 h-12 text-blue-500" viewBox="0 0 24 24" fill="currentColor">
-                              <path d="M4 4h16v16H4V4zm2 2v12h12V6H6zm2 2h8v2H8V8zm0 4h8v2H8v-2z" />
-                            </svg>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="font-medium text-text-primary truncate">{driveName} ({driveLetter})</div>
-                            <div className="w-full bg-gray-200 dark:bg-slate-600 h-4 mt-2 rounded-sm overflow-hidden">
-                              <div className={`h-full transition-all ${isNearFull ? 'bg-red-500' : 'bg-blue-500'}`} style={{ width: `${usagePercent}%` }} />
-                            </div>
-                            <div className="text-xs text-text-secondary mt-1">{formatBytes(drive.free)} free of {formatBytes(drive.total)}</div>
-                            <div className="text-xs text-text-secondary">{drive.fstype || 'NTFS'}</div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </CollapsibleSection>
-            )}
-
             {/* Agent Info */}
             <CollapsibleSection title="Agent information">
               <div className="space-y-1">
