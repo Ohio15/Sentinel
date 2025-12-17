@@ -255,7 +255,7 @@ export class AgentManager {
         architecture: message.data?.architecture || '',
       });
       // Notify renderer that a new device was created
-      this.notifyRenderer('devices:changed', {});
+      this.notifyRenderer('devices:updated', {});
     }
 
     if (device) {
