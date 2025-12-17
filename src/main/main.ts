@@ -312,6 +312,11 @@ function setupUpdaterHandlers(): void {
     // Use isSilent=true to prevent installer UI from blocking, isForceRunAfter=true to restart app
     autoUpdater.quitAndInstall(true, true);
   });
+
+  // App version - doesn't need DB so register early
+  ipcMain.handle('get-app-version', () => {
+    return app.getVersion();
+  });
 }
 
 function setupIpcHandlers(): void {
@@ -893,12 +898,6 @@ Read-Host 'Press Enter to close'
         error: `Failed to launch PowerShell: ${error.message}`,
       };
     }
-  });
-
-
-
-  ipcMain.handle('get-app-version', () => {
-    return app.getVersion();
   });
 }
 
