@@ -2,14 +2,17 @@
 
 export interface CertificateInfo {
   name: string;
-  subject: string;
-  issuer: string;
-  validFrom: string;
-  validTo: string;
-  serialNumber: string;
-  fingerprint: string;
+  type: 'ca' | 'server';
   path: string;
-  daysUntilExpiry: number;
+  exists: boolean;
+  subject?: string;
+  issuer?: string;
+  validFrom?: string;
+  validTo?: string;
+  fingerprint?: string;
+  serialNumber?: string;
+  daysUntilExpiry?: number;
+  status: 'valid' | 'expiring_soon' | 'expired' | 'missing';
 }
 
 export interface AgentCertStatus {
@@ -48,11 +51,13 @@ export const useCertificateStore = create<CertificateState>((set, get) => ({
   fetchCertificates: async () => {
     set({ loading: true, error: null });
     try {
-      const certificates = await window.api.certs.list();
-      const current = await window.api.certs.getCurrent();
+      const result = await window.api.certs.list();
+      // listCertificates returns { certificates, certsDir, caCertHash }
+      const certificates = result?.certificates || [];
+      const caCertHash = result?.caCertHash || null;
       set({
         certificates,
-        currentCertHash: current?.hash || null,
+        currentCertHash: caCertHash,
         loading: false,
       });
     } catch (error: any) {
