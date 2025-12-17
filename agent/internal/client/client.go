@@ -80,19 +80,20 @@ type MessageHandler func(msg *Message) error
 
 // Client manages the WebSocket connection to the server
 type Client struct {
-	config          *config.Config
-	conn            *websocket.Conn
-	handlers        map[string]MessageHandler
-	authenticated   bool
-	connected       bool
-	reconnectDelay  time.Duration
-	maxReconnect    time.Duration
-	mu              sync.RWMutex
-	done            chan struct{}
-	sendQueue       chan []byte
-	onConnect       func()
-	onDisconnect    func()
-	version         string
+	config            *config.Config
+	conn              *websocket.Conn
+	handlers          map[string]MessageHandler
+	authenticated     bool
+	connected         bool
+	reconnectDelay    time.Duration
+	maxReconnect      time.Duration
+	mu                sync.RWMutex
+	done              chan struct{}
+	sendQueue         chan []byte
+	onConnect         func()
+	onDisconnect      func()
+	onNeedsEnrollment func()
+	version           string
 	lastPong        time.Time
 	pingInterval    time.Duration
 	pongTimeout     time.Duration
@@ -127,6 +128,11 @@ func (c *Client) OnConnect(fn func()) {
 // OnDisconnect sets the callback for disconnection
 func (c *Client) OnDisconnect(fn func()) {
 	c.onDisconnect = fn
+}
+
+// OnNeedsEnrollment sets the callback for when server indicates device not found
+func (c *Client) OnNeedsEnrollment(fn func()) {
+	c.onNeedsEnrollment = fn
 }
 
 // RegisterHandler registers a message handler for a specific message type
@@ -511,8 +517,9 @@ func (c *Client) readLoop(ctx context.Context) {
 		if msg.Type == MsgTypeAuthResponse {
 			// Server sends success/error inside Payload field
 			var authResp struct {
-				Success bool   `json:"success"`
-				Error   string `json:"error"`
+				Success         bool   `json:"success"`
+				Error           string `json:"error"`
+				NeedsEnrollment bool   `json:"needsEnrollment"`
 			}
 			// Try to parse Payload if present
 			if msg.Payload != nil {
@@ -533,6 +540,17 @@ func (c *Client) readLoop(ctx context.Context) {
 				c.authenticated = true
 				c.mu.Unlock()
 				log.Println("Authentication successful")
+
+				// Check if server says we need to re-enroll
+				if authResp.NeedsEnrollment {
+					log.Println("Server indicates device not found - triggering re-enrollment")
+					c.mu.RLock()
+					cb := c.onNeedsEnrollment
+					c.mu.RUnlock()
+					if cb != nil {
+						go cb()
+					}
+				}
 			} else {
 				log.Printf("Authentication failed: %s", authResp.Error)
 			}

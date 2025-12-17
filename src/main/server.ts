@@ -660,8 +660,26 @@ private setupWebSocket(): void {
               // Register agent connection
               if (agentId) {
                 await this.agentManager.registerConnection(agentId, ws);
-                await this.database.updateDeviceLastSeen(agentId);
-                console.log(`Agent ${agentId} authenticated and registered`);
+
+                // Check if device exists, if not tell agent to re-enroll
+                const existingDevice = await this.database.getDeviceByAgentId(agentId);
+                if (existingDevice) {
+                  await this.database.updateDeviceLastSeen(agentId);
+                  console.log(`Agent ${agentId} authenticated and registered`);
+                } else {
+                  console.log(`Agent ${agentId} connected but device not found - requesting re-enrollment`);
+                }
+
+                ws.send(JSON.stringify({
+                  type: 'auth_response',
+                  success: true,
+                  payload: {
+                    success: true,
+                    needsEnrollment: !existingDevice
+                  },
+                  timestamp: new Date().toISOString(),
+                }));
+                return;
               }
 
               ws.send(JSON.stringify({
