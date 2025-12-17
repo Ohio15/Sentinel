@@ -1,0 +1,88 @@
+# GolangCI-Lint configuration
+# Run: golangci-lint run ./...
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    # Default linters
+    - errcheck      # Check for unchecked errors
+    - gosimple      # Simplify code
+    - govet         # Report suspicious constructs
+    - ineffassign   # Detect unused assignments
+    - staticcheck   # Static analysis
+    - unused        # Find unused code
+
+    # Additional linters
+    - gocritic      # Opinionated linter
+    - gofmt         # Check formatting
+    - goimports     # Check imports
+    - misspell      # Find misspellings
+    - prealloc      # Find slice preallocation opportunities
+    - unconvert     # Remove unnecessary conversions
+    - unparam       # Find unused parameters
+    - nakedret      # Find naked returns
+    - nilerr        # Find nil error returns
+    - bodyclose     # Check HTTP body close
+    - exportloopref # Check loop variable capture
+
+linters-settings:
+  govet:
+    # Check for potential lock issues
+    enable:
+      - assign
+      - atomic
+      - bools
+      - copylocks
+      - loopclosure
+      - lostcancel
+      - nilfunc
+      - printf
+      - shift
+      - unreachable
+      - unusedresult
+
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - performance
+      - style
+    disabled-checks:
+      - commentFormatting  # Too strict for comments
+      - hugeParam          # Sometimes unavoidable
+
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+
+  staticcheck:
+    checks:
+      - all
+      - -SA1019  # Allow deprecated (we'll handle separately)
+
+issues:
+  exclude-rules:
+    # Ignore long lines in generated files
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gocritic
+
+    # Allow fmt.Println in main
+    - path: cmd/
+      text: "use of `fmt.Println`"
+
+  max-issues-per-linter: 50
+  max-same-issues: 10
+
+severity:
+  default-severity: warning
+  rules:
+    - linters:
+        - errcheck
+      severity: error
+    - linters:
+        - govet
+      severity: error
