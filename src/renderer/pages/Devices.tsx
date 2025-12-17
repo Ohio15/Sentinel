@@ -454,32 +454,6 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
             </div>
           </div>
 
-          {/* Installation Commands */}
-          <div className="card p-6">
-            <h2 className="text-lg font-semibold text-text-primary mb-4">Installation Commands</h2>
-            <p className="text-sm text-text-secondary mb-4">
-              After downloading, run the appropriate command on the target machine to install the agent.
-            </p>
-
-            <div className="space-y-6">
-              <InstallCommand
-                platform="Windows"
-                icon={<WindowsIcon className="w-5 h-5 text-blue-500" />}
-                onCopy={copyToClipboard}
-              />
-              <InstallCommand
-                platform="macOS"
-                icon={<AppleIcon className="w-5 h-5 text-gray-600" />}
-                onCopy={copyToClipboard}
-              />
-              <InstallCommand
-                platform="Linux"
-                icon={<LinuxIcon className="w-5 h-5 text-orange-500" />}
-                onCopy={copyToClipboard}
-              />
-            </div>
-          </div>
-
           {/* Enterprise Deployment - MSI */}
           <div className="card p-6">
             <h2 className="text-lg font-semibold text-text-primary mb-4">Enterprise Deployment (MSI)</h2>
@@ -613,54 +587,6 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function InstallCommand({
-  platform,
-  icon,
-  onCopy,
-}: {
-  platform: string;
-  icon: React.ReactNode;
-  onCopy: (text: string) => void;
-}) {
-  const [command, setCommand] = useState<string>('');
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    loadCommand();
-  }, []);
-
-  const loadCommand = async () => {
-    try {
-      const cmd = await window.api.server.getAgentInstallerCommand(platform.toLowerCase());
-      setCommand(cmd);
-    } catch (error) {
-      setCommand('Failed to generate command');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div>
-      <div className="flex items-center gap-2 mb-2">
-        {icon}
-        <span className="font-medium text-text-primary">{platform}</span>
-      </div>
-      <div className="relative">
-        <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg text-sm overflow-x-auto font-mono">
-          {loading ? 'Loading...' : command}
-        </pre>
-        <button
-          onClick={() => onCopy(command)}
-          className="absolute top-2 right-2 btn btn-secondary text-xs py-1"
-        >
-          Copy
-        </button>
-      </div>
     </div>
   );
 }
