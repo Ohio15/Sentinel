@@ -1,4 +1,4 @@
-package config
+﻿package config
 
 import (
 	"encoding/json"
@@ -143,9 +143,9 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("failed to parse config file: %w", err)
 		}
 
-		// Save encrypted version immediately
+		// Save encrypted version immediately (use unlocked since we hold the lock)
 		instance = cfg
-		if err := cfg.Save(); err != nil {
+		if err := cfg.saveUnlocked(); err != nil {
 			log.Printf("[CONFIG] Warning: Failed to save encrypted config during migration: %v", err)
 		} else {
 			log.Println("[CONFIG] Successfully migrated config to encrypted format")
@@ -166,7 +166,11 @@ func Load() (*Config, error) {
 func (c *Config) Save() error {
 	mu.Lock()
 	defer mu.Unlock()
+	return c.saveUnlocked()
+}
 
+// saveUnlocked is the internal save implementation (caller must hold lock)
+func (c *Config) saveUnlocked() error {
 	configPath := GetConfigPath()
 
 	// Ensure directory exists
