@@ -1,39 +1,44 @@
--- Fix os_types column type from TEXT[] to JSONB
--- This handles databases created with older schema
+-- Fix os_types column type - ensure it's JSONB
+-- This migration safely handles both TEXT[] and JSONB columns
 
--- Drop and recreate the column to ensure correct type
--- First check if it's not already JSONB
 DO $$
-DECLARE
-    col_type text;
 BEGIN
-    -- Get the actual column type
-    SELECT udt_name INTO col_type
-    FROM information_schema.columns
-    WHERE table_name = 'scripts' AND column_name = 'os_types';
+    -- Try to drop the temp column if it exists from a failed migration
+    BEGIN
+        ALTER TABLE scripts DROP COLUMN IF EXISTS os_types_new;
+    EXCEPTION WHEN OTHERS THEN
+        -- Ignore errors
+    END;
 
-    RAISE NOTICE 'Current os_types type: %', col_type;
+    -- Check if scripts table exists
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'scripts') THEN
+        -- Check if os_types column exists and its type
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'scripts' AND column_name = 'os_types' AND udt_name = '_text'
+        ) THEN
+            RAISE NOTICE 'Converting os_types from TEXT[] to JSONB...';
 
-    -- If it's _text (TEXT[]), convert it
-    IF col_type = '_text' THEN
-        -- Add temp column
-        ALTER TABLE scripts ADD COLUMN os_types_new JSONB DEFAULT '[]'::jsonb;
+            -- Create new JSONB column
+            ALTER TABLE scripts ADD COLUMN os_types_new JSONB DEFAULT '[]'::jsonb;
 
-        -- Copy data converting TEXT[] to JSONB
-        UPDATE scripts SET os_types_new = COALESCE(to_jsonb(os_types), '[]'::jsonb);
+            -- Copy and convert data
+            UPDATE scripts SET os_types_new = COALESCE(to_jsonb(os_types), '[]'::jsonb);
 
-        -- Drop old column
-        ALTER TABLE scripts DROP COLUMN os_types;
+            -- Drop old column and rename new
+            ALTER TABLE scripts DROP COLUMN os_types;
+            ALTER TABLE scripts RENAME COLUMN os_types_new TO os_types;
 
-        -- Rename new column
-        ALTER TABLE scripts RENAME COLUMN os_types_new TO os_types;
-
-        RAISE NOTICE 'Converted os_types from TEXT[] to JSONB';
-    ELSIF col_type IS NULL THEN
-        -- Column doesn't exist, add it
-        ALTER TABLE scripts ADD COLUMN os_types JSONB DEFAULT '[]'::jsonb;
-        RAISE NOTICE 'Added os_types column as JSONB';
-    ELSE
-        RAISE NOTICE 'os_types column is already correct type: %', col_type;
+            RAISE NOTICE 'Successfully converted os_types to JSONB';
+        ELSIF NOT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'scripts' AND column_name = 'os_types'
+        ) THEN
+            -- Column doesn't exist, add it
+            ALTER TABLE scripts ADD COLUMN os_types JSONB DEFAULT '[]'::jsonb;
+            RAISE NOTICE 'Added os_types column as JSONB';
+        ELSE
+            RAISE NOTICE 'os_types column already exists with correct type';
+        END IF;
     END IF;
 END $$;
