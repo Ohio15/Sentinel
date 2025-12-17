@@ -1,7 +1,8 @@
-import { app, BrowserWindow, ipcMain, shell, dialog, Menu } from 'electron';
+﻿import { app, BrowserWindow, ipcMain, shell, dialog, Menu } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as dotenv from 'dotenv';
 import { Database } from './database';
 import { Server } from './server';
 import { AgentManager } from './agents';
@@ -20,6 +21,20 @@ if (!fs.existsSync(customUserData)) {
   fs.mkdirSync(customUserData, { recursive: true });
 }
 app.setPath('userData', customUserData);
+
+// Load environment variables from .env file in userData directory
+const envPath = path.join(customUserData, '.env');
+if (fs.existsSync(envPath)) {
+  dotenv.config({ path: envPath });
+  console.log('Loaded environment from:', envPath);
+} else {
+  // Also try project root for development
+  const devEnvPath = path.join(__dirname, '../../.env');
+  if (fs.existsSync(devEnvPath)) {
+    dotenv.config({ path: devEnvPath });
+    console.log('Loaded environment from:', devEnvPath);
+  }
+}
 
 // Helper function to embed configuration into agent binary
 function embedConfigInBinary(binaryData: Buffer, serverUrl: string, token: string): Buffer {
