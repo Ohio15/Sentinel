@@ -70,8 +70,31 @@ function formatDate(dateString: string): string {
 }
 
 function CertificateCard({ cert }: { cert: CertificateInfo }) {
-  const statusColor = getExpiryStatusColor(cert.daysUntilExpiry);
-  const badgeClass = getExpiryBadgeClass(cert.daysUntilExpiry);
+  const daysLeft = cert.daysUntilExpiry ?? 0;
+  const statusColor = getExpiryStatusColor(daysLeft);
+  const badgeClass = getExpiryBadgeClass(daysLeft);
+
+  // Handle missing certificate
+  if (!cert.exists) {
+    return (
+      <div className="card p-6 opacity-60">
+        <div className="flex items-start justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-500">
+              <ShieldIcon className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-text-primary">{cert.name}</h3>
+              <p className="text-sm text-text-secondary">Not generated</p>
+            </div>
+          </div>
+          <span className="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-400">
+            Missing
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="card p-6">
@@ -82,36 +105,36 @@ function CertificateCard({ cert }: { cert: CertificateInfo }) {
           </div>
           <div>
             <h3 className="font-semibold text-text-primary">{cert.name}</h3>
-            <p className="text-sm text-text-secondary">{cert.subject}</p>
+            <p className="text-sm text-text-secondary">{cert.subject || 'Unknown'}</p>
           </div>
         </div>
         <span className={`px-2 py-1 text-xs font-medium rounded-full ${badgeClass}`}>
-          {cert.daysUntilExpiry <= 0 ? 'Expired' : `${cert.daysUntilExpiry} days left`}
+          {daysLeft <= 0 ? 'Expired' : `${daysLeft} days left`}
         </span>
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
         <div>
           <span className="text-text-secondary">Issuer</span>
-          <p className="text-text-primary font-medium">{cert.issuer}</p>
+          <p className="text-text-primary font-medium">{cert.issuer || 'Unknown'}</p>
         </div>
         <div>
           <span className="text-text-secondary">Serial Number</span>
-          <p className="text-text-primary font-mono text-xs">{cert.serialNumber}</p>
+          <p className="text-text-primary font-mono text-xs">{cert.serialNumber || 'N/A'}</p>
         </div>
         <div>
           <span className="text-text-secondary">Valid From</span>
-          <p className="text-text-primary">{formatDate(cert.validFrom)}</p>
+          <p className="text-text-primary">{cert.validFrom ? formatDate(cert.validFrom) : 'N/A'}</p>
         </div>
         <div>
           <span className="text-text-secondary">Valid To</span>
-          <p className={`font-medium ${statusColor}`}>{formatDate(cert.validTo)}</p>
+          <p className={`font-medium ${statusColor}`}>{cert.validTo ? formatDate(cert.validTo) : 'N/A'}</p>
         </div>
       </div>
 
       <div className="mt-4 pt-4 border-t border-border">
         <span className="text-text-secondary text-sm">Fingerprint</span>
-        <p className="text-text-primary font-mono text-xs break-all">{cert.fingerprint}</p>
+        <p className="text-text-primary font-mono text-xs break-all">{cert.fingerprint || 'N/A'}</p>
       </div>
     </div>
   );
@@ -241,7 +264,7 @@ export function Certificates() {
     );
   }
 
-  const needsRenewal = certificates.some((cert) => cert.daysUntilExpiry <= 30);
+  const needsRenewal = certificates.some((cert) => (cert.daysUntilExpiry ?? 0) <= 30);
 
   return (
     <div className="space-y-6">
