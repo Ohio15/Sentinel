@@ -75,7 +75,8 @@ func DefaultConfig() *Config {
 }
 
 // GetConfigPath returns the platform-specific config path
-func GetConfigPath() string {
+// This is a variable to allow overriding in tests
+var GetConfigPath = func() string {
 	switch runtime.GOOS {
 	case "windows":
 		return filepath.Join(os.Getenv("ProgramData"), "Sentinel", "config.json")
