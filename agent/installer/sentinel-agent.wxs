@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+
+  <!-- Product definition -->
+  <Product Id="*"
+           Name="Sentinel Agent"
+           Language="1033"
+           Version="1.0.0"
+           Manufacturer="Sentinel"
+           UpgradeCode="E5F7A123-4B89-4D2C-9876-A1B2C3D4E5F6">
+
+    <Package InstallerVersion="500"
+             Compressed="yes"
+             InstallScope="perMachine"
+             Description="Sentinel Remote Monitoring Agent"
+             Comments="Installs the Sentinel Agent as a Windows Service"
+             Platform="x64"/>
+
+    <!-- Single CAB file for all content -->
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Upgrade handling -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed."
+                  AllowDowngrades="no"
+                  AllowSameVersionUpgrades="yes"
+                  Schedule="afterInstallInitialize"/>
+
+    <!-- Custom properties for server URL and token (can be set via msiexec) -->
+    <Property Id="SERVERURL" Value="__SERVERURL__" Secure="yes"/>
+    <Property Id="ENROLLMENTTOKEN" Value="__TOKEN__" Secure="yes"/>
+
+    <!-- Icon for Add/Remove Programs -->
+    <Property Id="ARPPRODUCTICON" Value="SentinelIcon"/>
+    <Property Id="ARPHELPLINK" Value="https://github.com/Ohio15/Sentinel"/>
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/Ohio15/Sentinel"/>
+
+    <!-- Feature definition -->
+    <Feature Id="ProductFeature" Title="Sentinel Agent" Level="1">
+      <ComponentGroupRef Id="ProductComponents"/>
+      <ComponentRef Id="RegistryEntries"/>
+    </Feature>
+
+    <!-- Directory structure -->
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="Sentinel Agent">
+          <Directory Id="LogsFolder" Name="logs"/>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <!-- Components -->
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+      <Component Id="MainExecutable" Guid="B1C2D3E4-F5A6-7890-ABCD-EF1234567890" Win64="yes">
+        <File Id="SentinelAgentExe"
+              Name="sentinel-agent.exe"
+              Source="$(var.SourceDir)\sentinel-agent.exe"
+              KeyPath="yes"
+              Vital="yes"/>
+
+        <!-- Install as Windows Service -->
+        <ServiceInstall Id="SentinelAgentService"
+                        Type="ownProcess"
+                        Name="SentinelAgent"
+                        DisplayName="Sentinel Monitoring Agent"
+                        Description="Remote monitoring and management agent for Sentinel RMM"
+                        Start="auto"
+                        Account="LocalSystem"
+                        ErrorControl="normal"
+                        Arguments="--service --server=[SERVERURL] --token=[ENROLLMENTTOKEN]"/>
+
+        <ServiceControl Id="SentinelAgentServiceControl"
+                        Name="SentinelAgent"
+                        Start="install"
+                        Stop="both"
+                        Remove="uninstall"
+                        Wait="yes"/>
+      </Component>
+    </ComponentGroup>
+
+    <!-- Registry entries for configuration -->
+    <Component Id="RegistryEntries" Directory="INSTALLFOLDER" Guid="C2D3E4F5-A6B7-8901-CDEF-234567890ABC" Win64="yes">
+      <RegistryKey Root="HKLM" Key="SOFTWARE\Sentinel\Agent" ForceCreateOnInstall="yes">
+        <RegistryValue Type="string" Name="ServerUrl" Value="[SERVERURL]" KeyPath="yes"/>
+        <RegistryValue Type="string" Name="EnrollmentToken" Value="[ENROLLMENTTOKEN]"/>
+        <RegistryValue Type="string" Name="InstallDir" Value="[INSTALLFOLDER]"/>
+      </RegistryKey>
+    </Component>
+
+    <!-- Icon -->
+    <Icon Id="SentinelIcon" SourceFile="$(var.SourceDir)\sentinel-agent.exe"/>
+
+  </Product>
+</Wix>

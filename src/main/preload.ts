@@ -178,6 +178,9 @@ contextBridge.exposeInMainWorld('api', {
   // Agent
   agent: {
     download: (platform: string) => ipcRenderer.invoke('agent:download', platform),
+    downloadMsi: () => ipcRenderer.invoke('agent:downloadMsi'),
+    getMsiCommand: () => ipcRenderer.invoke('agent:getMsiCommand'),
+    runPowerShellInstall: () => ipcRenderer.invoke('agent:runPowerShellInstall'),
   },
 
   // Updater
@@ -338,6 +341,23 @@ export interface ElectronAPI {
       filePath?: string;
       size?: number;
       canceled?: boolean;
+      error?: string;
+    }>;
+    downloadMsi: () => Promise<{
+      success: boolean;
+      filePath?: string;
+      size?: number;
+      installCommand?: string;
+      canceled?: boolean;
+      error?: string;
+    }>;
+    getMsiCommand: () => Promise<{
+      serverUrl: string;
+      enrollmentToken: string;
+      command: string;
+    }>;
+    runPowerShellInstall: () => Promise<{
+      success: boolean;
       error?: string;
     }>;
   };

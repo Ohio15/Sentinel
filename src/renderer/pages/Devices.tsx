@@ -12,6 +12,12 @@ interface ServerInfo {
   enrollmentToken: string;
 }
 
+interface MsiResult {
+  type: 'success' | 'error';
+  message: string;
+  installCommand?: string;
+}
+
 export function Devices({ onDeviceSelect }: DevicesProps) {
   const { devices, loading, deleteDevice } = useDeviceStore();
   const { clients, currentClientId } = useClientStore();
@@ -28,6 +34,9 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
   const [copied, setCopied] = useState(false);
   const [downloadingPlatform, setDownloadingPlatform] = useState<string | null>(null);
   const [downloadResult, setDownloadResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [msiDownloading, setMsiDownloading] = useState(false);
+  const [msiResult, setMsiResult] = useState<MsiResult | null>(null);
+  const [psRunning, setPsRunning] = useState(false);
 
   useEffect(() => {
     loadServerInfo();
@@ -84,6 +93,59 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
     } finally {
       setDownloadingPlatform(null);
       setTimeout(() => setDownloadResult(null), 5000);
+    }
+  };
+
+  const handleMsiDownload = async () => {
+    setMsiDownloading(true);
+    setMsiResult(null);
+
+    try {
+      const result = await window.api.agent.downloadMsi();
+
+      if (result.canceled) {
+        setMsiResult(null);
+      } else if (result.success) {
+        const sizeMB = result.size ? (result.size / 1024 / 1024).toFixed(1) : '?';
+        setMsiResult({
+          type: 'success',
+          message: `MSI saved (${sizeMB} MB)`,
+          installCommand: result.installCommand,
+        });
+      } else {
+        setMsiResult({
+          type: 'error',
+          message: result.error || 'Download failed',
+        });
+      }
+    } catch (error) {
+      setMsiResult({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Download failed',
+      });
+    } finally {
+      setMsiDownloading(false);
+      setTimeout(() => setMsiResult(null), 10000);
+    }
+  };
+
+  const handlePowerShellInstall = async () => {
+    setPsRunning(true);
+    try {
+      const result = await window.api.agent.runPowerShellInstall();
+      if (!result.success) {
+        setDownloadResult({
+          type: 'error',
+          message: result.error || 'Failed to launch PowerShell',
+        });
+      }
+    } catch (error) {
+      setDownloadResult({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Failed to launch PowerShell',
+      });
+    } finally {
+      setPsRunning(false);
     }
   };
 
@@ -418,6 +480,125 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
             </div>
           </div>
 
+          {/* Enterprise Deployment - MSI */}
+          <div className="card p-6">
+            <h2 className="text-lg font-semibold text-text-primary mb-4">Enterprise Deployment (MSI)</h2>
+            <p className="text-sm text-text-secondary mb-4">
+              Download the MSI installer for enterprise deployment via Group Policy, SCCM, or other deployment tools.
+            </p>
+
+            {/* MSI Result Toast */}
+            {msiResult && (
+              <div className={`mb-4 p-4 rounded-lg ${
+                msiResult.type === 'success'
+                  ? 'bg-green-50 border border-green-200'
+                  : 'bg-red-50 border border-red-200'
+              }`}>
+                <div className="flex items-center gap-3">
+                  {msiResult.type === 'success' ? (
+                    <CheckIcon className="w-5 h-5 text-green-600" />
+                  ) : (
+                    <ErrorIcon className="w-5 h-5 text-red-600" />
+                  )}
+                  <span className={`text-sm ${
+                    msiResult.type === 'success' ? 'text-green-700' : 'text-red-700'
+                  }`}>
+                    {msiResult.message}
+                  </span>
+                  <button
+                    onClick={() => setMsiResult(null)}
+                    className="ml-auto text-gray-400 hover:text-gray-600"
+                  >
+                    <CloseIcon className="w-4 h-4" />
+                  </button>
+                </div>
+                {msiResult.installCommand && (
+                  <div className="mt-3">
+                    <p className="text-xs text-green-600 mb-1">Silent install command:</p>
+                    <div className="relative">
+                      <pre className="bg-gray-900 text-gray-100 p-2 rounded text-xs overflow-x-auto font-mono">
+                        {msiResult.installCommand}
+                      </pre>
+                      <button
+                        onClick={() => copyToClipboard(msiResult.installCommand!)}
+                        className="absolute top-1 right-1 text-xs text-gray-400 hover:text-white"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <button
+                onClick={handleMsiDownload}
+                disabled={msiDownloading}
+                className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors border border-border disabled:opacity-50 disabled:cursor-not-allowed text-left"
+              >
+                <MsiIcon className="w-5 h-5 text-blue-600" />
+                <div className="flex-1">
+                  <p className="font-medium text-text-primary">Windows MSI</p>
+                  <p className="text-xs text-text-secondary">
+                    {msiDownloading ? 'Saving...' : 'sentinel-agent.msi'}
+                  </p>
+                </div>
+                {msiDownloading ? <SpinnerIcon /> : <DownloadIcon />}
+              </button>
+
+              <div className="p-4 bg-gray-50 rounded-lg border border-border">
+                <div className="flex items-center gap-2 mb-2">
+                  <TerminalIcon className="w-5 h-5 text-gray-600" />
+                  <span className="font-medium text-text-primary">Silent Install</span>
+                </div>
+                <p className="text-xs text-text-secondary">
+                  Use with Group Policy or SCCM:
+                </p>
+                <code className="text-xs text-gray-600 block mt-1">
+                  msiexec /i sentinel-agent.msi /qn
+                </code>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Install - PowerShell */}
+          <div className="card p-6">
+            <h2 className="text-lg font-semibold text-text-primary mb-4">Quick Install (PowerShell)</h2>
+            <p className="text-sm text-text-secondary mb-4">
+              One-click installation using PowerShell. Opens an elevated PowerShell window and automatically runs the install script.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <button
+                onClick={handlePowerShellInstall}
+                disabled={psRunning}
+                className="flex items-center gap-3 p-4 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors border border-blue-200 disabled:opacity-50 disabled:cursor-not-allowed text-left"
+              >
+                <PowerShellIcon className="w-5 h-5 text-blue-700" />
+                <div className="flex-1">
+                  <p className="font-medium text-blue-900">Run PowerShell Install</p>
+                  <p className="text-xs text-blue-700">
+                    {psRunning ? 'Launching...' : 'Opens elevated PowerShell window'}
+                  </p>
+                </div>
+                {psRunning ? <SpinnerIcon /> : <PlayIcon className="w-5 h-5 text-blue-600" />}
+              </button>
+
+              <div className="p-4 bg-gray-50 rounded-lg border border-border">
+                <div className="flex items-center gap-2 mb-2">
+                  <InfoIcon className="w-5 h-5 text-gray-500" />
+                  <span className="font-medium text-text-primary">What happens</span>
+                </div>
+                <ul className="text-xs text-text-secondary space-y-1">
+                  <li>1. UAC prompt requests admin rights</li>
+                  <li>2. Downloads agent from this server</li>
+                  <li>3. Installs and starts the service</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
           {/* Installation Notes */}
           <div className="card p-6">
             <h2 className="text-lg font-semibold text-text-primary mb-4">Installation Notes</h2>
@@ -600,6 +781,47 @@ function CloseIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+    </svg>
+  );
+}
+
+function MsiIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 9h-2v2H9v-2H7v-2h2V7h2v2h2v2zm3 8H8v-2h8v2zm0-4H8v-2h8v2zm-2-8V3.5L18.5 9H14z"/>
+    </svg>
+  );
+}
+
+function TerminalIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+    </svg>
+  );
+}
+
+function PowerShellIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M23.181 2.974c.568 0 .923.463.792 1.035l-3.659 15.982c-.13.572-.697 1.035-1.265 1.035H.819c-.568 0-.923-.463-.792-1.035L3.686 4.009c.13-.572.697-1.035 1.265-1.035h18.23zM6.669 16.108l1.06-.952 4.163-3.742-4.58-4.127L6.1 6.5l-.188.955 3.643 3.282-3.856 3.47-.189.955.188.946h.971zm5.781.946h5.469l.188-.946h-5.469l-.188.946z"/>
+    </svg>
+  );
+}
+
+function PlayIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  );
+}
+
+function InfoIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
     </svg>
   );
 }
