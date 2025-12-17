@@ -207,6 +207,14 @@ export class AgentManager {
         this.handleWebRTCSignal(agentId, message);
         break;
 
+      case 'tamper_alert':
+        this.handleTamperAlert(agentId, message);
+        break;
+
+      case 'cert_update_ack':
+        this.handleCertUpdateAck(agentId, message);
+        break;
+
       default:
         console.log(`Unknown message type: ${message.type}`);
     }
@@ -871,4 +879,48 @@ export class AgentManager {
     });
   }
 
+
+  // Broadcast CA certificate to all connected agents
+  async broadcastCertificate(certContent: string, certHash: string): Promise<{ success: number; failed: number; total: number }> {
+    let success = 0;
+    let failed = 0;
+    const total = this.connections.size;
+
+    console.log(`[Certs] Broadcasting CA certificate to ${total} connected agents`);
+
+    for (const [agentId] of this.connections) {
+      try {
+        this.sendToAgent(agentId, {
+          type: 'update_certificate',
+          data: {
+            certType: 'ca',
+            certContent,
+            certHash,
+          },
+        });
+
+        await this.database.setAgentCertStatus(agentId, certHash, true, false);
+        success++;
+        console.log(`[Certs] Sent certificate to agent ${agentId}`);
+      } catch (error) {
+        console.error(`[Certs] Failed to send certificate to agent ${agentId}:`, error);
+        failed++;
+      }
+    }
+
+    console.log(`[Certs] Broadcast complete: ${success} success, ${failed} failed out of ${total}`);
+    this.notifyRenderer('certs:distributed', { success, failed, total });
+
+    return { success, failed, total };
+  }
+
+  // Handle certificate update acknowledgment from agent
+  private async handleCertUpdateAck(agentId: string, message: any): Promise<void> {
+    const certHash = message.certHash || message.data?.certHash;
+    if (certHash) {
+      await this.database.setAgentCertStatus(agentId, certHash, true, true);
+      console.log(`[Certs] Agent ${agentId} confirmed certificate update (hash: ${certHash.substring(0, 8)}...)`);
+      this.notifyRenderer('certs:agentConfirmed', { agentId, certHash });
+    }
+  }
 }

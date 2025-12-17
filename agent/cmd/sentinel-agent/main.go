@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	"bytes"
@@ -464,6 +464,8 @@ func (a *Agent) registerHandlers() {
 	a.client.RegisterHandler(client.MsgTypeWebRTCStop, a.handleWebRTCStop)
 	// Configuration handlers
 	a.client.RegisterHandler(client.MsgTypeSetMetricsInterval, a.handleSetMetricsInterval)
+	// Certificate management handlers
+	a.client.RegisterHandler(client.MsgTypeUpdateCertificate, a.handleUpdateCertificate)
 }
 
 func (a *Agent) onConnect() {
@@ -1266,4 +1268,67 @@ func (a *Agent) handleSetMetricsInterval(msg *client.Message) error {
 	default:
 		return a.client.SendResponse(msg.RequestID, false, nil, "Metrics interval change already pending")
 	}
+}
+// handleUpdateCertificate handles CA certificate updates from the server
+func (a *Agent) handleUpdateCertificate(msg *client.Message) error {
+	log.Println("[Certs] Received certificate update request")
+
+	data, ok := msg.Data.(map[string]interface{})
+	if !ok {
+		errMsg := "Invalid message data"
+		a.client.SendCertUpdateAck("", false, errMsg)
+		return fmt.Errorf(errMsg)
+	}
+
+	certType, _ := data["certType"].(string)
+	certContent, _ := data["certContent"].(string)
+	certHash, _ := data["certHash"].(string)
+
+	if certContent == "" {
+		errMsg := "No certificate content provided"
+		a.client.SendCertUpdateAck(certHash, false, errMsg)
+		return fmt.Errorf(errMsg)
+	}
+
+	hashPrefix := certHash
+	if len(hashPrefix) > 8 {
+		hashPrefix = hashPrefix[:8]
+	}
+	log.Printf("[Certs] Updating %s certificate (hash: %s...)", certType, hashPrefix)
+
+	// Determine cert storage path
+	var certPath string
+	if runtime.GOOS == "windows" {
+		certPath = filepath.Join("C:\\ProgramData\\Sentinel\\certs", "ca-cert.pem")
+	} else {
+		certPath = filepath.Join("/etc/sentinel/certs", "ca-cert.pem")
+	}
+
+	// Ensure directory exists
+	certDir := filepath.Dir(certPath)
+	if err := os.MkdirAll(certDir, 0755); err != nil {
+		errMsg := fmt.Sprintf("Failed to create cert directory: %v", err)
+		log.Printf("[Certs] %s", errMsg)
+		a.client.SendCertUpdateAck(certHash, false, errMsg)
+		return fmt.Errorf(errMsg)
+	}
+
+	// Write the certificate file
+	if err := os.WriteFile(certPath, []byte(certContent), 0644); err != nil {
+		errMsg := fmt.Sprintf("Failed to write certificate: %v", err)
+		log.Printf("[Certs] %s", errMsg)
+		a.client.SendCertUpdateAck(certHash, false, errMsg)
+		return fmt.Errorf(errMsg)
+	}
+
+	log.Printf("[Certs] Certificate updated successfully at %s", certPath)
+
+	// Send acknowledgment back to server
+	if err := a.client.SendCertUpdateAck(certHash, true, ""); err != nil {
+		log.Printf("[Certs] Failed to send acknowledgment: %v", err)
+		return err
+	}
+
+	log.Println("[Certs] Certificate update acknowledged")
+	return nil
 }

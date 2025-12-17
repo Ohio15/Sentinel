@@ -6,6 +6,7 @@ import { Database } from './database';
 import { Server } from './server';
 import { AgentManager } from './agents';
 import { GrpcServer } from './grpc-server';
+import { listCertificates, renewCertificates, getCACertificate, getCertsDir } from './cert-manager';
 import * as os from 'os';
 
 // Disable GPU acceleration to prevent crashes on some systems
