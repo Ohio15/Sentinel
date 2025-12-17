@@ -7,8 +7,16 @@ param(
     [int]$ValidityDays = 365
 )
 
+# Determine the certificates path
+# If OutputDir is an absolute path, use it directly
+# Otherwise, compute it relative to the script's parent directory
+if ([System.IO.Path]::IsPathRooted($OutputDir)) {
+    $CertsPath = $OutputDir
+} else {
+    $CertsPath = Join-Path (Join-Path $PSScriptRoot "..") $OutputDir
+}
+
 # Ensure output directory exists
-$CertsPath = Join-Path (Join-Path $PSScriptRoot "..") $OutputDir
 if (-not (Test-Path $CertsPath)) {
     New-Item -ItemType Directory -Path $CertsPath -Force | Out-Null
     Write-Host "Created certificates directory: $CertsPath" -ForegroundColor Green

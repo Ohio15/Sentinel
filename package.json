@@ -1,6 +1,6 @@
 {
   "name": "sentinel",
-  "version": "1.56.16",
+  "version": "1.56.17",
   "description": "Sentinel - Remote Monitoring and Management",
   "main": "dist/main/main.js",
   "author": "Sentinel",
@@ -97,6 +97,13 @@
         "to": "update-config.json",
         "filter": [
           "**/*"
+        ]
+      },
+      {
+        "from": "scripts/",
+        "to": "scripts/",
+        "filter": [
+          "generate-certs.ps1"
         ]
       }
     ],

@@ -27,11 +27,19 @@ export interface CertificateListResult {
 
 /**
  * Get the certificates directory path
+ * For packaged apps, store in user data directory (writable)
+ * For development, use project certs directory
  */
 export function getCertsDir(): string {
-  return app.isPackaged
-    ? path.join(process.resourcesPath, 'certs')
-    : path.join(__dirname, '../../certs');
+  if (app.isPackaged) {
+    const certsDir = path.join(app.getPath('userData'), 'certs');
+    // Ensure directory exists
+    if (!fs.existsSync(certsDir)) {
+      fs.mkdirSync(certsDir, { recursive: true });
+    }
+    return certsDir;
+  }
+  return path.join(__dirname, '../../certs');
 }
 
 /**
@@ -221,6 +229,7 @@ export async function renewCertificates(validityDays: number = 365): Promise<{ s
       : path.join(__dirname, '../../scripts');
 
     const scriptPath = path.join(scriptsDir, 'generate-certs.ps1');
+    const certsDir = getCertsDir();
 
     if (!fs.existsSync(scriptPath)) {
       resolve({
@@ -231,10 +240,12 @@ export async function renewCertificates(validityDays: number = 365): Promise<{ s
     }
 
     console.log('[CertManager] Regenerating certificates...');
+    console.log('[CertManager] Output directory:', certsDir);
 
     const powershell = spawn('powershell.exe', [
       '-ExecutionPolicy', 'Bypass',
       '-File', scriptPath,
+      '-OutputDir', certsDir,
       '-ValidityDays', validityDays.toString(),
     ]);
 
