@@ -64,6 +64,10 @@ func (c *Collector) CollectAll(ctx context.Context, hoursBack int) (*DiagnosticR
 		return result, fmt.Errorf("diagnostics collection only supported on Windows")
 	}
 
+	// Create a timeout context for the collection (90 seconds to leave room for response)
+	collectCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+
 	// Collect in parallel using channels
 	type collectionResult struct {
 		name string
@@ -75,43 +79,43 @@ func (c *Collector) CollectAll(ctx context.Context, hoursBack int) (*DiagnosticR
 
 	// System Errors (Event Viewer - System log, Error/Critical)
 	go func() {
-		data, err := c.collectWindowsEventLog(ctx, "System", []string{"Error", "Critical"}, hoursBack)
+		data, err := c.collectWindowsEventLog(collectCtx, "System", []string{"Error", "Critical"}, hoursBack)
 		results <- collectionResult{"systemErrors", data, err}
 	}()
 
 	// Application Logs (Event Viewer - Application log, Error/Warning)
 	go func() {
-		data, err := c.collectWindowsEventLog(ctx, "Application", []string{"Error", "Warning"}, hoursBack)
+		data, err := c.collectWindowsEventLog(collectCtx, "Application", []string{"Error", "Warning"}, hoursBack)
 		results <- collectionResult{"applicationLogs", data, err}
 	}()
 
 	// Security Events (Event Viewer - Security log, audit failures)
 	go func() {
-		data, err := c.collectSecurityEvents(ctx, hoursBack)
+		data, err := c.collectSecurityEvents(collectCtx, hoursBack)
 		results <- collectionResult{"securityEvents", data, err}
 	}()
 
 	// Recent Crashes (Windows Error Reporting)
 	go func() {
-		data, err := c.collectRecentCrashes(ctx, hoursBack)
+		data, err := c.collectRecentCrashes(collectCtx, hoursBack)
 		results <- collectionResult{"recentCrashes", data, err}
 	}()
 
 	// Hardware Events
 	go func() {
-		data, err := c.collectHardwareEvents(ctx, hoursBack)
+		data, err := c.collectHardwareEvents(collectCtx, hoursBack)
 		results <- collectionResult{"hardwareEvents", data, err}
 	}()
 
 	// Network Events
 	go func() {
-		data, err := c.collectNetworkEvents(ctx, hoursBack)
+		data, err := c.collectNetworkEvents(collectCtx, hoursBack)
 		results <- collectionResult{"networkEvents", data, err}
 	}()
 
 	// Active Programs
 	go func() {
-		data, err := c.collectActivePrograms(ctx, hoursBack)
+		data, err := c.collectActivePrograms(collectCtx, hoursBack)
 		results <- collectionResult{"activePrograms", data, err}
 	}()
 
