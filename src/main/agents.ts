@@ -240,7 +240,24 @@ export class AgentManager {
   }
 
   private async handleMetrics(agentId: string, message: any): Promise<void> {
-    const device = await this.database.getDeviceByAgentId(agentId);
+    let device = await this.database.getDeviceByAgentId(agentId);
+
+    // If device doesn't exist, create a minimal record from the metrics data
+    if (!device) {
+      console.log(`Device not found for agent ${agentId}, creating from metrics data`);
+      const hostname = message.data?.hostname || `Agent-${agentId.substring(0, 8)}`;
+      device = await this.database.createOrUpdateDevice({
+        agentId,
+        hostname,
+        osType: message.data?.osType || 'Unknown',
+        osVersion: message.data?.osVersion || '',
+        platform: message.data?.platform || 'unknown',
+        architecture: message.data?.architecture || '',
+      });
+      // Notify renderer that a new device was created
+      this.notifyRenderer('devices:changed', {});
+    }
+
     if (device) {
       await this.database.insertMetrics(device.id, message.data);
       this.notifyRenderer('metrics:updated', {
