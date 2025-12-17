@@ -1545,6 +1545,114 @@ export class Database {
     await this.query('DELETE FROM agent_cert_status WHERE agent_id = $1', [agentId]);
   }
 
+  // ============================================================================
+  // DEVICE UPDATE STATUS METHODS
+  // ============================================================================
+
+  async upsertDeviceUpdateStatus(deviceId: string, status: {
+    pendingCount: number;
+    securityUpdateCount: number;
+    rebootRequired: boolean;
+    lastChecked: string;
+    lastUpdateInstalled?: string;
+    pendingUpdates?: any[];
+  }): Promise<void> {
+    await this.query(
+      `INSERT INTO device_updates (device_id, pending_count, security_update_count, reboot_required, last_checked, last_update_installed, pending_updates)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (device_id) DO UPDATE SET
+         pending_count = EXCLUDED.pending_count,
+         security_update_count = EXCLUDED.security_update_count,
+         reboot_required = EXCLUDED.reboot_required,
+         last_checked = EXCLUDED.last_checked,
+         last_update_installed = COALESCE(EXCLUDED.last_update_installed, device_updates.last_update_installed),
+         pending_updates = EXCLUDED.pending_updates,
+         updated_at = CURRENT_TIMESTAMP`,
+      [
+        deviceId,
+        status.pendingCount,
+        status.securityUpdateCount,
+        status.rebootRequired,
+        status.lastChecked,
+        status.lastUpdateInstalled || null,
+        JSON.stringify(status.pendingUpdates || [])
+      ]
+    );
+  }
+
+  async getDeviceUpdateStatus(deviceId: string): Promise<any | null> {
+    const result = await this.query(
+      `SELECT
+        id, device_id as "deviceId", pending_count as "pendingCount",
+        security_update_count as "securityUpdateCount", reboot_required as "rebootRequired",
+        last_checked as "lastChecked", last_update_installed as "lastUpdateInstalled",
+        pending_updates as "pendingUpdates", created_at as "createdAt", updated_at as "updatedAt"
+       FROM device_updates WHERE device_id = $1`,
+      [deviceId]
+    );
+    return result.rows[0] || null;
+  }
+
+  async getAllDeviceUpdateStatuses(): Promise<any[]> {
+    const result = await this.query(`
+      SELECT
+        du.id, du.device_id as "deviceId", du.pending_count as "pendingCount",
+        du.security_update_count as "securityUpdateCount", du.reboot_required as "rebootRequired",
+        du.last_checked as "lastChecked", du.last_update_installed as "lastUpdateInstalled",
+        du.pending_updates as "pendingUpdates", du.created_at as "createdAt", du.updated_at as "updatedAt",
+        d.hostname, d.display_name as "displayName", d.status as "deviceStatus"
+      FROM device_updates du
+      LEFT JOIN devices d ON d.id = du.device_id
+      ORDER BY du.security_update_count DESC, du.pending_count DESC
+    `);
+    return result.rows;
+  }
+
+  async getDevicesWithPendingUpdates(minCount: number = 1): Promise<any[]> {
+    const result = await this.query(`
+      SELECT
+        du.device_id as "deviceId", du.pending_count as "pendingCount",
+        du.security_update_count as "securityUpdateCount", du.reboot_required as "rebootRequired",
+        du.last_checked as "lastChecked",
+        d.hostname, d.display_name as "displayName", d.status as "deviceStatus"
+      FROM device_updates du
+      JOIN devices d ON d.id = du.device_id
+      WHERE du.pending_count >= $1
+      ORDER BY du.security_update_count DESC, du.pending_count DESC
+    `, [minCount]);
+    return result.rows;
+  }
+
+  async getDevicesWithSecurityUpdates(): Promise<any[]> {
+    const result = await this.query(`
+      SELECT
+        du.device_id as "deviceId", du.pending_count as "pendingCount",
+        du.security_update_count as "securityUpdateCount", du.reboot_required as "rebootRequired",
+        du.last_checked as "lastChecked", du.pending_updates as "pendingUpdates",
+        d.hostname, d.display_name as "displayName", d.status as "deviceStatus"
+      FROM device_updates du
+      JOIN devices d ON d.id = du.device_id
+      WHERE du.security_update_count > 0
+      ORDER BY du.security_update_count DESC
+    `);
+    return result.rows;
+  }
+
+  async getDevicesRequiringReboot(): Promise<any[]> {
+    const result = await this.query(`
+      SELECT
+        du.device_id as "deviceId", du.pending_count as "pendingCount",
+        du.security_update_count as "securityUpdateCount", du.reboot_required as "rebootRequired",
+        du.last_checked as "lastChecked",
+        d.hostname, d.display_name as "displayName", d.status as "deviceStatus"
+      FROM device_updates du
+      JOIN devices d ON d.id = du.device_id
+      WHERE du.reboot_required = TRUE
+      ORDER BY d.hostname
+    `);
+    return result.rows;
+  }
+
 
   async close(): Promise<void> {
     if (this.pool) {

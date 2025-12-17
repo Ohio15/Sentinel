@@ -215,6 +215,10 @@ export class AgentManager {
         this.handleCertUpdateAck(agentId, message);
         break;
 
+      case 'update_status':
+        this.handleUpdateStatus(agentId, message);
+        break;
+
       default:
         console.log(`Unknown message type: ${message.type}`);
     }
@@ -921,6 +925,124 @@ export class AgentManager {
       await this.database.setAgentCertStatus(agentId, certHash, true, true);
       console.log(`[Certs] Agent ${agentId} confirmed certificate update (hash: ${certHash.substring(0, 8)}...)`);
       this.notifyRenderer('certs:agentConfirmed', { agentId, certHash });
+    }
+  }
+
+  // Handle update status from agent
+  private async handleUpdateStatus(agentId: string, message: any): Promise<void> {
+    const device = await this.database.getDeviceByAgentId(agentId);
+    if (!device) {
+      console.log(`[Updates] Received update status from unknown agent: ${agentId}`);
+      return;
+    }
+
+    const data = message.data || message;
+    console.log(`[Updates] Received update status from ${device.hostname || agentId}:`, {
+      pendingCount: data.pendingCount,
+      securityUpdateCount: data.securityUpdateCount,
+      rebootRequired: data.rebootRequired,
+    });
+
+    // Store update status in database
+    await this.database.upsertDeviceUpdateStatus(device.id, {
+      pendingCount: data.pendingCount || 0,
+      securityUpdateCount: data.securityUpdateCount || 0,
+      rebootRequired: data.rebootRequired || false,
+      lastChecked: data.lastChecked || new Date().toISOString(),
+      lastUpdateInstalled: data.lastUpdateInstalled,
+      pendingUpdates: data.pendingUpdates || [],
+    });
+
+    // Notify renderer of update status change
+    this.notifyRenderer('updates:status', {
+      deviceId: device.id,
+      hostname: device.hostname,
+      ...data,
+    });
+
+    // Check for pending updates alerts
+    await this.checkUpdateAlerts(device, data);
+  }
+
+  // Check if update status should trigger alerts
+  private async checkUpdateAlerts(device: any, updateStatus: any): Promise<void> {
+    const rules = await this.database.getAlertRules();
+
+    for (const rule of rules) {
+      if (!rule.enabled) continue;
+
+      // Handle pending_updates metric type
+      if (rule.metric === 'pending_updates' || rule.metric === 'pendingUpdates') {
+        const pendingCount = updateStatus.pendingCount || 0;
+        let triggered = false;
+
+        switch (rule.operator) {
+          case 'gt': triggered = pendingCount > rule.threshold; break;
+          case 'gte': triggered = pendingCount >= rule.threshold; break;
+          case 'eq': triggered = pendingCount === rule.threshold; break;
+        }
+
+        if (triggered) {
+          await this.createUpdateAlert(device, rule, 'pending_updates', pendingCount, updateStatus);
+        }
+      }
+
+      // Handle security_updates metric type
+      if (rule.metric === 'security_updates' || rule.metric === 'securityUpdates') {
+        const securityCount = updateStatus.securityUpdateCount || 0;
+        let triggered = false;
+
+        switch (rule.operator) {
+          case 'gt': triggered = securityCount > rule.threshold; break;
+          case 'gte': triggered = securityCount >= rule.threshold; break;
+          case 'eq': triggered = securityCount === rule.threshold; break;
+        }
+
+        if (triggered) {
+          await this.createUpdateAlert(device, rule, 'security_updates', securityCount, updateStatus);
+        }
+      }
+
+      // Handle reboot_required metric type
+      if (rule.metric === 'reboot_required' || rule.metric === 'rebootRequired') {
+        if (updateStatus.rebootRequired && rule.threshold === 1) {
+          await this.createUpdateAlert(device, rule, 'reboot_required', 1, updateStatus);
+        }
+      }
+    }
+  }
+
+  // Create alert for update-related issues
+  private async createUpdateAlert(device: any, rule: any, metricType: string, value: number, updateStatus: any): Promise<void> {
+    const cooldownKey = `${device.id}:${rule.id}`;
+    const lastAlert = this.alertCooldowns.get(cooldownKey);
+    const now = new Date();
+
+    if (!lastAlert || (now.getTime() - lastAlert.getTime()) > rule.cooldownMinutes * 60 * 1000) {
+      let message = '';
+      switch (metricType) {
+        case 'pending_updates':
+          message = `${value} pending Windows updates (${updateStatus.securityUpdateCount || 0} security updates)`;
+          break;
+        case 'security_updates':
+          message = `${value} critical security updates pending`;
+          break;
+        case 'reboot_required':
+          message = 'System reboot required to complete updates';
+          break;
+      }
+
+      const alert = await this.database.createAlert({
+        deviceId: device.id,
+        ruleId: rule.id,
+        severity: rule.severity,
+        title: rule.name,
+        message,
+      });
+
+      this.alertCooldowns.set(cooldownKey, now);
+      this.notifyRenderer('alerts:new', alert);
+      console.log(`[Updates] Created alert for ${device.hostname}: ${message}`);
     }
   }
 }

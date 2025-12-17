@@ -194,6 +194,20 @@ contextBridge.exposeInMainWorld('api', {
     },
   },
 
+  // Device Updates (Windows Updates status)
+  updates: {
+    getAll: () => ipcRenderer.invoke('updates:getAll'),
+    getDevice: (deviceId: string) => ipcRenderer.invoke('updates:getDevice', deviceId),
+    getPending: (minCount?: number) => ipcRenderer.invoke('updates:getPending', minCount),
+    getSecurity: () => ipcRenderer.invoke('updates:getSecurity'),
+    getRebootRequired: () => ipcRenderer.invoke('updates:getRebootRequired'),
+    onStatus: (callback: (data: any) => void) => {
+      const handler = (_: any, data: any) => callback(data);
+      ipcRenderer.on('updates:status', handler);
+      return () => ipcRenderer.removeListener('updates:status', handler);
+    },
+  },
+
   // Agent
   agent: {
     download: (platform: string) => ipcRenderer.invoke('agent:download', platform),
@@ -252,6 +266,7 @@ contextBridge.exposeInMainWorld('api', {
       'tickets:updated',
       'certs:distributed',
       'certs:agentConfirmed',
+      'updates:status',
     ];
     if (validChannels.includes(channel)) {
       const handler = (_: any, ...args: any[]) => callback(...args);
@@ -364,6 +379,14 @@ export interface ElectronAPI {
     getCurrent: () => Promise<{ content: string; hash: string } | null>;
     onDistributed: (callback: (result: { success: number; failed: number; total: number }) => void) => () => void;
     onAgentConfirmed: (callback: (data: { agentId: string; certHash: string }) => void) => () => void;
+  };
+  updates: {
+    getAll: () => Promise<DeviceUpdateStatus[]>;
+    getDevice: (deviceId: string) => Promise<DeviceUpdateStatus | null>;
+    getPending: (minCount?: number) => Promise<DeviceUpdateStatus[]>;
+    getSecurity: () => Promise<DeviceUpdateStatus[]>;
+    getRebootRequired: () => Promise<DeviceUpdateStatus[]>;
+    onStatus: (callback: (data: DeviceUpdateStatus) => void) => () => void;
   };
   agent: {
     download: (platform: string) => Promise<{
@@ -685,6 +708,29 @@ interface Client {
   openTicketCount?: number;
   createdAt: string;
   updatedAt: string;
+}
+
+interface PendingUpdateInfo {
+  title: string;
+  kb?: string;
+  severity?: string;
+  sizeMB?: number;
+  isSecurityUpdate: boolean;
+}
+
+interface DeviceUpdateStatus {
+  deviceId: string;
+  hostname?: string;
+  displayName?: string;
+  deviceStatus?: string;
+  pendingCount: number;
+  securityUpdateCount: number;
+  rebootRequired: boolean;
+  lastChecked: string;
+  lastUpdateInstalled?: string;
+  pendingUpdates?: PendingUpdateInfo[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 declare global {
