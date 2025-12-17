@@ -673,6 +673,27 @@ function setupIpcHandlers(): void {
     return getCACertificate();
   });
 
+  // Device update status
+  ipcMain.handle('updates:getAll', async () => {
+    return database.getAllDeviceUpdateStatuses();
+  });
+
+  ipcMain.handle('updates:getDevice', async (_, deviceId: string) => {
+    return database.getDeviceUpdateStatus(deviceId);
+  });
+
+  ipcMain.handle('updates:getPending', async (_, minCount?: number) => {
+    return database.getDevicesWithPendingUpdates(minCount || 1);
+  });
+
+  ipcMain.handle('updates:getSecurity', async () => {
+    return database.getDevicesWithSecurityUpdates();
+  });
+
+  ipcMain.handle('updates:getRebootRequired', async () => {
+    return database.getDevicesRequiringReboot();
+  });
+
 
   // Agent installer
   ipcMain.handle('agent:getInstallerCommand', async (_, platform: string) => {

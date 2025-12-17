@@ -29,6 +29,7 @@ import (
 	svc "github.com/sentinel/agent/internal/service"
 	"github.com/sentinel/agent/internal/terminal"
 	"github.com/sentinel/agent/internal/updater"
+	"github.com/sentinel/agent/internal/updates"
 	"github.com/sentinel/agent/internal/webrtc"
 	"github.com/sentinel/agent/internal/admin"
 )
@@ -63,6 +64,7 @@ type Agent struct {
 	protectionManager    *protection.Manager
 	diagnosticsCollector *diagnostics.Collector
 	adminManager         *admin.Manager
+	updateChecker        *updates.Checker
 	tamperChan           chan string
 	metricsIntervalChan  chan time.Duration // Channel for dynamic metrics interval changes
 	ctx                  context.Context
@@ -296,6 +298,7 @@ func NewAgent(cfg *config.Config) *Agent {
 		protectionManager:    protMgr,
 		diagnosticsCollector: diagnostics.New(),
 		adminManager:         admin.NewManager(Version),
+		updateChecker:        updates.NewChecker(),
 		tamperChan:           make(chan string, 10),
 		metricsIntervalChan:  make(chan time.Duration, 1),
 		ctx:                  ctx,
@@ -392,6 +395,9 @@ func (a *Agent) Start() error {
 
 	// Start update check loop
 	go a.updater.RunUpdateLoop(a.ctx)
+
+	// Start Windows Update status monitoring loop
+	go a.updateStatusLoop()
 
 	return nil
 }
@@ -654,6 +660,53 @@ func (a *Agent) metricsLoop() {
 				}
 			}
 		}
+	}
+}
+
+// updateStatusLoop periodically checks for pending Windows updates and reports to server
+func (a *Agent) updateStatusLoop() {
+	// Check immediately on startup after a short delay
+	select {
+	case <-a.ctx.Done():
+		return
+	case <-time.After(30 * time.Second):
+	}
+
+	// Initial check
+	a.checkAndSendUpdateStatus()
+
+	// Then check every 4 hours
+	ticker := time.NewTicker(4 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-a.ctx.Done():
+			return
+		case <-ticker.C:
+			a.checkAndSendUpdateStatus()
+		}
+	}
+}
+
+// checkAndSendUpdateStatus checks for updates and sends status to the server
+func (a *Agent) checkAndSendUpdateStatus() {
+	if !a.client.IsConnected() || !a.client.IsAuthenticated() {
+		return
+	}
+
+	log.Println("Checking for Windows updates...")
+	status, err := a.updateChecker.GetStatus(a.ctx, false)
+	if err != nil {
+		log.Printf("Failed to check update status: %v", err)
+		return
+	}
+
+	log.Printf("Update status: %d pending, %d security updates, reboot required: %v",
+		status.PendingCount, status.SecurityUpdateCount, status.RebootRequired)
+
+	if err := a.client.SendUpdateStatus(status); err != nil {
+		log.Printf("Failed to send update status: %v", err)
 	}
 }
 

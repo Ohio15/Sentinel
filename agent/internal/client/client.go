@@ -60,6 +60,8 @@ const (
 	// Certificate management messages
 	MsgTypeUpdateCertificate = "update_certificate"
 	MsgTypeCertUpdateAck     = "cert_update_ack"
+	// System update status
+	MsgTypeUpdateStatus      = "update_status"
 )
 
 // Message represents a WebSocket message
@@ -731,6 +733,15 @@ func (c *Client) SendCertUpdateAck(certHash string, success bool, errMsg string)
 			"success":  success,
 			"error":    errMsg,
 		},
+	}
+	return c.SendJSON(msg)
+}
+
+// SendUpdateStatus sends system update status to the server
+func (c *Client) SendUpdateStatus(status interface{}) error {
+	msg := map[string]interface{}{
+		"type": MsgTypeUpdateStatus,
+		"data": status,
 	}
 	return c.SendJSON(msg)
 }
