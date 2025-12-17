@@ -164,8 +164,7 @@ func (m *Manager) ProtectFiles() error {
 	files := []string{
 		filepath.Join(m.installPath, "sentinel-agent.exe"),
 		filepath.Join(m.installPath, "sentinel-watchdog.exe"),
-		filepath.Join(m.installPath, "config.json"),
-		m.configPath,
+		m.configPath, // Config is in ProgramData, not install path
 	}
 
 	for _, file := range files {
