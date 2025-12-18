@@ -1,8 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { spawn } from 'child_process';
 import { app } from 'electron';
+import * as forge from 'node-forge';
 
 export interface CertificateInfo {
   name: string;
@@ -59,97 +59,66 @@ export function getCertHash(certPath: string): string | null {
 }
 
 /**
- * Parse certificate information using openssl
+ * Parse certificate information using node-forge
  */
 async function parseCertificate(certPath: string): Promise<Partial<CertificateInfo>> {
-  return new Promise((resolve) => {
-    if (!fs.existsSync(certPath)) {
-      resolve({ exists: false, status: 'missing' });
-      return;
-    }
+  if (!fs.existsSync(certPath)) {
+    return { exists: false, status: 'missing' };
+  }
 
-    const openssl = spawn('openssl', ['x509', '-in', certPath, '-noout', '-subject', '-issuer', '-dates', '-serial', '-fingerprint']);
+  try {
+    const certPem = fs.readFileSync(certPath, 'utf-8');
+    const cert = forge.pki.certificateFromPem(certPem);
 
-    let stdout = '';
-    let stderr = '';
+    const info: Partial<CertificateInfo> = { exists: true };
 
-    openssl.stdout.on('data', (data) => {
-      stdout += data.toString();
-    });
+    // Parse subject
+    const subjectAttrs = cert.subject.attributes.map(attr =>
+      `${attr.shortName || attr.name}=${attr.value}`
+    ).join(', ');
+    info.subject = subjectAttrs;
 
-    openssl.stderr.on('data', (data) => {
-      stderr += data.toString();
-    });
+    // Parse issuer
+    const issuerAttrs = cert.issuer.attributes.map(attr =>
+      `${attr.shortName || attr.name}=${attr.value}`
+    ).join(', ');
+    info.issuer = issuerAttrs;
 
-    openssl.on('close', (code) => {
-      if (code !== 0) {
-        console.error('[CertManager] OpenSSL error:', stderr);
-        resolve({ exists: true, status: 'valid' });
-        return;
-      }
+    // Parse dates
+    info.validFrom = cert.validity.notBefore;
+    info.validTo = cert.validity.notAfter;
 
-      const info: Partial<CertificateInfo> = { exists: true };
+    // Parse serial
+    info.serialNumber = cert.serialNumber;
 
-      // Parse subject
-      const subjectMatch = stdout.match(/subject=(.+)/i);
-      if (subjectMatch) {
-        info.subject = subjectMatch[1].trim();
-      }
+    // Calculate fingerprint (SHA-256)
+    const certDer = forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes();
+    const md = forge.md.sha256.create();
+    md.update(certDer);
+    info.fingerprint = md.digest().toHex().toUpperCase().match(/.{2}/g)?.join(':');
 
-      // Parse issuer
-      const issuerMatch = stdout.match(/issuer=(.+)/i);
-      if (issuerMatch) {
-        info.issuer = issuerMatch[1].trim();
-      }
+    // Calculate days until expiry and status
+    if (info.validTo) {
+      const now = new Date();
+      const daysUntilExpiry = Math.ceil((info.validTo.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      info.daysUntilExpiry = daysUntilExpiry;
 
-      // Parse dates
-      const notBeforeMatch = stdout.match(/notBefore=(.+)/i);
-      if (notBeforeMatch) {
-        info.validFrom = new Date(notBeforeMatch[1].trim());
-      }
-
-      const notAfterMatch = stdout.match(/notAfter=(.+)/i);
-      if (notAfterMatch) {
-        info.validTo = new Date(notAfterMatch[1].trim());
-      }
-
-      // Parse serial
-      const serialMatch = stdout.match(/serial=(.+)/i);
-      if (serialMatch) {
-        info.serialNumber = serialMatch[1].trim();
-      }
-
-      // Parse fingerprint
-      const fingerprintMatch = stdout.match(/SHA256 Fingerprint=(.+)/i) || stdout.match(/Fingerprint=(.+)/i);
-      if (fingerprintMatch) {
-        info.fingerprint = fingerprintMatch[1].trim();
-      }
-
-      // Calculate days until expiry and status
-      if (info.validTo) {
-        const now = new Date();
-        const daysUntilExpiry = Math.ceil((info.validTo.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-        info.daysUntilExpiry = daysUntilExpiry;
-
-        if (daysUntilExpiry <= 0) {
-          info.status = 'expired';
-        } else if (daysUntilExpiry <= 30) {
-          info.status = 'expiring_soon';
-        } else {
-          info.status = 'valid';
-        }
+      if (daysUntilExpiry <= 0) {
+        info.status = 'expired';
+      } else if (daysUntilExpiry <= 30) {
+        info.status = 'expiring_soon';
       } else {
         info.status = 'valid';
       }
+    } else {
+      info.status = 'valid';
+    }
 
-      resolve(info);
-    });
-
-    openssl.on('error', (err) => {
-      console.error('[CertManager] Failed to spawn openssl:', err);
-      resolve({ exists: true, status: 'valid' });
-    });
-  });
+    return info;
+  } catch (error) {
+    console.error('[CertManager] Failed to parse certificate:', error);
+    return { exists: true, status: 'valid' };
+  }
 }
 
 /**
@@ -220,72 +189,113 @@ export function getCACertificate(): { content: string; hash: string } | null {
 }
 
 /**
- * Regenerate certificates using the generate-certs.ps1 script
+ * Generate certificates using node-forge (no external dependencies required)
  */
 export async function renewCertificates(validityDays: number = 365): Promise<{ success: boolean; message: string; output?: string }> {
-  return new Promise((resolve) => {
-    const scriptsDir = app.isPackaged
-      ? path.join(process.resourcesPath, 'scripts')
-      : path.join(__dirname, '../../scripts');
-
-    const scriptPath = path.join(scriptsDir, 'generate-certs.ps1');
+  try {
     const certsDir = getCertsDir();
-
-    if (!fs.existsSync(scriptPath)) {
-      resolve({
-        success: false,
-        message: `Certificate generation script not found: ${scriptPath}`,
-      });
-      return;
-    }
+    const hostname = require('os').hostname();
 
     console.log('[CertManager] Regenerating certificates...');
     console.log('[CertManager] Output directory:', certsDir);
+    console.log('[CertManager] Hostname:', hostname);
 
-    const powershell = spawn('powershell.exe', [
-      '-ExecutionPolicy', 'Bypass',
-      '-File', scriptPath,
-      '-OutputDir', certsDir,
-      '-ValidityDays', validityDays.toString(),
+    // Generate CA key pair
+    console.log('[CertManager] Generating CA key pair...');
+    const caKeys = forge.pki.rsa.generateKeyPair(4096);
+
+    // Create CA certificate
+    console.log('[CertManager] Creating CA certificate...');
+    const caCert = forge.pki.createCertificate();
+    caCert.publicKey = caKeys.publicKey;
+    caCert.serialNumber = '01';
+    caCert.validity.notBefore = new Date();
+    caCert.validity.notAfter = new Date();
+    caCert.validity.notAfter.setDate(caCert.validity.notBefore.getDate() + validityDays);
+
+    const caAttrs = [
+      { name: 'commonName', value: 'Sentinel CA' },
+      { name: 'countryName', value: 'US' },
+      { name: 'stateOrProvinceName', value: 'State' },
+      { name: 'localityName', value: 'City' },
+      { name: 'organizationName', value: 'Sentinel' },
+      { shortName: 'OU', value: 'IT' },
+    ];
+    caCert.setSubject(caAttrs);
+    caCert.setIssuer(caAttrs);
+    caCert.setExtensions([
+      { name: 'basicConstraints', cA: true },
+      { name: 'keyUsage', keyCertSign: true, digitalSignature: true, cRLSign: true },
+      { name: 'subjectKeyIdentifier' },
     ]);
+    caCert.sign(caKeys.privateKey, forge.md.sha256.create());
 
-    let stdout = '';
-    let stderr = '';
+    // Generate Server key pair
+    console.log('[CertManager] Generating server key pair...');
+    const serverKeys = forge.pki.rsa.generateKeyPair(4096);
 
-    powershell.stdout.on('data', (data) => {
-      stdout += data.toString();
-      console.log('[CertManager]', data.toString().trim());
-    });
+    // Create Server certificate
+    console.log('[CertManager] Creating server certificate...');
+    const serverCert = forge.pki.createCertificate();
+    serverCert.publicKey = serverKeys.publicKey;
+    serverCert.serialNumber = '02';
+    serverCert.validity.notBefore = new Date();
+    serverCert.validity.notAfter = new Date();
+    serverCert.validity.notAfter.setDate(serverCert.validity.notBefore.getDate() + validityDays);
 
-    powershell.stderr.on('data', (data) => {
-      stderr += data.toString();
-      console.error('[CertManager]', data.toString().trim());
-    });
+    const serverAttrs = [
+      { name: 'commonName', value: hostname },
+      { name: 'countryName', value: 'US' },
+      { name: 'stateOrProvinceName', value: 'State' },
+      { name: 'localityName', value: 'City' },
+      { name: 'organizationName', value: 'Sentinel' },
+      { shortName: 'OU', value: 'IT' },
+    ];
+    serverCert.setSubject(serverAttrs);
+    serverCert.setIssuer(caAttrs); // Signed by CA
+    serverCert.setExtensions([
+      { name: 'basicConstraints', cA: false },
+      { name: 'keyUsage', digitalSignature: true, keyEncipherment: true },
+      { name: 'extKeyUsage', serverAuth: true },
+      {
+        name: 'subjectAltName',
+        altNames: [
+          { type: 2, value: hostname }, // DNS
+          { type: 2, value: 'localhost' },
+          { type: 7, ip: '127.0.0.1' }, // IP
+          { type: 7, ip: '::1' },
+        ],
+      },
+    ]);
+    serverCert.sign(caKeys.privateKey, forge.md.sha256.create());
 
-    powershell.on('close', (code) => {
-      if (code === 0) {
-        resolve({
-          success: true,
-          message: 'Certificates regenerated successfully',
-          output: stdout,
-        });
-      } else {
-        resolve({
-          success: false,
-          message: `Certificate generation failed with exit code ${code}`,
-          output: stderr || stdout,
-        });
-      }
-    });
+    // Convert to PEM format
+    const caCertPem = forge.pki.certificateToPem(caCert);
+    const caKeyPem = forge.pki.privateKeyToPem(caKeys.privateKey);
+    const serverCertPem = forge.pki.certificateToPem(serverCert);
+    const serverKeyPem = forge.pki.privateKeyToPem(serverKeys.privateKey);
 
-    powershell.on('error', (err) => {
-      console.error('[CertManager] Failed to spawn powershell:', err);
-      resolve({
-        success: false,
-        message: `Failed to run certificate generation script: ${err.message}`,
-      });
-    });
-  });
+    // Write files
+    console.log('[CertManager] Writing certificate files...');
+    fs.writeFileSync(path.join(certsDir, 'ca-cert.pem'), caCertPem);
+    fs.writeFileSync(path.join(certsDir, 'ca-key.pem'), caKeyPem);
+    fs.writeFileSync(path.join(certsDir, 'server-cert.pem'), serverCertPem);
+    fs.writeFileSync(path.join(certsDir, 'server-key.pem'), serverKeyPem);
+
+    console.log('[CertManager] Certificates generated successfully');
+
+    return {
+      success: true,
+      message: 'Certificates regenerated successfully',
+      output: `Generated certificates in ${certsDir}:\n- ca-cert.pem\n- ca-key.pem\n- server-cert.pem\n- server-key.pem`,
+    };
+  } catch (error: any) {
+    console.error('[CertManager] Certificate generation failed:', error);
+    return {
+      success: false,
+      message: `Certificate generation failed: ${error.message}`,
+    };
+  }
 }
 
 /**
