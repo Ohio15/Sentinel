@@ -91,12 +91,14 @@ function applyBranding() {
     document.documentElement.style.setProperty('--primary-hover', hoverColor);
   }
 
-  // Apply logo
+  // Apply logo with configurable size
   const clientLogo = document.getElementById('clientLogo');
   const defaultLogo = document.getElementById('defaultLogo');
   if (clientBranding.logoUrl && clientLogo && defaultLogo) {
     clientLogo.src = clientBranding.logoUrl;
     clientLogo.alt = clientBranding.name || 'Company Logo';
+    clientLogo.style.width = (clientBranding.logoWidth || 32) + 'px';
+    clientLogo.style.height = (clientBranding.logoHeight || 32) + 'px';
     clientLogo.style.display = 'block';
     defaultLogo.style.display = 'none';
   }

@@ -160,7 +160,7 @@ export function Clients() {
 interface ClientModalProps {
   client: Client | null;
   onClose: () => void;
-  onSave: (data: { name: string; description?: string; color?: string; logoUrl?: string }) => Promise<void>;
+  onSave: (data: { name: string; description?: string; color?: string; logoUrl?: string; logoWidth?: number; logoHeight?: number }) => Promise<void>;
 }
 
 function ClientModal({ client, onClose, onSave }: ClientModalProps) {
@@ -168,21 +168,11 @@ function ClientModal({ client, onClose, onSave }: ClientModalProps) {
   const [description, setDescription] = useState(client?.description || '');
   const [color, setColor] = useState(client?.color || '#6366f1');
   const [logoUrl, setLogoUrl] = useState(client?.logoUrl || '');
+  const [logoWidth, setLogoWidth] = useState(client?.logoWidth || 32);
+  const [logoHeight, setLogoHeight] = useState(client?.logoHeight || 32);
+  const [logoError, setLogoError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const colors = [
-    '#6366f1', // indigo
-    '#8b5cf6', // violet
-    '#ec4899', // pink
-    '#ef4444', // red
-    '#f97316', // orange
-    '#eab308', // yellow
-    '#22c55e', // green
-    '#14b8a6', // teal
-    '#06b6d4', // cyan
-    '#3b82f6', // blue
-  ];
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -199,6 +189,8 @@ function ClientModal({ client, onClose, onSave }: ClientModalProps) {
         description: description.trim() || undefined,
         color,
         logoUrl: logoUrl.trim() || undefined,
+        logoWidth: logoWidth || 32,
+        logoHeight: logoHeight || 32,
       });
     } catch (err: any) {
       setError(err.message || 'Failed to save client');
@@ -257,20 +249,35 @@ function ClientModal({ client, onClose, onSave }: ClientModalProps) {
 
           <div>
             <label className="block text-sm font-medium text-text-primary mb-2">
-              Color
+              Brand Color
             </label>
-            <div className="flex flex-wrap gap-2">
-              {colors.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setColor(c)}
-                  className={`w-8 h-8 rounded-lg transition-all ${
-                    color === c ? 'ring-2 ring-offset-2 ring-primary scale-110' : 'hover:scale-105'
-                  }`}
-                  style={{ backgroundColor: c }}
-                />
-              ))}
+            <div className="flex items-center gap-3">
+              <input
+                type="color"
+                value={color}
+                onChange={(e) => setColor(e.target.value)}
+                className="w-12 h-10 rounded-lg cursor-pointer border border-border"
+                title="Choose brand color"
+              />
+              <input
+                type="text"
+                value={color}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (/^#[0-9A-Fa-f]{0,6}$/.test(val)) {
+                    setColor(val);
+                  }
+                }}
+                className="input w-28 font-mono text-sm"
+                placeholder="#6366f1"
+                maxLength={7}
+              />
+              <div
+                className="w-20 h-8 rounded flex items-center justify-center text-white text-xs font-medium"
+                style={{ backgroundColor: color }}
+              >
+                Preview
+              </div>
             </div>
           </div>
 
@@ -281,27 +288,64 @@ function ClientModal({ client, onClose, onSave }: ClientModalProps) {
             <input
               type="url"
               value={logoUrl}
-              onChange={(e) => setLogoUrl(e.target.value)}
+              onChange={(e) => {
+                setLogoUrl(e.target.value);
+                setLogoError(false);
+              }}
               className="input w-full"
               placeholder="https://example.com/logo.png"
             />
             <p className="text-xs text-text-secondary mt-1">
               URL to the company logo for the support portal. Leave empty to use default.
             </p>
-            {logoUrl && (
-              <div className="mt-2 p-2 bg-background rounded-lg flex items-center gap-2">
-                <img
-                  src={logoUrl}
-                  alt="Logo preview"
-                  className="w-8 h-8 object-contain"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = 'none';
-                  }}
-                />
-                <span className="text-xs text-text-secondary">Logo preview</span>
-              </div>
-            )}
           </div>
+
+          {logoUrl && (
+            <div className="p-3 bg-background rounded-lg space-y-3">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-text-secondary">Width:</label>
+                  <input
+                    type="number"
+                    value={logoWidth}
+                    onChange={(e) => setLogoWidth(Math.max(16, Math.min(200, parseInt(e.target.value) || 32)))}
+                    className="input w-16 text-sm py-1"
+                    min={16}
+                    max={200}
+                  />
+                  <span className="text-xs text-text-secondary">px</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-text-secondary">Height:</label>
+                  <input
+                    type="number"
+                    value={logoHeight}
+                    onChange={(e) => setLogoHeight(Math.max(16, Math.min(200, parseInt(e.target.value) || 32)))}
+                    className="input w-16 text-sm py-1"
+                    min={16}
+                    max={200}
+                  />
+                  <span className="text-xs text-text-secondary">px</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-text-secondary">Preview:</span>
+                <div className="flex-1 flex items-center justify-center p-2 bg-white rounded border border-border min-h-[60px]">
+                  {!logoError ? (
+                    <img
+                      src={logoUrl}
+                      alt="Logo preview"
+                      style={{ width: logoWidth, height: logoHeight, objectFit: 'contain' }}
+                      onError={() => setLogoError(true)}
+                      onLoad={() => setLogoError(false)}
+                    />
+                  ) : (
+                    <span className="text-xs text-danger">Failed to load image</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="flex justify-end gap-3 pt-4">
             <button

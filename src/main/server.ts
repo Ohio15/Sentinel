@@ -882,7 +882,7 @@ export class Server {
         const client = await this.database.getClient(session.clientId);
 
         if (!client) {
-          res.json({ name: 'Support Portal', primaryColor: '#0078d4', logoUrl: null });
+          res.json({ name: 'Support Portal', primaryColor: '#0078d4', logoUrl: null, logoWidth: 32, logoHeight: 32 });
           return;
         }
 
@@ -890,10 +890,12 @@ export class Server {
           name: client.name,
           primaryColor: client.color || '#0078d4',
           logoUrl: client.logoUrl || null,
+          logoWidth: client.logoWidth || 32,
+          logoHeight: client.logoHeight || 32,
         });
       } catch (error) {
         console.error('Portal get client info error:', error);
-        res.json({ name: 'Support Portal', primaryColor: '#0078d4', logoUrl: null });
+        res.json({ name: 'Support Portal', primaryColor: '#0078d4', logoUrl: null, logoWidth: 32, logoHeight: 32 });
       }
     });
 

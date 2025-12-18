@@ -1421,6 +1421,7 @@ export class Database {
   async getClient(id: string): Promise<any | null> {
     const result = await this.query(
       `SELECT id, name, description, color, logo_url as "logoUrl",
+              logo_width as "logoWidth", logo_height as "logoHeight",
               created_at as "createdAt", updated_at as "updatedAt"
        FROM clients WHERE id = $1`,
       [id]
@@ -1428,17 +1429,17 @@ export class Database {
     return result.rows[0] || null;
   }
 
-  async createClient(client: { name: string; description?: string; color?: string; logoUrl?: string }): Promise<any> {
+  async createClient(client: { name: string; description?: string; color?: string; logoUrl?: string; logoWidth?: number; logoHeight?: number }): Promise<any> {
     const id = uuidv4();
     await this.query(
-      `INSERT INTO clients (id, name, description, color, logo_url)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [id, client.name, client.description || null, client.color || null, client.logoUrl || null]
+      `INSERT INTO clients (id, name, description, color, logo_url, logo_width, logo_height)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [id, client.name, client.description || null, client.color || null, client.logoUrl || null, client.logoWidth || 32, client.logoHeight || 32]
     );
     return this.getClient(id);
   }
 
-  async updateClient(id: string, client: { name?: string; description?: string; color?: string; logoUrl?: string }): Promise<any | null> {
+  async updateClient(id: string, client: { name?: string; description?: string; color?: string; logoUrl?: string; logoWidth?: number; logoHeight?: number }): Promise<any | null> {
     const updates: string[] = [];
     const values: any[] = [];
     let paramIndex = 1;
@@ -1458,6 +1459,14 @@ export class Database {
     if (client.logoUrl !== undefined) {
       updates.push(`logo_url = $${paramIndex++}`);
       values.push(client.logoUrl);
+    }
+    if (client.logoWidth !== undefined) {
+      updates.push(`logo_width = $${paramIndex++}`);
+      values.push(client.logoWidth);
+    }
+    if (client.logoHeight !== undefined) {
+      updates.push(`logo_height = $${paramIndex++}`);
+      values.push(client.logoHeight);
     }
 
     if (updates.length > 0) {
