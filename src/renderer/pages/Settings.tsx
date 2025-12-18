@@ -118,12 +118,17 @@ export function Settings() {
     }
   };
 
+  const getServerUrl = (path: string) => {
+    const port = serverInfo?.port || 3000;
+    return `http://localhost:${port}${path}`;
+  };
+
   const loadPortalData = async () => {
     try {
       const [portalData, tenantsData, clientsData] = await Promise.all([
-        fetch('/api/portal/settings').then(r => r.json()).catch(() => null),
-        fetch('/api/client-tenants').then(r => r.json()).catch(() => []),
-        fetch('/api/clients').then(r => r.json()).catch(() => []),
+        fetch(getServerUrl('/api/portal/settings')).then(r => r.json()).catch(() => null),
+        fetch(getServerUrl('/api/client-tenants')).then(r => r.json()).catch(() => []),
+        fetch(getServerUrl('/api/clients')).then(r => r.json()).catch(() => []),
       ]);
 
       if (portalData) {
@@ -142,7 +147,7 @@ export function Settings() {
   const handleSavePortalSettings = async () => {
     setSavingPortal(true);
     try {
-      const response = await fetch('/api/portal/settings', {
+      const response = await fetch(getServerUrl('/api/portal/settings'), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(portalSettings)
@@ -167,7 +172,7 @@ export function Settings() {
     }
 
     try {
-      const response = await fetch('/api/client-tenants', {
+      const response = await fetch(getServerUrl('/api/client-tenants'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newTenant)
@@ -189,7 +194,7 @@ export function Settings() {
     if (!confirm('Are you sure you want to remove this tenant mapping?')) return;
 
     try {
-      const response = await fetch(`/api/client-tenants/${id}`, {
+      const response = await fetch(getServerUrl(`/api/client-tenants/${id}`), {
         method: 'DELETE'
       });
 
