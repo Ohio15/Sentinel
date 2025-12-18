@@ -824,11 +824,14 @@ export class Database {
       SELECT
         t.id, t.ticket_number as "ticketNumber", t.subject, t.description,
         t.status, t.priority, t.type, t.device_id as "deviceId",
+        t.device_name as "userDeviceName",
         d.hostname as "deviceName", d.display_name as "deviceDisplayName",
         t.requester_name as "requesterName", t.requester_email as "requesterEmail",
+        t.submitter_name as "submitterName", t.submitter_email as "submitterEmail",
         t.assigned_to as "assignedTo", t.tags, t.due_date as "dueDate",
         t.resolved_at as "resolvedAt", t.closed_at as "closedAt",
-        t.created_at as "createdAt", t.updated_at as "updatedAt"
+        t.created_at as "createdAt", t.updated_at as "updatedAt",
+        t.source, t.client_id as "clientId"
       FROM tickets t
       LEFT JOIN devices d ON t.device_id = d.id
       WHERE t.id = $1
@@ -2283,6 +2286,7 @@ export class Database {
     priority?: string;
     type?: string;
     deviceId?: string;
+    deviceName?: string;
     clientId?: string;
     submitterEmail: string;
     submitterName: string;
@@ -2290,10 +2294,10 @@ export class Database {
     const id = uuidv4();
     await this.query(`
       INSERT INTO tickets (
-        id, subject, description, status, priority, type, device_id,
+        id, subject, description, status, priority, type, device_id, device_name,
         client_id, submitter_email, submitter_name, requester_name,
         requester_email, source
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
     `, [
       id,
       ticket.subject,
@@ -2302,6 +2306,7 @@ export class Database {
       ticket.priority || 'medium',
       ticket.type || 'incident',
       ticket.deviceId || null,
+      ticket.deviceName || null,
       ticket.clientId || null,
       ticket.submitterEmail,
       ticket.submitterName,
@@ -2321,6 +2326,7 @@ export class Database {
       SELECT
         t.id, t.ticket_number as "ticketNumber", t.subject, t.description,
         t.status, t.priority, t.type, t.device_id as "deviceId",
+        t.device_name as "userDeviceName",
         d.hostname as "deviceName", d.display_name as "deviceDisplayName",
         t.requester_name as "requesterName", t.requester_email as "requesterEmail",
         t.submitter_name as "submitterName", t.submitter_email as "submitterEmail",

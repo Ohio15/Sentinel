@@ -359,6 +359,12 @@ body {
   border-color: var(--primary);
 }
 
+.form-group input.readonly-field {
+  background-color: #f5f5f5;
+  color: #666;
+  cursor: not-allowed;
+}
+
 .form-group textarea {
   resize: vertical;
   min-height: 120px;
@@ -404,6 +410,25 @@ body {
   flex-wrap: wrap;
   color: var(--secondary);
   font-size: 0.9375rem;
+}
+
+.ticket-detail-info {
+  display: flex;
+  gap: 2rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.9375rem;
+}
+
+.ticket-detail-info span {
+  color: var(--dark);
+}
+
+.ticket-detail-info strong {
+  color: var(--secondary);
+  font-weight: 500;
 }
 
 .ticket-detail-body {
