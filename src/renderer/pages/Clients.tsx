@@ -174,6 +174,19 @@ function ClientModal({ client, onClose, onSave }: ClientModalProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Sync state when client prop changes (for editing different clients)
+  useEffect(() => {
+    setName(client?.name || '');
+    setDescription(client?.description || '');
+    setColor(client?.color || '#6366f1');
+    setLogoUrl(client?.logoUrl || '');
+    setLogoWidth(client?.logoWidth || 32);
+    setLogoHeight(client?.logoHeight || 32);
+    setLogoError(false);
+    setError(null);
+  }, [client]);
+
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
