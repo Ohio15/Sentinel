@@ -60,10 +60,50 @@ export class AgentManager {
       deviceId: device?.id,
       lastSeen: new Date(),
     });
-    console.log(`Agent registered: ${agentId}`);
+    console.log(`Agent registered: ${agentId}${device ? ` (device: ${device.id})` : ' (no device yet)'}`);
 
-    // Notify renderer of device online
-    this.notifyRenderer('devices:online', { agentId, deviceId: device?.id });
+    // Only notify renderer if device already exists
+    // New devices will trigger devices:online when first metrics create the device record
+    if (device?.id) {
+      this.notifyRenderer('devices:online', { agentId, deviceId: device.id });
+
+      // Deliver any queued commands for this device
+      this.deliverQueuedCommands(device.id, agentId).catch(err => {
+        console.error(`Failed to deliver queued commands for ${device.id}:`, err);
+      });
+    } else {
+      console.log(`[AgentManager] Agent ${agentId} connected but no device record yet - will be created on first metrics`);
+    }
+  }
+
+  // Deliver queued commands to a reconnected agent
+  private async deliverQueuedCommands(deviceId: string, agentId: string): Promise<void> {
+    const pendingCommands = await this.database.getPendingCommandsForDevice(deviceId);
+    if (pendingCommands.length === 0) return;
+
+    console.log(`[Queue] Delivering ${pendingCommands.length} queued commands to device ${deviceId}`);
+
+    for (const cmd of pendingCommands) {
+      try {
+        // Mark as delivered
+        await this.database.markCommandDelivered(cmd.id);
+
+        // Send to agent
+        const sent = this.sendToAgent(agentId, {
+          type: cmd.commandType,
+          requestId: cmd.id,
+          data: cmd.payload,
+        });
+
+        if (!sent) {
+          console.error(`[Queue] Failed to send queued command ${cmd.id} to agent`);
+        } else {
+          console.log(`[Queue] Delivered queued command ${cmd.id} (${cmd.commandType})`);
+        }
+      } catch (error) {
+        console.error(`[Queue] Error delivering command ${cmd.id}:`, error);
+      }
+    }
   }
 
   unregisterConnection(agentId: string): void {
@@ -219,9 +259,145 @@ export class AgentManager {
         this.handleUpdateStatus(agentId, message);
         break;
 
+      case 'sync_request':
+        this.handleSyncRequest(agentId, message);
+        break;
+
+      case 'bulk_metrics':
+        this.handleBulkMetrics(agentId, message);
+        break;
+
+      case 'command_result':
+        this.handleCommandResult(agentId, message);
+        break;
+
+      case 'health_report':
+        this.handleHealthReport(agentId, message);
+        break;
+
       default:
         console.log(`Unknown message type: ${message.type}`);
     }
+  }
+
+  // Handle sync request from agent after reconnection
+  private async handleSyncRequest(agentId: string, message: any): Promise<void> {
+    const device = await this.database.getDeviceByAgentId(agentId);
+    if (!device) return;
+
+    const data = message.data || message;
+    console.log(`[Sync] Agent ${agentId} requesting sync after ${data.offlineDuration || 'unknown'} offline`);
+    console.log(`[Sync] Agent has ${data.cachedMetricsCount || 0} cached metrics, ${data.cachedEventsCount || 0} events`);
+
+    // Get pending commands for this device
+    const pendingCommands = await this.database.getPendingCommandsForDevice(device.id);
+
+    // Send sync response with pending commands
+    this.sendToAgent(agentId, {
+      type: 'sync_response',
+      data: {
+        pendingCommands: pendingCommands.map(cmd => ({
+          id: cmd.id,
+          type: cmd.commandType,
+          payload: cmd.payload,
+          priority: cmd.priority,
+        })),
+        serverTime: new Date().toISOString(),
+        acceptBulkMetrics: true,
+        maxBatchSize: 100,
+      },
+    });
+  }
+
+  // Handle bulk metrics upload from agent (cached during offline period)
+  private async handleBulkMetrics(agentId: string, message: any): Promise<void> {
+    const device = await this.database.getDeviceByAgentId(agentId);
+    if (!device) return;
+
+    const data = message.data || message;
+    const metrics = data.metrics || [];
+
+    console.log(`[Sync] Received ${metrics.length} cached metrics from agent ${agentId}`);
+
+    let processed = 0;
+    for (const metric of metrics) {
+      try {
+        // Store the backlogged metric with its original timestamp
+        await this.database.storeMetricsBacklog(device.id, new Date(metric.timestamp), metric.data);
+        processed++;
+      } catch (error) {
+        console.error(`[Sync] Failed to store cached metric:`, error);
+      }
+    }
+
+    // Acknowledge receipt
+    this.sendToAgent(agentId, {
+      type: 'bulk_metrics_ack',
+      data: {
+        received: processed,
+        batchId: data.batchId,
+      },
+    });
+
+    console.log(`[Sync] Processed ${processed}/${metrics.length} cached metrics`);
+  }
+
+  // Handle command result from agent (for queued commands)
+  private async handleCommandResult(agentId: string, message: any): Promise<void> {
+    const data = message.data || message;
+    const commandId = data.commandId || message.requestId;
+
+    if (!commandId) {
+      console.error('[Queue] Command result missing commandId');
+      return;
+    }
+
+    if (data.success) {
+      await this.database.markCommandCompleted(commandId, data.result || data.output);
+      console.log(`[Queue] Command ${commandId} completed successfully`);
+    } else {
+      await this.database.markCommandFailed(commandId, data.error || 'Unknown error');
+      console.log(`[Queue] Command ${commandId} failed: ${data.error}`);
+    }
+
+    // Notify renderer of command completion
+    const device = await this.database.getDeviceByAgentId(agentId);
+    if (device) {
+      this.notifyRenderer('command:completed', {
+        deviceId: device.id,
+        commandId,
+        success: data.success,
+        result: data.result || data.output,
+        error: data.error,
+      });
+    }
+  }
+
+  // Handle health report from agent
+  private async handleHealthReport(agentId: string, message: any): Promise<void> {
+    const device = await this.database.getDeviceByAgentId(agentId);
+    if (!device) return;
+
+    const data = message.data || message;
+    console.log(`[Health] Received health report from ${device.hostname || agentId}:`, {
+      score: data.score,
+      status: data.status,
+    });
+
+    // Store the health report
+    await this.database.upsertAgentHealth(device.id, {
+      healthScore: data.score || 100,
+      status: data.status || 'unknown',
+      factors: data.factors || {},
+      components: data.components || {},
+      updatedAt: new Date(),
+    });
+
+    // Notify renderer
+    this.notifyRenderer('health:updated', {
+      deviceId: device.id,
+      ...data,
+    });
   }
 
   private async handleHeartbeat(agentId: string, message: any): Promise<void> {
@@ -241,10 +417,12 @@ export class AgentManager {
 
   private async handleMetrics(agentId: string, message: any): Promise<void> {
     let device = await this.database.getDeviceByAgentId(agentId);
+    let isNewDevice = false;
 
     // If device doesn't exist, create a minimal record from the metrics data
     if (!device) {
       console.log(`Device not found for agent ${agentId}, creating from metrics data`);
+      isNewDevice = true;
       const hostname = message.data?.hostname || `Agent-${agentId.substring(0, 8)}`;
       device = await this.database.createOrUpdateDevice({
         agentId,
@@ -254,8 +432,17 @@ export class AgentManager {
         platform: message.data?.platform || 'unknown',
         architecture: message.data?.architecture || '',
       });
-      // Notify renderer that a new device was created
-      this.notifyRenderer('devices:updated', {});
+
+      // Update the connection with the new device ID
+      const conn = this.connections.get(agentId);
+      if (conn) {
+        conn.deviceId = device.id;
+      }
+
+      // Notify renderer that a new device was created and is online
+      console.log(`[AgentManager] New device created: ${device.id} (${device.hostname}), notifying renderer`);
+      this.notifyRenderer('devices:online', { agentId, deviceId: device.id, isNew: true });
+      this.notifyRenderer('devices:updated', { deviceId: device.id });
     }
 
     if (device) {
@@ -446,14 +633,45 @@ export class AgentManager {
     }, 3600000); // Every hour
   }
 
-  // Command execution
-  async executeCommand(deviceId: string, command: string, type: string): Promise<any> {
+  // Command execution (with offline queue support)
+  async executeCommand(deviceId: string, command: string, type: string, options?: {
+    queueIfOffline?: boolean;
+    priority?: number;
+    expiresInMinutes?: number;
+  }): Promise<any> {
     const device = await this.database.getDevice(deviceId);
     if (!device) {
       throw new Error('Device not found');
     }
 
-    if (!this.isAgentConnected(device.agentId)) {
+    const isConnected = this.isAgentConnected(device.agentId);
+
+    // If agent is offline and queueIfOffline is enabled, queue the command
+    if (!isConnected && options?.queueIfOffline) {
+      const commandId = uuidv4();
+      const expiresAt = options.expiresInMinutes
+        ? new Date(Date.now() + options.expiresInMinutes * 60 * 1000)
+        : undefined;
+
+      await this.database.queueCommand({
+        id: commandId,
+        deviceId,
+        commandType: 'execute_command',
+        payload: { command, commandType: type },
+        priority: options.priority,
+        expiresAt,
+      });
+
+      console.log(`[Queue] Command queued for offline device ${deviceId}: ${command}`);
+      return {
+        success: true,
+        queued: true,
+        commandId,
+        message: 'Command queued for delivery when agent reconnects',
+      };
+    }
+
+    if (!isConnected) {
       throw new Error('Agent not connected');
     }
 
@@ -473,6 +691,34 @@ export class AgentManager {
       await this.database.updateCommandStatus(cmd.id, 'failed', undefined, error.message);
       throw error;
     }
+  }
+
+  // Queue any command for an offline agent
+  async queueCommandForDevice(deviceId: string, commandType: string, payload: any, options?: {
+    priority?: number;
+    expiresInMinutes?: number;
+  }): Promise<string> {
+    const device = await this.database.getDevice(deviceId);
+    if (!device) {
+      throw new Error('Device not found');
+    }
+
+    const commandId = uuidv4();
+    const expiresAt = options?.expiresInMinutes
+      ? new Date(Date.now() + options.expiresInMinutes * 60 * 1000)
+      : undefined;
+
+    await this.database.queueCommand({
+      id: commandId,
+      deviceId,
+      commandType,
+      payload,
+      priority: options?.priority,
+      expiresAt,
+    });
+
+    console.log(`[Queue] Command ${commandType} queued for device ${deviceId}`);
+    return commandId;
   }
 
   // Terminal sessions
