@@ -633,9 +633,20 @@ function setupIpcHandlers(): void {
     const email = body.email || {};
     const smtp = email.smtp || {};
 
+    console.log('[IPC:portal:updateSettings] Received:', {
+      hasClientId: !!azureAd.clientId,
+      clientIdLength: azureAd.clientId?.length || 0,
+      hasClientSecret: !!azureAd.clientSecret,
+      clientSecretIsMasked: azureAd.clientSecret === '********',
+      clientSecretLength: azureAd.clientSecret?.length || 0,
+      hasRedirectUri: !!azureAd.redirectUri,
+      redirectUri: azureAd.redirectUri,
+    });
+
     if (azureAd.clientId !== undefined) updates.azureClientId = azureAd.clientId;
     if (azureAd.clientSecret && azureAd.clientSecret !== '********') {
       updates.azureClientSecret = azureAd.clientSecret;
+      console.log('[IPC:portal:updateSettings] Saving new client secret (length:', azureAd.clientSecret.length, ')');
     }
     if (azureAd.redirectUri !== undefined) updates.azureRedirectUri = azureAd.redirectUri;
 
