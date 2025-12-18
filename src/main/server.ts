@@ -1007,18 +1007,26 @@ export class Server {
     this.app.get('/api/portal/settings', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
         const settings = await this.database.getSettings();
+        // Return nested structure expected by Settings UI
         res.json({
-          azureClientId: settings.azureClientId || '',
-          azureClientSecret: settings.azureClientSecret ? '********' : '',
-          azureRedirectUri: settings.azureRedirectUri || '',
-          portalEnabled: settings.portalEnabled === 'true',
-          smtpHost: settings.smtpHost || '',
-          smtpPort: settings.smtpPort || '587',
-          smtpUser: settings.smtpUser || '',
-          smtpPassword: settings.smtpPassword ? '********' : '',
-          smtpFromAddress: settings.smtpFromAddress || '',
-          smtpFromName: settings.smtpFromName || '',
-          emailNotificationsEnabled: settings.emailNotificationsEnabled === 'true',
+          azureAd: {
+            clientId: settings.azureClientId || '',
+            clientSecret: settings.azureClientSecret ? '********' : '',
+            redirectUri: settings.azureRedirectUri || '',
+          },
+          email: {
+            enabled: settings.emailNotificationsEnabled === 'true',
+            portalUrl: settings.portalUrl || '',
+            smtp: {
+              host: settings.smtpHost || '',
+              port: parseInt(settings.smtpPort || '587', 10),
+              secure: settings.smtpSecure === 'true',
+              user: settings.smtpUser || '',
+              password: settings.smtpPassword ? '********' : '',
+              fromAddress: settings.smtpFromAddress || '',
+              fromName: settings.smtpFromName || '',
+            },
+          },
         });
       } catch (error) {
         console.error('Get portal settings error:', error);
@@ -1032,26 +1040,41 @@ export class Server {
         const updates: Record<string, string> = {};
         const body = req.body;
 
-        // Azure AD settings
+        // Handle nested structure from Settings UI
+        const azureAd = body.azureAd || {};
+        const email = body.email || {};
+        const smtp = email.smtp || {};
+
+        // Azure AD settings (from nested structure)
+        if (azureAd.clientId !== undefined) updates.azureClientId = azureAd.clientId;
+        if (azureAd.clientSecret && azureAd.clientSecret !== '********') {
+          updates.azureClientSecret = azureAd.clientSecret;
+        }
+        if (azureAd.redirectUri !== undefined) updates.azureRedirectUri = azureAd.redirectUri;
+
+        // Email notification settings
+        if (email.enabled !== undefined) {
+          updates.emailNotificationsEnabled = String(email.enabled);
+        }
+        if (email.portalUrl !== undefined) updates.portalUrl = email.portalUrl;
+
+        // SMTP settings (from nested structure)
+        if (smtp.host !== undefined) updates.smtpHost = smtp.host;
+        if (smtp.port !== undefined) updates.smtpPort = String(smtp.port);
+        if (smtp.secure !== undefined) updates.smtpSecure = String(smtp.secure);
+        if (smtp.user !== undefined) updates.smtpUser = smtp.user;
+        if (smtp.password && smtp.password !== '********') {
+          updates.smtpPassword = smtp.password;
+        }
+        if (smtp.fromAddress !== undefined) updates.smtpFromAddress = smtp.fromAddress;
+        if (smtp.fromName !== undefined) updates.smtpFromName = smtp.fromName;
+
+        // Also support flat field names for backwards compatibility
         if (body.azureClientId !== undefined) updates.azureClientId = body.azureClientId;
         if (body.azureClientSecret && body.azureClientSecret !== '********') {
           updates.azureClientSecret = body.azureClientSecret;
         }
         if (body.azureRedirectUri !== undefined) updates.azureRedirectUri = body.azureRedirectUri;
-        if (body.portalEnabled !== undefined) updates.portalEnabled = String(body.portalEnabled);
-
-        // SMTP settings
-        if (body.smtpHost !== undefined) updates.smtpHost = body.smtpHost;
-        if (body.smtpPort !== undefined) updates.smtpPort = String(body.smtpPort);
-        if (body.smtpUser !== undefined) updates.smtpUser = body.smtpUser;
-        if (body.smtpPassword && body.smtpPassword !== '********') {
-          updates.smtpPassword = body.smtpPassword;
-        }
-        if (body.smtpFromAddress !== undefined) updates.smtpFromAddress = body.smtpFromAddress;
-        if (body.smtpFromName !== undefined) updates.smtpFromName = body.smtpFromName;
-        if (body.emailNotificationsEnabled !== undefined) {
-          updates.emailNotificationsEnabled = String(body.emailNotificationsEnabled);
-        }
 
         await this.database.updateSettings(updates);
 
