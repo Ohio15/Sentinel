@@ -3,6 +3,7 @@
 :root {
   --primary: #0078d4;
   --primary-hover: #106ebe;
+  --primary-light: rgba(0, 120, 212, 0.1);
   --secondary: #6c757d;
   --success: #28a745;
   --warning: #ffc107;
@@ -11,7 +12,9 @@
   --dark: #212529;
   --border: #dee2e6;
   --shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.15);
   --radius: 8px;
+  --radius-lg: 12px;
 }
 
 * {
@@ -42,6 +45,9 @@ body {
   justify-content: space-between;
   align-items: center;
   box-shadow: var(--shadow);
+  position: sticky;
+  top: 0;
+  z-index: 100;
 }
 
 .logo {
@@ -170,8 +176,8 @@ body {
 
 .login-card {
   background: white;
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
   padding: 3rem;
   max-width: 440px;
   width: 100%;
@@ -207,17 +213,18 @@ body {
 
 .ticket-card {
   background: white;
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
   padding: 1.5rem;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.2s ease;
   border: 1px solid transparent;
 }
 
 .ticket-card:hover {
   border-color: var(--primary);
   transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
 }
 
 .ticket-card-header {
@@ -225,6 +232,31 @@ body {
   justify-content: space-between;
   align-items: flex-start;
   margin-bottom: 0.75rem;
+}
+
+/* Ticket ID Badge */
+.ticket-id {
+  font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--primary);
+  background: var(--primary-light);
+  padding: 0.25rem 0.625rem;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+
+.ticket-id-large {
+  font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--primary);
+  background: var(--primary-light);
+  padding: 0.375rem 0.875rem;
+  border-radius: 6px;
+  display: inline-block;
+  margin-bottom: 0.75rem;
+  letter-spacing: 0.5px;
 }
 
 .ticket-number {
@@ -325,7 +357,7 @@ body {
 /* Ticket Form */
 .ticket-form {
   background: white;
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
   padding: 2rem;
 }
@@ -385,23 +417,26 @@ body {
   border-top: 1px solid var(--border);
 }
 
-/* Ticket Detail */
-.ticket-detail {
+/* Ticket Detail Card */
+.ticket-detail-card {
   background: white;
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
   overflow: hidden;
+  margin-bottom: 1.5rem;
 }
 
 .ticket-detail-header {
   padding: 1.5rem;
   border-bottom: 1px solid var(--border);
+  background: linear-gradient(to bottom, #fafbfc, white);
 }
 
 .ticket-detail-subject {
   font-size: 1.5rem;
   font-weight: 600;
-  margin-bottom: 0.5rem;
+  color: var(--dark);
+  margin-bottom: 0.75rem;
 }
 
 .ticket-detail-meta {
@@ -410,6 +445,7 @@ body {
   flex-wrap: wrap;
   color: var(--secondary);
   font-size: 0.9375rem;
+  align-items: center;
 }
 
 .ticket-detail-info {
@@ -440,17 +476,339 @@ body {
   line-height: 1.8;
 }
 
-/* Comments Section */
+/* Comments Section - IM Style */
 .comments-section {
-  border-top: 1px solid var(--border);
-  padding: 1.5rem;
+  background: white;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  overflow: hidden;
 }
 
 .comments-section h3 {
-  margin-bottom: 1.5rem;
+  padding: 1rem 1.5rem;
+  margin: 0;
+  color: var(--dark);
+  border-bottom: 1px solid var(--border);
+  background: #fafbfc;
+  font-size: 1rem;
+}
+
+.comments-container {
+  padding: 1rem 1.5rem;
+  max-height: 500px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.no-comments {
+  color: var(--secondary);
+  text-align: center;
+  padding: 2rem 1rem;
+  font-style: italic;
+}
+
+/* Older Comments Toggle */
+.older-comments-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.75rem;
+  border: 1px dashed var(--border);
+  border-radius: 20px;
+  color: var(--secondary);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: white;
+}
+
+.older-comments-toggle:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.older-comments-toggle svg {
+  transition: transform 0.2s;
+}
+
+.older-comments {
+  margin-bottom: 0.75rem;
+}
+
+/* Comment Bubbles - IM Style */
+.comment-bubble {
+  max-width: 75%;
+  padding: 0.75rem 1rem;
+  border-radius: 18px;
+  position: relative;
+}
+
+.comment-bubble-own {
+  align-self: flex-end;
+  background: var(--primary);
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+
+.comment-bubble-own .comment-author,
+.comment-bubble-own .comment-time {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.comment-bubble-other {
+  align-self: flex-start;
+  background: white;
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.comment-bubble-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.375rem;
+  font-size: 0.75rem;
+}
+
+.comment-author {
+  font-weight: 600;
   color: var(--dark);
 }
 
+.comment-time {
+  color: var(--secondary);
+}
+
+.comment-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
+/* Edit Comment Button */
+.btn-edit-comment {
+  background: none;
+  border: none;
+  padding: 0.25rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s;
+  color: inherit;
+  display: flex;
+  align-items: center;
+}
+
+.comment-bubble:hover .btn-edit-comment {
+  opacity: 0.7;
+}
+
+.btn-edit-comment:hover {
+  opacity: 1 !important;
+}
+
+/* Edit Comment Form */
+.edit-comment-textarea {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: inherit;
+  font-size: 0.9375rem;
+  resize: vertical;
+  min-height: 60px;
+  margin-bottom: 0.5rem;
+}
+
+.edit-comment-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+/* Comment Attachments */
+.comment-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.attachment-thumb {
+  width: 80px;
+  height: 80px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+
+.attachment-thumb:hover {
+  transform: scale(1.05);
+}
+
+.attachment-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Comment Form Container */
+.comment-form-container {
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--border);
+  background: #fafbfc;
+}
+
+.attachment-previews {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.attachment-preview {
+  position: relative;
+  width: 60px;
+  height: 60px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 2px solid var(--border);
+}
+
+.attachment-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.remove-attachment {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--danger);
+  color: white;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.comment-input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.comment-input-row textarea {
+  flex: 1;
+  padding: 0.625rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  font-family: inherit;
+  font-size: 0.9375rem;
+  resize: none;
+  min-height: 40px;
+  max-height: 150px;
+  line-height: 1.4;
+}
+
+.comment-input-row textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.btn-attach,
+.btn-send {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.btn-attach {
+  background: white;
+  color: var(--secondary);
+  border: 1px solid var(--border);
+}
+
+.btn-attach:hover {
+  background: var(--light);
+  color: var(--primary);
+}
+
+.btn-send {
+  background: var(--primary);
+  color: white;
+}
+
+.btn-send:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+.btn-send:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Lightbox */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.9);
+  z-index: 1000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: var(--radius);
+}
+
+.lightbox-close {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Legacy Comment Styles (kept for backwards compatibility) */
 .comments-list {
   display: flex;
   flex-direction: column;
@@ -470,17 +828,8 @@ body {
   font-size: 0.875rem;
 }
 
-.comment-author {
-  font-weight: 600;
-  color: var(--dark);
-}
-
 .comment-date {
   color: var(--secondary);
-}
-
-.comment-content {
-  white-space: pre-wrap;
 }
 
 .comment-form {
@@ -508,6 +857,14 @@ body {
 .comment-form textarea:focus {
   outline: none;
   border-color: var(--primary);
+}
+
+/* Legacy Ticket Detail Styles */
+.ticket-detail {
+  background: white;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  overflow: hidden;
 }
 
 /* Loading State */
@@ -569,5 +926,17 @@ body {
   .ticket-detail-meta {
     flex-direction: column;
     gap: 0.5rem;
+  }
+
+  .comment-bubble {
+    max-width: 90%;
+  }
+
+  .comments-container {
+    padding: 0.75rem 1rem;
+  }
+
+  .comment-form-container {
+    padding: 0.75rem 1rem;
   }
 }

@@ -822,7 +822,8 @@ export class Database {
     const result = await this.query(
       `
       SELECT
-        t.id, t.ticket_number as "ticketNumber", t.subject, t.description,
+        t.id, t.ticket_number as "ticketNumber", t.public_id as "publicId",
+        t.subject, t.description,
         t.status, t.priority, t.type, t.device_id as "deviceId",
         t.device_name as "userDeviceName",
         d.hostname as "deviceName", d.display_name as "deviceDisplayName",
@@ -943,7 +944,9 @@ export class Database {
       SELECT
         id, ticket_id as "ticketId", content, is_internal as "isInternal",
         author_name as "authorName", author_email as "authorEmail",
-        attachments, created_at as "createdAt"
+        attachments, created_at as "createdAt",
+        edited_at as "editedAt", edited_by as "editedBy",
+        original_content as "originalContent"
       FROM ticket_comments
       WHERE ticket_id = $1
       ORDER BY created_at ASC
@@ -979,7 +982,14 @@ export class Database {
       comment.authorName
     );
 
-    const result = await this.query('SELECT id, ticket_id as "ticketId", content, is_internal as "isInternal", author_name as "authorName", author_email as "authorEmail", attachments, created_at as "createdAt" FROM ticket_comments WHERE id = $1', [id]);
+    const result = await this.query(`
+      SELECT id, ticket_id as "ticketId", content, is_internal as "isInternal",
+             author_name as "authorName", author_email as "authorEmail",
+             attachments, created_at as "createdAt",
+             edited_at as "editedAt", edited_by as "editedBy",
+             original_content as "originalContent"
+      FROM ticket_comments WHERE id = $1
+    `, [id]);
     return result.rows[0];
   }
 
@@ -2335,7 +2345,8 @@ export class Database {
   async getTicketsBySubmitter(email: string): Promise<any[]> {
     const result = await this.query(`
       SELECT
-        t.id, t.ticket_number as "ticketNumber", t.subject, t.description,
+        t.id, t.ticket_number as "ticketNumber", t.public_id as "publicId",
+        t.subject, t.description,
         t.status, t.priority, t.type, t.device_id as "deviceId",
         t.device_name as "userDeviceName",
         d.hostname as "deviceName", d.display_name as "deviceDisplayName",
@@ -2356,7 +2367,8 @@ export class Database {
   async getTicketsByClient(clientId: string): Promise<any[]> {
     const result = await this.query(`
       SELECT
-        t.id, t.ticket_number as "ticketNumber", t.subject, t.description,
+        t.id, t.ticket_number as "ticketNumber", t.public_id as "publicId",
+        t.subject, t.description,
         t.status, t.priority, t.type, t.device_id as "deviceId",
         d.hostname as "deviceName", d.display_name as "deviceDisplayName",
         t.requester_name as "requesterName", t.requester_email as "requesterEmail",
@@ -2524,6 +2536,117 @@ export class Database {
              description, is_active as "isActive",
              created_at as "createdAt", updated_at as "updatedAt"
       FROM email_templates
+      WHERE id = $1
+    `, [id]);
+    return result.rows[0] || null;
+  }
+
+  // =========================================================================
+  // Portal Enhancements - Comment Editing & Attachments
+  // =========================================================================
+
+  async getTicketComment(id: string): Promise<any | null> {
+    const result = await this.query(`
+      SELECT id, ticket_id as "ticketId", content, is_internal as "isInternal",
+             author_name as "authorName", author_email as "authorEmail",
+             attachments, created_at as "createdAt",
+             edited_at as "editedAt", edited_by as "editedBy",
+             original_content as "originalContent"
+      FROM ticket_comments WHERE id = $1
+    `, [id]);
+    return result.rows[0] || null;
+  }
+
+  async updateTicketComment(id: string, updates: {
+    content: string;
+    editedBy: string;
+  }): Promise<any | null> {
+    const current = await this.getTicketComment(id);
+    if (!current) return null;
+
+    // Store original content only on first edit
+    const originalContent = current.originalContent || current.content;
+
+    await this.query(`
+      UPDATE ticket_comments
+      SET content = $1, edited_at = CURRENT_TIMESTAMP, edited_by = $2, original_content = $3
+      WHERE id = $4
+    `, [updates.content, updates.editedBy, originalContent, id]);
+
+    return this.getTicketComment(id);
+  }
+
+  async createTicketAttachment(attachment: {
+    ticketId: string;
+    commentId?: string;
+    filename: string;
+    originalFilename: string;
+    mimeType: string;
+    fileSize: number;
+    storagePath: string;
+    thumbnailPath?: string;
+    uploadedByEmail?: string;
+    uploadedByName?: string;
+  }): Promise<any> {
+    const id = uuidv4();
+    await this.query(`
+      INSERT INTO ticket_attachments (
+        id, ticket_id, comment_id, filename, original_filename,
+        mime_type, file_size, storage_path, thumbnail_path,
+        uploaded_by_email, uploaded_by_name
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    `, [
+      id,
+      attachment.ticketId,
+      attachment.commentId || null,
+      attachment.filename,
+      attachment.originalFilename,
+      attachment.mimeType,
+      attachment.fileSize,
+      attachment.storagePath,
+      attachment.thumbnailPath || null,
+      attachment.uploadedByEmail || null,
+      attachment.uploadedByName || null
+    ]);
+
+    return this.getTicketAttachment(id);
+  }
+
+  async getTicketAttachments(ticketId: string, commentId?: string): Promise<any[]> {
+    let sql = `
+      SELECT id, ticket_id as "ticketId", comment_id as "commentId",
+             filename, original_filename as "originalFilename",
+             mime_type as "mimeType", file_size as "fileSize",
+             storage_path as "storagePath", thumbnail_path as "thumbnailPath",
+             uploaded_by_email as "uploadedByEmail",
+             uploaded_by_name as "uploadedByName",
+             created_at as "createdAt"
+      FROM ticket_attachments
+      WHERE ticket_id = $1
+    `;
+    const values: any[] = [ticketId];
+
+    if (commentId) {
+      sql += ' AND comment_id = $2';
+      values.push(commentId);
+    }
+
+    sql += ' ORDER BY created_at ASC';
+
+    const result = await this.query(sql, values);
+    return result.rows;
+  }
+
+  async getTicketAttachment(id: string): Promise<any | null> {
+    const result = await this.query(`
+      SELECT id, ticket_id as "ticketId", comment_id as "commentId",
+             filename, original_filename as "originalFilename",
+             mime_type as "mimeType", file_size as "fileSize",
+             storage_path as "storagePath", thumbnail_path as "thumbnailPath",
+             uploaded_by_email as "uploadedByEmail",
+             uploaded_by_name as "uploadedByName",
+             created_at as "createdAt"
+      FROM ticket_attachments
       WHERE id = $1
     `, [id]);
     return result.rows[0] || null;

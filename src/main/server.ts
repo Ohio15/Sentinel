@@ -9,8 +9,19 @@ import { AgentManager } from './agents';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import cookieParser from 'cookie-parser';
+import multer from 'multer';
+import sharp from 'sharp';
 import { msalAuth, MSALConfig } from './auth/msal';
 import { EmailService, EmailConfig } from './notifications/email';
+
+// SSE Client interface for real-time portal updates
+interface SSEClient {
+  id: string;
+  res: Response;
+  userEmail: string;
+  clientId: string;
+  ticketId?: string;
+}
 
 // Rate limiter class
 class RateLimiter {
@@ -95,6 +106,8 @@ export class Server {
   private rateLimiter: RateLimiter;
   private allowedOrigins: string[] = [];
   private emailService: EmailService;
+  private sseClients: Map<string, SSEClient> = new Map();
+  private sseHeartbeatInterval: NodeJS.Timeout | null = null;
 
   constructor(database: Database, agentManager: AgentManager) {
     this.database = database;
@@ -1017,10 +1030,287 @@ export class Server {
         // Notify about new comment
         await this.emailService.notifyTicketComment(ticket, comment);
 
+        // Broadcast SSE event for real-time updates
+        this.broadcastSSE('comment:added', { ticketId: id, comment }, id);
+
         res.status(201).json(comment);
       } catch (error) {
         console.error('Portal add comment error:', error);
         res.status(500).json({ error: 'Failed to add comment' });
+      }
+    });
+
+    // =========================================================================
+    // Portal Real-Time Updates (SSE)
+    // =========================================================================
+
+    // SSE endpoint for real-time updates
+    this.app.get('/portal/api/events', requirePortalAuth, (req: Request, res: Response) => {
+      const session = (req as any).portalSession;
+      const ticketId = req.query.ticketId as string | undefined;
+
+      // Set SSE headers
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+
+      // Create client
+      const clientId = uuidv4();
+      const client: SSEClient = {
+        id: clientId,
+        res,
+        userEmail: session.userEmail,
+        clientId: session.clientId,
+        ticketId,
+      };
+
+      this.sseClients.set(clientId, client);
+
+      // Send initial connection message
+      res.write(`event: connected\ndata: ${JSON.stringify({ clientId })}\n\n`);
+
+      // Handle client disconnect
+      req.on('close', () => {
+        this.sseClients.delete(clientId);
+      });
+    });
+
+    // =========================================================================
+    // Portal Attachments & Comment Editing
+    // =========================================================================
+
+    // Configure multer for file uploads
+    const upload = multer({
+      storage: multer.memoryStorage(),
+      limits: {
+        fileSize: 10 * 1024 * 1024, // 10MB
+        files: 5,
+      },
+      fileFilter: (req, file, cb) => {
+        const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+        if (allowedTypes.includes(file.mimetype)) {
+          cb(null, true);
+        } else {
+          cb(new Error('Only image files are allowed'));
+        }
+      },
+    });
+
+    // Upload attachments to ticket
+    this.app.post('/portal/api/tickets/:id/attachments', requirePortalAuth, upload.array('files', 5), async (req: Request, res: Response) => {
+      try {
+        const session = (req as any).portalSession;
+        const { id } = req.params;
+        const { commentId } = req.body;
+        const files = req.files as Express.Multer.File[];
+
+        if (!files || files.length === 0) {
+          res.status(400).json({ error: 'No files uploaded' });
+          return;
+        }
+
+        // Verify access
+        const ticket = await this.database.getTicket(id);
+        if (!ticket) {
+          res.status(404).json({ error: 'Ticket not found' });
+          return;
+        }
+
+        const isSubmitter = ticket.submitterEmail === session.userEmail ||
+                           ticket.requesterEmail === session.userEmail;
+        const isSameClient = ticket.clientId === session.clientId;
+
+        if (!isSubmitter && !isSameClient) {
+          res.status(403).json({ error: 'Access denied' });
+          return;
+        }
+
+        // Create upload directory
+        const appDataPath = electronApp.getPath('userData');
+        const uploadDir = path.join(appDataPath, 'uploads', 'tickets', id);
+        await fs.promises.mkdir(uploadDir, { recursive: true });
+
+        const attachments = [];
+
+        for (const file of files) {
+          const filename = `${uuidv4()}${path.extname(file.originalname)}`;
+          const storagePath = path.join(uploadDir, filename);
+          let thumbnailPath: string | undefined;
+
+          // Save original file
+          await fs.promises.writeFile(storagePath, file.buffer);
+
+          // Generate thumbnail for images
+          try {
+            const thumbnailFilename = `thumb_${filename}`;
+            thumbnailPath = path.join(uploadDir, thumbnailFilename);
+            await sharp(file.buffer)
+              .resize(200, 200, { fit: 'inside', withoutEnlargement: true })
+              .toFile(thumbnailPath);
+          } catch (err) {
+            console.error('Thumbnail generation failed:', err);
+            thumbnailPath = undefined;
+          }
+
+          // Store metadata in database
+          const attachment = await this.database.createTicketAttachment({
+            ticketId: id,
+            commentId: commentId || undefined,
+            filename,
+            originalFilename: file.originalname,
+            mimeType: file.mimetype,
+            fileSize: file.size,
+            storagePath,
+            thumbnailPath,
+            uploadedByEmail: session.userEmail,
+            uploadedByName: session.userName || session.userEmail,
+          });
+
+          attachments.push(attachment);
+        }
+
+        // Broadcast SSE event
+        this.broadcastSSE('attachment:added', { ticketId: id, attachments }, id);
+
+        res.status(201).json(attachments);
+      } catch (error) {
+        console.error('Portal upload attachments error:', error);
+        res.status(500).json({ error: 'Failed to upload attachments' });
+      }
+    });
+
+    // Serve attachment file
+    this.app.get('/portal/api/attachments/:id', requirePortalAuth, async (req: Request, res: Response) => {
+      try {
+        const session = (req as any).portalSession;
+        const { id } = req.params;
+        const { thumbnail } = req.query;
+
+        const attachment = await this.database.getTicketAttachment(id);
+        if (!attachment) {
+          res.status(404).json({ error: 'Attachment not found' });
+          return;
+        }
+
+        // Verify access to ticket
+        const ticket = await this.database.getTicket(attachment.ticketId);
+        if (!ticket) {
+          res.status(404).json({ error: 'Ticket not found' });
+          return;
+        }
+
+        const isSubmitter = ticket.submitterEmail === session.userEmail ||
+                           ticket.requesterEmail === session.userEmail;
+        const isSameClient = ticket.clientId === session.clientId;
+
+        if (!isSubmitter && !isSameClient) {
+          res.status(403).json({ error: 'Access denied' });
+          return;
+        }
+
+        // Determine which file to serve
+        const filePath = thumbnail && attachment.thumbnailPath
+          ? attachment.thumbnailPath
+          : attachment.storagePath;
+
+        if (!fs.existsSync(filePath)) {
+          res.status(404).json({ error: 'File not found' });
+          return;
+        }
+
+        res.setHeader('Content-Type', attachment.mimeType);
+        res.setHeader('Content-Disposition', `inline; filename="${attachment.originalFilename}"`);
+        fs.createReadStream(filePath).pipe(res);
+      } catch (error) {
+        console.error('Portal serve attachment error:', error);
+        res.status(500).json({ error: 'Failed to serve attachment' });
+      }
+    });
+
+    // Edit comment
+    this.app.patch('/portal/api/tickets/:id/comments/:commentId', requirePortalAuth, async (req: Request, res: Response) => {
+      try {
+        const session = (req as any).portalSession;
+        const { id, commentId } = req.params;
+        const { content } = req.body;
+
+        if (!content) {
+          res.status(400).json({ error: 'Content is required' });
+          return;
+        }
+
+        // Get comment
+        const comment = await this.database.getTicketComment(commentId);
+        if (!comment) {
+          res.status(404).json({ error: 'Comment not found' });
+          return;
+        }
+
+        // Verify comment belongs to this ticket
+        if (comment.ticketId !== id) {
+          res.status(400).json({ error: 'Comment does not belong to this ticket' });
+          return;
+        }
+
+        // Verify author (only author can edit)
+        if (comment.authorEmail !== session.userEmail) {
+          res.status(403).json({ error: 'Only the author can edit this comment' });
+          return;
+        }
+
+        // Check 15-minute edit window
+        const createdAt = new Date(comment.createdAt);
+        const now = new Date();
+        const fifteenMinutes = 15 * 60 * 1000;
+        if (now.getTime() - createdAt.getTime() > fifteenMinutes) {
+          res.status(403).json({ error: 'Edit window has expired (15 minutes)' });
+          return;
+        }
+
+        // Update comment
+        const updatedComment = await this.database.updateTicketComment(commentId, {
+          content,
+          editedBy: session.userName || session.userEmail,
+        });
+
+        // Broadcast SSE event
+        this.broadcastSSE('comment:edited', { ticketId: id, comment: updatedComment }, id);
+
+        res.json(updatedComment);
+      } catch (error) {
+        console.error('Portal edit comment error:', error);
+        res.status(500).json({ error: 'Failed to edit comment' });
+      }
+    });
+
+    // Get ticket attachments
+    this.app.get('/portal/api/tickets/:id/attachments', requirePortalAuth, async (req: Request, res: Response) => {
+      try {
+        const session = (req as any).portalSession;
+        const { id } = req.params;
+
+        // Verify access
+        const ticket = await this.database.getTicket(id);
+        if (!ticket) {
+          res.status(404).json({ error: 'Ticket not found' });
+          return;
+        }
+
+        const isSubmitter = ticket.submitterEmail === session.userEmail ||
+                           ticket.requesterEmail === session.userEmail;
+        const isSameClient = ticket.clientId === session.clientId;
+
+        if (!isSubmitter && !isSameClient) {
+          res.status(403).json({ error: 'Access denied' });
+          return;
+        }
+
+        const attachments = await this.database.getTicketAttachments(id);
+        res.json(attachments);
+      } catch (error) {
+        console.error('Portal get attachments error:', error);
+        res.status(500).json({ error: 'Failed to get attachments' });
       }
     });
 
@@ -1636,6 +1926,9 @@ private setupWebSocket(): void {
     // Initialize portal services (MSAL and Email)
     await this.initializePortalServices();
 
+    // Start SSE heartbeat
+    this.startSSEHeartbeat();
+
     return new Promise((resolve, reject) => {
       this.server = this.app.listen(this.port, '0.0.0.0', () => {
         console.log(`Server listening on port ${this.port}`);
@@ -1661,6 +1954,13 @@ private setupWebSocket(): void {
 
   async stop(): Promise<void> {
     return new Promise((resolve) => {
+      // Clean up SSE clients
+      this.stopSSEHeartbeat();
+      for (const client of this.sseClients.values()) {
+        client.res.end();
+      }
+      this.sseClients.clear();
+
       this.rateLimiter.destroy();
       this.wss?.close();
       this.server?.close(() => {
@@ -1668,6 +1968,50 @@ private setupWebSocket(): void {
         resolve();
       });
     });
+  }
+
+  // SSE Helper Methods
+  private startSSEHeartbeat(): void {
+    // Send heartbeat every 30 seconds to keep connections alive
+    this.sseHeartbeatInterval = setInterval(() => {
+      for (const client of this.sseClients.values()) {
+        try {
+          client.res.write(`event: heartbeat\ndata: ${Date.now()}\n\n`);
+        } catch (err) {
+          // Client disconnected, remove from map
+          this.sseClients.delete(client.id);
+        }
+      }
+    }, 30000);
+  }
+
+  private stopSSEHeartbeat(): void {
+    if (this.sseHeartbeatInterval) {
+      clearInterval(this.sseHeartbeatInterval);
+      this.sseHeartbeatInterval = null;
+    }
+  }
+
+  private broadcastSSE(event: string, data: any, ticketId?: string): void {
+    const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+
+    for (const client of this.sseClients.values()) {
+      try {
+        // If ticketId is specified, only send to clients watching that ticket
+        if (ticketId && client.ticketId && client.ticketId !== ticketId) {
+          continue;
+        }
+        client.res.write(message);
+      } catch (err) {
+        // Client disconnected, remove from map
+        this.sseClients.delete(client.id);
+      }
+    }
+  }
+
+  // Public method to broadcast SSE events from main process (for admin app comments)
+  public notifyPortalUpdate(event: string, data: any): void {
+    this.broadcastSSE(event, data, data.ticketId);
   }
 
   getPort(): number {
