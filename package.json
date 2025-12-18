@@ -1,6 +1,6 @@
 {
   "name": "sentinel",
-  "version": "1.58.6",
+  "version": "1.58.7",
   "description": "Sentinel - Remote Monitoring and Management",
   "main": "dist/main/main.js",
   "author": "Sentinel",
