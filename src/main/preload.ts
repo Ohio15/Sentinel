@@ -167,9 +167,9 @@ contextBridge.exposeInMainWorld('api', {
   clients: {
     list: () => ipcRenderer.invoke('clients:list'),
     get: (id: string) => ipcRenderer.invoke('clients:get', id),
-    create: (client: { name: string; description?: string; color?: string; logoUrl?: string }) =>
+    create: (client: { name: string; description?: string; color?: string; logoUrl?: string; logoWidth?: number; logoHeight?: number }) =>
       ipcRenderer.invoke('clients:create', client),
-    update: (id: string, client: { name?: string; description?: string; color?: string; logoUrl?: string }) =>
+    update: (id: string, client: { name?: string; description?: string; color?: string; logoUrl?: string; logoWidth?: number; logoHeight?: number }) =>
       ipcRenderer.invoke('clients:update', id, client),
     delete: (id: string) => ipcRenderer.invoke('clients:delete', id),
     assignDevice: (deviceId: string, clientId: string | null) =>
@@ -723,6 +723,8 @@ interface Client {
   description?: string;
   color?: string;
   logoUrl?: string;
+  logoWidth?: number;
+  logoHeight?: number;
   deviceCount?: number;
   openTicketCount?: number;
   createdAt: string;

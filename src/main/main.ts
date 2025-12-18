@@ -704,11 +704,11 @@ function setupIpcHandlers(): void {
     return database.getClient(id);
   });
 
-  ipcMain.handle('clients:create', async (_, client: { name: string; description?: string; color?: string; logoUrl?: string }) => {
+  ipcMain.handle('clients:create', async (_, client: { name: string; description?: string; color?: string; logoUrl?: string; logoWidth?: number; logoHeight?: number }) => {
     return database.createClient(client);
   });
 
-  ipcMain.handle('clients:update', async (_, id: string, client: { name?: string; description?: string; color?: string; logoUrl?: string }) => {
+  ipcMain.handle('clients:update', async (_, id: string, client: { name?: string; description?: string; color?: string; logoUrl?: string; logoWidth?: number; logoHeight?: number }) => {
     return database.updateClient(id, client);
   });
 

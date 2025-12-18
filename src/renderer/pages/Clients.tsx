@@ -333,6 +333,7 @@ function ClientModal({ client, onClose, onSave }: ClientModalProps) {
                 <div className="flex-1 flex items-center justify-center p-2 bg-white rounded border border-border min-h-[60px]">
                   {!logoError ? (
                     <img
+                      key={logoUrl}
                       src={logoUrl}
                       alt="Logo preview"
                       style={{ width: logoWidth, height: logoHeight, objectFit: 'contain' }}
@@ -340,7 +341,16 @@ function ClientModal({ client, onClose, onSave }: ClientModalProps) {
                       onLoad={() => setLogoError(false)}
                     />
                   ) : (
-                    <span className="text-xs text-danger">Failed to load image</span>
+                    <div className="text-center">
+                      <span className="text-xs text-danger block">Failed to load image</span>
+                      <button
+                        type="button"
+                        onClick={() => setLogoError(false)}
+                        className="text-xs text-primary hover:underline mt-1"
+                      >
+                        Retry
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
