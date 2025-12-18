@@ -2123,6 +2123,395 @@ export class Database {
     return result.rows;
   }
 
+  // =========================================================================
+  // Portal Methods - Client Tenants
+  // =========================================================================
+
+  async getClientTenants(): Promise<any[]> {
+    const result = await this.query(`
+      SELECT ct.id, ct.client_id as "clientId", ct.tenant_id as "tenantId",
+             ct.tenant_name as "tenantName", ct.enabled,
+             ct.created_at as "createdAt", ct.updated_at as "updatedAt",
+             c.name as "clientName"
+      FROM client_tenants ct
+      LEFT JOIN clients c ON ct.client_id = c.id
+      ORDER BY ct.created_at DESC
+    `);
+    return result.rows;
+  }
+
+  async getClientTenantByTenantId(tenantId: string): Promise<any | null> {
+    const result = await this.query(`
+      SELECT ct.id, ct.client_id as "clientId", ct.tenant_id as "tenantId",
+             ct.tenant_name as "tenantName", ct.enabled,
+             ct.created_at as "createdAt", ct.updated_at as "updatedAt",
+             c.name as "clientName"
+      FROM client_tenants ct
+      LEFT JOIN clients c ON ct.client_id = c.id
+      WHERE ct.tenant_id = $1
+    `, [tenantId]);
+    return result.rows[0] || null;
+  }
+
+  async createClientTenant(data: {
+    clientId: string;
+    tenantId: string;
+    tenantName?: string;
+    enabled?: boolean;
+  }): Promise<any> {
+    const id = uuidv4();
+    await this.query(`
+      INSERT INTO client_tenants (id, client_id, tenant_id, tenant_name, enabled)
+      VALUES ($1, $2, $3, $4, $5)
+    `, [id, data.clientId, data.tenantId, data.tenantName || null, data.enabled !== false]);
+    return this.getClientTenantByTenantId(data.tenantId);
+  }
+
+  async updateClientTenant(id: string, data: {
+    tenantName?: string;
+    enabled?: boolean;
+  }): Promise<any | null> {
+    const fields: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    if (data.tenantName !== undefined) {
+      fields.push(`tenant_name = $${paramIndex++}`);
+      values.push(data.tenantName);
+    }
+    if (data.enabled !== undefined) {
+      fields.push(`enabled = $${paramIndex++}`);
+      values.push(data.enabled);
+    }
+
+    if (fields.length > 0) {
+      values.push(id);
+      await this.query(`
+        UPDATE client_tenants SET ${fields.join(', ')} WHERE id = $${paramIndex}
+      `, values);
+    }
+
+    const result = await this.query(`
+      SELECT ct.id, ct.client_id as "clientId", ct.tenant_id as "tenantId",
+             ct.tenant_name as "tenantName", ct.enabled,
+             ct.created_at as "createdAt", ct.updated_at as "updatedAt",
+             c.name as "clientName"
+      FROM client_tenants ct
+      LEFT JOIN clients c ON ct.client_id = c.id
+      WHERE ct.id = $1
+    `, [id]);
+    return result.rows[0] || null;
+  }
+
+  async deleteClientTenant(id: string): Promise<void> {
+    await this.query('DELETE FROM client_tenants WHERE id = $1', [id]);
+  }
+
+  // =========================================================================
+  // Portal Methods - Sessions
+  // =========================================================================
+
+  async createPortalSession(data: {
+    userEmail: string;
+    userName?: string;
+    tenantId: string;
+    clientId?: string;
+    accessToken?: string;
+    refreshToken?: string;
+    idToken?: string;
+    expiresAt?: Date;
+  }): Promise<any> {
+    const id = uuidv4();
+    await this.query(`
+      INSERT INTO portal_sessions (id, user_email, user_name, tenant_id, client_id,
+                                   access_token, refresh_token, id_token, expires_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `, [
+      id,
+      data.userEmail,
+      data.userName || null,
+      data.tenantId,
+      data.clientId || null,
+      data.accessToken || null,
+      data.refreshToken || null,
+      data.idToken || null,
+      data.expiresAt || null
+    ]);
+
+    return this.getPortalSession(id);
+  }
+
+  async getPortalSession(id: string): Promise<any | null> {
+    const result = await this.query(`
+      SELECT id, user_email as "userEmail", user_name as "userName",
+             tenant_id as "tenantId", client_id as "clientId",
+             access_token as "accessToken", refresh_token as "refreshToken",
+             id_token as "idToken", expires_at as "expiresAt",
+             created_at as "createdAt", last_activity as "lastActivity"
+      FROM portal_sessions
+      WHERE id = $1
+    `, [id]);
+    return result.rows[0] || null;
+  }
+
+  async updatePortalSessionActivity(id: string): Promise<void> {
+    await this.query(`
+      UPDATE portal_sessions SET last_activity = CURRENT_TIMESTAMP WHERE id = $1
+    `, [id]);
+  }
+
+  async deletePortalSession(id: string): Promise<void> {
+    await this.query('DELETE FROM portal_sessions WHERE id = $1', [id]);
+  }
+
+  async cleanupExpiredSessions(): Promise<number> {
+    const result = await this.query(`
+      DELETE FROM portal_sessions
+      WHERE expires_at < CURRENT_TIMESTAMP
+         OR last_activity < CURRENT_TIMESTAMP - INTERVAL '24 hours'
+    `);
+    return result.rowCount || 0;
+  }
+
+  // =========================================================================
+  // Portal Methods - Tickets (Extended)
+  // =========================================================================
+
+  async createPortalTicket(ticket: {
+    subject: string;
+    description: string;
+    priority?: string;
+    type?: string;
+    deviceId?: string;
+    clientId?: string;
+    submitterEmail: string;
+    submitterName: string;
+  }): Promise<any> {
+    const id = uuidv4();
+    await this.query(`
+      INSERT INTO tickets (
+        id, subject, description, status, priority, type, device_id,
+        client_id, submitter_email, submitter_name, requester_name,
+        requester_email, source
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    `, [
+      id,
+      ticket.subject,
+      ticket.description,
+      'open',
+      ticket.priority || 'medium',
+      ticket.type || 'incident',
+      ticket.deviceId || null,
+      ticket.clientId || null,
+      ticket.submitterEmail,
+      ticket.submitterName,
+      ticket.submitterName, // Also set as requester
+      ticket.submitterEmail,
+      'portal'
+    ]);
+
+    // Log activity
+    await this.createTicketActivity(id, 'created', null, null, null, ticket.submitterName);
+
+    return this.getTicket(id);
+  }
+
+  async getTicketsBySubmitter(email: string): Promise<any[]> {
+    const result = await this.query(`
+      SELECT
+        t.id, t.ticket_number as "ticketNumber", t.subject, t.description,
+        t.status, t.priority, t.type, t.device_id as "deviceId",
+        d.hostname as "deviceName", d.display_name as "deviceDisplayName",
+        t.requester_name as "requesterName", t.requester_email as "requesterEmail",
+        t.submitter_name as "submitterName", t.submitter_email as "submitterEmail",
+        t.assigned_to as "assignedTo", t.tags, t.due_date as "dueDate",
+        t.resolved_at as "resolvedAt", t.closed_at as "closedAt",
+        t.created_at as "createdAt", t.updated_at as "updatedAt",
+        t.source
+      FROM tickets t
+      LEFT JOIN devices d ON t.device_id = d.id
+      WHERE t.submitter_email = $1 OR t.requester_email = $1
+      ORDER BY t.created_at DESC
+    `, [email]);
+    return result.rows;
+  }
+
+  async getTicketsByClient(clientId: string): Promise<any[]> {
+    const result = await this.query(`
+      SELECT
+        t.id, t.ticket_number as "ticketNumber", t.subject, t.description,
+        t.status, t.priority, t.type, t.device_id as "deviceId",
+        d.hostname as "deviceName", d.display_name as "deviceDisplayName",
+        t.requester_name as "requesterName", t.requester_email as "requesterEmail",
+        t.submitter_name as "submitterName", t.submitter_email as "submitterEmail",
+        t.assigned_to as "assignedTo", t.tags, t.due_date as "dueDate",
+        t.resolved_at as "resolvedAt", t.closed_at as "closedAt",
+        t.created_at as "createdAt", t.updated_at as "updatedAt",
+        t.source
+      FROM tickets t
+      LEFT JOIN devices d ON t.device_id = d.id
+      WHERE t.client_id = $1
+      ORDER BY t.created_at DESC
+    `, [clientId]);
+    return result.rows;
+  }
+
+  // =========================================================================
+  // Portal Methods - Email Queue
+  // =========================================================================
+
+  async queueEmail(data: {
+    toAddresses: string[];
+    ccAddresses?: string[];
+    subject: string;
+    bodyHtml?: string;
+    bodyText?: string;
+    templateName?: string;
+    templateData?: any;
+    scheduledAt?: Date;
+  }): Promise<any> {
+    const id = uuidv4();
+    await this.query(`
+      INSERT INTO email_queue (id, to_addresses, cc_addresses, subject, body_html,
+                               body_text, template_name, template_data, scheduled_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `, [
+      id,
+      JSON.stringify(data.toAddresses),
+      JSON.stringify(data.ccAddresses || []),
+      data.subject,
+      data.bodyHtml || null,
+      data.bodyText || null,
+      data.templateName || null,
+      data.templateData ? JSON.stringify(data.templateData) : null,
+      data.scheduledAt || new Date()
+    ]);
+
+    return this.getQueuedEmail(id);
+  }
+
+  async getQueuedEmail(id: string): Promise<any | null> {
+    const result = await this.query(`
+      SELECT id, to_addresses as "toAddresses", cc_addresses as "ccAddresses",
+             subject, body_html as "bodyHtml", body_text as "bodyText",
+             template_name as "templateName", template_data as "templateData",
+             status, error_message as "errorMessage", retry_count as "retryCount",
+             scheduled_at as "scheduledAt", sent_at as "sentAt",
+             created_at as "createdAt"
+      FROM email_queue
+      WHERE id = $1
+    `, [id]);
+    return result.rows[0] || null;
+  }
+
+  async getPendingEmails(limit: number = 50): Promise<any[]> {
+    const result = await this.query(`
+      SELECT id, to_addresses as "toAddresses", cc_addresses as "ccAddresses",
+             subject, body_html as "bodyHtml", body_text as "bodyText",
+             template_name as "templateName", template_data as "templateData",
+             status, error_message as "errorMessage", retry_count as "retryCount",
+             scheduled_at as "scheduledAt", created_at as "createdAt"
+      FROM email_queue
+      WHERE status = 'pending'
+        AND scheduled_at <= CURRENT_TIMESTAMP
+        AND retry_count < 3
+      ORDER BY scheduled_at ASC
+      LIMIT $1
+    `, [limit]);
+    return result.rows;
+  }
+
+  async updateEmailStatus(id: string, status: string, errorMessage?: string): Promise<void> {
+    if (status === 'sent') {
+      await this.query(`
+        UPDATE email_queue SET status = $1, sent_at = CURRENT_TIMESTAMP WHERE id = $2
+      `, [status, id]);
+    } else if (status === 'failed') {
+      await this.query(`
+        UPDATE email_queue SET status = $1, error_message = $2, retry_count = retry_count + 1 WHERE id = $3
+      `, [status, errorMessage || null, id]);
+    } else {
+      await this.query(`
+        UPDATE email_queue SET status = $1 WHERE id = $2
+      `, [status, id]);
+    }
+  }
+
+  // =========================================================================
+  // Portal Methods - Email Templates
+  // =========================================================================
+
+  async getEmailTemplates(): Promise<any[]> {
+    const result = await this.query(`
+      SELECT id, name, subject, body_html as "bodyHtml", body_text as "bodyText",
+             description, is_active as "isActive",
+             created_at as "createdAt", updated_at as "updatedAt"
+      FROM email_templates
+      ORDER BY name
+    `);
+    return result.rows;
+  }
+
+  async getEmailTemplate(name: string): Promise<any | null> {
+    const result = await this.query(`
+      SELECT id, name, subject, body_html as "bodyHtml", body_text as "bodyText",
+             description, is_active as "isActive",
+             created_at as "createdAt", updated_at as "updatedAt"
+      FROM email_templates
+      WHERE name = $1 AND is_active = true
+    `, [name]);
+    return result.rows[0] || null;
+  }
+
+  async updateEmailTemplate(id: string, data: {
+    subject?: string;
+    bodyHtml?: string;
+    bodyText?: string;
+    description?: string;
+    isActive?: boolean;
+  }): Promise<any | null> {
+    const fields: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    if (data.subject !== undefined) {
+      fields.push(`subject = $${paramIndex++}`);
+      values.push(data.subject);
+    }
+    if (data.bodyHtml !== undefined) {
+      fields.push(`body_html = $${paramIndex++}`);
+      values.push(data.bodyHtml);
+    }
+    if (data.bodyText !== undefined) {
+      fields.push(`body_text = $${paramIndex++}`);
+      values.push(data.bodyText);
+    }
+    if (data.description !== undefined) {
+      fields.push(`description = $${paramIndex++}`);
+      values.push(data.description);
+    }
+    if (data.isActive !== undefined) {
+      fields.push(`is_active = $${paramIndex++}`);
+      values.push(data.isActive);
+    }
+
+    if (fields.length > 0) {
+      values.push(id);
+      await this.query(`
+        UPDATE email_templates SET ${fields.join(', ')} WHERE id = $${paramIndex}
+      `, values);
+    }
+
+    const result = await this.query(`
+      SELECT id, name, subject, body_html as "bodyHtml", body_text as "bodyText",
+             description, is_active as "isActive",
+             created_at as "createdAt", updated_at as "updatedAt"
+      FROM email_templates
+      WHERE id = $1
+    `, [id]);
+    return result.rows[0] || null;
+  }
+
   async close(): Promise<void> {
     if (this.pool) {
       await this.pool.end();

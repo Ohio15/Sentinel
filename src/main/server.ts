@@ -8,6 +8,9 @@ import { Database } from './database';
 import { AgentManager } from './agents';
 import * as os from 'os';
 import * as crypto from 'crypto';
+import cookieParser from 'cookie-parser';
+import { msalAuth, MSALConfig } from './auth/msal';
+import { EmailService, EmailConfig } from './notifications/email';
 
 // Rate limiter class
 class RateLimiter {
@@ -91,12 +94,14 @@ export class Server {
   private dashboardToken: string = '';
   private rateLimiter: RateLimiter;
   private allowedOrigins: string[] = [];
+  private emailService: EmailService;
 
   constructor(database: Database, agentManager: AgentManager) {
     this.database = database;
     this.agentManager = agentManager;
     this.app = express();
     this.rateLimiter = new RateLimiter();
+    this.emailService = new EmailService(database);
     this.setupMiddleware();
     this.setupRoutes();
   }
@@ -104,6 +109,7 @@ export class Server {
   private setupMiddleware(): void {
     this.app.use(express.json());
     this.app.use(express.urlencoded({ extended: true }));
+    this.app.use(cookieParser());
 
     // CORS middleware with origin validation
     this.app.use((req: Request, res: Response, next: NextFunction) => {
@@ -717,9 +723,477 @@ export class Server {
         res.status(500).json({ error: 'Internal server error' });
       }
     });
+
+    // =========================================================================
+    // Support Portal API - Authentication
+    // =========================================================================
+
+    // Portal login - redirect to Microsoft
+    this.app.get('/portal/auth/login', async (req: Request, res: Response) => {
+      try {
+        if (!msalAuth.isConfigured()) {
+          res.status(503).json({ error: 'Portal authentication not configured' });
+          return;
+        }
+
+        const redirectTo = req.query.redirect as string || '/portal/tickets';
+        const authUrl = await msalAuth.getAuthCodeUrl(redirectTo);
+        res.redirect(authUrl);
+      } catch (error) {
+        console.error('Portal login error:', error);
+        res.status(500).json({ error: 'Authentication error' });
+      }
+    });
+
+    // OAuth callback from Microsoft
+    this.app.get('/portal/auth/callback', async (req: Request, res: Response) => {
+      try {
+        const { code, state, error, error_description } = req.query;
+
+        if (error) {
+          console.error('OAuth error:', error, error_description);
+          res.redirect(`/portal?error=${encodeURIComponent(error_description as string || 'Authentication failed')}`);
+          return;
+        }
+
+        if (!code || !state) {
+          res.redirect('/portal?error=Invalid%20callback');
+          return;
+        }
+
+        // Exchange code for tokens
+        const tokenResponse = await msalAuth.acquireTokenByCode(code as string, state as string);
+
+        // Look up tenant mapping
+        const tenantMapping = await this.database.getClientTenantByTenantId(tokenResponse.account.tenantId);
+
+        if (!tenantMapping) {
+          console.log('Unmapped tenant attempted login:', tokenResponse.account.tenantId);
+          res.redirect('/portal?error=Your%20organization%20is%20not%20registered%20with%20this%20support%20portal');
+          return;
+        }
+
+        if (!tenantMapping.enabled) {
+          res.redirect('/portal?error=Your%20organization%20access%20has%20been%20disabled');
+          return;
+        }
+
+        // Create session
+        const session = await this.database.createPortalSession({
+          userEmail: tokenResponse.account.username,
+          userName: tokenResponse.account.name,
+          tenantId: tokenResponse.account.tenantId,
+          clientId: tenantMapping.clientId,
+          accessToken: tokenResponse.accessToken,
+          idToken: tokenResponse.idToken,
+          expiresAt: tokenResponse.expiresOn,
+        });
+
+        // Set session cookie
+        res.cookie('portal_session', session.id, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'lax',
+          maxAge: 24 * 60 * 60 * 1000, // 24 hours
+        });
+
+        // Redirect to tickets page
+        res.redirect('/portal/tickets');
+      } catch (error: any) {
+        console.error('Portal callback error:', error);
+        res.redirect(`/portal?error=${encodeURIComponent(error.message || 'Authentication failed')}`);
+      }
+    });
+
+    // Portal logout
+    this.app.post('/portal/auth/logout', async (req: Request, res: Response) => {
+      try {
+        const sessionId = req.cookies?.portal_session;
+        if (sessionId) {
+          await this.database.deletePortalSession(sessionId);
+        }
+        res.clearCookie('portal_session');
+        res.json({ success: true });
+      } catch (error) {
+        console.error('Portal logout error:', error);
+        res.status(500).json({ error: 'Logout failed' });
+      }
+    });
+
+    // Get current user
+    this.app.get('/portal/auth/me', async (req: Request, res: Response) => {
+      try {
+        const sessionId = req.cookies?.portal_session;
+        if (!sessionId) {
+          res.status(401).json({ error: 'Not authenticated' });
+          return;
+        }
+
+        const session = await this.database.getPortalSession(sessionId);
+        if (!session) {
+          res.clearCookie('portal_session');
+          res.status(401).json({ error: 'Session expired' });
+          return;
+        }
+
+        // Update activity
+        await this.database.updatePortalSessionActivity(sessionId);
+
+        res.json({
+          email: session.userEmail,
+          name: session.userName,
+          clientId: session.clientId,
+        });
+      } catch (error) {
+        console.error('Portal auth me error:', error);
+        res.status(500).json({ error: 'Failed to get user info' });
+      }
+    });
+
+    // =========================================================================
+    // Support Portal API - Tickets
+    // =========================================================================
+
+    // Middleware to require portal session
+    const requirePortalAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+      const sessionId = req.cookies?.portal_session;
+      if (!sessionId) {
+        res.status(401).json({ error: 'Not authenticated' });
+        return;
+      }
+
+      const session = await this.database.getPortalSession(sessionId);
+      if (!session) {
+        res.clearCookie('portal_session');
+        res.status(401).json({ error: 'Session expired' });
+        return;
+      }
+
+      // Attach session to request
+      (req as any).portalSession = session;
+      await this.database.updatePortalSessionActivity(sessionId);
+      next();
+    };
+
+    // List user's tickets
+    this.app.get('/portal/api/tickets', requirePortalAuth, async (req: Request, res: Response) => {
+      try {
+        const session = (req as any).portalSession;
+        const tickets = await this.database.getTicketsBySubmitter(session.userEmail);
+        res.json(tickets);
+      } catch (error) {
+        console.error('Portal get tickets error:', error);
+        res.status(500).json({ error: 'Failed to get tickets' });
+      }
+    });
+
+    // Get single ticket
+    this.app.get('/portal/api/tickets/:id', requirePortalAuth, async (req: Request, res: Response) => {
+      try {
+        const session = (req as any).portalSession;
+        const { id } = req.params;
+
+        const ticket = await this.database.getTicket(id);
+        if (!ticket) {
+          res.status(404).json({ error: 'Ticket not found' });
+          return;
+        }
+
+        // Verify user has access (either submitter or same client)
+        const isSubmitter = ticket.submitterEmail === session.userEmail ||
+                           ticket.requesterEmail === session.userEmail;
+        const isSameClient = ticket.clientId === session.clientId;
+
+        if (!isSubmitter && !isSameClient) {
+          res.status(403).json({ error: 'Access denied' });
+          return;
+        }
+
+        // Get comments (exclude internal)
+        const comments = await this.database.getTicketComments(id);
+        const publicComments = comments.filter((c: any) => !c.isInternal);
+
+        res.json({ ...ticket, comments: publicComments });
+      } catch (error) {
+        console.error('Portal get ticket error:', error);
+        res.status(500).json({ error: 'Failed to get ticket' });
+      }
+    });
+
+    // Create new ticket
+    this.app.post('/portal/api/tickets', requirePortalAuth, async (req: Request, res: Response) => {
+      try {
+        const session = (req as any).portalSession;
+        const { subject, description, priority, type, deviceId } = req.body;
+
+        if (!subject || !description) {
+          res.status(400).json({ error: 'Subject and description are required' });
+          return;
+        }
+
+        const ticket = await this.database.createPortalTicket({
+          subject,
+          description,
+          priority: priority || 'medium',
+          type: type || 'incident',
+          deviceId,
+          clientId: session.clientId,
+          submitterEmail: session.userEmail,
+          submitterName: session.userName || session.userEmail,
+        });
+
+        // Send notification to technicians
+        await this.emailService.notifyTicketCreated(ticket);
+
+        res.status(201).json(ticket);
+      } catch (error) {
+        console.error('Portal create ticket error:', error);
+        res.status(500).json({ error: 'Failed to create ticket' });
+      }
+    });
+
+    // Add comment to ticket
+    this.app.post('/portal/api/tickets/:id/comments', requirePortalAuth, async (req: Request, res: Response) => {
+      try {
+        const session = (req as any).portalSession;
+        const { id } = req.params;
+        const { content } = req.body;
+
+        if (!content) {
+          res.status(400).json({ error: 'Content is required' });
+          return;
+        }
+
+        // Verify access
+        const ticket = await this.database.getTicket(id);
+        if (!ticket) {
+          res.status(404).json({ error: 'Ticket not found' });
+          return;
+        }
+
+        const isSubmitter = ticket.submitterEmail === session.userEmail ||
+                           ticket.requesterEmail === session.userEmail;
+        const isSameClient = ticket.clientId === session.clientId;
+
+        if (!isSubmitter && !isSameClient) {
+          res.status(403).json({ error: 'Access denied' });
+          return;
+        }
+
+        // Add comment
+        const comment = await this.database.createTicketComment({
+          ticketId: id,
+          content,
+          isInternal: false,
+          authorName: session.userName || session.userEmail,
+          authorEmail: session.userEmail,
+        });
+
+        // Notify about new comment
+        await this.emailService.notifyTicketComment(ticket, comment);
+
+        res.status(201).json(comment);
+      } catch (error) {
+        console.error('Portal add comment error:', error);
+        res.status(500).json({ error: 'Failed to add comment' });
+      }
+    });
+
+    // =========================================================================
+    // Portal Admin API - Settings & Tenant Mapping
+    // =========================================================================
+
+    // Get portal settings
+    this.app.get('/api/portal/settings', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const settings = await this.database.getSettings();
+        res.json({
+          azureClientId: settings.azureClientId || '',
+          azureClientSecret: settings.azureClientSecret ? '********' : '',
+          azureRedirectUri: settings.azureRedirectUri || '',
+          portalEnabled: settings.portalEnabled === 'true',
+          smtpHost: settings.smtpHost || '',
+          smtpPort: settings.smtpPort || '587',
+          smtpUser: settings.smtpUser || '',
+          smtpPassword: settings.smtpPassword ? '********' : '',
+          smtpFromAddress: settings.smtpFromAddress || '',
+          smtpFromName: settings.smtpFromName || '',
+          emailNotificationsEnabled: settings.emailNotificationsEnabled === 'true',
+        });
+      } catch (error) {
+        console.error('Get portal settings error:', error);
+        res.status(500).json({ error: 'Failed to get settings' });
+      }
+    });
+
+    // Update portal settings
+    this.app.put('/api/portal/settings', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const updates: Record<string, string> = {};
+        const body = req.body;
+
+        // Azure AD settings
+        if (body.azureClientId !== undefined) updates.azureClientId = body.azureClientId;
+        if (body.azureClientSecret && body.azureClientSecret !== '********') {
+          updates.azureClientSecret = body.azureClientSecret;
+        }
+        if (body.azureRedirectUri !== undefined) updates.azureRedirectUri = body.azureRedirectUri;
+        if (body.portalEnabled !== undefined) updates.portalEnabled = String(body.portalEnabled);
+
+        // SMTP settings
+        if (body.smtpHost !== undefined) updates.smtpHost = body.smtpHost;
+        if (body.smtpPort !== undefined) updates.smtpPort = String(body.smtpPort);
+        if (body.smtpUser !== undefined) updates.smtpUser = body.smtpUser;
+        if (body.smtpPassword && body.smtpPassword !== '********') {
+          updates.smtpPassword = body.smtpPassword;
+        }
+        if (body.smtpFromAddress !== undefined) updates.smtpFromAddress = body.smtpFromAddress;
+        if (body.smtpFromName !== undefined) updates.smtpFromName = body.smtpFromName;
+        if (body.emailNotificationsEnabled !== undefined) {
+          updates.emailNotificationsEnabled = String(body.emailNotificationsEnabled);
+        }
+
+        await this.database.updateSettings(updates);
+
+        // Reinitialize services if needed
+        await this.initializePortalServices();
+
+        res.json({ success: true });
+      } catch (error) {
+        console.error('Update portal settings error:', error);
+        res.status(500).json({ error: 'Failed to update settings' });
+      }
+    });
+
+    // List client tenant mappings
+    this.app.get('/api/client-tenants', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const tenants = await this.database.getClientTenants();
+        res.json(tenants);
+      } catch (error) {
+        console.error('Get client tenants error:', error);
+        res.status(500).json({ error: 'Failed to get tenant mappings' });
+      }
+    });
+
+    // Create client tenant mapping
+    this.app.post('/api/client-tenants', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { clientId, tenantId, tenantName, enabled } = req.body;
+
+        if (!clientId || !tenantId) {
+          res.status(400).json({ error: 'Client ID and Tenant ID are required' });
+          return;
+        }
+
+        const mapping = await this.database.createClientTenant({
+          clientId,
+          tenantId,
+          tenantName,
+          enabled,
+        });
+
+        res.status(201).json(mapping);
+      } catch (error: any) {
+        console.error('Create client tenant error:', error);
+        if (error.message?.includes('duplicate')) {
+          res.status(409).json({ error: 'This tenant is already mapped' });
+        } else {
+          res.status(500).json({ error: 'Failed to create mapping' });
+        }
+      }
+    });
+
+    // Update client tenant mapping
+    this.app.put('/api/client-tenants/:id', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { id } = req.params;
+        const { tenantName, enabled } = req.body;
+
+        const mapping = await this.database.updateClientTenant(id, { tenantName, enabled });
+        if (!mapping) {
+          res.status(404).json({ error: 'Mapping not found' });
+          return;
+        }
+
+        res.json(mapping);
+      } catch (error) {
+        console.error('Update client tenant error:', error);
+        res.status(500).json({ error: 'Failed to update mapping' });
+      }
+    });
+
+    // Delete client tenant mapping
+    this.app.delete('/api/client-tenants/:id', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { id } = req.params;
+        await this.database.deleteClientTenant(id);
+        res.json({ success: true });
+      } catch (error) {
+        console.error('Delete client tenant error:', error);
+        res.status(500).json({ error: 'Failed to delete mapping' });
+      }
+    });
+
+    // =========================================================================
+    // Portal Static Files
+    // =========================================================================
+
+    // Serve portal static files
+    const portalDir = electronApp.isPackaged
+      ? path.join(process.resourcesPath, 'portal')
+      : path.join(__dirname, '..', '..', 'src', 'portal');
+
+    this.app.use('/portal', express.static(portalDir));
+
+    // Serve portal index for SPA routes
+    this.app.get('/portal/*', (req: Request, res: Response) => {
+      const indexPath = path.join(portalDir, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        res.status(404).send('Portal not found. Please configure the portal.');
+      }
+    });
   }
 
-  
+  /**
+   * Initialize portal-related services (MSAL and Email)
+   */
+  private async initializePortalServices(): Promise<void> {
+    const settings = await this.database.getSettings();
+
+    // Initialize MSAL if configured
+    if (settings.azureClientId && settings.azureClientSecret && settings.azureRedirectUri) {
+      const msalConfig: MSALConfig = {
+        clientId: settings.azureClientId,
+        clientSecret: settings.azureClientSecret,
+        redirectUri: settings.azureRedirectUri,
+      };
+      msalAuth.initialize(msalConfig);
+      console.log('[Server] MSAL initialized for portal authentication');
+    }
+
+    // Initialize Email service if configured
+    const emailConfig: EmailConfig = {
+      enabled: settings.emailNotificationsEnabled === 'true',
+      portalUrl: settings.portalUrl || `http://localhost:${this.port}`,
+    };
+
+    if (emailConfig.enabled && settings.smtpHost) {
+      emailConfig.smtp = {
+        host: settings.smtpHost,
+        port: parseInt(settings.smtpPort) || 587,
+        secure: parseInt(settings.smtpPort) === 465,
+        user: settings.smtpUser || '',
+        password: settings.smtpPassword || '',
+        fromAddress: settings.smtpFromAddress || '',
+        fromName: settings.smtpFromName,
+      };
+    }
+
+    await this.emailService.initialize(emailConfig);
+  }
 
   // Compare semantic versions: returns 1 if v1 > v2, -1 if v1 < v2, 0 if equal
   private compareVersions(v1: string, v2: string): number {
@@ -1069,6 +1543,9 @@ private setupWebSocket(): void {
     } else {
       console.log('CORS: Using default (localhost:* only)');
     }
+
+    // Initialize portal services (MSAL and Email)
+    await this.initializePortalServices();
 
     return new Promise((resolve, reject) => {
       this.server = this.app.listen(this.port, '0.0.0.0', () => {
