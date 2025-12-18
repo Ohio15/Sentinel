@@ -601,6 +601,87 @@ function setupIpcHandlers(): void {
     return database.updateSettings(settings);
   });
 
+  // Portal Settings
+  ipcMain.handle('portal:getSettings', async () => {
+    const settings = await database.getSettings();
+    return {
+      azureAd: {
+        clientId: settings.azureClientId || '',
+        clientSecret: settings.azureClientSecret ? '********' : '',
+        redirectUri: settings.azureRedirectUri || '',
+      },
+      email: {
+        enabled: settings.emailNotificationsEnabled === 'true',
+        portalUrl: settings.portalUrl || '',
+        smtp: {
+          host: settings.smtpHost || '',
+          port: parseInt(settings.smtpPort || '587', 10),
+          secure: settings.smtpSecure === 'true',
+          user: settings.smtpUser || '',
+          password: settings.smtpPassword ? '********' : '',
+          fromAddress: settings.smtpFromAddress || '',
+          fromName: settings.smtpFromName || '',
+        },
+      },
+    };
+  });
+
+  ipcMain.handle('portal:updateSettings', async (_, body: any) => {
+    const updates: Record<string, string> = {};
+
+    const azureAd = body.azureAd || {};
+    const email = body.email || {};
+    const smtp = email.smtp || {};
+
+    if (azureAd.clientId !== undefined) updates.azureClientId = azureAd.clientId;
+    if (azureAd.clientSecret && azureAd.clientSecret !== '********') {
+      updates.azureClientSecret = azureAd.clientSecret;
+    }
+    if (azureAd.redirectUri !== undefined) updates.azureRedirectUri = azureAd.redirectUri;
+
+    if (email.enabled !== undefined) {
+      updates.emailNotificationsEnabled = String(email.enabled);
+    }
+    if (email.portalUrl !== undefined) updates.portalUrl = email.portalUrl;
+
+    if (smtp.host !== undefined) updates.smtpHost = smtp.host;
+    if (smtp.port !== undefined) updates.smtpPort = String(smtp.port);
+    if (smtp.secure !== undefined) updates.smtpSecure = String(smtp.secure);
+    if (smtp.user !== undefined) updates.smtpUser = smtp.user;
+    if (smtp.password && smtp.password !== '********') {
+      updates.smtpPassword = smtp.password;
+    }
+    if (smtp.fromAddress !== undefined) updates.smtpFromAddress = smtp.fromAddress;
+    if (smtp.fromName !== undefined) updates.smtpFromName = smtp.fromName;
+
+    await database.updateSettings(updates);
+    return { success: true };
+  });
+
+  ipcMain.handle('portal:getClientTenants', async () => {
+    return database.getClientTenants();
+  });
+
+  ipcMain.handle('portal:createClientTenant', async (_, data: { clientId?: string; tenantId: string; tenantName?: string }) => {
+    let { clientId, tenantId, tenantName } = data;
+
+    if (!clientId) {
+      const clientName = tenantName || `Tenant ${tenantId.substring(0, 8)}`;
+      const newClient = await database.createClient({ name: clientName });
+      clientId = newClient.id;
+    }
+
+    return database.createClientTenant({
+      clientId: clientId as string,
+      tenantId,
+      tenantName,
+    });
+  });
+
+  ipcMain.handle('portal:deleteClientTenant', async (_, id: string) => {
+    return database.deleteClientTenant(id);
+  });
+
 
   // Clients
   ipcMain.handle('clients:list', async () => {
