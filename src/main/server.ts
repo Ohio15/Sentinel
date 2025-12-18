@@ -310,7 +310,7 @@ export class Server {
         wsEndpoint: `ws://${localIp}:${this.port}/ws`,
         version: '1.0.0',
       });
-
+    });
 
     // =========================================================================
     // AGENT UPDATE API ENDPOINTS
@@ -515,6 +515,207 @@ export class Server {
       }
     });
 
+    // ============================================================================
+    // Update Groups API
+    // ============================================================================
+
+    // List all update groups
+    this.app.get('/api/update-groups', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const groups = await this.database.getUpdateGroups();
+        res.json(groups);
+      } catch (error) {
+        console.error('Get update groups error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+    // Create a new update group
+    this.app.post('/api/update-groups', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { id, name, priority, autoPromote, successThresholdPercent, failureThresholdPercent, minDevicesForDecision, waitTimeMinutes } = req.body;
+        await this.database.createUpdateGroup({
+          id: id || uuidv4(),
+          name,
+          priority: priority || 0,
+          autoPromote: autoPromote ?? false,
+          successThresholdPercent: successThresholdPercent || 95,
+          failureThresholdPercent: failureThresholdPercent || 10,
+          minDevicesForDecision: minDevicesForDecision || 3,
+          waitTimeMinutes: waitTimeMinutes || 60
+        });
+        res.json({ success: true });
+      } catch (error) {
+        console.error('Create update group error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+    // Assign device to update group
+    this.app.post('/api/devices/:id/update-group', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { id } = req.params;
+        const { groupId } = req.body;
+        await this.database.assignDeviceToUpdateGroup(id, groupId || null);
+        res.json({ success: true });
+      } catch (error) {
+        console.error('Assign device to group error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+    // ============================================================================
+    // Agent Health API
+    // ============================================================================
+
+    // Get all agent health scores
+    this.app.get('/api/health/agents', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const health = await this.database.getAllAgentHealth();
+        res.json(health);
+      } catch (error) {
+        console.error('Get all agent health error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+    // Get specific device health
+    this.app.get('/api/devices/:id/health', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { id } = req.params;
+        const health = await this.database.getAgentHealth(id);
+        if (!health) {
+          res.status(404).json({ error: 'Health data not found' });
+          return;
+        }
+        res.json(health);
+      } catch (error) {
+        console.error('Get device health error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+    // Get device health history
+    this.app.get('/api/devices/:id/health/history', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { id } = req.params;
+        const hours = parseInt(req.query.hours as string) || 24;
+        const history = await this.database.getAgentHealthHistory(id, hours);
+        res.json(history);
+      } catch (error) {
+        console.error('Get device health history error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+    // ============================================================================
+    // Command Queue API
+    // ============================================================================
+
+    // Get queued commands for a device
+    this.app.get('/api/devices/:id/queue', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { id } = req.params;
+        const commands = await this.database.getPendingCommandsForDevice(id);
+        res.json(commands);
+      } catch (error) {
+        console.error('Get device queue error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+    // Queue a command for a device
+    this.app.post('/api/devices/:id/queue', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { id } = req.params;
+        const { commandType, payload, priority, expiresInMinutes } = req.body;
+
+        await this.database.queueCommand({
+          id: uuidv4(),
+          deviceId: id,
+          commandType,
+          payload,
+          priority: priority || 50,
+          expiresAt: expiresInMinutes ? new Date(Date.now() + expiresInMinutes * 60000) : undefined
+        });
+
+        res.json({ success: true });
+      } catch (error) {
+        console.error('Queue command error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+    // ============================================================================
+    // Rollouts API
+    // ============================================================================
+
+    // List all rollouts
+    this.app.get('/api/rollouts', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const limit = parseInt(req.query.limit as string) || 50;
+        const rollouts = await this.database.getRollouts(limit);
+        res.json(rollouts);
+      } catch (error) {
+        console.error('Get rollouts error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+    // Get rollout details
+    this.app.get('/api/rollouts/:id', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { id } = req.params;
+        const rollouts = await this.database.getRollouts(100);
+        const rollout = rollouts.find(r => r.id === id);
+        if (!rollout) {
+          res.status(404).json({ error: 'Rollout not found' });
+          return;
+        }
+        const stages = await this.database.getRolloutStages(id);
+        const events = await this.database.getRolloutEvents(id);
+        res.json({ ...rollout, stages, events });
+      } catch (error) {
+        console.error('Get rollout error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+    // Get rollout stages
+    this.app.get('/api/rollouts/:id/stages', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { id } = req.params;
+        const stages = await this.database.getRolloutStages(id);
+        res.json(stages);
+      } catch (error) {
+        console.error('Get rollout stages error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+    // Get rollout devices
+    this.app.get('/api/rollouts/:id/devices', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { id } = req.params;
+        const stageId = req.query.stageId as string | undefined;
+        const devices = await this.database.getRolloutDevices(id, stageId);
+        res.json(devices);
+      } catch (error) {
+        console.error('Get rollout devices error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+    // Get rollout events
+    this.app.get('/api/rollouts/:id/events', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { id } = req.params;
+        const events = await this.database.getRolloutEvents(id);
+        res.json(events);
+      } catch (error) {
+        console.error('Get rollout events error:', error);
+        res.status(500).json({ error: 'Internal server error' });
+      }
     });
   }
 

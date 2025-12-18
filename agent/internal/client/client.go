@@ -12,6 +12,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/sentinel/agent/internal/config"
+	"github.com/sentinel/agent/internal/offline"
 )
 
 // Message types
@@ -62,6 +63,13 @@ const (
 	MsgTypeCertUpdateAck     = "cert_update_ack"
 	// System update status
 	MsgTypeUpdateStatus      = "update_status"
+	// Sync protocol messages
+	MsgTypeSyncRequest       = "sync_request"
+	MsgTypeSyncResponse      = "sync_response"
+	MsgTypeBulkMetrics       = "bulk_metrics"
+	MsgTypeBulkMetricsAck    = "bulk_metrics_ack"
+	MsgTypeCommandResult     = "command_result"
+	MsgTypeHealthReport      = "health_report"
 )
 
 // Message represents a WebSocket message
@@ -94,11 +102,14 @@ type Client struct {
 	onDisconnect      func()
 	onNeedsEnrollment func()
 	version           string
-	lastPong        time.Time
-	pingInterval    time.Duration
-	pongTimeout     time.Duration
-	healthPollRate  time.Duration
-	httpClient      *http.Client
+	lastPong          time.Time
+	pingInterval      time.Duration
+	pongTimeout       time.Duration
+	healthPollRate    time.Duration
+	httpClient        *http.Client
+	offlineStore      *offline.Store
+	lastDisconnect    time.Time
+	wasOffline        bool
 }
 
 // New creates a new WebSocket client
@@ -463,6 +474,8 @@ func (c *Client) readLoop(ctx context.Context) {
 		c.mu.Lock()
 		c.connected = false
 		c.authenticated = false
+		c.lastDisconnect = time.Now()
+		c.wasOffline = true
 		// Signal done channel to trigger reconnection in RunWithReconnect
 		select {
 		case <-c.done:
@@ -762,4 +775,227 @@ func (c *Client) SendUpdateStatus(status interface{}) error {
 		"data": status,
 	}
 	return c.SendJSON(msg)
+}
+
+// SetOfflineStore sets the offline store for caching data during disconnections
+func (c *Client) SetOfflineStore(store *offline.Store) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.offlineStore = store
+}
+
+// GetOfflineStore returns the offline store
+func (c *Client) GetOfflineStore() *offline.Store {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.offlineStore
+}
+
+// MarkDisconnected records the disconnection time for offline duration tracking
+func (c *Client) MarkDisconnected() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lastDisconnect = time.Now()
+	c.wasOffline = true
+}
+
+// SendSyncRequest sends a sync request after reconnection
+func (c *Client) SendSyncRequest() error {
+	c.mu.RLock()
+	store := c.offlineStore
+	lastDisconnect := c.lastDisconnect
+	wasOffline := c.wasOffline
+	c.mu.RUnlock()
+
+	if !wasOffline {
+		return nil // Not reconnecting from offline state
+	}
+
+	var offlineDuration string
+	if !lastDisconnect.IsZero() {
+		offlineDuration = time.Since(lastDisconnect).String()
+	}
+
+	var cachedMetricsCount, cachedEventsCount, cachedCommandsCount int
+	if store != nil {
+		cachedMetricsCount = store.GetMetricsCount()
+		cachedEventsCount = store.GetEventsCount()
+		cachedCommandsCount = store.GetPendingCommandsCount()
+	}
+
+	log.Printf("[Sync] Sending sync request after %s offline (metrics: %d, events: %d, commands: %d)",
+		offlineDuration, cachedMetricsCount, cachedEventsCount, cachedCommandsCount)
+
+	msg := map[string]interface{}{
+		"type": MsgTypeSyncRequest,
+		"data": map[string]interface{}{
+			"offlineDuration":     offlineDuration,
+			"cachedMetricsCount":  cachedMetricsCount,
+			"cachedEventsCount":   cachedEventsCount,
+			"cachedCommandsCount": cachedCommandsCount,
+		},
+	}
+
+	err := c.SendJSON(msg)
+	if err == nil {
+		c.mu.Lock()
+		c.wasOffline = false
+		c.mu.Unlock()
+	}
+	return err
+}
+
+// SendBulkMetrics sends cached metrics to the server in batches
+func (c *Client) SendBulkMetrics(batchID string, metrics []map[string]interface{}) error {
+	msg := map[string]interface{}{
+		"type": MsgTypeBulkMetrics,
+		"data": map[string]interface{}{
+			"batchId": batchID,
+			"metrics": metrics,
+		},
+	}
+	return c.SendJSON(msg)
+}
+
+// SendCommandResult sends the result of a command execution
+func (c *Client) SendCommandResult(commandID string, success bool, result interface{}, errMsg string) error {
+	msg := map[string]interface{}{
+		"type": MsgTypeCommandResult,
+		"data": map[string]interface{}{
+			"commandId": commandID,
+			"success":   success,
+			"result":    result,
+			"error":     errMsg,
+		},
+	}
+	return c.SendJSON(msg)
+}
+
+// SendHealthReport sends the agent's health status to the server
+func (c *Client) SendHealthReport(score int, status string, factors, components map[string]interface{}) error {
+	msg := map[string]interface{}{
+		"type": MsgTypeHealthReport,
+		"data": map[string]interface{}{
+			"score":      score,
+			"status":     status,
+			"factors":    factors,
+			"components": components,
+			"timestamp":  time.Now().Format(time.RFC3339),
+		},
+	}
+	return c.SendJSON(msg)
+}
+
+// QueueMetricsIfOffline queues metrics for later sync if not connected
+func (c *Client) QueueMetricsIfOffline(metrics interface{}) (bool, error) {
+	c.mu.RLock()
+	connected := c.connected
+	store := c.offlineStore
+	c.mu.RUnlock()
+
+	if connected || store == nil {
+		return false, nil // Not offline or no store
+	}
+
+	// Marshal metrics to JSON
+	data, err := json.Marshal(metrics)
+	if err != nil {
+		return false, fmt.Errorf("failed to marshal metrics: %w", err)
+	}
+
+	// Queue the metrics
+	if err := store.QueueMetrics(data, offline.PriorityNormal); err != nil {
+		return false, fmt.Errorf("failed to queue metrics: %w", err)
+	}
+
+	return true, nil
+}
+
+// QueueEventIfOffline queues an event for later sync if not connected
+func (c *Client) QueueEventIfOffline(eventType, severity string, payload interface{}) (bool, error) {
+	c.mu.RLock()
+	connected := c.connected
+	store := c.offlineStore
+	c.mu.RUnlock()
+
+	if connected || store == nil {
+		return false, nil // Not offline or no store
+	}
+
+	// Marshal payload to JSON
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return false, fmt.Errorf("failed to marshal event payload: %w", err)
+	}
+
+	// Queue the event
+	if err := store.QueueEvent(eventType, severity, data); err != nil {
+		return false, fmt.Errorf("failed to queue event: %w", err)
+	}
+
+	return true, nil
+}
+
+// UploadCachedMetrics uploads all cached metrics to the server
+func (c *Client) UploadCachedMetrics(ctx context.Context, batchSize int) error {
+	c.mu.RLock()
+	store := c.offlineStore
+	c.mu.RUnlock()
+
+	if store == nil {
+		return nil
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// Get a batch of cached metrics
+		entries, err := store.GetPendingMetrics(batchSize)
+		if err != nil {
+			return fmt.Errorf("failed to get cached metrics: %w", err)
+		}
+
+		if len(entries) == 0 {
+			return nil // All done
+		}
+
+		// Convert to the format expected by the server
+		metrics := make([]map[string]interface{}, 0, len(entries))
+		ids := make([]int64, 0, len(entries))
+		for _, entry := range entries {
+			var data map[string]interface{}
+			if err := json.Unmarshal(entry.Payload, &data); err != nil {
+				log.Printf("[Sync] Failed to unmarshal cached metric: %v", err)
+				continue
+			}
+			metrics = append(metrics, map[string]interface{}{
+				"timestamp": entry.Timestamp.Format(time.RFC3339),
+				"data":      data,
+			})
+			ids = append(ids, entry.ID)
+		}
+
+		if len(metrics) == 0 {
+			continue
+		}
+
+		// Send the batch
+		batchID := fmt.Sprintf("batch-%d", time.Now().UnixNano())
+		if err := c.SendBulkMetrics(batchID, metrics); err != nil {
+			return fmt.Errorf("failed to send bulk metrics: %w", err)
+		}
+
+		// Mark as synced
+		for _, id := range ids {
+			if err := store.MarkMetricsSynced(id); err != nil {
+				log.Printf("[Sync] Failed to mark metric %d as synced: %v", id, err)
+			}
+		}
+
+		log.Printf("[Sync] Uploaded %d cached metrics", len(metrics))
+	}
 }
