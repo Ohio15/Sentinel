@@ -160,13 +160,14 @@ export function Clients() {
 interface ClientModalProps {
   client: Client | null;
   onClose: () => void;
-  onSave: (data: { name: string; description?: string; color?: string }) => Promise<void>;
+  onSave: (data: { name: string; description?: string; color?: string; logoUrl?: string }) => Promise<void>;
 }
 
 function ClientModal({ client, onClose, onSave }: ClientModalProps) {
   const [name, setName] = useState(client?.name || '');
   const [description, setDescription] = useState(client?.description || '');
   const [color, setColor] = useState(client?.color || '#6366f1');
+  const [logoUrl, setLogoUrl] = useState(client?.logoUrl || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -197,6 +198,7 @@ function ClientModal({ client, onClose, onSave }: ClientModalProps) {
         name: name.trim(),
         description: description.trim() || undefined,
         color,
+        logoUrl: logoUrl.trim() || undefined,
       });
     } catch (err: any) {
       setError(err.message || 'Failed to save client');
@@ -270,6 +272,35 @@ function ClientModal({ client, onClose, onSave }: ClientModalProps) {
                 />
               ))}
             </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-text-primary mb-1">
+              Logo URL
+            </label>
+            <input
+              type="url"
+              value={logoUrl}
+              onChange={(e) => setLogoUrl(e.target.value)}
+              className="input w-full"
+              placeholder="https://example.com/logo.png"
+            />
+            <p className="text-xs text-text-secondary mt-1">
+              URL to the company logo for the support portal. Leave empty to use default.
+            </p>
+            {logoUrl && (
+              <div className="mt-2 p-2 bg-background rounded-lg flex items-center gap-2">
+                <img
+                  src={logoUrl}
+                  alt="Logo preview"
+                  className="w-8 h-8 object-contain"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).style.display = 'none';
+                  }}
+                />
+                <span className="text-xs text-text-secondary">Logo preview</span>
+              </div>
+            )}
           </div>
 
           <div className="flex justify-end gap-3 pt-4">

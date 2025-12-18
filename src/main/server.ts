@@ -875,6 +875,28 @@ export class Server {
       next();
     };
 
+    // Get client branding info for portal
+    this.app.get('/portal/api/client-info', requirePortalAuth, async (req: Request, res: Response) => {
+      try {
+        const session = (req as any).portalSession;
+        const client = await this.database.getClient(session.clientId);
+
+        if (!client) {
+          res.json({ name: 'Support Portal', primaryColor: '#0078d4', logoUrl: null });
+          return;
+        }
+
+        res.json({
+          name: client.name,
+          primaryColor: client.color || '#0078d4',
+          logoUrl: client.logoUrl || null,
+        });
+      } catch (error) {
+        console.error('Portal get client info error:', error);
+        res.json({ name: 'Support Portal', primaryColor: '#0078d4', logoUrl: null });
+      }
+    });
+
     // List user's tickets
     this.app.get('/portal/api/tickets', requirePortalAuth, async (req: Request, res: Response) => {
       try {
@@ -924,7 +946,7 @@ export class Server {
     this.app.post('/portal/api/tickets', requirePortalAuth, async (req: Request, res: Response) => {
       try {
         const session = (req as any).portalSession;
-        const { subject, description, priority, type, deviceId } = req.body;
+        const { subject, description, priority, type, deviceId, deviceName } = req.body;
 
         if (!subject || !description) {
           res.status(400).json({ error: 'Subject and description are required' });
@@ -937,6 +959,7 @@ export class Server {
           priority: priority || 'medium',
           type: type || 'incident',
           deviceId,
+          deviceName,
           clientId: session.clientId,
           submitterEmail: session.userEmail,
           submitterName: session.userName || session.userEmail,

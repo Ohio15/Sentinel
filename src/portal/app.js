@@ -4,6 +4,7 @@
 
 // State
 let currentUser = null;
+let clientBranding = null;
 let tickets = [];
 let currentTicket = null;
 
@@ -46,6 +47,7 @@ async function checkAuth() {
     if (response.ok) {
       const data = await response.json();
       currentUser = data.user;
+      await loadClientBranding();
       showAuthenticatedUI();
       await loadTickets();
     } else {
@@ -55,6 +57,83 @@ async function checkAuth() {
     console.error('Auth check failed:', error);
     showLoginPage();
   }
+}
+
+/**
+ * Load client branding and apply it
+ */
+async function loadClientBranding() {
+  try {
+    const response = await fetch('/portal/api/client-info', {
+      credentials: 'include'
+    });
+
+    if (response.ok) {
+      clientBranding = await response.json();
+      applyBranding();
+    }
+  } catch (error) {
+    console.error('Failed to load client branding:', error);
+  }
+}
+
+/**
+ * Apply client branding to the UI
+ */
+function applyBranding() {
+  if (!clientBranding) return;
+
+  // Apply primary color
+  if (clientBranding.primaryColor) {
+    document.documentElement.style.setProperty('--primary', clientBranding.primaryColor);
+    // Calculate a hover color (slightly darker)
+    const hoverColor = adjustColorBrightness(clientBranding.primaryColor, -20);
+    document.documentElement.style.setProperty('--primary-hover', hoverColor);
+  }
+
+  // Apply logo
+  const clientLogo = document.getElementById('clientLogo');
+  const defaultLogo = document.getElementById('defaultLogo');
+  if (clientBranding.logoUrl && clientLogo && defaultLogo) {
+    clientLogo.src = clientBranding.logoUrl;
+    clientLogo.alt = clientBranding.name || 'Company Logo';
+    clientLogo.style.display = 'block';
+    defaultLogo.style.display = 'none';
+  }
+
+  // Apply company name
+  const portalTitle = document.getElementById('portalTitle');
+  const welcomeTitle = document.getElementById('welcomeTitle');
+  if (clientBranding.name) {
+    if (portalTitle) {
+      portalTitle.textContent = `${clientBranding.name} Support`;
+    }
+    if (welcomeTitle) {
+      welcomeTitle.textContent = `Welcome to ${clientBranding.name} Support`;
+    }
+    document.title = `${clientBranding.name} Support Portal`;
+  }
+}
+
+/**
+ * Adjust color brightness for hover states
+ */
+function adjustColorBrightness(hex, amount) {
+  // Remove # if present
+  hex = hex.replace(/^#/, '');
+
+  // Parse RGB values
+  let r = parseInt(hex.substr(0, 2), 16);
+  let g = parseInt(hex.substr(2, 2), 16);
+  let b = parseInt(hex.substr(4, 2), 16);
+
+  // Adjust brightness
+  r = Math.max(0, Math.min(255, r + amount));
+  g = Math.max(0, Math.min(255, g + amount));
+  b = Math.max(0, Math.min(255, b + amount));
+
+  // Convert back to hex
+  return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
 }
 
 /**
@@ -78,6 +157,10 @@ async function logout() {
   }
 
   currentUser = null;
+  clientBranding = null;
+  // Reset branding to defaults
+  document.documentElement.style.setProperty('--primary', '#0078d4');
+  document.documentElement.style.setProperty('--primary-hover', '#106ebe');
   showLoginPage();
 }
 
@@ -140,6 +223,12 @@ function showNewTicketForm() {
   hideAllPages();
   newTicketPage.style.display = 'block';
   newTicketForm.reset();
+
+  // Auto-populate "Submitted By" field with current user's name
+  const submittedByField = document.getElementById('submittedBy');
+  if (submittedByField && currentUser) {
+    submittedByField.value = currentUser.name || currentUser.email || '';
+  }
 }
 
 /**
@@ -234,6 +323,15 @@ function renderTicketDetail() {
   const ticketTitle = document.getElementById('ticketDetailTitle');
   ticketTitle.textContent = `Ticket #${ticket.ticketNumber || ticket.id.slice(0, 8)}`;
 
+  // Build info items for submitter and device
+  let infoItems = '';
+  if (ticket.submitterName || ticket.submitterEmail) {
+    infoItems += `<span><strong>Submitted by:</strong> ${escapeHtml(ticket.submitterName || ticket.submitterEmail)}</span>`;
+  }
+  if (ticket.userDeviceName) {
+    infoItems += `<span><strong>Device:</strong> ${escapeHtml(ticket.userDeviceName)}</span>`;
+  }
+
   ticketDetail.innerHTML = `
     <div class="ticket-detail-header">
       <div class="ticket-detail-subject">${escapeHtml(ticket.subject)}</div>
@@ -243,6 +341,7 @@ function renderTicketDetail() {
         <span>Created ${formatDate(ticket.createdAt)}</span>
         ${ticket.updatedAt ? `<span>Updated ${formatDate(ticket.updatedAt)}</span>` : ''}
       </div>
+      ${infoItems ? `<div class="ticket-detail-info">${infoItems}</div>` : ''}
     </div>
     <div class="ticket-detail-body">
       <div class="ticket-detail-description">${escapeHtml(ticket.description || '')}</div>
@@ -297,7 +396,8 @@ async function submitTicket(event) {
     subject: formData.get('subject'),
     description: formData.get('description'),
     priority: formData.get('priority'),
-    type: formData.get('type')
+    type: formData.get('type'),
+    deviceName: formData.get('deviceName') || null
   };
 
   try {

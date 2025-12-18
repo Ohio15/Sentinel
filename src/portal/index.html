@@ -11,10 +11,11 @@
     <!-- Header -->
     <header class="header">
       <div class="logo">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <img id="clientLogo" src="" alt="" style="display: none; width: 32px; height: 32px; object-fit: contain;">
+        <svg id="defaultLogo" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
         </svg>
-        <span>Support Portal</span>
+        <span id="portalTitle">Support Portal</span>
       </div>
       <div class="user-info" id="userInfo" style="display: none;">
         <span id="userName"></span>
@@ -28,7 +29,7 @@
       <div id="loginPage" class="page">
         <div class="login-container">
           <div class="login-card">
-            <h1>Welcome to Support Portal</h1>
+            <h1 id="welcomeTitle">Welcome to Support Portal</h1>
             <p>Sign in with your Microsoft account to submit and track support tickets.</p>
             <div id="errorMessage" class="error-message" style="display: none;"></div>
             <button class="btn btn-primary btn-lg btn-microsoft" onclick="login()">
@@ -75,8 +76,16 @@
         </div>
         <form class="ticket-form" id="newTicketForm" onsubmit="submitTicket(event)">
           <div class="form-group">
+            <label for="submittedBy">Submitted By</label>
+            <input type="text" id="submittedBy" name="submittedBy" readonly class="readonly-field">
+          </div>
+          <div class="form-group">
             <label for="subject">Subject *</label>
             <input type="text" id="subject" name="subject" required placeholder="Brief description of the issue">
+          </div>
+          <div class="form-group">
+            <label for="deviceName">Device/Computer Name</label>
+            <input type="text" id="deviceName" name="deviceName" placeholder="Name of the affected computer (optional)">
           </div>
           <div class="form-row">
             <div class="form-group">
