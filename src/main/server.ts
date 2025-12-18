@@ -1212,6 +1212,15 @@ export class Server {
   public async initializePortalServices(): Promise<void> {
     const settings = await this.database.getSettings();
 
+    // Debug: Log which settings are present
+    console.log('[Server] Portal settings check:', {
+      hasClientId: !!settings.azureClientId,
+      hasClientSecret: !!settings.azureClientSecret,
+      hasRedirectUri: !!settings.azureRedirectUri,
+      clientIdLength: settings.azureClientId?.length || 0,
+      secretLength: settings.azureClientSecret?.length || 0,
+    });
+
     // Initialize MSAL if configured
     if (settings.azureClientId && settings.azureClientSecret && settings.azureRedirectUri) {
       const msalConfig: MSALConfig = {
@@ -1221,6 +1230,12 @@ export class Server {
       };
       msalAuth.initialize(msalConfig);
       console.log('[Server] MSAL initialized for portal authentication');
+    } else {
+      console.log('[Server] MSAL not initialized - missing settings:', {
+        clientId: !settings.azureClientId ? 'MISSING' : 'OK',
+        clientSecret: !settings.azureClientSecret ? 'MISSING' : 'OK',
+        redirectUri: !settings.azureRedirectUri ? 'MISSING' : 'OK',
+      });
     }
 
     // Initialize Email service if configured
