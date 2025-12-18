@@ -165,12 +165,29 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
   },
 
   subscribeToUpdates: () => {
-    const unsubOnline = window.api.on('devices:online', (data: any) => {
+    const unsubOnline = window.api.on('devices:online', async (data: any) => {
       const { devices } = get();
-      const updated = devices.map(d =>
-        d.agentId === data.agentId ? { ...d, status: 'online' as const } : d
-      );
-      set({ devices: updated });
+      const existingDevice = devices.find(d => d.agentId === data.agentId);
+
+      if (existingDevice) {
+        // Device exists in store, just update status
+        const updated = devices.map(d =>
+          d.agentId === data.agentId ? { ...d, status: 'online' as const } : d
+        );
+        set({ devices: updated });
+      } else if (data.deviceId) {
+        // New device - fetch it and add to store
+        console.log('[DeviceStore] New device online, fetching:', data.deviceId);
+        try {
+          const newDevice = await window.api.devices.get(data.deviceId);
+          if (newDevice) {
+            set({ devices: [...devices, { ...newDevice, status: 'online' as const }] });
+            console.log('[DeviceStore] Added new device to store:', newDevice.hostname);
+          }
+        } catch (error) {
+          console.error('[DeviceStore] Failed to fetch new device:', error);
+        }
+      }
     });
 
     const unsubOffline = window.api.on('devices:offline', (data: any) => {
@@ -181,7 +198,9 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
       set({ devices: updated });
     });
 
-    const unsubUpdated = window.api.on('devices:updated', () => {
+    const unsubUpdated = window.api.on('devices:updated', (data: any) => {
+      console.log('[DeviceStore] devices:updated received', data);
+      // Refetch devices to get the latest list
       get().fetchDevices();
     });
 
