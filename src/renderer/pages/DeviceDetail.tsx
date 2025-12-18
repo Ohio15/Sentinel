@@ -5,6 +5,7 @@ import { Terminal } from '../components/Terminal';
 import { FileExplorer } from '../components/FileExplorer';
 import { RemoteDesktop } from '../components/RemoteDesktop';
 import { PerformanceView } from '../components/PerformanceView';
+import { WindowsUpdateStatus } from '../components/WindowsUpdateStatus';
 
 interface DeviceDetailProps {
   deviceId: string;
@@ -143,22 +144,23 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
     : null;
 
 
-  // Real-time metrics for Performance tab (1 second intervals like Windows Task Manager)
+  // Real-time metrics for Overview and Performance tabs (1 second intervals like Windows Task Manager)
   useEffect(() => {
-    if (activeTab !== 'performance') return;
+    // Enable 1-second updates for both overview and performance tabs
+    if (activeTab !== 'performance' && activeTab !== 'overview') return;
 
     // Don't fetch historical metrics here - we want fresh real-time data
     // The metrics subscription will provide live updates
-    console.log('[DeviceDetail] Performance tab active, requesting 1s metrics interval');
+    console.log(`[DeviceDetail] ${activeTab} tab active, requesting 1s metrics interval`);
 
     // Request 1-second interval metrics from the agent (matches Windows Task Manager)
     window.api.devices.setMetricsInterval(deviceId, 1000).catch(err => {
       console.log('Failed to set metrics interval:', err);
     });
 
-    // Cleanup: reset to default interval (5000ms) when leaving Performance tab
+    // Cleanup: reset to default interval (5000ms) when leaving the tab
     return () => {
-      console.log('[DeviceDetail] Leaving Performance tab, resetting to normal interval');
+      console.log(`[DeviceDetail] Leaving ${activeTab} tab, resetting to normal interval`);
       window.api.devices.setMetricsInterval(deviceId, 5000).catch(err => {
         console.log('Failed to reset metrics interval:', err);
       });
@@ -351,7 +353,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
         {activeTab === 'overview' && (
           <div className="space-y-6">
             {/* Summary Cards - Gradient Style */}
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-5 gap-4">
               {/* Storage Card */}
               <div className="bg-gradient-to-br from-blue-500 to-blue-700 rounded-xl p-4 text-white shadow-lg">
                 <div className="flex items-center gap-3 mb-3">
@@ -411,6 +413,20 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                   {latestMetrics?.cpuPercent != null
                     ? `${latestMetrics.cpuPercent.toFixed(0)}% utilization`
                     : ''}
+                </div>
+              </div>
+
+              {/* Uptime Card */}
+              <div className="bg-gradient-to-br from-green-500 to-green-700 rounded-xl p-4 text-white shadow-lg">
+                <div className="flex items-center gap-3 mb-3">
+                  <ClockIcon className="w-8 h-8" />
+                  <span className="text-lg font-medium">Uptime</span>
+                </div>
+                <div className="text-2xl font-bold">
+                  {latestMetrics?.uptime ? formatUptime(latestMetrics.uptime) : 'N/A'}
+                </div>
+                <div className="text-sm opacity-80 mt-1">
+                  Since last boot
                 </div>
               </div>
             </div>
@@ -575,7 +591,8 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
               </div>
             </CollapsibleSection>
 
-            
+            {/* Windows Update Status */}
+            <WindowsUpdateStatus deviceId={deviceId} osType={selectedDevice.osType} />
           </div>
         )}
 
@@ -793,6 +810,21 @@ function formatBytes(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
+// Helper function to format uptime in seconds to days, hours, minutes
+function formatUptime(seconds: number): string {
+  if (!seconds || seconds <= 0) return 'N/A';
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0 || parts.length === 0) parts.push(`${minutes}m`);
+
+  return parts.join(' ');
+}
+
 function RefreshIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -899,6 +931,14 @@ function CpuIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+    </svg>
+  );
+}
+
+function ClockIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
     </svg>
   );
 }
