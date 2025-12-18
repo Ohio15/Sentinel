@@ -100,7 +100,7 @@ export function PerformanceView({ metrics, systemInfo }: PerformanceViewProps) {
           type: 'gpu',
           label: `GPU ${idx}`,
           sublabel: gpu.name,
-          value: 0,
+          value: latestMetrics?.gpuMetrics?.[idx]?.utilization ?? 0,
           unit: '%',
           color: '#4cc2ff',
         });
@@ -161,6 +161,7 @@ export function PerformanceView({ metrics, systemInfo }: PerformanceViewProps) {
           <GPUDetailView
             systemInfo={systemInfo}
             gpuIndex={parseInt(selectedItem.id.split('-')[1] || '0')}
+            latestMetrics={latestMetrics}
           />
         )}
       </div>
@@ -282,8 +283,8 @@ function CPUDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProps) 
 function MemoryDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProps) {
   const memPercent = latestMetrics?.memoryPercent ?? 0;
   const memUsed = latestMetrics?.memoryUsedBytes ?? 0;
-  const memAvailable = memTotal - memUsed;
   const memTotal = systemInfo?.totalMemory ?? 0;
+  const memAvailable = memTotal - memUsed;
 
   return (
     <div>
@@ -325,10 +326,10 @@ function MemoryDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProp
       <div className="grid grid-cols-2 gap-x-12 gap-y-2 mt-6 text-sm">
         <StatRow label="In use" value={formatBytes(memUsed)} />
         <StatRow label="Available" value={formatBytes(memAvailable)} />
-        <StatRow label="Committed" value="N/A" />
-        <StatRow label="Cached" value="N/A" />
-        <StatRow label="Paged pool" value="N/A" />
-        <StatRow label="Non-paged pool" value="N/A" />
+        <StatRow label="Committed" value={latestMetrics?.memoryCommitted ? formatBytes(latestMetrics.memoryCommitted) : 'N/A'} />
+        <StatRow label="Cached" value={latestMetrics?.memoryCached ? formatBytes(latestMetrics.memoryCached) : 'N/A'} />
+        <StatRow label="Paged pool" value={latestMetrics?.memoryPagedPool ? formatBytes(latestMetrics.memoryPagedPool) : 'N/A'} />
+        <StatRow label="Non-paged pool" value={latestMetrics?.memoryNonPagedPool ? formatBytes(latestMetrics.memoryNonPagedPool) : 'N/A'} />
       </div>
     </div>
   );
@@ -352,7 +353,7 @@ function DiskDetailView({ metrics, systemInfo, latestMetrics, diskIndex }: DiskD
         </div>
         <div className="text-right">
           <div className="text-4xl font-light">{diskPercent.toFixed(0)}%</div>
-          <div className="text-sm text-text-secondary">Active time</div>
+          <div className="text-sm text-text-secondary">Used</div>
         </div>
       </div>
 
@@ -360,15 +361,15 @@ function DiskDetailView({ metrics, systemInfo, latestMetrics, diskIndex }: DiskD
         metrics={metrics}
         dataKey="diskPercent"
         color="#00b294"
-        label="Active time"
+        label="Disk usage"
         maxValue={100}
       />
 
       <div className="grid grid-cols-2 gap-x-12 gap-y-2 mt-6 text-sm">
-        <StatRow label="Active time" value={`${diskPercent.toFixed(0)}%`} />
+        <StatRow label="Used" value={`${diskPercent.toFixed(0)}%`} />
         <StatRow label="Average response time" value="N/A" />
-        <StatRow label="Read speed" value="N/A" />
-        <StatRow label="Write speed" value="N/A" />
+        <StatRow label="Read speed" value={latestMetrics?.diskReadBytesPerSec ? formatBytesPerSec(latestMetrics.diskReadBytesPerSec) : 'N/A'} />
+        <StatRow label="Write speed" value={latestMetrics?.diskWriteBytesPerSec ? formatBytesPerSec(latestMetrics.diskWriteBytesPerSec) : 'N/A'} />
         <div className="col-span-2 border-t border-border my-2" />
         <StatRow label="Capacity" value={formatBytes(disk?.total ?? latestMetrics?.diskTotalBytes ?? 0)} />
         <StatRow label="Used" value={formatBytes(disk?.used ?? latestMetrics?.diskUsedBytes ?? 0)} />
@@ -420,33 +421,60 @@ function NetworkDetailView({ metrics, latestMetrics }: NetworkDetailViewProps) {
 interface GPUDetailViewProps {
   systemInfo?: PerformanceViewProps['systemInfo'];
   gpuIndex: number;
+  latestMetrics?: DeviceMetrics | null;
 }
 
-function GPUDetailView({ systemInfo, gpuIndex }: GPUDetailViewProps) {
+function GPUDetailView({ systemInfo, gpuIndex, latestMetrics }: GPUDetailViewProps) {
   const gpu = systemInfo?.gpu?.[gpuIndex];
+  const gpuMetric = latestMetrics?.gpuMetrics?.[gpuIndex];
+  const utilization = gpuMetric?.utilization ?? 0;
+  const hasUtilization = gpuMetric && gpuMetric.utilization > 0;
 
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-2xl font-light">GPU {gpuIndex}</h2>
-          <div className="text-sm text-text-secondary">{gpu?.name ?? 'Unknown GPU'}</div>
+          <div className="text-sm text-text-secondary">{gpuMetric?.name ?? gpu?.name ?? 'Unknown GPU'}</div>
         </div>
         <div className="text-right">
-          <div className="text-4xl font-light">0%</div>
+          <div className="text-4xl font-light">{utilization.toFixed(0)}%</div>
           <div className="text-sm text-text-secondary">Utilization</div>
         </div>
       </div>
 
-      <div className="bg-gray-50 border border-border p-4 rounded mb-6">
-        <div className="text-sm text-text-secondary mb-2">GPU utilization data not available</div>
-        <div className="text-xs text-text-secondary">GPU monitoring requires additional drivers</div>
-      </div>
+      {!hasUtilization ? (
+        <div className="bg-gray-50 border border-border p-4 rounded mb-6">
+          <div className="text-sm text-text-secondary mb-2">Real-time GPU utilization not available</div>
+          <div className="text-xs text-text-secondary">NVIDIA GPUs with nvidia-smi support real-time monitoring</div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-4 mb-6">
+          <div className="bg-gray-50 border border-border p-4 rounded">
+            <div className="text-sm text-text-secondary mb-2">GPU Memory</div>
+            <div className="text-2xl font-light">
+              {gpuMetric.memoryUsed && gpuMetric.memoryTotal
+                ? `${formatBytes(gpuMetric.memoryUsed)} / ${formatBytes(gpuMetric.memoryTotal)}`
+                : 'N/A'}
+            </div>
+          </div>
+          <div className="bg-gray-50 border border-border p-4 rounded">
+            <div className="text-sm text-text-secondary mb-2">Temperature</div>
+            <div className="text-2xl font-light">
+              {gpuMetric.temperature ? `${gpuMetric.temperature.toFixed(0)}°C` : 'N/A'}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-x-12 gap-y-2 mt-6 text-sm">
-        <StatRow label="GPU" value={gpu?.name ?? 'N/A'} />
+        <StatRow label="GPU" value={gpuMetric?.name ?? gpu?.name ?? 'N/A'} />
         <StatRow label="Vendor" value={gpu?.vendor ?? 'N/A'} />
-        <StatRow label="Dedicated GPU memory" value={gpu?.memory ? formatBytes(gpu.memory) : 'N/A'} />
+        <StatRow label="Utilization" value={`${utilization.toFixed(0)}%`} />
+        <StatRow label="Temperature" value={gpuMetric?.temperature ? `${gpuMetric.temperature.toFixed(0)}°C` : 'N/A'} />
+        <StatRow label="GPU Memory Used" value={gpuMetric?.memoryUsed ? formatBytes(gpuMetric.memoryUsed) : 'N/A'} />
+        <StatRow label="GPU Memory Total" value={gpuMetric?.memoryTotal ? formatBytes(gpuMetric.memoryTotal) : (gpu?.memory ? formatBytes(gpu.memory) : 'N/A')} />
+        <StatRow label="Power Draw" value={gpuMetric?.powerDraw ? `${gpuMetric.powerDraw.toFixed(0)} W` : 'N/A'} />
         <StatRow label="Driver version" value={gpu?.driverVersion ?? 'N/A'} />
       </div>
     </div>

@@ -344,19 +344,31 @@ export class Database {
       `
       INSERT INTO device_metrics (
         device_id, cpu_percent, memory_percent, memory_used_bytes,
-        disk_percent, disk_used_bytes, network_rx_bytes, network_tx_bytes, process_count
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        disk_percent, disk_used_bytes, network_rx_bytes, network_tx_bytes, process_count,
+        uptime_seconds, disk_read_bytes_sec, disk_write_bytes_sec,
+        memory_committed, memory_cached, memory_paged_pool, memory_non_paged_pool,
+        gpu_metrics, network_interfaces
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
     `,
       [
         deviceId,
         metrics.cpu_percent ?? metrics.cpuPercent ?? 0,
         metrics.memory_percent ?? metrics.memoryPercent ?? 0,
-        metrics.memory_used ?? metrics.memoryUsedBytes ?? 0,
+        metrics.memory_used ?? metrics.memoryUsed ?? metrics.memoryUsedBytes ?? 0,
         metrics.disk_percent ?? metrics.diskPercent ?? 0,
-        metrics.disk_used ?? metrics.diskUsedBytes ?? 0,
+        metrics.disk_used ?? metrics.diskUsed ?? metrics.diskUsedBytes ?? 0,
         metrics.network_rx_bytes ?? metrics.networkRxBytes ?? 0,
         metrics.network_tx_bytes ?? metrics.networkTxBytes ?? 0,
         metrics.process_count ?? metrics.processCount ?? 0,
+        metrics.uptime ?? 0,
+        metrics.disk_read_bytes_sec ?? metrics.diskReadBytesPerSec ?? 0,
+        metrics.disk_write_bytes_sec ?? metrics.diskWriteBytesPerSec ?? 0,
+        metrics.memory_committed ?? metrics.memoryCommitted ?? 0,
+        metrics.memory_cached ?? metrics.memoryCached ?? 0,
+        metrics.memory_paged_pool ?? metrics.memoryPagedPool ?? 0,
+        metrics.memory_non_paged_pool ?? metrics.memoryNonPagedPool ?? 0,
+        JSON.stringify(metrics.gpu_metrics ?? metrics.gpuMetrics ?? []),
+        JSON.stringify(metrics.network_interfaces ?? metrics.networkInterfaces ?? []),
       ]
     );
 
@@ -380,7 +392,16 @@ export class Database {
         timestamp, cpu_percent as "cpuPercent", memory_percent as "memoryPercent",
         memory_used_bytes as "memoryUsedBytes", disk_percent as "diskPercent",
         disk_used_bytes as "diskUsedBytes", network_rx_bytes as "networkRxBytes",
-        network_tx_bytes as "networkTxBytes", process_count as "processCount"
+        network_tx_bytes as "networkTxBytes", process_count as "processCount",
+        uptime_seconds as "uptime",
+        disk_read_bytes_sec as "diskReadBytesPerSec",
+        disk_write_bytes_sec as "diskWriteBytesPerSec",
+        memory_committed as "memoryCommitted",
+        memory_cached as "memoryCached",
+        memory_paged_pool as "memoryPagedPool",
+        memory_non_paged_pool as "memoryNonPagedPool",
+        gpu_metrics as "gpuMetrics",
+        network_interfaces as "networkInterfaces"
       FROM device_metrics
       WHERE device_id = $1 AND timestamp > NOW() - INTERVAL '1 hour' * $2
       ORDER BY timestamp DESC

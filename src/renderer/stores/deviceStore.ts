@@ -4,7 +4,7 @@ export interface GPUInfo {
   name: string;
   vendor: string;
   memory: number;
-  driver_version: string;
+  driverVersion: string;
 }
 
 export interface StorageInfo {
@@ -53,6 +53,27 @@ export interface Device {
   updatedAt: string;
 }
 
+export interface GPUMetric {
+  name: string;
+  utilization: number;
+  memoryUsed: number;
+  memoryTotal: number;
+  temperature?: number;
+  powerDraw?: number;
+}
+
+export interface NetworkInterfaceMetric {
+  name: string;
+  rxBytesPerSec: number;
+  txBytesPerSec: number;
+  rxBytes: number;
+  txBytes: number;
+  rxPackets: number;
+  txPackets: number;
+  errorsIn: number;
+  errorsOut: number;
+}
+
 export interface DeviceMetrics {
   timestamp: string;
   cpuPercent: number;
@@ -66,6 +87,15 @@ export interface DeviceMetrics {
   networkTxBytes: number;
   processCount: number;
   uptime: number; // System uptime in seconds
+  // Extended metrics
+  diskReadBytesPerSec?: number;
+  diskWriteBytesPerSec?: number;
+  memoryCommitted?: number;
+  memoryCached?: number;
+  memoryPagedPool?: number;
+  memoryNonPagedPool?: number;
+  gpuMetrics?: GPUMetric[];
+  networkInterfaces?: NetworkInterfaceMetric[];
 }
 
 interface DeviceState {
@@ -185,15 +215,24 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
           timestamp: new Date().toISOString(),
           cpuPercent: m.cpuPercent,
           memoryPercent: m.memoryPercent,
-          memoryUsedBytes: m.memoryUsedBytes || 0,
+          memoryUsedBytes: m.memoryUsedBytes || m.memory_used || 0,
           memoryTotalBytes: m.memoryTotalBytes,
           diskPercent: m.diskPercent,
-          diskUsedBytes: m.diskUsedBytes || 0,
+          diskUsedBytes: m.diskUsedBytes || m.disk_used || 0,
           diskTotalBytes: m.diskTotalBytes,
-          networkRxBytes: m.networkRxBytes || 0,
-          networkTxBytes: m.networkTxBytes || 0,
-          processCount: m.processCount || 0,
+          networkRxBytes: m.networkRxBytes || m.network_rx_bytes || 0,
+          networkTxBytes: m.networkTxBytes || m.network_tx_bytes || 0,
+          processCount: m.processCount || m.process_count || 0,
           uptime: m.uptime || 0,
+          // Extended metrics
+          diskReadBytesPerSec: m.diskReadBytesPerSec || m.disk_read_bytes_sec || 0,
+          diskWriteBytesPerSec: m.diskWriteBytesPerSec || m.disk_write_bytes_sec || 0,
+          memoryCommitted: m.memoryCommitted || m.memory_committed || 0,
+          memoryCached: m.memoryCached || m.memory_cached || 0,
+          memoryPagedPool: m.memoryPagedPool || m.memory_paged_pool || 0,
+          memoryNonPagedPool: m.memoryNonPagedPool || m.memory_non_paged_pool || 0,
+          gpuMetrics: m.gpuMetrics || m.gpu_metrics || [],
+          networkInterfaces: m.networkInterfaces || m.network_interfaces || [],
         }, ...metrics.slice(0, 59)];
         set({ metrics: newMetrics });
         console.log('[DeviceStore] metrics updated, count:', newMetrics.length,

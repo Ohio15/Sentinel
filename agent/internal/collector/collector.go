@@ -4,6 +4,7 @@ import (
 	"context"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -58,6 +59,29 @@ type StorageInfo struct {
 	Percent    float64 `json:"percent"`
 }
 
+// GPUMetrics contains real-time GPU utilization data
+type GPUMetrics struct {
+	Name        string  `json:"name"`
+	Utilization float64 `json:"utilization"`
+	MemoryUsed  uint64  `json:"memory_used"`
+	MemoryTotal uint64  `json:"memory_total"`
+	Temperature float64 `json:"temperature,omitempty"`
+	PowerDraw   float64 `json:"power_draw,omitempty"`
+}
+
+// NetworkInterfaceMetric contains per-interface network stats
+type NetworkInterfaceMetric struct {
+	Name          string `json:"name"`
+	RxBytesPerSec uint64 `json:"rx_bytes_per_sec"`
+	TxBytesPerSec uint64 `json:"tx_bytes_per_sec"`
+	RxBytes       uint64 `json:"rx_bytes"`
+	TxBytes       uint64 `json:"tx_bytes"`
+	RxPackets     uint64 `json:"rx_packets"`
+	TxPackets     uint64 `json:"tx_packets"`
+	ErrorsIn      uint64 `json:"errors_in"`
+	ErrorsOut     uint64 `json:"errors_out"`
+}
+
 // Metrics contains current system metrics
 type Metrics struct {
 	Timestamp       time.Time     `json:"timestamp"`
@@ -73,19 +97,33 @@ type Metrics struct {
 	ProcessCount    int           `json:"process_count"`
 	Uptime          uint64        `json:"uptime"`
 	Storage         []StorageInfo `json:"storage,omitempty"`
+	// Extended metrics
+	DiskReadBytesPerSec  uint64                   `json:"disk_read_bytes_sec"`
+	DiskWriteBytesPerSec uint64                   `json:"disk_write_bytes_sec"`
+	MemoryCommitted      uint64                   `json:"memory_committed"`
+	MemoryCached         uint64                   `json:"memory_cached"`
+	MemoryPagedPool      uint64                   `json:"memory_paged_pool"`
+	MemoryNonPagedPool   uint64                   `json:"memory_non_paged_pool"`
+	GPUMetrics           []GPUMetrics             `json:"gpu_metrics,omitempty"`
+	NetworkInterfaces    []NetworkInterfaceMetric `json:"network_interfaces,omitempty"`
 }
 
 // Collector handles system metrics collection
 type Collector struct {
-	lastNetRx uint64
-	lastNetTx uint64
-	lastCheck time.Time
+	lastNetRx          uint64
+	lastNetTx          uint64
+	lastCheck          time.Time
+	lastDiskReadBytes  uint64
+	lastDiskWriteBytes uint64
+	lastInterfaceStats map[string]net.IOCountersStat
+	mu                 sync.Mutex
 }
 
 // New creates a new metrics collector
 func New() *Collector {
 	return &Collector{
-		lastCheck: time.Now(),
+		lastCheck:          time.Now(),
+		lastInterfaceStats: make(map[string]net.IOCountersStat),
 	}
 }
 
@@ -244,7 +282,15 @@ func (c *Collector) Collect(ctx context.Context) (*Metrics, error) {
 		metrics.MemoryPercent = memInfo.UsedPercent
 		metrics.MemoryUsed = memInfo.Used
 		metrics.MemoryAvailable = memInfo.Available
+		metrics.MemoryCached = memInfo.Cached
 	}
+
+	// Extended memory metrics (Windows-specific via platform file)
+	// Gets committed memory and paged/non-paged pools via WMI
+	committed, pagedPool, nonPagedPool := getMemoryDetails()
+	metrics.MemoryCommitted = committed
+	metrics.MemoryPagedPool = pagedPool
+	metrics.MemoryNonPagedPool = nonPagedPool
 
 	// Disk usage (primary disk)
 	diskPath := "/"
@@ -283,6 +329,17 @@ func (c *Collector) Collect(ctx context.Context) (*Metrics, error) {
 
 	// Storage info (updated with each metrics collection)
 	metrics.Storage = c.getStorageInfo()
+
+	// Disk I/O rates
+	diskReadRate, diskWriteRate := c.collectDiskIO(ctx)
+	metrics.DiskReadBytesPerSec = diskReadRate
+	metrics.DiskWriteBytesPerSec = diskWriteRate
+
+	// GPU metrics (platform-specific)
+	metrics.GPUMetrics = getGPUMetrics()
+
+	// Network per-interface stats
+	metrics.NetworkInterfaces = c.collectNetworkPerInterface(ctx)
 
 	c.lastCheck = time.Now()
 	return metrics, nil
@@ -398,4 +455,94 @@ func (c *Collector) GetNetworkInterfaces(ctx context.Context) ([]map[string]inte
 	}
 
 	return result, nil
+}
+
+// collectDiskIO calculates disk read/write rates in bytes per second
+func (c *Collector) collectDiskIO(ctx context.Context) (readRate, writeRate uint64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	ioCounters, err := disk.IOCountersWithContext(ctx)
+	if err != nil {
+		return 0, 0
+	}
+
+	var totalReadBytes, totalWriteBytes uint64
+	for _, counter := range ioCounters {
+		totalReadBytes += counter.ReadBytes
+		totalWriteBytes += counter.WriteBytes
+	}
+
+	// Calculate elapsed time since last check
+	elapsed := time.Since(c.lastCheck).Seconds()
+	if elapsed <= 0 {
+		elapsed = 1
+	}
+
+	// Calculate rates only if we have previous values
+	if c.lastDiskReadBytes > 0 || c.lastDiskWriteBytes > 0 {
+		if totalReadBytes >= c.lastDiskReadBytes {
+			readRate = uint64(float64(totalReadBytes-c.lastDiskReadBytes) / elapsed)
+		}
+		if totalWriteBytes >= c.lastDiskWriteBytes {
+			writeRate = uint64(float64(totalWriteBytes-c.lastDiskWriteBytes) / elapsed)
+		}
+	}
+
+	// Store current values for next calculation
+	c.lastDiskReadBytes = totalReadBytes
+	c.lastDiskWriteBytes = totalWriteBytes
+
+	return readRate, writeRate
+}
+
+// collectNetworkPerInterface collects per-interface network statistics with rates
+func (c *Collector) collectNetworkPerInterface(ctx context.Context) []NetworkInterfaceMetric {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	ioCounters, err := net.IOCountersWithContext(ctx, true)
+	if err != nil {
+		return nil
+	}
+
+	elapsed := time.Since(c.lastCheck).Seconds()
+	if elapsed <= 0 {
+		elapsed = 1
+	}
+
+	result := make([]NetworkInterfaceMetric, 0, len(ioCounters))
+	for _, io := range ioCounters {
+		// Skip loopback
+		if io.Name == "lo" || strings.Contains(strings.ToLower(io.Name), "loopback") {
+			continue
+		}
+
+		metric := NetworkInterfaceMetric{
+			Name:      io.Name,
+			RxBytes:   io.BytesRecv,
+			TxBytes:   io.BytesSent,
+			RxPackets: io.PacketsRecv,
+			TxPackets: io.PacketsSent,
+			ErrorsIn:  io.Errin,
+			ErrorsOut: io.Errout,
+		}
+
+		// Calculate rates if we have previous values
+		if prev, ok := c.lastInterfaceStats[io.Name]; ok {
+			if io.BytesRecv >= prev.BytesRecv {
+				metric.RxBytesPerSec = uint64(float64(io.BytesRecv-prev.BytesRecv) / elapsed)
+			}
+			if io.BytesSent >= prev.BytesSent {
+				metric.TxBytesPerSec = uint64(float64(io.BytesSent-prev.BytesSent) / elapsed)
+			}
+		}
+
+		// Store current stats for next calculation
+		c.lastInterfaceStats[io.Name] = io
+
+		result = append(result, metric)
+	}
+
+	return result
 }
