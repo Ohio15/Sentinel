@@ -7,6 +7,8 @@ export interface Client {
   description?: string;
   color?: string;
   logoUrl?: string;
+  logoWidth?: number;
+  logoHeight?: number;
   deviceCount?: number;
   openTicketCount?: number;
   createdAt: string;
