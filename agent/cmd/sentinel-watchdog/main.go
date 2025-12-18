@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/sentinel/agent/internal/ipc"
 	"github.com/sentinel/agent/internal/protection"
@@ -36,10 +37,17 @@ const (
 	updateCheckInterval    = 5 * time.Second  // How often to check for pending updates
 	updateVerifyTimeout    = 30 * time.Second // How long to wait for agent to report version
 	updateVerifyInterval   = 2 * time.Second  // How often to check agent version during verification
+
+	// Health check constants for auto-rollback
+	healthCheckInterval   = 10 * time.Second // How often to check agent health after update
+	healthCheckDuration   = 60 * time.Second // How long to monitor health after update
+	maxAgentMemoryMB      = 500              // Maximum memory usage before triggering rollback
+	maxCrashesPerMinute   = 2                // Maximum crashes before triggering rollback
+	healthStatusTimeout   = 15 * time.Second // Time to wait for agent to write health status
 )
 
 var (
-	Version = "1.19.0"
+	Version = "1.57.0"
 	elog    debug.Log
 	isDebug = false
 )
@@ -928,23 +936,35 @@ func (ws *watchdogService) atomicReplace(src, dst string) error {
 	return nil
 }
 
-// verifyUpdate waits for the agent to start and report the expected version
+// verifyUpdate waits for the agent to start and runs comprehensive health checks
+// This replaces the simple version check with full post-update health monitoring
 func (ws *watchdogService) verifyUpdate(expectedVersion string) error {
+	// First do a quick initial check for the version (up to updateVerifyTimeout)
+	logMessage(fmt.Sprintf("Waiting for agent to report version %s...", expectedVersion))
+
 	deadline := time.Now().Add(updateVerifyTimeout)
+	versionConfirmed := false
 
 	for time.Now().Before(deadline) {
 		info, err := ipc.ReadAgentInfo()
 		if err == nil && info != nil {
 			if info.Version == expectedVersion {
-				logMessage(fmt.Sprintf("Update verified: agent running version %s", expectedVersion))
-				return nil
+				logMessage(fmt.Sprintf("Version confirmed: agent running %s", expectedVersion))
+				versionConfirmed = true
+				break
 			}
-			logMessage(fmt.Sprintf("Agent version mismatch: expected %s, got %s", expectedVersion, info.Version))
+			logMessage(fmt.Sprintf("Version mismatch: expected %s, got %s", expectedVersion, info.Version))
 		}
 		time.Sleep(updateVerifyInterval)
 	}
 
-	return fmt.Errorf("timeout waiting for agent to report version %s", expectedVersion)
+	if !versionConfirmed {
+		return fmt.Errorf("timeout waiting for agent to report version %s", expectedVersion)
+	}
+
+	// Now run comprehensive health checks for the full monitoring duration
+	// This monitors for crashes, memory issues, and stability
+	return ws.runPostUpdateHealthChecks(expectedVersion)
 }
 
 // rollbackUpdate restores the backup and restarts the agent
@@ -995,4 +1015,430 @@ func (ws *watchdogService) failUpdate(status *ipc.UpdateStatus, reason string) {
 
 	// Clean up request file so we don't keep retrying
 	ipc.DeleteUpdateRequest()
+}
+
+// ============================================================================
+// Comprehensive Health Checks for Auto-Rollback
+// ============================================================================
+
+// HealthCheckResult contains the result of a single health check
+type HealthCheckResult struct {
+	Name    string
+	Passed  bool
+	Message string
+	Value   interface{}
+}
+
+// PostUpdateHealth tracks the overall health status during post-update monitoring
+type PostUpdateHealth struct {
+	VersionConfirmed  bool
+	ServiceRunning    bool
+	MemoryOK          bool
+	CrashCount        int
+	HealthFileWritten bool
+	AllChecksPassed   bool
+	FailureReason     string
+}
+
+// runPostUpdateHealthChecks runs comprehensive health checks for the specified duration
+// Returns nil if all health checks pass, or an error describing what failed
+func (ws *watchdogService) runPostUpdateHealthChecks(expectedVersion string) error {
+	logMessage(fmt.Sprintf("Starting %v post-update health monitoring for version %s", healthCheckDuration, expectedVersion))
+
+	health := &PostUpdateHealth{}
+	startTime := time.Now()
+	checkTicker := time.NewTicker(healthCheckInterval)
+	defer checkTicker.Stop()
+
+	// Track crash count by monitoring service state transitions
+	lastServiceState := svc.Stopped
+	crashTimes := []time.Time{}
+
+	for {
+		elapsed := time.Since(startTime)
+		if elapsed >= healthCheckDuration {
+			// Monitoring period complete - verify all checks passed
+			return ws.evaluateFinalHealth(health, expectedVersion)
+		}
+
+		select {
+		case <-ws.stopChan:
+			return fmt.Errorf("watchdog stopped during health monitoring")
+		case <-checkTicker.C:
+			results := ws.runHealthChecks(expectedVersion, &lastServiceState, &crashTimes)
+
+			// Update health status
+			for _, result := range results {
+				switch result.Name {
+				case "version":
+					if result.Passed {
+						health.VersionConfirmed = true
+					}
+				case "service_running":
+					health.ServiceRunning = result.Passed
+				case "memory":
+					health.MemoryOK = result.Passed
+				case "crash_count":
+					if count, ok := result.Value.(int); ok {
+						health.CrashCount = count
+					}
+				case "health_file":
+					if result.Passed {
+						health.HealthFileWritten = true
+					}
+				}
+
+				// Log failed checks
+				if !result.Passed {
+					logMessage(fmt.Sprintf("[Health] FAILED: %s - %s", result.Name, result.Message))
+				}
+			}
+
+			// Check for immediate rollback triggers
+			if reason := ws.checkRollbackTriggers(health, elapsed); reason != "" {
+				health.FailureReason = reason
+				return fmt.Errorf("health check failed: %s", reason)
+			}
+
+			// Log progress
+			logMessage(fmt.Sprintf("[Health] Monitoring: %v/%v - Version:%v Service:%v Memory:%v Crashes:%d",
+				elapsed.Round(time.Second), healthCheckDuration,
+				health.VersionConfirmed, health.ServiceRunning, health.MemoryOK, health.CrashCount))
+		}
+	}
+}
+
+// runHealthChecks performs all individual health checks
+func (ws *watchdogService) runHealthChecks(expectedVersion string, lastState *svc.State, crashTimes *[]time.Time) []HealthCheckResult {
+	var results []HealthCheckResult
+
+	// Check 1: Version verification
+	results = append(results, ws.checkAgentVersion(expectedVersion))
+
+	// Check 2: Service running state
+	serviceResult, currentState := ws.checkServiceRunning()
+	results = append(results, serviceResult)
+
+	// Detect crashes (service went from Running to Stopped unexpectedly)
+	if *lastState == svc.Running && currentState == svc.Stopped {
+		*crashTimes = append(*crashTimes, time.Now())
+		logMessage("[Health] Detected agent crash/stop")
+	}
+	*lastState = currentState
+
+	// Clean up old crash times (only count crashes in the last minute)
+	cutoff := time.Now().Add(-1 * time.Minute)
+	var recentCrashes []time.Time
+	for _, t := range *crashTimes {
+		if t.After(cutoff) {
+			recentCrashes = append(recentCrashes, t)
+		}
+	}
+	*crashTimes = recentCrashes
+
+	// Check 3: Crash count
+	results = append(results, HealthCheckResult{
+		Name:    "crash_count",
+		Passed:  len(recentCrashes) < maxCrashesPerMinute,
+		Message: fmt.Sprintf("%d crashes in last minute (max: %d)", len(recentCrashes), maxCrashesPerMinute),
+		Value:   len(recentCrashes),
+	})
+
+	// Check 4: Memory usage
+	results = append(results, ws.checkAgentMemory())
+
+	// Check 5: Health file written (agent writes status to indicate it's healthy)
+	results = append(results, ws.checkHealthFile())
+
+	return results
+}
+
+// checkAgentVersion verifies the agent is reporting the expected version
+func (ws *watchdogService) checkAgentVersion(expectedVersion string) HealthCheckResult {
+	info, err := ipc.ReadAgentInfo()
+	if err != nil {
+		return HealthCheckResult{
+			Name:    "version",
+			Passed:  false,
+			Message: fmt.Sprintf("cannot read agent info: %v", err),
+		}
+	}
+
+	if info == nil {
+		return HealthCheckResult{
+			Name:    "version",
+			Passed:  false,
+			Message: "agent info file not found",
+		}
+	}
+
+	if info.Version != expectedVersion {
+		return HealthCheckResult{
+			Name:    "version",
+			Passed:  false,
+			Message: fmt.Sprintf("version mismatch: expected %s, got %s", expectedVersion, info.Version),
+			Value:   info.Version,
+		}
+	}
+
+	return HealthCheckResult{
+		Name:    "version",
+		Passed:  true,
+		Message: fmt.Sprintf("version confirmed: %s", expectedVersion),
+		Value:   info.Version,
+	}
+}
+
+// checkServiceRunning verifies the agent service is in running state
+func (ws *watchdogService) checkServiceRunning() (HealthCheckResult, svc.State) {
+	m, err := mgr.Connect()
+	if err != nil {
+		return HealthCheckResult{
+			Name:    "service_running",
+			Passed:  false,
+			Message: fmt.Sprintf("cannot connect to SCM: %v", err),
+		}, svc.Stopped
+	}
+	defer m.Disconnect()
+
+	s, err := m.OpenService(ws.config.AgentService)
+	if err != nil {
+		return HealthCheckResult{
+			Name:    "service_running",
+			Passed:  false,
+			Message: fmt.Sprintf("cannot open service: %v", err),
+		}, svc.Stopped
+	}
+	defer s.Close()
+
+	status, err := s.Query()
+	if err != nil {
+		return HealthCheckResult{
+			Name:    "service_running",
+			Passed:  false,
+			Message: fmt.Sprintf("cannot query service: %v", err),
+		}, svc.Stopped
+	}
+
+	if status.State != svc.Running {
+		return HealthCheckResult{
+			Name:    "service_running",
+			Passed:  false,
+			Message: fmt.Sprintf("service not running: state=%d", status.State),
+			Value:   status.State,
+		}, status.State
+	}
+
+	return HealthCheckResult{
+		Name:    "service_running",
+		Passed:  true,
+		Message: "service is running",
+		Value:   status.State,
+	}, status.State
+}
+
+// PROCESS_MEMORY_COUNTERS for GetProcessMemoryInfo
+type processMemoryCounters struct {
+	CB                         uint32
+	PageFaultCount             uint32
+	PeakWorkingSetSize         uintptr
+	WorkingSetSize             uintptr
+	QuotaPeakPagedPoolUsage    uintptr
+	QuotaPagedPoolUsage        uintptr
+	QuotaPeakNonPagedPoolUsage uintptr
+	QuotaNonPagedPoolUsage     uintptr
+	PagefileUsage              uintptr
+	PeakPagefileUsage          uintptr
+}
+
+var (
+	modpsapi                = windows.NewLazySystemDLL("psapi.dll")
+	procGetProcessMemoryInfo = modpsapi.NewProc("GetProcessMemoryInfo")
+)
+
+// getProcessMemoryInfo calls the Windows API to get process memory info
+func getProcessMemoryInfo(handle windows.Handle, memCounters *processMemoryCounters, cb uint32) error {
+	ret, _, err := procGetProcessMemoryInfo.Call(
+		uintptr(handle),
+		uintptr(unsafe.Pointer(memCounters)),
+		uintptr(cb),
+	)
+	if ret == 0 {
+		return err
+	}
+	return nil
+}
+
+// checkAgentMemory checks if the agent process memory usage is within limits
+func (ws *watchdogService) checkAgentMemory() HealthCheckResult {
+	// Get agent process by querying the service
+	m, err := mgr.Connect()
+	if err != nil {
+		return HealthCheckResult{
+			Name:    "memory",
+			Passed:  true, // Give benefit of doubt if we can't check
+			Message: "cannot check memory: SCM connection failed",
+		}
+	}
+	defer m.Disconnect()
+
+	s, err := m.OpenService(ws.config.AgentService)
+	if err != nil {
+		return HealthCheckResult{
+			Name:    "memory",
+			Passed:  true,
+			Message: "cannot check memory: service not found",
+		}
+	}
+	defer s.Close()
+
+	status, err := s.Query()
+	if err != nil || status.ProcessId == 0 {
+		return HealthCheckResult{
+			Name:    "memory",
+			Passed:  true,
+			Message: "cannot check memory: no PID",
+		}
+	}
+
+	// Open the process to get memory info
+	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_INFORMATION|windows.PROCESS_VM_READ, false, status.ProcessId)
+	if err != nil {
+		return HealthCheckResult{
+			Name:    "memory",
+			Passed:  true,
+			Message: "cannot check memory: process access denied",
+		}
+	}
+	defer windows.CloseHandle(handle)
+
+	var memInfo processMemoryCounters
+	memInfo.CB = uint32(unsafe.Sizeof(memInfo))
+	err = getProcessMemoryInfo(handle, &memInfo, memInfo.CB)
+	if err != nil {
+		return HealthCheckResult{
+			Name:    "memory",
+			Passed:  true,
+			Message: "cannot check memory: GetProcessMemoryInfo failed",
+		}
+	}
+
+	memoryMB := uint64(memInfo.WorkingSetSize) / (1024 * 1024)
+	if memoryMB > uint64(maxAgentMemoryMB) {
+		return HealthCheckResult{
+			Name:    "memory",
+			Passed:  false,
+			Message: fmt.Sprintf("memory usage %dMB exceeds limit %dMB", memoryMB, maxAgentMemoryMB),
+			Value:   memoryMB,
+		}
+	}
+
+	return HealthCheckResult{
+		Name:    "memory",
+		Passed:  true,
+		Message: fmt.Sprintf("memory usage OK: %dMB", memoryMB),
+		Value:   memoryMB,
+	}
+}
+
+// checkHealthFile checks if the agent has written its health status file recently
+func (ws *watchdogService) checkHealthFile() HealthCheckResult {
+	// Check if agent info file exists and was modified recently
+	infoPath := ipc.AgentInfoPath()
+	fileInfo, err := os.Stat(infoPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return HealthCheckResult{
+				Name:    "health_file",
+				Passed:  false,
+				Message: "agent info file not found",
+			}
+		}
+		return HealthCheckResult{
+			Name:    "health_file",
+			Passed:  false,
+			Message: fmt.Sprintf("cannot stat agent info file: %v", err),
+		}
+	}
+
+	// Check if the file was modified recently (within healthStatusTimeout)
+	modAge := time.Since(fileInfo.ModTime())
+	if modAge > healthStatusTimeout {
+		return HealthCheckResult{
+			Name:    "health_file",
+			Passed:  false,
+			Message: fmt.Sprintf("agent info is stale: last modified %v ago", modAge.Round(time.Second)),
+		}
+	}
+
+	// Also verify the file is valid JSON with version info
+	info, err := ipc.ReadAgentInfo()
+	if err != nil || info == nil {
+		return HealthCheckResult{
+			Name:    "health_file",
+			Passed:  false,
+			Message: "agent info file exists but cannot be read",
+		}
+	}
+
+	return HealthCheckResult{
+		Name:    "health_file",
+		Passed:  true,
+		Message: fmt.Sprintf("agent info fresh: modified %v ago", modAge.Round(time.Second)),
+	}
+}
+
+// checkRollbackTriggers checks if any immediate rollback conditions are met
+func (ws *watchdogService) checkRollbackTriggers(health *PostUpdateHealth, elapsed time.Duration) string {
+	// Trigger 1: Service stopped and stays stopped for 10+ seconds after starting
+	if elapsed > 10*time.Second && !health.ServiceRunning {
+		return "agent service stopped and did not recover"
+	}
+
+	// Trigger 2: Too many crashes
+	if health.CrashCount >= maxCrashesPerMinute {
+		return fmt.Sprintf("agent crashed %d times in the last minute", health.CrashCount)
+	}
+
+	// Trigger 3: Memory exceeded (checked in individual check)
+	// This is handled by MemoryOK being set to false
+
+	// Trigger 4: Version not confirmed after 30 seconds
+	if elapsed > updateVerifyTimeout && !health.VersionConfirmed {
+		return "agent did not report expected version within timeout"
+	}
+
+	return ""
+}
+
+// evaluateFinalHealth performs final evaluation after the monitoring period
+func (ws *watchdogService) evaluateFinalHealth(health *PostUpdateHealth, expectedVersion string) error {
+	// Must have confirmed version
+	if !health.VersionConfirmed {
+		return fmt.Errorf("agent never reported expected version %s", expectedVersion)
+	}
+
+	// Must be running at end of monitoring period
+	if !health.ServiceRunning {
+		return fmt.Errorf("agent service not running at end of health monitoring")
+	}
+
+	// Must have written health file
+	if !health.HealthFileWritten {
+		return fmt.Errorf("agent did not write health status within %v", healthStatusTimeout)
+	}
+
+	// Memory must be OK
+	if !health.MemoryOK {
+		return fmt.Errorf("agent memory usage exceeded %dMB", maxAgentMemoryMB)
+	}
+
+	// Should not have crashed too many times (relaxed check - any crashes during full period)
+	if health.CrashCount > 0 {
+		logMessage(fmt.Sprintf("[Health] Warning: agent crashed %d times during monitoring but recovered", health.CrashCount))
+	}
+
+	health.AllChecksPassed = true
+	logMessage("[Health] All post-update health checks passed")
+	return nil
 }

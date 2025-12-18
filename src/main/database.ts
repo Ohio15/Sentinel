@@ -1674,6 +1674,454 @@ export class Database {
     return result.rows;
   }
 
+  // ============================================
+  // Agent Health Methods
+  // ============================================
+
+  async upsertAgentHealth(deviceId: string, health: {
+    healthScore: number;
+    status: string;
+    factors: any;
+    components: any;
+    updatedAt: Date;
+  }): Promise<void> {
+    await this.query(`
+      INSERT INTO agent_health (device_id, health_score, status, factors, components, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (device_id) DO UPDATE SET
+        health_score = EXCLUDED.health_score,
+        status = EXCLUDED.status,
+        factors = EXCLUDED.factors,
+        components = EXCLUDED.components,
+        updated_at = EXCLUDED.updated_at
+    `, [deviceId, health.healthScore, health.status, JSON.stringify(health.factors), JSON.stringify(health.components), health.updatedAt]);
+  }
+
+  async getAgentHealth(deviceId: string): Promise<any | null> {
+    const result = await this.query(`
+      SELECT device_id as "deviceId", health_score as "healthScore", status,
+             factors, components, updated_at as "updatedAt"
+      FROM agent_health WHERE device_id = $1
+    `, [deviceId]);
+    return result.rows[0] || null;
+  }
+
+  async getAllAgentHealth(): Promise<any[]> {
+    const result = await this.query(`
+      SELECT ah.device_id as "deviceId", ah.health_score as "healthScore", ah.status,
+             ah.factors, ah.components, ah.updated_at as "updatedAt",
+             d.hostname, d.display_name as "displayName"
+      FROM agent_health ah
+      JOIN devices d ON d.id = ah.device_id
+      ORDER BY ah.health_score ASC
+    `);
+    return result.rows;
+  }
+
+  async recordHealthSnapshot(): Promise<number> {
+    const result = await this.query(`SELECT record_health_snapshot() as count`);
+    return result.rows[0]?.count || 0;
+  }
+
+  async getAgentHealthHistory(deviceId: string, hours: number = 24): Promise<any[]> {
+    const result = await this.query(`
+      SELECT device_id as "deviceId", health_score as "healthScore", status,
+             factors, recorded_at as "recordedAt"
+      FROM agent_health_history
+      WHERE device_id = $1 AND recorded_at > NOW() - ($2 || ' hours')::INTERVAL
+      ORDER BY recorded_at DESC
+    `, [deviceId, hours]);
+    return result.rows;
+  }
+
+  async cleanHealthHistory(retentionDays: number = 30): Promise<number> {
+    const result = await this.query(`SELECT clean_health_history($1) as count`, [retentionDays]);
+    return result.rows[0]?.count || 0;
+  }
+
+  // ============================================
+  // Command Queue Methods (for offline agents)
+  // ============================================
+
+  async queueCommand(command: {
+    id: string;
+    deviceId: string;
+    commandType: string;
+    payload: any;
+    priority?: number;
+    expiresAt?: Date;
+    maxAttempts?: number;
+  }): Promise<void> {
+    await this.query(`
+      INSERT INTO command_queue (id, device_id, command_type, payload, priority, expires_at, max_attempts)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `, [
+      command.id,
+      command.deviceId,
+      command.commandType,
+      JSON.stringify(command.payload),
+      command.priority || 50,
+      command.expiresAt,
+      command.maxAttempts || 3
+    ]);
+  }
+
+  async getQueuedCommand(commandId: string): Promise<any | null> {
+    const result = await this.query(`
+      SELECT id, device_id as "deviceId", command_type as "commandType", payload, priority,
+             status, created_at as "createdAt", expires_at as "expiresAt",
+             attempts, max_attempts as "maxAttempts", delivered_at as "deliveredAt",
+             completed_at as "completedAt", result, error
+      FROM command_queue WHERE id = $1
+    `, [commandId]);
+    return result.rows[0] || null;
+  }
+
+  async getQueuedCommandsForDevice(deviceId: string): Promise<any[]> {
+    const result = await this.query(`
+      SELECT id, device_id as "deviceId", command_type as "commandType", payload, priority,
+             status, created_at as "createdAt", expires_at as "expiresAt",
+             attempts, max_attempts as "maxAttempts"
+      FROM command_queue
+      WHERE device_id = $1
+      ORDER BY created_at DESC
+    `, [deviceId]);
+    return result.rows;
+  }
+
+  async getPendingCommandsForDevice(deviceId: string): Promise<any[]> {
+    const result = await this.query(`
+      SELECT id, device_id as "deviceId", command_type as "commandType", payload, priority,
+             status, created_at as "createdAt", expires_at as "expiresAt",
+             attempts, max_attempts as "maxAttempts"
+      FROM command_queue
+      WHERE device_id = $1 AND status IN ('queued', 'pending')
+        AND (expires_at IS NULL OR expires_at > NOW())
+        AND attempts < max_attempts
+      ORDER BY priority DESC, created_at ASC
+    `, [deviceId]);
+    return result.rows;
+  }
+
+  async markCommandDelivered(commandId: string): Promise<void> {
+    await this.query(`
+      UPDATE command_queue
+      SET status = 'delivered', delivered_at = NOW(), attempts = attempts + 1
+      WHERE id = $1
+    `, [commandId]);
+  }
+
+  async markCommandCompleted(commandId: string, result: any): Promise<void> {
+    await this.query(`
+      UPDATE command_queue
+      SET status = 'completed', completed_at = NOW(), result = $2
+      WHERE id = $1
+    `, [commandId, JSON.stringify(result)]);
+  }
+
+  async markCommandFailed(commandId: string, error: string): Promise<void> {
+    await this.query(`
+      UPDATE command_queue
+      SET status = 'failed', completed_at = NOW(), error = $2
+      WHERE id = $1
+    `, [commandId, error]);
+  }
+
+  async expireOldCommands(): Promise<number> {
+    const result = await this.query(`
+      UPDATE command_queue
+      SET status = 'expired'
+      WHERE status IN ('queued', 'pending')
+        AND expires_at IS NOT NULL AND expires_at < NOW()
+      RETURNING id
+    `);
+    return result.rowCount || 0;
+  }
+
+  async storeMetricsBacklog(deviceId: string, collectedAt: Date, metrics: any): Promise<string> {
+    const result = await this.query(`
+      INSERT INTO metrics_backlog (device_id, collected_at, metrics)
+      VALUES ($1, $2, $3)
+      RETURNING id
+    `, [deviceId, collectedAt, JSON.stringify(metrics)]);
+    return result.rows[0].id;
+  }
+
+  async getMetricsBacklog(deviceId: string, limit: number = 100): Promise<any[]> {
+    const result = await this.query(`
+      SELECT id, device_id as "deviceId", collected_at as "collectedAt", metrics, synced
+      FROM metrics_backlog
+      WHERE device_id = $1 AND synced = FALSE
+      ORDER BY collected_at ASC
+      LIMIT $2
+    `, [deviceId, limit]);
+    return result.rows;
+  }
+
+  async markMetricsBacklogSynced(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    await this.query(`
+      UPDATE metrics_backlog SET synced = TRUE WHERE id = ANY($1)
+    `, [ids]);
+  }
+
+  // ============================================
+  // Update Groups Methods
+  // ============================================
+
+  async getUpdateGroups(): Promise<any[]> {
+    const result = await this.query(`
+      SELECT id, name, priority, auto_promote as "autoPromote",
+             success_threshold_percent as "successThresholdPercent",
+             failure_threshold_percent as "failureThresholdPercent",
+             min_devices_for_decision as "minDevicesForDecision",
+             wait_time_minutes as "waitTimeMinutes",
+             created_at as "createdAt"
+      FROM update_groups
+      ORDER BY priority ASC
+    `);
+    return result.rows;
+  }
+
+  async getUpdateGroup(id: string): Promise<any | null> {
+    const result = await this.query(`
+      SELECT id, name, priority, auto_promote as "autoPromote",
+             success_threshold_percent as "successThresholdPercent",
+             failure_threshold_percent as "failureThresholdPercent",
+             min_devices_for_decision as "minDevicesForDecision",
+             wait_time_minutes as "waitTimeMinutes",
+             created_at as "createdAt"
+      FROM update_groups WHERE id = $1
+    `, [id]);
+    return result.rows[0] || null;
+  }
+
+  async createUpdateGroup(group: {
+    id: string;
+    name: string;
+    priority?: number;
+    autoPromote?: boolean;
+    successThresholdPercent?: number;
+    failureThresholdPercent?: number;
+    minDevicesForDecision?: number;
+    waitTimeMinutes?: number;
+  }): Promise<void> {
+    await this.query(`
+      INSERT INTO update_groups (id, name, priority, auto_promote, success_threshold_percent,
+                                  failure_threshold_percent, min_devices_for_decision, wait_time_minutes)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `, [
+      group.id, group.name, group.priority || 0, group.autoPromote ?? false,
+      group.successThresholdPercent || 95, group.failureThresholdPercent || 10,
+      group.minDevicesForDecision || 3, group.waitTimeMinutes || 60
+    ]);
+  }
+
+  async updateUpdateGroup(id: string, updates: Partial<{
+    name: string;
+    priority: number;
+    autoPromote: boolean;
+    successThresholdPercent: number;
+    failureThresholdPercent: number;
+    minDevicesForDecision: number;
+    waitTimeMinutes: number;
+  }>): Promise<void> {
+    const fields: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    if (updates.name !== undefined) { fields.push(`name = $${paramIndex++}`); values.push(updates.name); }
+    if (updates.priority !== undefined) { fields.push(`priority = $${paramIndex++}`); values.push(updates.priority); }
+    if (updates.autoPromote !== undefined) { fields.push(`auto_promote = $${paramIndex++}`); values.push(updates.autoPromote); }
+    if (updates.successThresholdPercent !== undefined) { fields.push(`success_threshold_percent = $${paramIndex++}`); values.push(updates.successThresholdPercent); }
+    if (updates.failureThresholdPercent !== undefined) { fields.push(`failure_threshold_percent = $${paramIndex++}`); values.push(updates.failureThresholdPercent); }
+    if (updates.minDevicesForDecision !== undefined) { fields.push(`min_devices_for_decision = $${paramIndex++}`); values.push(updates.minDevicesForDecision); }
+    if (updates.waitTimeMinutes !== undefined) { fields.push(`wait_time_minutes = $${paramIndex++}`); values.push(updates.waitTimeMinutes); }
+
+    if (fields.length === 0) return;
+    values.push(id);
+    await this.query(`UPDATE update_groups SET ${fields.join(', ')} WHERE id = $${paramIndex}`, values);
+  }
+
+  async deleteUpdateGroup(id: string): Promise<void> {
+    await this.query(`DELETE FROM update_groups WHERE id = $1`, [id]);
+  }
+
+  async assignDeviceToUpdateGroup(deviceId: string, groupId: string | null): Promise<void> {
+    await this.query(`UPDATE devices SET update_group_id = $2 WHERE id = $1`, [deviceId, groupId]);
+  }
+
+  async getDevicesInUpdateGroup(groupId: string): Promise<any[]> {
+    const result = await this.query(`
+      SELECT id, hostname, display_name as "displayName", status, agent_version as "agentVersion",
+             last_seen as "lastSeen"
+      FROM devices WHERE update_group_id = $1
+      ORDER BY hostname
+    `, [groupId]);
+    return result.rows;
+  }
+
+  // ============================================
+  // Rollout Methods
+  // ============================================
+
+  async getRollouts(limit: number = 50): Promise<any[]> {
+    const result = await this.query(`
+      SELECT id, release_version as "releaseVersion", name, status,
+             started_at as "startedAt", completed_at as "completedAt",
+             created_at as "createdAt"
+      FROM rollouts
+      ORDER BY created_at DESC
+      LIMIT $1
+    `, [limit]);
+    return result.rows;
+  }
+
+  async getRollout(id: string): Promise<any | null> {
+    const result = await this.query(`
+      SELECT id, release_version as "releaseVersion", name, status,
+             started_at as "startedAt", completed_at as "completedAt",
+             created_at as "createdAt"
+      FROM rollouts WHERE id = $1
+    `, [id]);
+    return result.rows[0] || null;
+  }
+
+  async createRollout(rollout: {
+    id: string;
+    releaseVersion: string;
+    name: string;
+    downloadUrl?: string;
+    checksum?: string;
+  }): Promise<void> {
+    await this.query(`
+      INSERT INTO rollouts (id, release_version, name, download_url, checksum) VALUES ($1, $2, $3, $4, $5)
+    `, [rollout.id, rollout.releaseVersion, rollout.name, rollout.downloadUrl || null, rollout.checksum || null]);
+  }
+
+  async updateRolloutStatus(id: string, status: string): Promise<void> {
+    const updates = status === 'in_progress'
+      ? `status = $2, started_at = COALESCE(started_at, NOW())`
+      : status === 'completed' || status === 'failed' || status === 'cancelled'
+        ? `status = $2, completed_at = NOW()`
+        : `status = $2`;
+    await this.query(`UPDATE rollouts SET ${updates} WHERE id = $1`, [id, status]);
+  }
+
+  async getRolloutStages(rolloutId: string): Promise<any[]> {
+    const result = await this.query(`
+      SELECT rs.id, rs.rollout_id as "rolloutId", rs.group_id as "groupId",
+             rs.status, rs.started_at as "startedAt", rs.completed_at as "completedAt",
+             rs.total_devices as "totalDevices", rs.completed_devices as "completedDevices",
+             rs.failed_devices as "failedDevices",
+             ug.name as "groupName", ug.priority as "groupPriority"
+      FROM rollout_stages rs
+      JOIN update_groups ug ON ug.id = rs.group_id
+      WHERE rs.rollout_id = $1
+      ORDER BY ug.priority ASC
+    `, [rolloutId]);
+    return result.rows;
+  }
+
+  async createRolloutStage(stage: {
+    id: string;
+    rolloutId: string;
+    groupId: string;
+    totalDevices: number;
+  }): Promise<void> {
+    await this.query(`
+      INSERT INTO rollout_stages (id, rollout_id, group_id, total_devices)
+      VALUES ($1, $2, $3, $4)
+    `, [stage.id, stage.rolloutId, stage.groupId, stage.totalDevices]);
+  }
+
+  async updateRolloutStageStatus(stageId: string, status: string): Promise<void> {
+    const updates = status === 'in_progress'
+      ? `status = $2, started_at = COALESCE(started_at, NOW())`
+      : status === 'completed' || status === 'failed'
+        ? `status = $2, completed_at = NOW()`
+        : `status = $2`;
+    await this.query(`UPDATE rollout_stages SET ${updates} WHERE id = $1`, [stageId, status]);
+  }
+
+  async updateRolloutStageDeviceCounts(stageId: string, completed: number, failed: number): Promise<void> {
+    await this.query(`
+      UPDATE rollout_stages
+      SET completed_devices = $2, failed_devices = $3
+      WHERE id = $1
+    `, [stageId, completed, failed]);
+  }
+
+  async getRolloutDevices(rolloutId: string, stageId?: string): Promise<any[]> {
+    let query = `
+      SELECT rd.id, rd.rollout_id as "rolloutId", rd.stage_id as "stageId",
+             rd.device_id as "deviceId", rd.status,
+             rd.from_version as "fromVersion", rd.to_version as "toVersion",
+             rd.started_at as "startedAt", rd.completed_at as "completedAt",
+             rd.error, d.hostname, d.display_name as "displayName"
+      FROM rollout_devices rd
+      JOIN devices d ON d.id = rd.device_id
+      WHERE rd.rollout_id = $1
+    `;
+    const params: any[] = [rolloutId];
+    if (stageId) {
+      query += ` AND rd.stage_id = $2`;
+      params.push(stageId);
+    }
+    query += ` ORDER BY rd.started_at DESC NULLS LAST`;
+    const result = await this.query(query, params);
+    return result.rows;
+  }
+
+  async addRolloutDevice(device: {
+    id: string;
+    rolloutId: string;
+    stageId: string;
+    deviceId: string;
+    fromVersion?: string;
+    toVersion: string;
+  }): Promise<void> {
+    await this.query(`
+      INSERT INTO rollout_devices (id, rollout_id, stage_id, device_id, from_version, to_version)
+      VALUES ($1, $2, $3, $4, $5, $6)
+    `, [device.id, device.rolloutId, device.stageId, device.deviceId, device.fromVersion, device.toVersion]);
+  }
+
+  async updateRolloutDeviceStatus(deviceId: string, rolloutId: string, status: string, error?: string): Promise<void> {
+    const updates = status === 'in_progress'
+      ? `status = $3, started_at = COALESCE(started_at, NOW())`
+      : status === 'completed' || status === 'failed'
+        ? `status = $3, completed_at = NOW(), error = $4`
+        : `status = $3`;
+    await this.query(`
+      UPDATE rollout_devices SET ${updates}
+      WHERE device_id = $1 AND rollout_id = $2
+    `, [deviceId, rolloutId, status, error]);
+  }
+
+  async addRolloutEvent(event: {
+    id: string;
+    rolloutId: string;
+    eventType: string;
+    message: string;
+    metadata?: any;
+  }): Promise<void> {
+    await this.query(`
+      INSERT INTO rollout_events (id, rollout_id, event_type, message, metadata)
+      VALUES ($1, $2, $3, $4, $5)
+    `, [event.id, event.rolloutId, event.eventType, event.message, event.metadata ? JSON.stringify(event.metadata) : null]);
+  }
+
+  async getRolloutEvents(rolloutId: string): Promise<any[]> {
+    const result = await this.query(`
+      SELECT id, rollout_id as "rolloutId", event_type as "eventType",
+             message, metadata, created_at as "createdAt"
+      FROM rollout_events
+      WHERE rollout_id = $1
+      ORDER BY created_at DESC
+    `, [rolloutId]);
+    return result.rows;
+  }
 
   async close(): Promise<void> {
     if (this.pool) {
