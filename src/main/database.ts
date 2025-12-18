@@ -1411,6 +1411,7 @@ export class Database {
     const result = await this.query(`
       SELECT
         id, name, description, color, logo_url as "logoUrl",
+        logo_width as "logoWidth", logo_height as "logoHeight",
         created_at as "createdAt", updated_at as "updatedAt"
       FROM clients
       ORDER BY name
@@ -1495,6 +1496,7 @@ export class Database {
     const result = await this.query(`
       SELECT
         c.id, c.name, c.description, c.color, c.logo_url as "logoUrl",
+        c.logo_width as "logoWidth", c.logo_height as "logoHeight",
         c.created_at as "createdAt", c.updated_at as "updatedAt",
         COUNT(DISTINCT d.id) as "deviceCount",
         COUNT(DISTINCT t.id) FILTER (WHERE t.status NOT IN ('closed', 'resolved')) as "openTicketCount"
