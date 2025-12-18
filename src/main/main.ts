@@ -1188,13 +1188,7 @@ app.on('before-quit', async (event) => {
     console.log('Shutting down gracefully...');
 
     try {
-      // Close all windows first
-      BrowserWindow.getAllWindows().forEach(win => {
-        win.removeAllListeners('close');
-        win.close();
-      });
-
-      // Stop servers and close database
+      // Stop servers and close database first
       if (grpcServer) {
         console.log('Stopping gRPC server...');
         await grpcServer.stop();
@@ -1208,13 +1202,24 @@ app.on('before-quit', async (event) => {
         await database.close();
       }
 
+      // Destroy all windows forcefully (not just close)
+      BrowserWindow.getAllWindows().forEach(win => {
+        win.removeAllListeners('close');
+        win.removeAllListeners('closed');
+        if (!win.isDestroyed()) {
+          win.destroy();
+        }
+      });
+
       console.log('Cleanup complete');
     } catch (error) {
       console.error('Error during shutdown:', error);
     }
 
-    // Force quit after cleanup
-    app.exit(0);
+    // Small delay to ensure cleanup completes, then force quit
+    setTimeout(() => {
+      app.exit(0);
+    }, 100);
   }
 });
 
