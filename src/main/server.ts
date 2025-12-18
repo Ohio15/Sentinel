@@ -1090,11 +1090,26 @@ export class Server {
     // Create client tenant mapping
     this.app.post('/api/client-tenants', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
-        const { clientId, tenantId, tenantName, enabled } = req.body;
+        let { clientId, tenantId, tenantName, enabled } = req.body;
 
-        if (!clientId || !tenantId) {
-          res.status(400).json({ error: 'Client ID and Tenant ID are required' });
+        if (!tenantId) {
+          res.status(400).json({ error: 'Tenant ID is required' });
           return;
+        }
+
+        // Validate tenant ID format (should be a GUID)
+        const guidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!guidRegex.test(tenantId)) {
+          res.status(400).json({ error: 'Invalid Tenant ID format. Must be a valid GUID.' });
+          return;
+        }
+
+        // If no clientId provided, auto-create a client using the tenant name
+        if (!clientId) {
+          const clientName = tenantName || `Tenant ${tenantId.substring(0, 8)}`;
+          const newClient = await this.database.createClient({ name: clientName });
+          clientId = newClient.id;
+          console.log(`[Server] Auto-created client "${clientName}" for tenant ${tenantId}`);
         }
 
         const mapping = await this.database.createClientTenant({

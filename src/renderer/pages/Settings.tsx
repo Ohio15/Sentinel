@@ -166,8 +166,15 @@ export function Settings() {
   };
 
   const handleAddTenant = async () => {
-    if (!newTenant.clientId || !newTenant.tenantId) {
-      alert('Please select a client and enter the Azure AD tenant ID');
+    if (!newTenant.tenantId) {
+      alert('Please enter the Azure AD tenant ID');
+      return;
+    }
+
+    // Validate GUID format
+    const guidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!guidRegex.test(newTenant.tenantId)) {
+      alert('Invalid Tenant ID format. Must be a valid GUID (e.g., xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)');
       return;
     }
 
@@ -619,35 +626,23 @@ export function Settings() {
               <div>
                 <h2 className="text-lg font-semibold text-text-primary">Client Tenant Mapping</h2>
                 <p className="text-sm text-text-secondary">
-                  Map Azure AD tenant IDs to Sentinel clients for automatic organization identification
+                  Add Azure AD tenant IDs to allow users from those organizations to access the portal.
+                  A Sentinel client will be auto-created for each tenant.
                 </p>
               </div>
               <button
                 onClick={() => setShowAddTenant(true)}
                 className="btn btn-primary"
               >
-                Add Mapping
+                Add Tenant
               </button>
             </div>
 
             {showAddTenant && (
               <div className="p-4 bg-gray-50 dark:bg-slate-800 rounded-lg mb-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="label">Client</label>
-                    <select
-                      value={newTenant.clientId}
-                      onChange={e => setNewTenant({ ...newTenant, clientId: e.target.value })}
-                      className="input"
-                    >
-                      <option value="">Select client...</option>
-                      {clients.map(client => (
-                        <option key={client.id} value={client.id}>{client.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="label">Azure AD Tenant ID</label>
+                    <label className="label">Azure AD Tenant ID *</label>
                     <input
                       type="text"
                       value={newTenant.tenantId}
@@ -655,9 +650,12 @@ export function Settings() {
                       className="input"
                       placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
                     />
+                    <p className="text-xs text-text-secondary mt-1">
+                      Found in Azure Portal → Microsoft Entra ID → Overview → Tenant ID
+                    </p>
                   </div>
                   <div>
-                    <label className="label">Tenant Name (optional)</label>
+                    <label className="label">Organization Name *</label>
                     <input
                       type="text"
                       value={newTenant.tenantName}
@@ -665,11 +663,29 @@ export function Settings() {
                       className="input"
                       placeholder="Contoso Corp"
                     />
+                    <p className="text-xs text-text-secondary mt-1">
+                      This will be used as the client name in Sentinel
+                    </p>
                   </div>
                 </div>
+                {clients.length > 0 && (
+                  <div className="mt-4">
+                    <label className="label">Link to Existing Client (optional)</label>
+                    <select
+                      value={newTenant.clientId}
+                      onChange={e => setNewTenant({ ...newTenant, clientId: e.target.value })}
+                      className="input"
+                    >
+                      <option value="">Auto-create new client</option>
+                      {clients.map(client => (
+                        <option key={client.id} value={client.id}>{client.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <div className="flex gap-2 mt-4">
                   <button onClick={handleAddTenant} className="btn btn-primary">
-                    Save
+                    Add Tenant
                   </button>
                   <button
                     onClick={() => {
