@@ -3,6 +3,34 @@
  */
 
 // State
+
+// Theme management
+function initTheme() {
+  const savedTheme = localStorage.getItem('portal-theme');
+  if (savedTheme === 'dark') {
+    document.documentElement.classList.add('dark');
+    updateThemeIcon(true);
+  }
+}
+
+function toggleTheme() {
+  const isDark = document.documentElement.classList.toggle('dark');
+  localStorage.setItem('portal-theme', isDark ? 'dark' : 'light');
+  updateThemeIcon(isDark);
+}
+
+function updateThemeIcon(isDark) {
+  const sunIcon = document.getElementById('sunIcon');
+  const moonIcon = document.getElementById('moonIcon');
+  if (sunIcon && moonIcon) {
+    sunIcon.style.display = isDark ? 'none' : 'block';
+    moonIcon.style.display = isDark ? 'block' : 'none';
+  }
+}
+
+// Initialize theme on load
+initTheme();
+
 let currentUser = null;
 let clientBranding = null;
 let tickets = [];
