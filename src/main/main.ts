@@ -655,6 +655,7 @@ function setupIpcHandlers(): void {
     if (smtp.fromName !== undefined) updates.smtpFromName = smtp.fromName;
 
     await database.updateSettings(updates);
+    await server.initializePortalServices();
     return { success: true };
   });
 

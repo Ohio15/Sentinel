@@ -1209,7 +1209,7 @@ export class Server {
   /**
    * Initialize portal-related services (MSAL and Email)
    */
-  private async initializePortalServices(): Promise<void> {
+  public async initializePortalServices(): Promise<void> {
     const settings = await this.database.getSettings();
 
     // Initialize MSAL if configured
