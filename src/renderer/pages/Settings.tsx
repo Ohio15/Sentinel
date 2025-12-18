@@ -118,17 +118,12 @@ export function Settings() {
     }
   };
 
-  const getServerUrl = (path: string) => {
-    const port = serverInfo?.port || 3000;
-    return `http://localhost:${port}${path}`;
-  };
-
   const loadPortalData = async () => {
     try {
       const [portalData, tenantsData, clientsData] = await Promise.all([
-        fetch(getServerUrl('/api/portal/settings')).then(r => r.json()).catch(() => null),
-        fetch(getServerUrl('/api/client-tenants')).then(r => r.json()).catch(() => []),
-        fetch(getServerUrl('/api/clients')).then(r => r.json()).catch(() => []),
+        window.api.portal.getSettings().catch(() => null),
+        window.api.portal.getClientTenants().catch(() => []),
+        window.api.clients.list().catch(() => []),
       ]);
 
       if (portalData) {
@@ -147,16 +142,7 @@ export function Settings() {
   const handleSavePortalSettings = async () => {
     setSavingPortal(true);
     try {
-      const response = await fetch(getServerUrl('/api/portal/settings'), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(portalSettings)
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to save portal settings');
-      }
-
+      await window.api.portal.updateSettings(portalSettings);
       alert('Portal settings saved successfully');
     } catch (error: any) {
       alert(`Error saving portal settings: ${error.message}`);
@@ -179,16 +165,7 @@ export function Settings() {
     }
 
     try {
-      const response = await fetch(getServerUrl('/api/client-tenants'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newTenant)
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to add tenant mapping');
-      }
-
+      await window.api.portal.createClientTenant(newTenant);
       setNewTenant({ clientId: '', tenantId: '', tenantName: '' });
       setShowAddTenant(false);
       loadPortalData();
@@ -201,14 +178,7 @@ export function Settings() {
     if (!confirm('Are you sure you want to remove this tenant mapping?')) return;
 
     try {
-      const response = await fetch(getServerUrl(`/api/client-tenants/${id}`), {
-        method: 'DELETE'
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to delete tenant mapping');
-      }
-
+      await window.api.portal.deleteClientTenant(id);
       loadPortalData();
     } catch (error: any) {
       alert(`Error deleting tenant mapping: ${error.message}`);

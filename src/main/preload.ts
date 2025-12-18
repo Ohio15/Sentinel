@@ -152,6 +152,17 @@ contextBridge.exposeInMainWorld('api', {
   },
 
 
+
+  // Portal Settings
+  portal: {
+    getSettings: () => ipcRenderer.invoke('portal:getSettings'),
+    updateSettings: (settings: any) => ipcRenderer.invoke('portal:updateSettings', settings),
+    getClientTenants: () => ipcRenderer.invoke('portal:getClientTenants'),
+    createClientTenant: (data: { clientId?: string; tenantId: string; tenantName?: string }) =>
+      ipcRenderer.invoke('portal:createClientTenant', data),
+    deleteClientTenant: (id: string) => ipcRenderer.invoke('portal:deleteClientTenant', id),
+  },
+
   // Clients
   clients: {
     list: () => ipcRenderer.invoke('clients:list'),
@@ -357,6 +368,14 @@ export interface ElectronAPI {
     get: () => Promise<Settings>;
     update: (settings: Partial<Settings>) => Promise<Settings>;
   };
+  portal: {
+    getSettings: () => Promise<PortalSettings>;
+    updateSettings: (settings: PortalSettings) => Promise<{ success: boolean }>;
+    getClientTenants: () => Promise<ClientTenant[]>;
+    createClientTenant: (data: { clientId?: string; tenantId: string; tenantName?: string }) => Promise<ClientTenant>;
+    deleteClientTenant: (id: string) => Promise<void>;
+  };
+
   clients: {
     list: () => Promise<Client[]>;
     get: (id: string) => Promise<Client | null>;
@@ -731,6 +750,37 @@ interface DeviceUpdateStatus {
   pendingUpdates?: PendingUpdateInfo[];
   createdAt?: string;
   updatedAt?: string;
+}
+
+
+interface PortalSettings {
+  azureAd: {
+    clientId: string;
+    clientSecret: string;
+    redirectUri: string;
+  };
+  email: {
+    enabled: boolean;
+    portalUrl?: string;
+    smtp?: {
+      host: string;
+      port: number;
+      secure: boolean;
+      user: string;
+      password: string;
+      fromAddress: string;
+      fromName?: string;
+    };
+  };
+}
+
+interface ClientTenant {
+  id: string;
+  clientId: string;
+  tenantId: string;
+  tenantName?: string;
+  clientName?: string;
+  createdAt: string;
 }
 
 declare global {
