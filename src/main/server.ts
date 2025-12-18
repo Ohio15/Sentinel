@@ -1065,6 +1065,17 @@ export class Server {
       }
     });
 
+    // List clients (for tenant mapping dropdown)
+    this.app.get('/api/clients', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const clients = await this.database.getClients();
+        res.json(clients);
+      } catch (error) {
+        console.error('Get clients error:', error);
+        res.status(500).json({ error: 'Failed to get clients' });
+      }
+    });
+
     // List client tenant mappings
     this.app.get('/api/client-tenants', this.requireAuth.bind(this), async (req: Request, res: Response) => {
       try {
