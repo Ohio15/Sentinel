@@ -1520,6 +1520,493 @@ export class Server {
     });
 
     // =========================================================================
+    // SLA Policies API
+    // =========================================================================
+
+    this.app.get('/api/sla-policies', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const clientId = req.query.clientId as string | undefined;
+        const policies = await this.database.getSLAPolicies(clientId);
+        res.json(policies);
+      } catch (error) {
+        console.error('Get SLA policies error:', error);
+        res.status(500).json({ error: 'Failed to get SLA policies' });
+      }
+    });
+
+    this.app.get('/api/sla-policies/:id', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const policy = await this.database.getSLAPolicy(req.params.id);
+        if (!policy) {
+          res.status(404).json({ error: 'SLA policy not found' });
+          return;
+        }
+        res.json(policy);
+      } catch (error) {
+        console.error('Get SLA policy error:', error);
+        res.status(500).json({ error: 'Failed to get SLA policy' });
+      }
+    });
+
+    this.app.post('/api/sla-policies', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const policy = await this.database.createSLAPolicy(req.body);
+        res.status(201).json(policy);
+      } catch (error) {
+        console.error('Create SLA policy error:', error);
+        res.status(500).json({ error: 'Failed to create SLA policy' });
+      }
+    });
+
+    this.app.put('/api/sla-policies/:id', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const policy = await this.database.updateSLAPolicy(req.params.id, req.body);
+        if (!policy) {
+          res.status(404).json({ error: 'SLA policy not found' });
+          return;
+        }
+        res.json(policy);
+      } catch (error) {
+        console.error('Update SLA policy error:', error);
+        res.status(500).json({ error: 'Failed to update SLA policy' });
+      }
+    });
+
+    this.app.delete('/api/sla-policies/:id', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        await this.database.deleteSLAPolicy(req.params.id);
+        res.json({ success: true });
+      } catch (error) {
+        console.error('Delete SLA policy error:', error);
+        res.status(500).json({ error: 'Failed to delete SLA policy' });
+      }
+    });
+
+    // =========================================================================
+    // Ticket Categories API
+    // =========================================================================
+
+    this.app.get('/api/ticket-categories', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const clientId = req.query.clientId as string | undefined;
+        const categories = await this.database.getTicketCategories(clientId);
+        res.json(categories);
+      } catch (error) {
+        console.error('Get ticket categories error:', error);
+        res.status(500).json({ error: 'Failed to get ticket categories' });
+      }
+    });
+
+    this.app.post('/api/ticket-categories', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const category = await this.database.createTicketCategory(req.body);
+        res.status(201).json(category);
+      } catch (error) {
+        console.error('Create ticket category error:', error);
+        res.status(500).json({ error: 'Failed to create ticket category' });
+      }
+    });
+
+    this.app.put('/api/ticket-categories/:id', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const category = await this.database.updateTicketCategory(req.params.id, req.body);
+        if (!category) {
+          res.status(404).json({ error: 'Category not found' });
+          return;
+        }
+        res.json(category);
+      } catch (error) {
+        console.error('Update ticket category error:', error);
+        res.status(500).json({ error: 'Failed to update ticket category' });
+      }
+    });
+
+    this.app.delete('/api/ticket-categories/:id', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        await this.database.deleteTicketCategory(req.params.id);
+        res.json({ success: true });
+      } catch (error) {
+        console.error('Delete ticket category error:', error);
+        res.status(500).json({ error: 'Failed to delete ticket category' });
+      }
+    });
+
+    // =========================================================================
+    // Ticket Tags API
+    // =========================================================================
+
+    this.app.get('/api/ticket-tags', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const clientId = req.query.clientId as string | undefined;
+        const tags = await this.database.getTicketTags(clientId);
+        res.json(tags);
+      } catch (error) {
+        console.error('Get ticket tags error:', error);
+        res.status(500).json({ error: 'Failed to get ticket tags' });
+      }
+    });
+
+    this.app.post('/api/ticket-tags', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const tag = await this.database.createTicketTag(req.body);
+        res.status(201).json(tag);
+      } catch (error) {
+        console.error('Create ticket tag error:', error);
+        res.status(500).json({ error: 'Failed to create ticket tag' });
+      }
+    });
+
+    this.app.put('/api/ticket-tags/:id', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const tag = await this.database.updateTicketTag(req.params.id, req.body);
+        if (!tag) {
+          res.status(404).json({ error: 'Tag not found' });
+          return;
+        }
+        res.json(tag);
+      } catch (error) {
+        console.error('Update ticket tag error:', error);
+        res.status(500).json({ error: 'Failed to update ticket tag' });
+      }
+    });
+
+    this.app.delete('/api/ticket-tags/:id', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        await this.database.deleteTicketTag(req.params.id);
+        res.json({ success: true });
+      } catch (error) {
+        console.error('Delete ticket tag error:', error);
+        res.status(500).json({ error: 'Failed to delete ticket tag' });
+      }
+    });
+
+    this.app.get('/api/tickets/:id/tags', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const tags = await this.database.getTicketTagAssignments(req.params.id);
+        res.json(tags);
+      } catch (error) {
+        console.error('Get ticket tag assignments error:', error);
+        res.status(500).json({ error: 'Failed to get ticket tags' });
+      }
+    });
+
+    this.app.put('/api/tickets/:id/tags', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const { tagIds, assignedBy } = req.body;
+        await this.database.assignTagsToTicket(req.params.id, tagIds, assignedBy);
+        const tags = await this.database.getTicketTagAssignments(req.params.id);
+        res.json(tags);
+      } catch (error) {
+        console.error('Assign ticket tags error:', error);
+        res.status(500).json({ error: 'Failed to assign ticket tags' });
+      }
+    });
+
+    // =========================================================================
+    // Ticket Links API
+    // =========================================================================
+
+    this.app.get('/api/tickets/:id/links', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const links = await this.database.getTicketLinks(req.params.id);
+        res.json(links);
+      } catch (error) {
+        console.error('Get ticket links error:', error);
+        res.status(500).json({ error: 'Failed to get ticket links' });
+      }
+    });
+
+    this.app.post('/api/ticket-links', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const link = await this.database.createTicketLink(req.body);
+        res.status(201).json(link);
+      } catch (error) {
+        console.error('Create ticket link error:', error);
+        res.status(500).json({ error: 'Failed to create ticket link' });
+      }
+    });
+
+    this.app.delete('/api/ticket-links/:id', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        await this.database.deleteTicketLink(req.params.id);
+        res.json({ success: true });
+      } catch (error) {
+        console.error('Delete ticket link error:', error);
+        res.status(500).json({ error: 'Failed to delete ticket link' });
+      }
+    });
+
+    // =========================================================================
+    // Ticket Analytics API
+    // =========================================================================
+
+    this.app.get('/api/tickets/analytics', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const analytics = await this.database.getTicketAnalytics({
+          clientId: req.query.clientId as string | undefined,
+          dateFrom: req.query.dateFrom as string | undefined,
+          dateTo: req.query.dateTo as string | undefined,
+        });
+        res.json(analytics);
+      } catch (error) {
+        console.error('Get ticket analytics error:', error);
+        res.status(500).json({ error: 'Failed to get ticket analytics' });
+      }
+    });
+
+    // =========================================================================
+    // Knowledge Base Admin API
+    // =========================================================================
+
+    this.app.get('/api/kb/categories', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const categories = await this.database.getKBCategories();
+        res.json(categories);
+      } catch (error) {
+        console.error('Get KB categories error:', error);
+        res.status(500).json({ error: 'Failed to get KB categories' });
+      }
+    });
+
+    this.app.post('/api/kb/categories', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const category = await this.database.createKBCategory(req.body);
+        res.status(201).json(category);
+      } catch (error) {
+        console.error('Create KB category error:', error);
+        res.status(500).json({ error: 'Failed to create KB category' });
+      }
+    });
+
+    this.app.put('/api/kb/categories/:id', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const category = await this.database.updateKBCategory(req.params.id, req.body);
+        if (!category) {
+          res.status(404).json({ error: 'Category not found' });
+          return;
+        }
+        res.json(category);
+      } catch (error) {
+        console.error('Update KB category error:', error);
+        res.status(500).json({ error: 'Failed to update KB category' });
+      }
+    });
+
+    this.app.delete('/api/kb/categories/:id', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        await this.database.deleteKBCategory(req.params.id);
+        res.json({ success: true });
+      } catch (error) {
+        console.error('Delete KB category error:', error);
+        res.status(500).json({ error: 'Failed to delete KB category' });
+      }
+    });
+
+    this.app.get('/api/kb/articles', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const articles = await this.database.getKBArticles({
+          categoryId: req.query.categoryId as string | undefined,
+          status: req.query.status as string | undefined,
+          featured: req.query.featured === 'true',
+          limit: req.query.limit ? parseInt(req.query.limit as string, 10) : undefined,
+          offset: req.query.offset ? parseInt(req.query.offset as string, 10) : undefined,
+        });
+        res.json(articles);
+      } catch (error) {
+        console.error('Get KB articles error:', error);
+        res.status(500).json({ error: 'Failed to get KB articles' });
+      }
+    });
+
+    this.app.get('/api/kb/articles/:id', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const article = await this.database.getKBArticle(req.params.id);
+        if (!article) {
+          res.status(404).json({ error: 'Article not found' });
+          return;
+        }
+        res.json(article);
+      } catch (error) {
+        console.error('Get KB article error:', error);
+        res.status(500).json({ error: 'Failed to get KB article' });
+      }
+    });
+
+    this.app.post('/api/kb/articles', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const article = await this.database.createKBArticle(req.body);
+        res.status(201).json(article);
+      } catch (error) {
+        console.error('Create KB article error:', error);
+        res.status(500).json({ error: 'Failed to create KB article' });
+      }
+    });
+
+    this.app.put('/api/kb/articles/:id', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        const article = await this.database.updateKBArticle(req.params.id, req.body);
+        if (!article) {
+          res.status(404).json({ error: 'Article not found' });
+          return;
+        }
+        res.json(article);
+      } catch (error) {
+        console.error('Update KB article error:', error);
+        res.status(500).json({ error: 'Failed to update KB article' });
+      }
+    });
+
+    this.app.delete('/api/kb/articles/:id', this.requireAuth.bind(this), async (req: Request, res: Response) => {
+      try {
+        await this.database.deleteKBArticle(req.params.id);
+        res.json({ success: true });
+      } catch (error) {
+        console.error('Delete KB article error:', error);
+        res.status(500).json({ error: 'Failed to delete KB article' });
+      }
+    });
+
+    // =========================================================================
+    // Portal KB API (Public-facing)
+    // =========================================================================
+
+    this.app.get('/portal/api/kb/categories', requirePortalAuth, async (req: Request, res: Response) => {
+      try {
+        const categories = await this.database.getKBCategories();
+        res.json(categories.filter(c => c.isActive));
+      } catch (error) {
+        console.error('Portal get KB categories error:', error);
+        res.status(500).json({ error: 'Failed to get KB categories' });
+      }
+    });
+
+    this.app.get('/portal/api/kb/articles', requirePortalAuth, async (req: Request, res: Response) => {
+      try {
+        const articles = await this.database.getKBArticles({
+          categoryId: req.query.categoryId as string | undefined,
+          status: 'published',
+          limit: req.query.limit ? parseInt(req.query.limit as string, 10) : 50,
+          offset: req.query.offset ? parseInt(req.query.offset as string, 10) : undefined,
+        });
+        res.json(articles);
+      } catch (error) {
+        console.error('Portal get KB articles error:', error);
+        res.status(500).json({ error: 'Failed to get KB articles' });
+      }
+    });
+
+    this.app.get('/portal/api/kb/articles/:slug', requirePortalAuth, async (req: Request, res: Response) => {
+      try {
+        const article = await this.database.getKBArticleBySlug(req.params.slug);
+        if (!article || article.status !== 'published') {
+          res.status(404).json({ error: 'Article not found' });
+          return;
+        }
+
+        // Increment view count
+        const session = (req as any).portalSession;
+        await this.database.incrementKBArticleViews(
+          article.id,
+          session?.userEmail,
+          undefined,
+          req.ip
+        );
+
+        // Get related articles
+        const relatedArticles = await this.database.getKBRelatedArticles(article.id);
+
+        res.json({ ...article, relatedArticles });
+      } catch (error) {
+        console.error('Portal get KB article error:', error);
+        res.status(500).json({ error: 'Failed to get KB article' });
+      }
+    });
+
+    this.app.get('/portal/api/kb/search', requirePortalAuth, async (req: Request, res: Response) => {
+      try {
+        const query = req.query.q as string;
+        if (!query || query.length < 2) {
+          res.json([]);
+          return;
+        }
+        const articles = await this.database.searchKBArticles(query);
+        res.json(articles);
+      } catch (error) {
+        console.error('Portal KB search error:', error);
+        res.status(500).json({ error: 'Failed to search KB' });
+      }
+    });
+
+    this.app.get('/portal/api/kb/suggest', requirePortalAuth, async (req: Request, res: Response) => {
+      try {
+        const subject = req.query.subject as string;
+        if (!subject || subject.length < 3) {
+          res.json([]);
+          return;
+        }
+        const articles = await this.database.suggestKBArticles(subject, 5);
+        res.json(articles);
+      } catch (error) {
+        console.error('Portal KB suggest error:', error);
+        res.status(500).json({ error: 'Failed to get suggestions' });
+      }
+    });
+
+    this.app.get('/portal/api/kb/featured', requirePortalAuth, async (req: Request, res: Response) => {
+      try {
+        const articles = await this.database.getKBFeaturedArticles(6);
+        res.json(articles);
+      } catch (error) {
+        console.error('Portal get featured articles error:', error);
+        res.status(500).json({ error: 'Failed to get featured articles' });
+      }
+    });
+
+    this.app.post('/portal/api/kb/articles/:id/feedback', requirePortalAuth, async (req: Request, res: Response) => {
+      try {
+        const session = (req as any).portalSession;
+        const { isHelpful, comment } = req.body;
+
+        await this.database.submitKBArticleFeedback(
+          req.params.id,
+          isHelpful,
+          comment,
+          session?.userEmail,
+          session?.userName
+        );
+
+        res.json({ success: true });
+      } catch (error) {
+        console.error('Portal KB feedback error:', error);
+        res.status(500).json({ error: 'Failed to submit feedback' });
+      }
+    });
+
+    // =========================================================================
+    // Portal Ticket Search API
+    // =========================================================================
+
+    this.app.get('/portal/api/tickets/search', requirePortalAuth, async (req: Request, res: Response) => {
+      try {
+        const session = (req as any).portalSession;
+        const result = await this.database.searchPortalTickets({
+          email: session.userEmail,
+          query: req.query.q as string | undefined,
+          status: req.query.status as string | undefined,
+          priority: req.query.priority as string | undefined,
+          dateFrom: req.query.dateFrom as string | undefined,
+          dateTo: req.query.dateTo as string | undefined,
+          limit: req.query.limit ? parseInt(req.query.limit as string, 10) : 20,
+          offset: req.query.offset ? parseInt(req.query.offset as string, 10) : 0,
+        });
+        res.json(result);
+      } catch (error) {
+        console.error('Portal ticket search error:', error);
+        res.status(500).json({ error: 'Failed to search tickets' });
+      }
+    });
+
+    // =========================================================================
     // Portal Static Files
     // =========================================================================
 

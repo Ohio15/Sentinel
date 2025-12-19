@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { Dashboard } from './pages/Dashboard';
@@ -9,6 +9,10 @@ import { Scripts } from './pages/Scripts';
 import { Settings } from './pages/Settings';
 import { Tickets } from './pages/Tickets';
 import { TicketDetail } from './pages/TicketDetail';
+import { TicketsKanban } from './pages/TicketsKanban';
+import { TicketsCalendar } from './pages/TicketsCalendar';
+import { TicketAnalytics } from './pages/TicketAnalytics';
+import { KnowledgeBase } from './pages/KnowledgeBase';
 import { Clients } from './pages/Clients';
 import { Certificates } from './pages/Certificates';
 import { useDeviceStore } from './stores/deviceStore';
@@ -16,7 +20,7 @@ import { useAlertStore } from './stores/alertStore';
 import { useClientStore } from './stores/clientStore';
 import { UpdateNotification } from './components/UpdateNotification';
 
-type Page = 'dashboard' | 'devices' | 'device-detail' | 'alerts' | 'scripts' | 'certificates' | 'settings' | 'tickets' | 'ticket-detail' | 'clients';
+type Page = 'dashboard' | 'devices' | 'device-detail' | 'alerts' | 'scripts' | 'certificates' | 'settings' | 'tickets' | 'ticket-detail' | 'tickets-kanban' | 'tickets-calendar' | 'tickets-analytics' | 'knowledge-base' | 'clients';
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('dashboard');
@@ -106,6 +110,14 @@ function App() {
         return <Clients />;
       case 'certificates':
         return <Certificates />;
+      case 'tickets-kanban':
+        return <TicketsKanban onTicketSelect={handleTicketSelect} />;
+      case 'tickets-calendar':
+        return <TicketsCalendar onTicketSelect={handleTicketSelect} />;
+      case 'tickets-analytics':
+        return <TicketAnalytics />;
+      case 'knowledge-base':
+        return <KnowledgeBase />;
       default:
         return <Dashboard onDeviceSelect={handleDeviceSelect} />;
     }

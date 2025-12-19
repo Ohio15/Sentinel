@@ -2652,6 +2652,1019 @@ export class Database {
     return result.rows[0] || null;
   }
 
+  // ============================================================================
+  // SLA POLICY METHODS
+  // ============================================================================
+
+  async getSLAPolicies(clientId?: string): Promise<any[]> {
+    let sql = `
+      SELECT id, name, description, priority,
+             response_target_minutes as "responseTargetMinutes",
+             resolution_target_minutes as "resolutionTargetMinutes",
+             business_hours_only as "businessHoursOnly",
+             business_hours_start as "businessHoursStart",
+             business_hours_end as "businessHoursEnd",
+             business_days as "businessDays",
+             client_id as "clientId", is_default as "isDefault",
+             is_active as "isActive",
+             created_at as "createdAt", updated_at as "updatedAt"
+      FROM sla_policies
+      WHERE is_active = true
+    `;
+    const values: any[] = [];
+
+    if (clientId) {
+      sql += ' AND (client_id = $1 OR client_id IS NULL)';
+      values.push(clientId);
+    }
+
+    sql += ' ORDER BY CASE priority WHEN \'urgent\' THEN 1 WHEN \'high\' THEN 2 WHEN \'medium\' THEN 3 WHEN \'low\' THEN 4 END';
+    const result = await this.query(sql, values);
+    return result.rows;
+  }
+
+  async getSLAPolicy(id: string): Promise<any | null> {
+    const result = await this.query(`
+      SELECT id, name, description, priority,
+             response_target_minutes as "responseTargetMinutes",
+             resolution_target_minutes as "resolutionTargetMinutes",
+             business_hours_only as "businessHoursOnly",
+             business_hours_start as "businessHoursStart",
+             business_hours_end as "businessHoursEnd",
+             business_days as "businessDays",
+             client_id as "clientId", is_default as "isDefault",
+             is_active as "isActive",
+             created_at as "createdAt", updated_at as "updatedAt"
+      FROM sla_policies WHERE id = $1
+    `, [id]);
+    return result.rows[0] || null;
+  }
+
+  async getSLAPolicyForPriority(priority: string, clientId?: string): Promise<any | null> {
+    const result = await this.query(`
+      SELECT id, name, description, priority,
+             response_target_minutes as "responseTargetMinutes",
+             resolution_target_minutes as "resolutionTargetMinutes",
+             business_hours_only as "businessHoursOnly",
+             business_hours_start as "businessHoursStart",
+             business_hours_end as "businessHoursEnd",
+             business_days as "businessDays",
+             client_id as "clientId", is_default as "isDefault"
+      FROM sla_policies
+      WHERE priority = $1 AND is_active = true
+        AND (client_id = $2 OR (client_id IS NULL AND is_default = true))
+      ORDER BY client_id NULLS LAST
+      LIMIT 1
+    `, [priority, clientId]);
+    return result.rows[0] || null;
+  }
+
+  async createSLAPolicy(policy: any): Promise<any> {
+    const id = uuidv4();
+    await this.query(`
+      INSERT INTO sla_policies (
+        id, name, description, priority, response_target_minutes,
+        resolution_target_minutes, business_hours_only, business_hours_start,
+        business_hours_end, business_days, client_id, is_default
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    `, [
+      id,
+      policy.name,
+      policy.description || null,
+      policy.priority,
+      policy.responseTargetMinutes,
+      policy.resolutionTargetMinutes,
+      policy.businessHoursOnly ?? true,
+      policy.businessHoursStart || '09:00:00',
+      policy.businessHoursEnd || '17:00:00',
+      policy.businessDays || [1, 2, 3, 4, 5],
+      policy.clientId || null,
+      policy.isDefault || false
+    ]);
+    return this.getSLAPolicy(id);
+  }
+
+  async updateSLAPolicy(id: string, updates: any): Promise<any | null> {
+    const fields: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    const fieldMap: { [key: string]: string } = {
+      name: 'name',
+      description: 'description',
+      responseTargetMinutes: 'response_target_minutes',
+      resolutionTargetMinutes: 'resolution_target_minutes',
+      businessHoursOnly: 'business_hours_only',
+      businessHoursStart: 'business_hours_start',
+      businessHoursEnd: 'business_hours_end',
+      businessDays: 'business_days',
+      isDefault: 'is_default',
+      isActive: 'is_active'
+    };
+
+    for (const [jsField, dbField] of Object.entries(fieldMap)) {
+      if (updates[jsField] !== undefined) {
+        fields.push(`${dbField} = $${paramIndex++}`);
+        values.push(updates[jsField]);
+      }
+    }
+
+    if (fields.length === 0) return this.getSLAPolicy(id);
+
+    values.push(id);
+    await this.query(
+      `UPDATE sla_policies SET ${fields.join(', ')} WHERE id = $${paramIndex}`,
+      values
+    );
+    return this.getSLAPolicy(id);
+  }
+
+  async deleteSLAPolicy(id: string): Promise<void> {
+    await this.query('UPDATE sla_policies SET is_active = false WHERE id = $1', [id]);
+  }
+
+  async calculateSLADueDates(ticketId: string): Promise<void> {
+    const ticket = await this.getTicket(ticketId);
+    if (!ticket) return;
+
+    const policy = await this.getSLAPolicyForPriority(ticket.priority, ticket.clientId);
+    if (!policy) return;
+
+    const now = new Date();
+    const responseMinutes = policy.responseTargetMinutes;
+    const resolutionMinutes = policy.resolutionTargetMinutes;
+
+    // Simple calculation (not accounting for business hours for now)
+    const responseDue = new Date(now.getTime() + responseMinutes * 60 * 1000);
+    const resolutionDue = new Date(now.getTime() + resolutionMinutes * 60 * 1000);
+
+    await this.query(`
+      UPDATE tickets SET
+        sla_policy_id = $1,
+        first_response_due_at = $2,
+        resolution_due_at = $3
+      WHERE id = $4
+    `, [policy.id, responseDue.toISOString(), resolutionDue.toISOString(), ticketId]);
+  }
+
+  async recordFirstResponse(ticketId: string): Promise<void> {
+    const ticket = await this.getTicket(ticketId);
+    if (!ticket || ticket.firstResponseAt) return;
+
+    const now = new Date();
+    const breached = ticket.firstResponseDueAt && now > new Date(ticket.firstResponseDueAt);
+
+    await this.query(`
+      UPDATE tickets SET
+        first_response_at = $1,
+        sla_response_breached = $2
+      WHERE id = $3
+    `, [now.toISOString(), breached, ticketId]);
+  }
+
+  async pauseSLA(ticketId: string): Promise<void> {
+    await this.query(`
+      UPDATE tickets SET sla_paused_at = CURRENT_TIMESTAMP
+      WHERE id = $1 AND sla_paused_at IS NULL
+    `, [ticketId]);
+  }
+
+  async resumeSLA(ticketId: string): Promise<void> {
+    const result = await this.query(`
+      SELECT sla_paused_at, sla_paused_duration_minutes,
+             first_response_due_at, resolution_due_at
+      FROM tickets WHERE id = $1 AND sla_paused_at IS NOT NULL
+    `, [ticketId]);
+
+    if (result.rows.length === 0) return;
+
+    const ticket = result.rows[0];
+    const pausedAt = new Date(ticket.sla_paused_at);
+    const now = new Date();
+    const pausedMinutes = Math.floor((now.getTime() - pausedAt.getTime()) / 60000);
+    const totalPausedMinutes = (ticket.sla_paused_duration_minutes || 0) + pausedMinutes;
+
+    // Extend due dates by paused duration
+    const responseDue = ticket.first_response_due_at
+      ? new Date(new Date(ticket.first_response_due_at).getTime() + pausedMinutes * 60000)
+      : null;
+    const resolutionDue = ticket.resolution_due_at
+      ? new Date(new Date(ticket.resolution_due_at).getTime() + pausedMinutes * 60000)
+      : null;
+
+    await this.query(`
+      UPDATE tickets SET
+        sla_paused_at = NULL,
+        sla_paused_duration_minutes = $1,
+        first_response_due_at = $2,
+        resolution_due_at = $3
+      WHERE id = $4
+    `, [totalPausedMinutes, responseDue?.toISOString(), resolutionDue?.toISOString(), ticketId]);
+  }
+
+  async checkSLABreaches(): Promise<any[]> {
+    const result = await this.query(`
+      UPDATE tickets SET
+        sla_response_breached = CASE
+          WHEN first_response_at IS NULL AND first_response_due_at < CURRENT_TIMESTAMP THEN true
+          ELSE sla_response_breached
+        END,
+        sla_resolution_breached = CASE
+          WHEN closed_at IS NULL AND resolution_due_at < CURRENT_TIMESTAMP THEN true
+          ELSE sla_resolution_breached
+        END
+      WHERE (status NOT IN ('closed', 'resolved'))
+        AND sla_paused_at IS NULL
+        AND (
+          (first_response_at IS NULL AND first_response_due_at < CURRENT_TIMESTAMP AND sla_response_breached = false)
+          OR (closed_at IS NULL AND resolution_due_at < CURRENT_TIMESTAMP AND sla_resolution_breached = false)
+        )
+      RETURNING id, subject, sla_response_breached, sla_resolution_breached
+    `);
+    return result.rows;
+  }
+
+  // ============================================================================
+  // TICKET CATEGORY METHODS
+  // ============================================================================
+
+  async getTicketCategories(clientId?: string): Promise<any[]> {
+    let sql = `
+      SELECT id, name, description, parent_id as "parentId",
+             color, icon, sort_order as "sortOrder",
+             is_active as "isActive", client_id as "clientId",
+             created_at as "createdAt", updated_at as "updatedAt"
+      FROM ticket_categories
+      WHERE is_active = true
+    `;
+    const values: any[] = [];
+
+    if (clientId) {
+      sql += ' AND (client_id = $1 OR client_id IS NULL)';
+      values.push(clientId);
+    }
+
+    sql += ' ORDER BY sort_order, name';
+    const result = await this.query(sql, values);
+    return result.rows;
+  }
+
+  async getTicketCategory(id: string): Promise<any | null> {
+    const result = await this.query(`
+      SELECT id, name, description, parent_id as "parentId",
+             color, icon, sort_order as "sortOrder",
+             is_active as "isActive", client_id as "clientId",
+             created_at as "createdAt", updated_at as "updatedAt"
+      FROM ticket_categories WHERE id = $1
+    `, [id]);
+    return result.rows[0] || null;
+  }
+
+  async createTicketCategory(category: any): Promise<any> {
+    const id = uuidv4();
+    await this.query(`
+      INSERT INTO ticket_categories (id, name, description, parent_id, color, icon, sort_order, client_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `, [
+      id,
+      category.name,
+      category.description || null,
+      category.parentId || null,
+      category.color || '#6B7280',
+      category.icon || 'folder',
+      category.sortOrder || 0,
+      category.clientId || null
+    ]);
+    return this.getTicketCategory(id);
+  }
+
+  async updateTicketCategory(id: string, updates: any): Promise<any | null> {
+    const fields: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    const fieldMap: { [key: string]: string } = {
+      name: 'name',
+      description: 'description',
+      parentId: 'parent_id',
+      color: 'color',
+      icon: 'icon',
+      sortOrder: 'sort_order',
+      isActive: 'is_active'
+    };
+
+    for (const [jsField, dbField] of Object.entries(fieldMap)) {
+      if (updates[jsField] !== undefined) {
+        fields.push(`${dbField} = $${paramIndex++}`);
+        values.push(updates[jsField]);
+      }
+    }
+
+    if (fields.length === 0) return this.getTicketCategory(id);
+
+    values.push(id);
+    await this.query(
+      `UPDATE ticket_categories SET ${fields.join(', ')} WHERE id = $${paramIndex}`,
+      values
+    );
+    return this.getTicketCategory(id);
+  }
+
+  async deleteTicketCategory(id: string): Promise<void> {
+    await this.query('UPDATE ticket_categories SET is_active = false WHERE id = $1', [id]);
+  }
+
+  // ============================================================================
+  // TICKET TAG METHODS
+  // ============================================================================
+
+  async getTicketTags(clientId?: string): Promise<any[]> {
+    let sql = `
+      SELECT id, name, color, description,
+             usage_count as "usageCount", client_id as "clientId",
+             created_at as "createdAt"
+      FROM ticket_tags
+    `;
+    const values: any[] = [];
+
+    if (clientId) {
+      sql += ' WHERE (client_id = $1 OR client_id IS NULL)';
+      values.push(clientId);
+    }
+
+    sql += ' ORDER BY usage_count DESC, name';
+    const result = await this.query(sql, values);
+    return result.rows;
+  }
+
+  async getTicketTag(id: string): Promise<any | null> {
+    const result = await this.query(`
+      SELECT id, name, color, description,
+             usage_count as "usageCount", client_id as "clientId",
+             created_at as "createdAt"
+      FROM ticket_tags WHERE id = $1
+    `, [id]);
+    return result.rows[0] || null;
+  }
+
+  async createTicketTag(tag: any): Promise<any> {
+    const id = uuidv4();
+    await this.query(`
+      INSERT INTO ticket_tags (id, name, color, description, client_id)
+      VALUES ($1, $2, $3, $4, $5)
+    `, [
+      id,
+      tag.name,
+      tag.color || '#6B7280',
+      tag.description || null,
+      tag.clientId || null
+    ]);
+    return this.getTicketTag(id);
+  }
+
+  async updateTicketTag(id: string, updates: any): Promise<any | null> {
+    const fields: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    if (updates.name !== undefined) {
+      fields.push(`name = $${paramIndex++}`);
+      values.push(updates.name);
+    }
+    if (updates.color !== undefined) {
+      fields.push(`color = $${paramIndex++}`);
+      values.push(updates.color);
+    }
+    if (updates.description !== undefined) {
+      fields.push(`description = $${paramIndex++}`);
+      values.push(updates.description);
+    }
+
+    if (fields.length === 0) return this.getTicketTag(id);
+
+    values.push(id);
+    await this.query(
+      `UPDATE ticket_tags SET ${fields.join(', ')} WHERE id = $${paramIndex}`,
+      values
+    );
+    return this.getTicketTag(id);
+  }
+
+  async deleteTicketTag(id: string): Promise<void> {
+    await this.query('DELETE FROM ticket_tags WHERE id = $1', [id]);
+  }
+
+  async getTicketTagAssignments(ticketId: string): Promise<any[]> {
+    const result = await this.query(`
+      SELECT t.id, t.name, t.color, t.description
+      FROM ticket_tags t
+      JOIN ticket_tag_assignments a ON t.id = a.tag_id
+      WHERE a.ticket_id = $1
+      ORDER BY t.name
+    `, [ticketId]);
+    return result.rows;
+  }
+
+  async assignTagsToTicket(ticketId: string, tagIds: string[], assignedBy?: string): Promise<void> {
+    // Remove existing tags
+    await this.query('DELETE FROM ticket_tag_assignments WHERE ticket_id = $1', [ticketId]);
+
+    // Add new tags
+    for (const tagId of tagIds) {
+      await this.query(`
+        INSERT INTO ticket_tag_assignments (ticket_id, tag_id, assigned_by)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (ticket_id, tag_id) DO NOTHING
+      `, [ticketId, tagId, assignedBy || null]);
+    }
+  }
+
+  // ============================================================================
+  // TICKET LINK METHODS
+  // ============================================================================
+
+  async getTicketLinks(ticketId: string): Promise<any[]> {
+    const result = await this.query(`
+      SELECT l.id, l.link_type as "linkType",
+             l.source_ticket_id as "sourceTicketId",
+             l.target_ticket_id as "targetTicketId",
+             l.created_by as "createdBy", l.created_at as "createdAt",
+             st.subject as "sourceSubject", st.public_id as "sourcePublicId", st.status as "sourceStatus",
+             tt.subject as "targetSubject", tt.public_id as "targetPublicId", tt.status as "targetStatus"
+      FROM ticket_links l
+      JOIN tickets st ON l.source_ticket_id = st.id
+      JOIN tickets tt ON l.target_ticket_id = tt.id
+      WHERE l.source_ticket_id = $1 OR l.target_ticket_id = $1
+      ORDER BY l.created_at DESC
+    `, [ticketId]);
+    return result.rows;
+  }
+
+  async createTicketLink(link: any): Promise<any> {
+    const id = uuidv4();
+    await this.query(`
+      INSERT INTO ticket_links (id, source_ticket_id, target_ticket_id, link_type, created_by)
+      VALUES ($1, $2, $3, $4, $5)
+    `, [
+      id,
+      link.sourceTicketId,
+      link.targetTicketId,
+      link.linkType,
+      link.createdBy || null
+    ]);
+
+    const result = await this.query(`
+      SELECT id, link_type as "linkType",
+             source_ticket_id as "sourceTicketId",
+             target_ticket_id as "targetTicketId",
+             created_by as "createdBy", created_at as "createdAt"
+      FROM ticket_links WHERE id = $1
+    `, [id]);
+    return result.rows[0];
+  }
+
+  async deleteTicketLink(id: string): Promise<void> {
+    await this.query('DELETE FROM ticket_links WHERE id = $1', [id]);
+  }
+
+  // ============================================================================
+  // TICKET ANALYTICS METHODS
+  // ============================================================================
+
+  async getTicketAnalytics(params: {
+    clientId?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  }): Promise<any> {
+    const values: any[] = [];
+    let paramIndex = 1;
+    let dateFilter = '';
+    let clientFilter = '';
+
+    if (params.dateFrom) {
+      dateFilter += ` AND created_at >= $${paramIndex++}`;
+      values.push(params.dateFrom);
+    }
+    if (params.dateTo) {
+      dateFilter += ` AND created_at <= $${paramIndex++}`;
+      values.push(params.dateTo);
+    }
+    if (params.clientId) {
+      clientFilter = ` AND client_id = $${paramIndex++}`;
+      values.push(params.clientId);
+    }
+
+    // Status breakdown
+    const statusResult = await this.query(`
+      SELECT status, COUNT(*) as count
+      FROM tickets WHERE 1=1 ${dateFilter} ${clientFilter}
+      GROUP BY status
+    `, values);
+
+    // Priority breakdown
+    const priorityResult = await this.query(`
+      SELECT priority, COUNT(*) as count
+      FROM tickets WHERE 1=1 ${dateFilter} ${clientFilter}
+      GROUP BY priority
+    `, values);
+
+    // Type breakdown
+    const typeResult = await this.query(`
+      SELECT type, COUNT(*) as count
+      FROM tickets WHERE 1=1 ${dateFilter} ${clientFilter}
+      GROUP BY type
+    `, values);
+
+    // Over time (last 30 days)
+    const overTimeResult = await this.query(`
+      SELECT DATE(created_at) as date, COUNT(*) as count
+      FROM tickets
+      WHERE created_at >= CURRENT_DATE - INTERVAL '30 days' ${clientFilter}
+      GROUP BY DATE(created_at)
+      ORDER BY date
+    `, params.clientId ? [params.clientId] : []);
+
+    // Technician stats
+    const technicianResult = await this.query(`
+      SELECT assigned_to as "assignedTo",
+             COUNT(*) as total,
+             COUNT(*) FILTER (WHERE status = 'open') as open,
+             COUNT(*) FILTER (WHERE status = 'closed') as closed,
+             AVG(EXTRACT(EPOCH FROM (closed_at - created_at))/3600) FILTER (WHERE closed_at IS NOT NULL) as "avgResolutionHours"
+      FROM tickets
+      WHERE assigned_to IS NOT NULL ${dateFilter} ${clientFilter}
+      GROUP BY assigned_to
+      ORDER BY total DESC
+    `, values);
+
+    // SLA stats
+    const slaResult = await this.query(`
+      SELECT
+        COUNT(*) as total,
+        COUNT(*) FILTER (WHERE sla_response_breached = true) as "responseBreached",
+        COUNT(*) FILTER (WHERE sla_resolution_breached = true) as "resolutionBreached",
+        COUNT(*) FILTER (WHERE first_response_at IS NOT NULL AND sla_response_breached = false) as "responseOnTime",
+        COUNT(*) FILTER (WHERE closed_at IS NOT NULL AND sla_resolution_breached = false) as "resolutionOnTime"
+      FROM tickets
+      WHERE sla_policy_id IS NOT NULL ${dateFilter} ${clientFilter}
+    `, values);
+
+    // Category breakdown
+    const categoryResult = await this.query(`
+      SELECT c.name as category, c.color, COUNT(t.id) as count
+      FROM ticket_categories c
+      LEFT JOIN tickets t ON t.category_id = c.id ${dateFilter.replace(/AND/g, 'AND t.')} ${clientFilter.replace('client_id', 't.client_id')}
+      WHERE c.is_active = true
+      GROUP BY c.id, c.name, c.color
+      ORDER BY count DESC
+    `, values);
+
+    return {
+      byStatus: statusResult.rows.reduce((acc: any, r) => ({ ...acc, [r.status]: parseInt(r.count) }), {}),
+      byPriority: priorityResult.rows.reduce((acc: any, r) => ({ ...acc, [r.priority]: parseInt(r.count) }), {}),
+      byType: typeResult.rows.reduce((acc: any, r) => ({ ...acc, [r.type]: parseInt(r.count) }), {}),
+      byCategory: categoryResult.rows,
+      overTime: overTimeResult.rows.map(r => ({ date: r.date, count: parseInt(r.count) })),
+      technicianStats: technicianResult.rows.map(r => ({
+        ...r,
+        total: parseInt(r.total),
+        open: parseInt(r.open),
+        closed: parseInt(r.closed),
+        avgResolutionHours: r.avgResolutionHours ? parseFloat(r.avgResolutionHours).toFixed(1) : null
+      })),
+      slaStats: slaResult.rows[0] ? {
+        total: parseInt(slaResult.rows[0].total),
+        responseBreached: parseInt(slaResult.rows[0].responseBreached),
+        resolutionBreached: parseInt(slaResult.rows[0].resolutionBreached),
+        responseOnTime: parseInt(slaResult.rows[0].responseOnTime),
+        resolutionOnTime: parseInt(slaResult.rows[0].resolutionOnTime)
+      } : null
+    };
+  }
+
+  // ============================================================================
+  // KNOWLEDGE BASE METHODS
+  // ============================================================================
+
+  async getKBCategories(): Promise<any[]> {
+    const result = await this.query(`
+      SELECT id, name, slug, description, parent_id as "parentId",
+             icon, color, sort_order as "sortOrder",
+             is_active as "isActive", article_count as "articleCount",
+             created_at as "createdAt", updated_at as "updatedAt"
+      FROM kb_categories
+      WHERE is_active = true
+      ORDER BY sort_order, name
+    `);
+    return result.rows;
+  }
+
+  async getKBCategory(id: string): Promise<any | null> {
+    const result = await this.query(`
+      SELECT id, name, slug, description, parent_id as "parentId",
+             icon, color, sort_order as "sortOrder",
+             is_active as "isActive", article_count as "articleCount",
+             created_at as "createdAt", updated_at as "updatedAt"
+      FROM kb_categories WHERE id = $1
+    `, [id]);
+    return result.rows[0] || null;
+  }
+
+  async getKBCategoryBySlug(slug: string): Promise<any | null> {
+    const result = await this.query(`
+      SELECT id, name, slug, description, parent_id as "parentId",
+             icon, color, sort_order as "sortOrder",
+             is_active as "isActive", article_count as "articleCount",
+             created_at as "createdAt", updated_at as "updatedAt"
+      FROM kb_categories WHERE slug = $1
+    `, [slug]);
+    return result.rows[0] || null;
+  }
+
+  async createKBCategory(category: any): Promise<any> {
+    const id = uuidv4();
+    const slug = category.slug || category.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+/g, '-');
+
+    await this.query(`
+      INSERT INTO kb_categories (id, name, slug, description, parent_id, icon, color, sort_order)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `, [
+      id,
+      category.name,
+      slug,
+      category.description || null,
+      category.parentId || null,
+      category.icon || 'folder',
+      category.color || '#6B7280',
+      category.sortOrder || 0
+    ]);
+    return this.getKBCategory(id);
+  }
+
+  async updateKBCategory(id: string, updates: any): Promise<any | null> {
+    const fields: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    const fieldMap: { [key: string]: string } = {
+      name: 'name',
+      slug: 'slug',
+      description: 'description',
+      parentId: 'parent_id',
+      icon: 'icon',
+      color: 'color',
+      sortOrder: 'sort_order',
+      isActive: 'is_active'
+    };
+
+    for (const [jsField, dbField] of Object.entries(fieldMap)) {
+      if (updates[jsField] !== undefined) {
+        fields.push(`${dbField} = $${paramIndex++}`);
+        values.push(updates[jsField]);
+      }
+    }
+
+    if (fields.length === 0) return this.getKBCategory(id);
+
+    values.push(id);
+    await this.query(
+      `UPDATE kb_categories SET ${fields.join(', ')} WHERE id = $${paramIndex}`,
+      values
+    );
+    return this.getKBCategory(id);
+  }
+
+  async deleteKBCategory(id: string): Promise<void> {
+    await this.query('UPDATE kb_categories SET is_active = false WHERE id = $1', [id]);
+  }
+
+  async getKBArticles(options?: {
+    categoryId?: string;
+    status?: string;
+    featured?: boolean;
+    limit?: number;
+    offset?: number;
+  }): Promise<any[]> {
+    let sql = `
+      SELECT a.id, a.title, a.slug, a.summary, a.status,
+             a.is_featured as "isFeatured", a.is_pinned as "isPinned",
+             a.tags, a.keywords, a.view_count as "viewCount",
+             a.helpful_count as "helpfulCount", a.not_helpful_count as "notHelpfulCount",
+             a.author_name as "authorName", a.published_at as "publishedAt",
+             a.created_at as "createdAt", a.updated_at as "updatedAt",
+             a.category_id as "categoryId", c.name as "categoryName", c.slug as "categorySlug"
+      FROM kb_articles a
+      LEFT JOIN kb_categories c ON a.category_id = c.id
+      WHERE 1=1
+    `;
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    if (options?.categoryId) {
+      sql += ` AND a.category_id = $${paramIndex++}`;
+      values.push(options.categoryId);
+    }
+    if (options?.status) {
+      sql += ` AND a.status = $${paramIndex++}`;
+      values.push(options.status);
+    }
+    if (options?.featured) {
+      sql += ' AND a.is_featured = true';
+    }
+
+    sql += ' ORDER BY a.is_pinned DESC, a.published_at DESC NULLS LAST, a.created_at DESC';
+
+    if (options?.limit) {
+      sql += ` LIMIT $${paramIndex++}`;
+      values.push(options.limit);
+    }
+    if (options?.offset) {
+      sql += ` OFFSET $${paramIndex++}`;
+      values.push(options.offset);
+    }
+
+    const result = await this.query(sql, values);
+    return result.rows;
+  }
+
+  async getKBArticle(id: string): Promise<any | null> {
+    const result = await this.query(`
+      SELECT a.id, a.title, a.slug, a.content, a.content_html as "contentHtml",
+             a.summary, a.status, a.is_featured as "isFeatured", a.is_pinned as "isPinned",
+             a.tags, a.keywords, a.view_count as "viewCount",
+             a.helpful_count as "helpfulCount", a.not_helpful_count as "notHelpfulCount",
+             a.author_name as "authorName", a.author_email as "authorEmail",
+             a.last_reviewed_at as "lastReviewedAt", a.last_reviewed_by as "lastReviewedBy",
+             a.published_at as "publishedAt",
+             a.created_at as "createdAt", a.updated_at as "updatedAt",
+             a.category_id as "categoryId", c.name as "categoryName", c.slug as "categorySlug"
+      FROM kb_articles a
+      LEFT JOIN kb_categories c ON a.category_id = c.id
+      WHERE a.id = $1
+    `, [id]);
+    return result.rows[0] || null;
+  }
+
+  async getKBArticleBySlug(slug: string): Promise<any | null> {
+    const result = await this.query(`
+      SELECT a.id, a.title, a.slug, a.content, a.content_html as "contentHtml",
+             a.summary, a.status, a.is_featured as "isFeatured", a.is_pinned as "isPinned",
+             a.tags, a.keywords, a.view_count as "viewCount",
+             a.helpful_count as "helpfulCount", a.not_helpful_count as "notHelpfulCount",
+             a.author_name as "authorName",
+             a.published_at as "publishedAt",
+             a.created_at as "createdAt", a.updated_at as "updatedAt",
+             a.category_id as "categoryId", c.name as "categoryName", c.slug as "categorySlug"
+      FROM kb_articles a
+      LEFT JOIN kb_categories c ON a.category_id = c.id
+      WHERE a.slug = $1
+    `, [slug]);
+    return result.rows[0] || null;
+  }
+
+  async createKBArticle(article: any): Promise<any> {
+    const id = uuidv4();
+    const slug = article.slug || article.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+/g, '-');
+
+    await this.query(`
+      INSERT INTO kb_articles (
+        id, title, slug, content, content_html, summary, category_id,
+        status, is_featured, is_pinned, tags, keywords,
+        author_name, author_email, published_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+    `, [
+      id,
+      article.title,
+      slug,
+      article.content || null,
+      article.contentHtml || null,
+      article.summary || null,
+      article.categoryId || null,
+      article.status || 'draft',
+      article.isFeatured || false,
+      article.isPinned || false,
+      JSON.stringify(article.tags || []),
+      JSON.stringify(article.keywords || []),
+      article.authorName || null,
+      article.authorEmail || null,
+      article.status === 'published' ? new Date().toISOString() : null
+    ]);
+    return this.getKBArticle(id);
+  }
+
+  async updateKBArticle(id: string, updates: any): Promise<any | null> {
+    const current = await this.getKBArticle(id);
+    if (!current) return null;
+
+    const fields: string[] = [];
+    const values: any[] = [];
+    let paramIndex = 1;
+
+    const fieldMap: { [key: string]: string } = {
+      title: 'title',
+      slug: 'slug',
+      content: 'content',
+      contentHtml: 'content_html',
+      summary: 'summary',
+      categoryId: 'category_id',
+      status: 'status',
+      isFeatured: 'is_featured',
+      isPinned: 'is_pinned'
+    };
+
+    for (const [jsField, dbField] of Object.entries(fieldMap)) {
+      if (updates[jsField] !== undefined) {
+        fields.push(`${dbField} = $${paramIndex++}`);
+        values.push(updates[jsField]);
+      }
+    }
+
+    if (updates.tags !== undefined) {
+      fields.push(`tags = $${paramIndex++}`);
+      values.push(JSON.stringify(updates.tags));
+    }
+    if (updates.keywords !== undefined) {
+      fields.push(`keywords = $${paramIndex++}`);
+      values.push(JSON.stringify(updates.keywords));
+    }
+
+    // Set published_at when first publishing
+    if (updates.status === 'published' && current.status !== 'published') {
+      fields.push(`published_at = CURRENT_TIMESTAMP`);
+    }
+
+    if (fields.length === 0) return this.getKBArticle(id);
+
+    values.push(id);
+    await this.query(
+      `UPDATE kb_articles SET ${fields.join(', ')} WHERE id = $${paramIndex}`,
+      values
+    );
+    return this.getKBArticle(id);
+  }
+
+  async deleteKBArticle(id: string): Promise<void> {
+    await this.query('DELETE FROM kb_articles WHERE id = $1', [id]);
+  }
+
+  async searchKBArticles(query: string, limit: number = 10): Promise<any[]> {
+    const result = await this.query(`
+      SELECT a.id, a.title, a.slug, a.summary, a.status,
+             a.view_count as "viewCount", a.helpful_count as "helpfulCount",
+             a.category_id as "categoryId", c.name as "categoryName",
+             ts_rank(to_tsvector('english', COALESCE(a.title, '') || ' ' || COALESCE(a.content, '') || ' ' || COALESCE(a.summary, '')),
+                     plainto_tsquery('english', $1)) as rank
+      FROM kb_articles a
+      LEFT JOIN kb_categories c ON a.category_id = c.id
+      WHERE a.status = 'published'
+        AND to_tsvector('english', COALESCE(a.title, '') || ' ' || COALESCE(a.content, '') || ' ' || COALESCE(a.summary, ''))
+            @@ plainto_tsquery('english', $1)
+      ORDER BY rank DESC, a.helpful_count DESC
+      LIMIT $2
+    `, [query, limit]);
+    return result.rows;
+  }
+
+  async suggestKBArticles(ticketSubject: string, limit: number = 5): Promise<any[]> {
+    // Use the ticket subject to find relevant KB articles
+    return this.searchKBArticles(ticketSubject, limit);
+  }
+
+  async incrementKBArticleViews(id: string, userEmail?: string, sessionId?: string, ipAddress?: string): Promise<void> {
+    await this.query('UPDATE kb_articles SET view_count = view_count + 1 WHERE id = $1', [id]);
+
+    // Log the view
+    await this.query(`
+      INSERT INTO kb_article_views (id, article_id, user_email, session_id, ip_address)
+      VALUES ($1, $2, $3, $4, $5)
+    `, [uuidv4(), id, userEmail || null, sessionId || null, ipAddress || null]);
+  }
+
+  async submitKBArticleFeedback(articleId: string, isHelpful: boolean, comment?: string, userEmail?: string, userName?: string): Promise<void> {
+    await this.query(`
+      INSERT INTO kb_article_feedback (id, article_id, is_helpful, comment, user_email, user_name)
+      VALUES ($1, $2, $3, $4, $5, $6)
+    `, [uuidv4(), articleId, isHelpful, comment || null, userEmail || null, userName || null]);
+  }
+
+  async getKBFeaturedArticles(limit: number = 6): Promise<any[]> {
+    const result = await this.query(`
+      SELECT a.id, a.title, a.slug, a.summary,
+             a.view_count as "viewCount", a.helpful_count as "helpfulCount",
+             a.category_id as "categoryId", c.name as "categoryName", c.slug as "categorySlug"
+      FROM kb_articles a
+      LEFT JOIN kb_categories c ON a.category_id = c.id
+      WHERE a.status = 'published' AND a.is_featured = true
+      ORDER BY a.is_pinned DESC, a.helpful_count DESC, a.view_count DESC
+      LIMIT $1
+    `, [limit]);
+    return result.rows;
+  }
+
+  async getKBRelatedArticles(articleId: string): Promise<any[]> {
+    const result = await this.query(`
+      SELECT a.id, a.title, a.slug, a.summary,
+             a.category_id as "categoryId", c.name as "categoryName"
+      FROM kb_related_articles r
+      JOIN kb_articles a ON r.target_article_id = a.id
+      LEFT JOIN kb_categories c ON a.category_id = c.id
+      WHERE r.source_article_id = $1 AND a.status = 'published'
+      ORDER BY r.sort_order
+    `, [articleId]);
+    return result.rows;
+  }
+
+  // ============================================================================
+  // PORTAL TICKET SEARCH
+  // ============================================================================
+
+  async searchPortalTickets(options: {
+    email: string;
+    query?: string;
+    status?: string;
+    priority?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ tickets: any[]; total: number }> {
+    let sql = `
+      SELECT t.id, t.ticket_number as "ticketNumber", t.public_id as "publicId",
+             t.subject, t.status, t.priority, t.type,
+             t.created_at as "createdAt", t.updated_at as "updatedAt",
+             t.resolved_at as "resolvedAt", t.closed_at as "closedAt"
+      FROM tickets t
+      WHERE t.submitter_email = $1
+    `;
+    let countSql = 'SELECT COUNT(*) as total FROM tickets t WHERE t.submitter_email = $1';
+
+    const values: any[] = [options.email];
+    const countValues: any[] = [options.email];
+    let paramIndex = 2;
+
+    if (options.query) {
+      const searchCondition = ` AND to_tsvector('english', t.subject || ' ' || COALESCE(t.description, '')) @@ plainto_tsquery('english', $${paramIndex})`;
+      sql += searchCondition;
+      countSql += searchCondition;
+      values.push(options.query);
+      countValues.push(options.query);
+      paramIndex++;
+    }
+    if (options.status) {
+      const statusCondition = ` AND t.status = $${paramIndex}`;
+      sql += statusCondition;
+      countSql += statusCondition;
+      values.push(options.status);
+      countValues.push(options.status);
+      paramIndex++;
+    }
+    if (options.priority) {
+      const priorityCondition = ` AND t.priority = $${paramIndex}`;
+      sql += priorityCondition;
+      countSql += priorityCondition;
+      values.push(options.priority);
+      countValues.push(options.priority);
+      paramIndex++;
+    }
+    if (options.dateFrom) {
+      const dateFromCondition = ` AND t.created_at >= $${paramIndex}`;
+      sql += dateFromCondition;
+      countSql += dateFromCondition;
+      values.push(options.dateFrom);
+      countValues.push(options.dateFrom);
+      paramIndex++;
+    }
+    if (options.dateTo) {
+      const dateToCondition = ` AND t.created_at <= $${paramIndex}`;
+      sql += dateToCondition;
+      countSql += dateToCondition;
+      values.push(options.dateTo);
+      countValues.push(options.dateTo);
+      paramIndex++;
+    }
+
+    sql += ' ORDER BY t.created_at DESC';
+
+    if (options.limit) {
+      sql += ` LIMIT $${paramIndex++}`;
+      values.push(options.limit);
+    }
+    if (options.offset) {
+      sql += ` OFFSET $${paramIndex++}`;
+      values.push(options.offset);
+    }
+
+    const [ticketsResult, countResult] = await Promise.all([
+      this.query(sql, values),
+      this.query(countSql, countValues)
+    ]);
+
+    return {
+      tickets: ticketsResult.rows,
+      total: parseInt(countResult.rows[0]?.total || '0')
+    };
+  }
+
   async close(): Promise<void> {
     if (this.pool) {
       await this.pool.end();

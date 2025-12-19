@@ -1,6 +1,16 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useTicketStore, Ticket, TicketFilters } from '../stores/ticketStore';
 import { useDeviceStore, Device } from '../stores/deviceStore';
+import { SLABadge, CategoryBadge, TicketViewSwitcher } from '../components/tickets';
+
+interface Category {
+  id: string;
+  name: string;
+  parentId: string | null;
+  color: string | null;
+  icon: string | null;
+  isActive: boolean;
+}
 
 interface TicketsProps {
   onTicketSelect: (ticketId: string) => void;
@@ -20,23 +30,49 @@ export function Tickets({ onTicketSelect }: TicketsProps) {
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
 
   useEffect(() => {
     fetchTickets();
     fetchStats();
+    loadCategories();
   }, []);
+
+  const loadCategories = async () => {
+    try {
+      const cats = await window.api.categories.list();
+      setCategories(cats);
+    } catch (error) {
+      console.error('Failed to load categories:', error);
+    }
+  };
 
   const handleFilterChange = (key: keyof TicketFilters, value: string) => {
     setFilters({ ...filters, [key]: value || undefined });
   };
 
-  const filteredTickets = tickets.filter((ticket) =>
-    searchTerm
+  const filteredTickets = tickets.filter((ticket) => {
+    // Search filter
+    const matchesSearch = searchTerm
       ? ticket.subject.toLowerCase().includes(searchTerm.toLowerCase()) ||
         ticket.ticketNumber.toString().includes(searchTerm) ||
         ticket.requesterName?.toLowerCase().includes(searchTerm.toLowerCase())
-      : true
-  );
+      : true;
+
+    // Category filter
+    const matchesCategory = selectedCategoryId
+      ? ticket.categoryId === selectedCategoryId
+      : true;
+
+    return matchesSearch && matchesCategory;
+  });
+
+  // Get category by ID for display
+  const getCategoryById = (categoryId: string | null): Category | null => {
+    if (!categoryId) return null;
+    return categories.find((c) => c.id === categoryId) || null;
+  };
 
   const getStatusBadgeClass = (status: string) => {
     switch (status) {
@@ -87,7 +123,10 @@ export function Tickets({ onTicketSelect }: TicketsProps) {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-text-primary">Tickets</h1>
+        <div className="flex items-center gap-4">
+          <h1 className="text-2xl font-bold text-text-primary">Tickets</h1>
+          <TicketViewSwitcher />
+        </div>
         <button
           onClick={() => setShowCreateModal(true)}
           className="btn btn-primary flex items-center gap-2"
@@ -179,9 +218,24 @@ export function Tickets({ onTicketSelect }: TicketsProps) {
             <option value="">All Assignees</option>
             <option value="unassigned">Unassigned</option>
           </select>
-          {(filters.status || filters.priority || filters.assignedTo) && (
+          <select
+            value={selectedCategoryId}
+            onChange={(e) => setSelectedCategoryId(e.target.value)}
+            className="input w-auto"
+          >
+            <option value="">All Categories</option>
+            {categories.filter((c) => c.isActive).map((cat) => (
+              <option key={cat.id} value={cat.id}>
+                {cat.name}
+              </option>
+            ))}
+          </select>
+          {(filters.status || filters.priority || filters.assignedTo || selectedCategoryId) && (
             <button
-              onClick={() => setFilters({})}
+              onClick={() => {
+                setFilters({});
+                setSelectedCategoryId('');
+              }}
               className="text-sm text-primary hover:underline"
             >
               Clear filters
@@ -207,9 +261,10 @@ export function Tickets({ onTicketSelect }: TicketsProps) {
                 <th className="text-left">Ticket</th>
                 <th className="text-left">Status</th>
                 <th className="text-left">Priority</th>
+                <th className="text-left">SLA</th>
+                <th className="text-left">Category</th>
                 <th className="text-left">Requester</th>
                 <th className="text-left">Assigned To</th>
-                <th className="text-left">Device</th>
                 <th className="text-left">Created</th>
               </tr>
             </thead>
@@ -242,6 +297,24 @@ export function Tickets({ onTicketSelect }: TicketsProps) {
                       {ticket.priority}
                     </span>
                   </td>
+                  <td>
+                    <SLABadge
+                      firstResponseDueAt={ticket.firstResponseDueAt}
+                      resolutionDueAt={ticket.resolutionDueAt}
+                      firstResponseAt={ticket.firstResponseAt}
+                      resolvedAt={ticket.resolvedAt}
+                      slaResponseBreached={ticket.slaResponseBreached}
+                      slaResolutionBreached={ticket.slaResolutionBreached}
+                      slaPausedAt={ticket.slaPausedAt}
+                      status={ticket.status}
+                    />
+                  </td>
+                  <td>
+                    <CategoryBadge
+                      category={ticket.categoryId ? getCategoryById(ticket.categoryId) : null}
+                      size="sm"
+                    />
+                  </td>
                   <td className="text-text-primary">
                     {ticket.requesterName || '-'}
                   </td>
@@ -249,9 +322,6 @@ export function Tickets({ onTicketSelect }: TicketsProps) {
                     {ticket.assignedTo || (
                       <span className="text-text-secondary">Unassigned</span>
                     )}
-                  </td>
-                  <td className="text-text-primary">
-                    {ticket.deviceDisplayName || ticket.deviceName || '-'}
                   </td>
                   <td className="text-text-secondary">{formatDate(ticket.createdAt)}</td>
                 </tr>

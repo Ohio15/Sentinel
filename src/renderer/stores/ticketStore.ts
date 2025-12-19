@@ -20,6 +20,20 @@ export interface Ticket {
   closedAt?: string;
   createdAt: string;
   updatedAt: string;
+  // SLA fields
+  slaPolicyId?: string;
+  firstResponseAt?: string;
+  firstResponseDueAt?: string;
+  resolutionDueAt?: string;
+  slaResponseBreached?: boolean;
+  slaResolutionBreached?: boolean;
+  slaPausedAt?: string;
+  slaPausedDurationMinutes?: number;
+  // Category field
+  categoryId?: string;
+  categoryName?: string;
+  // Custom fields
+  customFields?: Record<string, any>;
 }
 
 export interface TicketComment {

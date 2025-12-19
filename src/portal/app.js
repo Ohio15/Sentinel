@@ -3,6 +3,24 @@
  */
 
 // State
+let kbCategories = [];
+let kbArticles = [];
+let currentKBArticle = null;
+let currentKBCategory = null;
+let kbSearchTimeout = null;
+
+// Ticket filtering state
+let ticketFilters = {
+  search: '',
+  status: 'all',
+  priority: '',
+  dateFrom: '',
+  dateTo: ''
+};
+let currentPage = 1;
+let totalPages = 1;
+let pageSize = 10;
+let suggestionTimeout = null;
 
 // Theme management
 function initTheme() {
@@ -43,6 +61,9 @@ const loginPage = document.getElementById('loginPage');
 const ticketsPage = document.getElementById('ticketsPage');
 const newTicketPage = document.getElementById('newTicketPage');
 const ticketDetailPage = document.getElementById('ticketDetailPage');
+const kbPage = document.getElementById('kbPage');
+const kbArticlePage = document.getElementById('kbArticlePage');
+const headerNav = document.getElementById('headerNav');
 const userInfo = document.getElementById('userInfo');
 const userName = document.getElementById('userName');
 const errorMessage = document.getElementById('errorMessage');
@@ -205,6 +226,7 @@ function showLoginPage() {
   hideAllPages();
   loginPage.style.display = 'block';
   userInfo.style.display = 'none';
+  headerNav.style.display = 'none';
 }
 
 /**
@@ -213,6 +235,7 @@ function showLoginPage() {
 function showAuthenticatedUI() {
   userName.textContent = currentUser?.name || currentUser?.email || 'User';
   userInfo.style.display = 'flex';
+  headerNav.style.display = 'flex';
   showTicketsList();
 }
 
@@ -239,6 +262,8 @@ function hideAllPages() {
   ticketsPage.style.display = 'none';
   newTicketPage.style.display = 'none';
   ticketDetailPage.style.display = 'none';
+  kbPage.style.display = 'none';
+  kbArticlePage.style.display = 'none';
   disconnectSSE();
 }
 
@@ -1036,4 +1061,665 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+// =========================================================================
+// Navigation
+// =========================================================================
+
+/**
+ * Navigate to a page
+ */
+function navigateTo(page) {
+  // Update nav buttons
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.page === page);
+  });
+
+  if (page === 'tickets') {
+    showTicketsList();
+  } else if (page === 'kb') {
+    showKBPage();
+  }
+}
+
+// =========================================================================
+// Ticket Search and Filtering
+// =========================================================================
+
+/**
+ * Handle ticket search input
+ */
+function handleTicketSearch(event) {
+  ticketFilters.search = event.target.value;
+  const clearBtn = document.getElementById('searchClear');
+  clearBtn.style.display = ticketFilters.search ? 'flex' : 'none';
+  currentPage = 1;
+  loadTicketsWithFilters();
+}
+
+/**
+ * Clear ticket search
+ */
+function clearTicketSearch() {
+  const searchInput = document.getElementById('ticketSearch');
+  searchInput.value = '';
+  ticketFilters.search = '';
+  document.getElementById('searchClear').style.display = 'none';
+  currentPage = 1;
+  loadTicketsWithFilters();
+}
+
+/**
+ * Set status filter
+ */
+function setStatusFilter(status) {
+  ticketFilters.status = status;
+  // Update chip UI
+  document.querySelectorAll('.filter-chip').forEach(chip => {
+    chip.classList.toggle('active', chip.dataset.status === status);
+  });
+  currentPage = 1;
+  loadTicketsWithFilters();
+}
+
+/**
+ * Toggle advanced filters visibility
+ */
+function toggleAdvancedFilters() {
+  const filters = document.getElementById('advancedFilters');
+  filters.style.display = filters.style.display === 'none' ? 'flex' : 'none';
+}
+
+/**
+ * Apply filters
+ */
+function applyFilters() {
+  ticketFilters.priority = document.getElementById('priorityFilter').value;
+  ticketFilters.dateFrom = document.getElementById('dateFrom').value;
+  ticketFilters.dateTo = document.getElementById('dateTo').value;
+  currentPage = 1;
+  loadTicketsWithFilters();
+}
+
+/**
+ * Clear all filters
+ */
+function clearFilters() {
+  ticketFilters = { search: '', status: 'all', priority: '', dateFrom: '', dateTo: '' };
+  document.getElementById('ticketSearch').value = '';
+  document.getElementById('searchClear').style.display = 'none';
+  document.getElementById('priorityFilter').value = '';
+  document.getElementById('dateFrom').value = '';
+  document.getElementById('dateTo').value = '';
+  document.querySelectorAll('.filter-chip').forEach(chip => {
+    chip.classList.toggle('active', chip.dataset.status === 'all');
+  });
+  currentPage = 1;
+  loadTicketsWithFilters();
+}
+
+/**
+ * Load tickets with current filters
+ */
+async function loadTicketsWithFilters() {
+  ticketsList.innerHTML = '<div class="loading">Loading tickets...</div>';
+
+  try {
+    // Build query params
+    const params = new URLSearchParams();
+    if (ticketFilters.search) params.append('q', ticketFilters.search);
+    if (ticketFilters.status && ticketFilters.status !== 'all') params.append('status', ticketFilters.status);
+    if (ticketFilters.priority) params.append('priority', ticketFilters.priority);
+    if (ticketFilters.dateFrom) params.append('dateFrom', ticketFilters.dateFrom);
+    if (ticketFilters.dateTo) params.append('dateTo', ticketFilters.dateTo);
+    params.append('page', currentPage);
+    params.append('limit', pageSize);
+
+    const response = await fetch(`/portal/api/tickets/search?${params.toString()}`, {
+      credentials: 'include'
+    });
+
+    if (!response.ok) {
+      // Fall back to regular tickets endpoint
+      await loadTickets();
+      return;
+    }
+
+    const data = await response.json();
+    tickets = data.tickets || data;
+    totalPages = data.totalPages || 1;
+    currentPage = data.page || 1;
+
+    renderTicketsList();
+    updatePagination();
+  } catch (error) {
+    console.error('Failed to load tickets:', error);
+    // Fall back to regular load
+    await loadTickets();
+  }
+}
+
+/**
+ * Update pagination controls
+ */
+function updatePagination() {
+  const pagination = document.getElementById('ticketsPagination');
+  const prevBtn = document.getElementById('prevPageBtn');
+  const nextBtn = document.getElementById('nextPageBtn');
+  const pageInfo = document.getElementById('pageInfo');
+
+  if (totalPages <= 1) {
+    pagination.style.display = 'none';
+    return;
+  }
+
+  pagination.style.display = 'flex';
+  prevBtn.disabled = currentPage <= 1;
+  nextBtn.disabled = currentPage >= totalPages;
+  pageInfo.textContent = `Page ${currentPage} of ${totalPages}`;
+}
+
+/**
+ * Go to specific page
+ */
+function goToPage(page) {
+  if (page < 1 || page > totalPages) return;
+  currentPage = page;
+  loadTicketsWithFilters();
+}
+
+// =========================================================================
+// Suggested Articles for Ticket Creation
+// =========================================================================
+
+/**
+ * Handle subject input for suggested articles
+ */
+function handleSubjectInput(event) {
+  const subject = event.target.value;
+
+  if (suggestionTimeout) {
+    clearTimeout(suggestionTimeout);
+  }
+
+  if (subject.length < 5) {
+    hideSuggestedArticles();
+    return;
+  }
+
+  // Debounce the suggestion lookup
+  suggestionTimeout = setTimeout(() => {
+    getSuggestedArticles(subject);
+  }, 500);
+}
+
+/**
+ * Get suggested articles based on ticket subject
+ */
+async function getSuggestedArticles(subject) {
+  try {
+    const response = await fetch(`/portal/api/kb/suggest?subject=${encodeURIComponent(subject)}`, {
+      credentials: 'include'
+    });
+
+    if (!response.ok) return;
+
+    const articles = await response.json();
+
+    if (articles && articles.length > 0) {
+      showSuggestedArticles(articles);
+    } else {
+      hideSuggestedArticles();
+    }
+  } catch (error) {
+    console.error('Failed to get suggested articles:', error);
+  }
+}
+
+/**
+ * Show suggested articles
+ */
+function showSuggestedArticles(articles) {
+  const container = document.getElementById('suggestedArticles');
+  const list = document.getElementById('suggestedArticlesList');
+
+  list.innerHTML = articles.slice(0, 3).map(article => `
+    <a href="#" class="suggested-article" onclick="openSuggestedArticle('${article.slug}'); return false;">
+      <span class="article-title">${escapeHtml(article.title)}</span>
+      ${article.summary ? `<span class="article-summary">${escapeHtml(article.summary)}</span>` : ''}
+    </a>
+  `).join('');
+
+  container.style.display = 'block';
+}
+
+/**
+ * Hide suggested articles
+ */
+function hideSuggestedArticles() {
+  document.getElementById('suggestedArticles').style.display = 'none';
+}
+
+/**
+ * Open suggested article in new tab/window
+ */
+function openSuggestedArticle(slug) {
+  // Open article in a new context while keeping form state
+  window.open(`#kb-article-${slug}`, '_blank');
+}
+
+// =========================================================================
+// Knowledge Base
+// =========================================================================
+
+/**
+ * Show Knowledge Base page
+ */
+function showKBPage() {
+  hideAllPages();
+  kbPage.style.display = 'block';
+  updateNavButtons('kb');
+  loadKBCategories();
+  loadKBArticles();
+  loadFeaturedArticles();
+}
+
+/**
+ * Update navigation button states
+ */
+function updateNavButtons(activePage) {
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.page === activePage);
+  });
+}
+
+/**
+ * Load KB categories
+ */
+async function loadKBCategories() {
+  const container = document.getElementById('kbCategories');
+
+  try {
+    const response = await fetch('/portal/api/kb/categories', {
+      credentials: 'include'
+    });
+
+    if (!response.ok) throw new Error('Failed to load categories');
+
+    kbCategories = await response.json();
+    renderKBCategories();
+  } catch (error) {
+    console.error('Failed to load KB categories:', error);
+    container.innerHTML = '<p class="error">Failed to load categories</p>';
+  }
+}
+
+/**
+ * Render KB categories in sidebar
+ */
+function renderKBCategories() {
+  const container = document.getElementById('kbCategories');
+
+  if (kbCategories.length === 0) {
+    container.innerHTML = '<p class="no-categories">No categories available</p>';
+    return;
+  }
+
+  container.innerHTML = `
+    <a href="#" class="kb-category-link ${!currentKBCategory ? 'active' : ''}" onclick="selectKBCategory(null); return false;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+        <polyline points="9 22 9 12 15 12 15 22"></polyline>
+      </svg>
+      All Articles
+    </a>
+    ${kbCategories.map(cat => `
+      <a href="#" class="kb-category-link ${currentKBCategory === cat.id ? 'active' : ''}" onclick="selectKBCategory('${cat.id}'); return false;">
+        <span class="category-color" style="background-color: ${cat.color || '#6B7280'}"></span>
+        ${escapeHtml(cat.name)}
+        ${cat.articleCount ? `<span class="category-count">${cat.articleCount}</span>` : ''}
+      </a>
+    `).join('')}
+  `;
+}
+
+/**
+ * Select KB category
+ */
+function selectKBCategory(categoryId) {
+  currentKBCategory = categoryId;
+  renderKBCategories();
+  loadKBArticles(categoryId);
+
+  // Update title
+  if (categoryId) {
+    const category = kbCategories.find(c => c.id === categoryId);
+    document.getElementById('kbTitle').textContent = category?.name || 'Articles';
+    document.getElementById('kbSubtitle').textContent = category?.description || '';
+  } else {
+    document.getElementById('kbTitle').textContent = 'Knowledge Base';
+    document.getElementById('kbSubtitle').textContent = 'Find answers to common questions';
+  }
+}
+
+/**
+ * Load KB articles
+ */
+async function loadKBArticles(categoryId = null) {
+  const container = document.getElementById('kbArticles');
+  container.innerHTML = '<div class="loading">Loading articles...</div>';
+
+  // Hide search results when loading regular articles
+  document.getElementById('kbSearchResults').style.display = 'none';
+  document.getElementById('kbArticles').style.display = 'block';
+
+  try {
+    let url = '/portal/api/kb/articles';
+    if (categoryId) {
+      url += `?categoryId=${categoryId}`;
+    }
+
+    const response = await fetch(url, {
+      credentials: 'include'
+    });
+
+    if (!response.ok) throw new Error('Failed to load articles');
+
+    kbArticles = await response.json();
+    renderKBArticles();
+  } catch (error) {
+    console.error('Failed to load KB articles:', error);
+    container.innerHTML = '<p class="error">Failed to load articles</p>';
+  }
+}
+
+/**
+ * Render KB articles
+ */
+function renderKBArticles() {
+  const container = document.getElementById('kbArticles');
+
+  if (kbArticles.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
+        </svg>
+        <h3>No articles found</h3>
+        <p>There are no articles in this category yet.</p>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="kb-articles-list">
+      ${kbArticles.map(article => renderKBArticleCard(article)).join('')}
+    </div>
+  `;
+}
+
+/**
+ * Render KB article card
+ */
+function renderKBArticleCard(article) {
+  const category = kbCategories.find(c => c.id === article.categoryId);
+
+  return `
+    <a href="#" class="kb-article-card" onclick="showKBArticle('${article.slug}'); return false;">
+      <div class="article-card-content">
+        <h3>${escapeHtml(article.title)}</h3>
+        ${article.summary ? `<p>${escapeHtml(article.summary)}</p>` : ''}
+        <div class="article-meta">
+          ${category ? `<span class="article-category" style="background-color: ${category.color || '#6B7280'}20; color: ${category.color || '#6B7280'}">${escapeHtml(category.name)}</span>` : ''}
+          ${article.viewCount ? `<span class="article-views">${article.viewCount} views</span>` : ''}
+        </div>
+      </div>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="9 18 15 12 9 6"></polyline>
+      </svg>
+    </a>
+  `;
+}
+
+/**
+ * Load featured articles
+ */
+async function loadFeaturedArticles() {
+  try {
+    const response = await fetch('/portal/api/kb/featured', {
+      credentials: 'include'
+    });
+
+    if (!response.ok) return;
+
+    const featured = await response.json();
+
+    if (featured && featured.length > 0) {
+      renderFeaturedArticles(featured);
+    }
+  } catch (error) {
+    console.error('Failed to load featured articles:', error);
+  }
+}
+
+/**
+ * Render featured articles
+ */
+function renderFeaturedArticles(articles) {
+  const container = document.getElementById('kbFeatured');
+  const grid = document.getElementById('kbFeaturedGrid');
+
+  grid.innerHTML = articles.map(article => `
+    <a href="#" class="kb-featured-card" onclick="showKBArticle('${article.slug}'); return false;">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+      </svg>
+      <h3>${escapeHtml(article.title)}</h3>
+      ${article.summary ? `<p>${escapeHtml(article.summary)}</p>` : ''}
+    </a>
+  `).join('');
+
+  container.style.display = 'block';
+}
+
+/**
+ * Handle KB search
+ */
+function handleKBSearch(event) {
+  const query = event.target.value;
+
+  if (kbSearchTimeout) {
+    clearTimeout(kbSearchTimeout);
+  }
+
+  if (query.length < 2) {
+    // Show regular articles view
+    document.getElementById('kbSearchResults').style.display = 'none';
+    document.getElementById('kbArticles').style.display = 'block';
+    document.getElementById('kbFeatured').style.display = currentKBCategory ? 'none' : 'block';
+    return;
+  }
+
+  kbSearchTimeout = setTimeout(() => {
+    searchKBArticles(query);
+  }, 300);
+}
+
+/**
+ * Search KB articles
+ */
+async function searchKBArticles(query) {
+  const resultsContainer = document.getElementById('kbSearchResults');
+  const resultsList = document.getElementById('kbSearchResultsList');
+
+  // Show search results section, hide others
+  document.getElementById('kbArticles').style.display = 'none';
+  document.getElementById('kbFeatured').style.display = 'none';
+  resultsContainer.style.display = 'block';
+
+  resultsList.innerHTML = '<div class="loading">Searching...</div>';
+
+  try {
+    const response = await fetch(`/portal/api/kb/search?q=${encodeURIComponent(query)}`, {
+      credentials: 'include'
+    });
+
+    if (!response.ok) throw new Error('Search failed');
+
+    const results = await response.json();
+
+    if (results.length === 0) {
+      resultsList.innerHTML = `
+        <div class="empty-state">
+          <h3>No results found</h3>
+          <p>Try different keywords or browse categories</p>
+        </div>
+      `;
+      return;
+    }
+
+    resultsList.innerHTML = results.map(article => renderKBArticleCard(article)).join('');
+  } catch (error) {
+    console.error('KB search failed:', error);
+    resultsList.innerHTML = '<p class="error">Search failed. Please try again.</p>';
+  }
+}
+
+/**
+ * Show KB article detail
+ */
+async function showKBArticle(slug) {
+  hideAllPages();
+  kbArticlePage.style.display = 'block';
+
+  const container = document.getElementById('kbArticleDetail');
+  container.innerHTML = '<div class="loading">Loading article...</div>';
+
+  try {
+    const response = await fetch(`/portal/api/kb/articles/${slug}`, {
+      credentials: 'include'
+    });
+
+    if (!response.ok) throw new Error('Failed to load article');
+
+    currentKBArticle = await response.json();
+    renderKBArticleDetail();
+
+    // Show feedback section
+    document.getElementById('articleFeedback').style.display = 'block';
+    document.getElementById('feedbackThanks').style.display = 'none';
+
+    // Load related articles
+    loadRelatedArticles(currentKBArticle.categoryId, currentKBArticle.id);
+  } catch (error) {
+    console.error('Failed to load KB article:', error);
+    container.innerHTML = '<div class="error-message">Failed to load article. Please try again.</div>';
+  }
+}
+
+/**
+ * Render KB article detail
+ */
+function renderKBArticleDetail() {
+  const container = document.getElementById('kbArticleDetail');
+  const article = currentKBArticle;
+  const category = kbCategories.find(c => c.id === article.categoryId);
+
+  container.innerHTML = `
+    <header class="article-header">
+      ${category ? `<span class="article-category-badge" style="background-color: ${category.color || '#6B7280'}20; color: ${category.color || '#6B7280'}">${escapeHtml(category.name)}</span>` : ''}
+      <h1>${escapeHtml(article.title)}</h1>
+      <div class="article-meta-info">
+        <span>Last updated ${formatDate(article.updatedAt || article.publishedAt)}</span>
+        ${article.viewCount ? `<span>${article.viewCount} views</span>` : ''}
+      </div>
+    </header>
+    <div class="article-content">
+      ${article.contentHtml || formatMarkdown(article.content)}
+    </div>
+    ${article.tags && article.tags.length > 0 ? `
+      <div class="article-tags">
+        ${article.tags.map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}
+      </div>
+    ` : ''}
+  `;
+}
+
+/**
+ * Simple markdown to HTML (basic formatting)
+ */
+function formatMarkdown(text) {
+  if (!text) return '';
+  return escapeHtml(text)
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/\n/g, '<br>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/`(.*?)`/g, '<code>$1</code>');
+}
+
+/**
+ * Load related articles
+ */
+async function loadRelatedArticles(categoryId, excludeId) {
+  const container = document.getElementById('relatedArticles');
+  const list = document.getElementById('relatedArticlesList');
+
+  if (!categoryId) {
+    container.style.display = 'none';
+    return;
+  }
+
+  try {
+    const response = await fetch(`/portal/api/kb/articles?categoryId=${categoryId}&limit=3`, {
+      credentials: 'include'
+    });
+
+    if (!response.ok) return;
+
+    const articles = await response.json();
+    const related = articles.filter(a => a.id !== excludeId).slice(0, 3);
+
+    if (related.length === 0) {
+      container.style.display = 'none';
+      return;
+    }
+
+    list.innerHTML = related.map(article => `
+      <a href="#" class="related-article-link" onclick="showKBArticle('${article.slug}'); return false;">
+        ${escapeHtml(article.title)}
+      </a>
+    `).join('');
+
+    container.style.display = 'block';
+  } catch (error) {
+    console.error('Failed to load related articles:', error);
+    container.style.display = 'none';
+  }
+}
+
+/**
+ * Submit KB article feedback
+ */
+async function submitKBFeedback(helpful) {
+  if (!currentKBArticle) return;
+
+  try {
+    await fetch(`/portal/api/kb/articles/${currentKBArticle.id}/feedback`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      credentials: 'include',
+      body: JSON.stringify({ helpful })
+    });
+
+    // Show thank you message
+    document.querySelector('.feedback-buttons').style.display = 'none';
+    document.getElementById('feedbackThanks').style.display = 'flex';
+  } catch (error) {
+    console.error('Failed to submit feedback:', error);
+  }
 }

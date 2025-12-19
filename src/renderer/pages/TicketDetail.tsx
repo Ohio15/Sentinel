@@ -1,5 +1,38 @@
 import React, { useState, useEffect } from 'react';
 import { useTicketStore, Ticket, TicketComment } from '../stores/ticketStore';
+import { SLADetails, CategorySelector, TagManager, TicketLinks } from '../components/tickets';
+
+interface Category {
+  id: string;
+  name: string;
+  parentId: string | null;
+  color: string | null;
+  icon: string | null;
+  isActive: boolean;
+}
+
+interface TicketTag {
+  id: string;
+  name: string;
+  color: string;
+  usageCount?: number;
+}
+
+interface TicketLink {
+  id: string;
+  sourceTicketId: string;
+  targetTicketId: string;
+  linkType: 'parent' | 'child' | 'related' | 'duplicate' | 'blocks' | 'blocked_by';
+  createdBy?: string;
+  createdAt?: string;
+  linkedTicket?: {
+    id: string;
+    ticketNumber: string;
+    subject: string;
+    status: string;
+    priority: string;
+  };
+}
 
 interface TicketDetailProps {
   ticketId: string;
@@ -26,10 +59,39 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+  // SLA, Categories, Tags, Links state
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [availableTags, setAvailableTags] = useState<TicketTag[]>([]);
+  const [selectedTags, setSelectedTags] = useState<TicketTag[]>([]);
+  const [ticketLinks, setTicketLinks] = useState<TicketLink[]>([]);
+
   useEffect(() => {
     fetchTicket(ticketId);
     fetchTemplates();
+    loadEnhancements();
   }, [ticketId]);
+
+  const loadEnhancements = async () => {
+    try {
+      // Load categories
+      const cats = await window.api.categories.list();
+      setCategories(cats);
+
+      // Load available tags
+      const tags = await window.api.tags.list();
+      setAvailableTags(tags);
+
+      // Load ticket's assigned tags
+      const assignments = await window.api.tags.getAssignments(ticketId);
+      setSelectedTags(assignments);
+
+      // Load ticket links
+      const links = await window.api.links.list(ticketId);
+      setTicketLinks(links);
+    } catch (error) {
+      console.error('Failed to load enhancements:', error);
+    }
+  };
 
   const handleStatusChange = async (status: Ticket['status']) => {
     if (selectedTicket) {
@@ -58,6 +120,62 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
 
   const useTemplate = (template: { content: string }) => {
     setNewComment(template.content);
+  };
+
+  const handleCategoryChange = async (categoryId: string | null) => {
+    if (selectedTicket) {
+      await updateTicket(ticketId, { categoryId: categoryId || undefined, actorName: 'Admin' });
+    }
+  };
+
+  const handleTagsChange = async (tags: TicketTag[]) => {
+    setSelectedTags(tags);
+    try {
+      await window.api.tags.assign(ticketId, tags.map((t) => t.id));
+    } catch (error) {
+      console.error('Failed to update tags:', error);
+    }
+  };
+
+  const handleCreateTag = async (name: string): Promise<TicketTag> => {
+    const newTag = await window.api.tags.create({ name, color: '#6B7280' });
+    setAvailableTags((prev) => [...prev, newTag]);
+    return newTag;
+  };
+
+  const handleAddLink = async (targetTicketId: string, linkType: TicketLink['linkType']) => {
+    await window.api.links.create({
+      sourceTicketId: ticketId,
+      targetTicketId,
+      linkType,
+      createdBy: 'Admin'
+    });
+    // Reload links
+    const links = await window.api.links.list(ticketId);
+    setTicketLinks(links);
+  };
+
+  const handleRemoveLink = async (linkId: string) => {
+    await window.api.links.delete(linkId);
+    setTicketLinks((prev) => prev.filter((l) => l.id !== linkId));
+  };
+
+  const searchTicketsForLink = async (query: string) => {
+    // Use the ticket search to find tickets
+    const result = await window.api.tickets.list();
+    return result
+      .filter((t: Ticket) =>
+        t.id !== ticketId &&
+        (t.ticketNumber.toString().includes(query) ||
+          t.subject.toLowerCase().includes(query.toLowerCase()))
+      )
+      .slice(0, 10)
+      .map((t: Ticket) => ({
+        id: t.id,
+        ticketNumber: t.ticketNumber.toString(),
+        subject: t.subject,
+        status: t.status
+      }));
   };
 
   const getStatusBadgeClass = (status: string) => {
@@ -367,6 +485,34 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
             </div>
           </div>
 
+          {/* SLA Status */}
+          {(selectedTicket.firstResponseDueAt || selectedTicket.resolutionDueAt) && (
+            <div className="card p-4">
+              <h3 className="font-semibold text-text-primary mb-3">SLA Status</h3>
+              <SLADetails
+                firstResponseDueAt={selectedTicket.firstResponseDueAt}
+                resolutionDueAt={selectedTicket.resolutionDueAt}
+                firstResponseAt={selectedTicket.firstResponseAt}
+                resolvedAt={selectedTicket.resolvedAt}
+                slaResponseBreached={selectedTicket.slaResponseBreached}
+                slaResolutionBreached={selectedTicket.slaResolutionBreached}
+                slaPausedAt={selectedTicket.slaPausedAt}
+                status={selectedTicket.status}
+              />
+            </div>
+          )}
+
+          {/* Category */}
+          <div className="card p-4">
+            <h3 className="font-semibold text-text-primary mb-3">Category</h3>
+            <CategorySelector
+              value={selectedTicket.categoryId}
+              onChange={handleCategoryChange}
+              categories={categories}
+              placeholder="Select category..."
+            />
+          </div>
+
           {/* Details */}
           <div className="card p-4">
             <h3 className="font-semibold text-text-primary mb-3">Details</h3>
@@ -425,21 +571,27 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
           </div>
 
           {/* Tags */}
-          {selectedTicket.tags && selectedTicket.tags.length > 0 && (
-            <div className="card p-4">
-              <h3 className="font-semibold text-text-primary mb-3">Tags</h3>
-              <div className="flex flex-wrap gap-2">
-                {selectedTicket.tags.map((tag, index) => (
-                  <span
-                    key={index}
-                    className="px-2 py-1 bg-gray-100 dark:bg-slate-700 text-text-secondary rounded text-sm"
-                  >
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
+          <div className="card p-4">
+            <h3 className="font-semibold text-text-primary mb-3">Tags</h3>
+            <TagManager
+              selectedTags={selectedTags}
+              availableTags={availableTags}
+              onChange={handleTagsChange}
+              onCreateTag={handleCreateTag}
+              placeholder="Add tags..."
+            />
+          </div>
+
+          {/* Linked Tickets */}
+          <div className="card p-4">
+            <TicketLinks
+              ticketId={ticketId}
+              links={ticketLinks}
+              onAddLink={handleAddLink}
+              onRemoveLink={handleRemoveLink}
+              searchTickets={searchTicketsForLink}
+            />
+          </div>
         </div>
       </div>
 
