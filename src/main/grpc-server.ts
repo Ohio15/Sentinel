@@ -173,11 +173,24 @@ export class GrpcServer {
           return;
         }
 
-        // Find device by agent ID
-        const device = await this.database.getDeviceByAgentId(agentId);
+        // Find device by agent ID, create if doesn't exist (orphaned agent recovery)
+        let device = await this.database.getDeviceByAgentId(agentId);
+        let isNewDevice = false;
         if (!device) {
-          console.warn(`gRPC: No device found for agent ${agentId}`);
-          return;
+          console.log(`gRPC: Device not found for agent ${agentId}, creating from metrics data`);
+          isNewDevice = true;
+          device = await this.database.createOrUpdateDevice({
+            agentId,
+            hostname: `Agent-${agentId.substring(0, 8)}`,
+            osType: 'Unknown',
+            osVersion: '',
+            platform: 'unknown',
+            architecture: '',
+          });
+          // Notify renderer that a new device was created
+          console.log(`[gRPC] New device created: ${device.id}, notifying renderer`);
+          this.notifyRenderer('devices:online', { agentId, deviceId: device.id, isNew: true });
+          this.notifyRenderer('devices:updated', { deviceId: device.id });
         }
 
         // Track connection and update database status

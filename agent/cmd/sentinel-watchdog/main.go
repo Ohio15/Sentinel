@@ -370,16 +370,27 @@ func (ws *watchdogService) reinstallAgent() error {
 		return fmt.Errorf("agent executable not found: %s", ws.config.AgentPath)
 	}
 
-	// Run agent install command
-	cmd := exec.Command(ws.config.AgentPath, "install")
+	// Run agent install command (uses --install flag)
+	cmd := exec.Command(ws.config.AgentPath, "--install")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("install failed: %v - %s", err, string(output))
 	}
 
-	// Start the service
-	cmd = exec.Command(ws.config.AgentPath, "start")
-	return cmd.Run()
+	// Start the service via SCM (the --install command also starts it, but ensure it's running)
+	m, err := mgr.Connect()
+	if err != nil {
+		return fmt.Errorf("failed to connect to service manager: %v", err)
+	}
+	defer m.Disconnect()
+
+	s, err := m.OpenService(ws.config.AgentService)
+	if err != nil {
+		return fmt.Errorf("failed to open service after install: %v", err)
+	}
+	defer s.Close()
+
+	return s.Start()
 }
 
 // isAgentResponding checks if the agent process is actually working
