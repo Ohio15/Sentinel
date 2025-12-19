@@ -46,14 +46,6 @@ const (
 	MsgTypeRemoteFrame    = "remote_frame"
 	MsgTypeUninstallAgent = "uninstall_agent"
 
-	// Inventory message types
-	MsgTypeInventoryFull     = "inventory_full"
-	MsgTypeInventoryDelta    = "inventory_delta"
-	MsgTypeSecurityPosture   = "security_posture"
-	MsgTypeUserAccess        = "user_access"
-	MsgTypeHardwareInventory = "hardware_inventory"
-	MsgTypeRequestInventory  = "request_inventory"
-
 	// Agent update message types
 	MsgTypeCheckUpdate   = "check_update"
 	MsgTypeUpdateAvailable = "update_available"

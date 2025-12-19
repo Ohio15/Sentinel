@@ -85,12 +85,12 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	ctx := context.Background()
 	var deviceID uuid.UUID
 	var isDisabled bool
-	err = r.db.Pool.QueryRow(ctx, "SELECT id, COALESCE(is_disabled, false) FROM devices WHERE agent_id = $1", authPayload.AgentID).Scan(&deviceID, &isDisabled)
+	err = r.db.Pool().QueryRow(ctx, "SELECT id, COALESCE(is_disabled, false) FROM devices WHERE agent_id = $1", authPayload.AgentID).Scan(&deviceID, &isDisabled)
 	if err != nil {
 		// Device not found - auto-enroll as a new device
 		log.Printf("Device not found for agent %s, auto-enrolling...", authPayload.AgentID)
 		deviceID = uuid.New()
-		_, insertErr := r.db.Pool.Exec(ctx, `
+		_, insertErr := r.db.Pool().Exec(ctx, `
 			INSERT INTO devices (id, agent_id, hostname, status, created_at, last_seen)
 			VALUES ($1, $2, $3, 'online', NOW(), NOW())
 		`, deviceID, authPayload.AgentID, "Auto-enrolled-"+authPayload.AgentID[:8])
@@ -117,7 +117,7 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	client := r.hub.RegisterAgent(conn, authPayload.AgentID, deviceID)
 
 	// Update device status
-	r.db.Pool.Exec(ctx, "UPDATE devices SET status = 'online', last_seen = NOW() WHERE id = $1", deviceID)
+	r.db.Pool().Exec(ctx, "UPDATE devices SET status = 'online', last_seen = NOW() WHERE id = $1", deviceID)
 
 	// Broadcast online status to dashboards
 	onlineMsg, _ := json.Marshal(map[string]interface{}{
@@ -134,7 +134,7 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	})
 
 	// Update device status on disconnect
-	r.db.Pool.Exec(context.Background(), "UPDATE devices SET status = 'offline' WHERE id = $1", deviceID)
+	r.db.Pool().Exec(context.Background(), "UPDATE devices SET status = 'offline' WHERE id = $1", deviceID)
 
 	// Broadcast offline status to dashboards
 	offlineMsg, _ := json.Marshal(map[string]interface{}{
@@ -166,9 +166,9 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 
 		// Update last seen (and agent version if provided)
 		if heartbeat.AgentVersion != "" {
-			r.db.Pool.Exec(ctx, "UPDATE devices SET last_seen = NOW(), agent_version = $1 WHERE id = $2", heartbeat.AgentVersion, deviceID)
+			r.db.Pool().Exec(ctx, "UPDATE devices SET last_seen = NOW(), agent_version = $1 WHERE id = $2", heartbeat.AgentVersion, deviceID)
 		} else {
-			r.db.Pool.Exec(ctx, "UPDATE devices SET last_seen = NOW() WHERE id = $1", deviceID)
+			r.db.Pool().Exec(ctx, "UPDATE devices SET last_seen = NOW() WHERE id = $1", deviceID)
 		}
 
 		// Send ack back to agent
@@ -193,7 +193,7 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 		}
 
 		// Insert metrics
-		r.db.Pool.Exec(ctx, `
+		r.db.Pool().Exec(ctx, `
 			INSERT INTO device_metrics (device_id, cpu_percent, memory_percent, memory_used_bytes,
 				memory_total_bytes, disk_percent, disk_used_bytes, disk_total_bytes,
 				network_rx_bytes, network_tx_bytes, process_count)
@@ -238,7 +238,7 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 				status = "failed"
 			}
 
-			r.db.Pool.Exec(ctx, `
+			r.db.Pool().Exec(ctx, `
 				UPDATE commands SET status = $1, output = $2, error_message = $3, completed_at = NOW()
 				WHERE id = $4
 			`, status, data.Output, response.Error, data.CommandID)
@@ -282,7 +282,7 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 func (r *Router) checkAlertRules(deviceID uuid.UUID, cpu, memory, disk float64) {
 	ctx := context.Background()
 
-	rows, err := r.db.Pool.Query(ctx, `
+	rows, err := r.db.Pool().Query(ctx, `
 		SELECT id, name, metric, operator, threshold, severity FROM alert_rules WHERE enabled = true
 	`)
 	if err != nil {
@@ -330,14 +330,14 @@ func (r *Router) checkAlertRules(deviceID uuid.UUID, cpu, memory, disk float64) 
 		if triggered {
 			// Check cooldown (don't create duplicate alerts)
 			var count int
-			r.db.Pool.QueryRow(ctx, `
+			r.db.Pool().QueryRow(ctx, `
 				SELECT COUNT(*) FROM alerts
 				WHERE device_id = $1 AND rule_id = $2 AND status != 'resolved'
 				AND created_at > NOW() - INTERVAL '15 minutes'
 			`, deviceID, rule.ID).Scan(&count)
 
 			if count == 0 {
-				r.db.Pool.Exec(ctx, `
+				r.db.Pool().Exec(ctx, `
 					INSERT INTO alerts (device_id, rule_id, severity, title, message)
 					VALUES ($1, $2, $3, $4, $5)
 				`, deviceID, rule.ID, rule.Severity, rule.Name,
@@ -369,7 +369,7 @@ func (r *Router) handleDashboardWebSocket(c *gin.Context) {
 func (r *Router) listScripts(c *gin.Context) {
 	ctx := context.Background()
 
-	rows, err := r.db.Pool.Query(ctx, `
+	rows, err := r.db.Pool().Query(ctx, `
 		SELECT id, name, description, language, content, os_types, created_at, updated_at
 		FROM scripts ORDER BY name
 	`)
@@ -448,7 +448,7 @@ func (r *Router) listAlerts(c *gin.Context) {
 	}
 	query += " ORDER BY a.created_at DESC LIMIT 100"
 
-	rows, err := r.db.Pool.Query(ctx, query, args...)
+	rows, err := r.db.Pool().Query(ctx, query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch alerts"})
 		return
@@ -504,7 +504,7 @@ func (r *Router) acknowledgeAlert(c *gin.Context) {
 	userID := c.MustGet("userId").(uuid.UUID)
 	ctx := context.Background()
 
-	r.db.Pool.Exec(ctx, `
+	r.db.Pool().Exec(ctx, `
 		UPDATE alerts SET status = 'acknowledged', acknowledged_by = $1, acknowledged_at = NOW()
 		WHERE id = $2
 	`, userID, id)
@@ -516,7 +516,7 @@ func (r *Router) resolveAlert(c *gin.Context) {
 	id, _ := uuid.Parse(c.Param("id"))
 	ctx := context.Background()
 
-	r.db.Pool.Exec(ctx, "UPDATE alerts SET status = 'resolved', resolved_at = NOW() WHERE id = $1", id)
+	r.db.Pool().Exec(ctx, "UPDATE alerts SET status = 'resolved', resolved_at = NOW() WHERE id = $1", id)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Alert resolved"})
 }
@@ -525,7 +525,7 @@ func (r *Router) resolveAlert(c *gin.Context) {
 func (r *Router) listAlertRules(c *gin.Context) {
 	ctx := context.Background()
 
-	rows, err := r.db.Pool.Query(ctx, `
+	rows, err := r.db.Pool().Query(ctx, `
 		SELECT id, name, description, enabled, metric, operator, threshold, severity,
 			   cooldown_minutes, created_at
 		FROM alert_rules ORDER BY name
@@ -591,7 +591,7 @@ func (r *Router) deleteAlertRule(c *gin.Context) {
 func (r *Router) getSettings(c *gin.Context) {
 	ctx := context.Background()
 
-	rows, err := r.db.Pool.Query(ctx, "SELECT key, value FROM settings")
+	rows, err := r.db.Pool().Query(ctx, "SELECT key, value FROM settings")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch settings"})
 		return
@@ -618,7 +618,7 @@ func (r *Router) updateSettings(c *gin.Context) {
 func (r *Router) listUsers(c *gin.Context) {
 	ctx := context.Background()
 
-	rows, err := r.db.Pool.Query(ctx, `
+	rows, err := r.db.Pool().Query(ctx, `
 		SELECT id, email, first_name, last_name, role, is_active, last_login, created_at
 		FROM users ORDER BY email
 	`)
@@ -686,7 +686,7 @@ func (r *Router) createUser(c *gin.Context) {
 
 	ctx := context.Background()
 	var id uuid.UUID
-	err = r.db.Pool.QueryRow(ctx, `INSERT INTO users (email, password_hash, first_name, last_name, role) VALUES ($1, $2, $3, $4, $5) RETURNING id`, req.Email, hashedPassword, req.FirstName, req.LastName, req.Role).Scan(&id)
+	err = r.db.Pool().QueryRow(ctx, `INSERT INTO users (email, password_hash, first_name, last_name, role) VALUES ($1, $2, $3, $4, $5) RETURNING id`, req.Email, hashedPassword, req.FirstName, req.LastName, req.Role).Scan(&id)
 
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "User already exists"})
@@ -768,7 +768,7 @@ func (r *Router) updateUser(c *gin.Context) {
 	args = append(args, id)
 	query := "UPDATE users SET " + strings.Join(updates, ", ") + ", updated_at = NOW() WHERE id = $" + string(rune('0'+argNum))
 
-	_, err = r.db.Pool.Exec(ctx, query, args...)
+	_, err = r.db.Pool().Exec(ctx, query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update user"})
 		return
@@ -787,7 +787,7 @@ func (r *Router) deleteUser(c *gin.Context) {
 	ctx := context.Background()
 
 	// Soft delete by setting is_active to false
-	_, err = r.db.Pool.Exec(ctx, "UPDATE users SET is_active = false, updated_at = NOW() WHERE id = $1", id)
+	_, err = r.db.Pool().Exec(ctx, "UPDATE users SET is_active = false, updated_at = NOW() WHERE id = $1", id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete user"})
 		return
@@ -804,42 +804,42 @@ func (r *Router) getDashboardStats(c *gin.Context) {
 
 	// Total devices
 	var totalDevices int
-	r.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM devices").Scan(&totalDevices)
+	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM devices").Scan(&totalDevices)
 	stats["totalDevices"] = totalDevices
 
 	// Online devices
 	var onlineDevices int
-	r.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM devices WHERE status = 'online'").Scan(&onlineDevices)
+	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM devices WHERE status = 'online'").Scan(&onlineDevices)
 	stats["onlineDevices"] = onlineDevices
 
 	// Offline devices
 	var offlineDevices int
-	r.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM devices WHERE status = 'offline'").Scan(&offlineDevices)
+	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM devices WHERE status = 'offline'").Scan(&offlineDevices)
 	stats["offlineDevices"] = offlineDevices
 
 	// Critical alerts
 	var criticalAlerts int
-	r.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM alerts WHERE severity = 'critical' AND status = 'open'").Scan(&criticalAlerts)
+	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM alerts WHERE severity = 'critical' AND status = 'open'").Scan(&criticalAlerts)
 	stats["criticalAlerts"] = criticalAlerts
 
 	// Warning alerts
 	var warningAlerts int
-	r.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM alerts WHERE severity = 'warning' AND status = 'open'").Scan(&warningAlerts)
+	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM alerts WHERE severity = 'warning' AND status = 'open'").Scan(&warningAlerts)
 	stats["warningAlerts"] = warningAlerts
 
 	// Total alerts
 	var totalAlerts int
-	r.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM alerts WHERE status = 'open'").Scan(&totalAlerts)
+	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM alerts WHERE status = 'open'").Scan(&totalAlerts)
 	stats["totalAlerts"] = totalAlerts
 
 	// Total scripts
 	var totalScripts int
-	r.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM scripts").Scan(&totalScripts)
+	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM scripts").Scan(&totalScripts)
 	stats["totalScripts"] = totalScripts
 
 	// Total users
 	var totalUsers int
-	r.db.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE is_active = true").Scan(&totalUsers)
+	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE is_active = true").Scan(&totalUsers)
 	stats["totalUsers"] = totalUsers
 
 	c.JSON(http.StatusOK, stats)

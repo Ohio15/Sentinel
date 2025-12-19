@@ -16,7 +16,7 @@ import (
 func (r *Router) listDevices(c *gin.Context) {
 	ctx := context.Background()
 
-	rows, err := r.db.Pool.Query(ctx, `
+	rows, err := r.db.Pool().Query(ctx, `
 		SELECT id, agent_id, hostname, display_name, os_type, os_version, os_build,
 			   platform, platform_family, architecture, cpu_model, cpu_cores, cpu_threads,
 			   cpu_speed, total_memory, boot_time, gpu, storage, serial_number,
@@ -78,7 +78,7 @@ func (r *Router) getDevice(c *gin.Context) {
 	var metadata map[string]string
 	var gpuJSON, storageJSON []byte
 
-	err = r.db.Pool.QueryRow(ctx, `
+	err = r.db.Pool().QueryRow(ctx, `
 		SELECT id, agent_id, hostname, display_name, os_type, os_version, os_build,
 			   platform, platform_family, architecture, cpu_model, cpu_cores, cpu_threads,
 			   cpu_speed, total_memory, boot_time, gpu, storage, serial_number,
@@ -123,7 +123,7 @@ func (r *Router) deleteDevice(c *gin.Context) {
 
 	// Check device status - only allow deletion for uninstalling devices
 	var status string
-	err = r.db.Pool.QueryRow(ctx, "SELECT status FROM devices WHERE id = $1", id).Scan(&status)
+	err = r.db.Pool().QueryRow(ctx, "SELECT status FROM devices WHERE id = $1", id).Scan(&status)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
 		return
@@ -138,7 +138,7 @@ func (r *Router) deleteDevice(c *gin.Context) {
 	}
 
 	// Device is uninstalling - safe to delete
-	result, err := r.db.Pool.Exec(ctx, "DELETE FROM devices WHERE id = $1", id)
+	result, err := r.db.Pool().Exec(ctx, "DELETE FROM devices WHERE id = $1", id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete device"})
 		return
@@ -165,14 +165,14 @@ func (r *Router) disableDevice(c *gin.Context) {
 
 	// Get agent ID to disconnect if online
 	var agentID string
-	err = r.db.Pool.QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1", id).Scan(&agentID)
+	err = r.db.Pool().QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1", id).Scan(&agentID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
 		return
 	}
 
 	// Update device status to disabled
-	result, err := r.db.Pool.Exec(ctx, `
+	result, err := r.db.Pool().Exec(ctx, `
 		UPDATE devices SET
 			is_disabled = TRUE,
 			disabled_at = NOW(),
@@ -227,7 +227,7 @@ func (r *Router) enableDevice(c *gin.Context) {
 	ctx := context.Background()
 
 	// Re-enable the device
-	result, err := r.db.Pool.Exec(ctx, `
+	result, err := r.db.Pool().Exec(ctx, `
 		UPDATE devices SET
 			is_disabled = FALSE,
 			disabled_at = NULL,
@@ -276,7 +276,7 @@ func (r *Router) getDeviceMetrics(c *gin.Context) {
 
 	ctx := context.Background()
 
-	rows, err := r.db.Pool.Query(ctx, `
+	rows, err := r.db.Pool().Query(ctx, `
 		SELECT timestamp, cpu_percent, memory_percent, memory_used_bytes, memory_total_bytes,
 			   disk_percent, disk_used_bytes, disk_total_bytes, network_rx_bytes,
 			   network_tx_bytes, process_count
@@ -333,7 +333,7 @@ func (r *Router) executeCommand(c *gin.Context) {
 
 	// Get device agent ID
 	var agentID string
-	err = r.db.Pool.QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1", id).Scan(&agentID)
+	err = r.db.Pool().QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1", id).Scan(&agentID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
 		return
@@ -349,7 +349,7 @@ func (r *Router) executeCommand(c *gin.Context) {
 	commandID := uuid.New()
 	requestID := uuid.New().String()
 
-	_, err = r.db.Pool.Exec(ctx, `
+	_, err = r.db.Pool().Exec(ctx, `
 		INSERT INTO commands (id, device_id, command_type, command, status, created_by)
 		VALUES ($1, $2, $3, $4, 'pending', $5)
 	`, commandID, id, req.CommandType, req.Command, userID)
@@ -376,7 +376,7 @@ func (r *Router) executeCommand(c *gin.Context) {
 	}
 
 	// Update command status to running
-	r.db.Pool.Exec(ctx, `
+	r.db.Pool().Exec(ctx, `
 		UPDATE commands SET status = 'running', started_at = NOW() WHERE id = $1
 	`, commandID)
 
@@ -408,11 +408,11 @@ func (r *Router) enrollAgent(c *gin.Context) {
 
 	// Check if agent already exists
 	var existingID uuid.UUID
-	err := r.db.Pool.QueryRow(ctx, "SELECT id FROM devices WHERE agent_id = $1", enrollment.AgentID).Scan(&existingID)
+	err := r.db.Pool().QueryRow(ctx, "SELECT id FROM devices WHERE agent_id = $1", enrollment.AgentID).Scan(&existingID)
 
 	if err == nil {
 		// Update existing device
-		_, err = r.db.Pool.Exec(ctx, `
+		_, err = r.db.Pool().Exec(ctx, `
 			UPDATE devices SET
 				hostname = $2, os_type = $3, os_version = $4, os_build = $5,
 				platform = $6, platform_family = $7, architecture = $8,
@@ -452,7 +452,7 @@ func (r *Router) enrollAgent(c *gin.Context) {
 		displayName = enrollment.AgentID
 	}
 
-	_, err = r.db.Pool.Exec(ctx, `
+	_, err = r.db.Pool().Exec(ctx, `
 		INSERT INTO devices (id, agent_id, hostname, display_name, os_type, os_version,
 			os_build, platform, platform_family, architecture, cpu_model, cpu_cores,
 			cpu_threads, cpu_speed, total_memory, boot_time, gpu, storage, serial_number,
@@ -504,7 +504,7 @@ func (r *Router) listDeviceCommands(c *gin.Context) {
 		}
 	}
 
-	rows, err := r.db.Pool.Query(ctx, `
+	rows, err := r.db.Pool().Query(ctx, `
 		SELECT id, device_id, command_type, command, status, output, error_message,
 			   exit_code, created_by, created_at, started_at, completed_at
 		FROM commands WHERE device_id = $1 ORDER BY created_at DESC LIMIT $2
@@ -556,7 +556,7 @@ func (r *Router) listCommands(c *gin.Context) {
 		args = []interface{}{}
 	}
 
-	rows, err := r.db.Pool.Query(ctx, query, args...)
+	rows, err := r.db.Pool().Query(ctx, query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch commands"})
 		return
@@ -591,7 +591,7 @@ func (r *Router) getCommand(c *gin.Context) {
 	ctx := context.Background()
 
 	var cmd models.Command
-	err = r.db.Pool.QueryRow(ctx, `
+	err = r.db.Pool().QueryRow(ctx, `
 		SELECT id, device_id, command_type, command, status, output, error_message,
 			   exit_code, created_by, created_at, started_at, completed_at
 		FROM commands WHERE id = $1
@@ -621,7 +621,7 @@ func (r *Router) uninstallAgent(c *gin.Context) {
 
 	// Get device agent ID
 	var agentID string
-	err = r.db.Pool.QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1", id).Scan(&agentID)
+	err = r.db.Pool().QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1", id).Scan(&agentID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
 		return
@@ -654,7 +654,7 @@ func (r *Router) uninstallAgent(c *gin.Context) {
 	}
 
 	// Mark device as pending uninstall in database
-	r.db.Pool.Exec(ctx, `
+	r.db.Pool().Exec(ctx, `
 		UPDATE devices SET status = 'uninstalling', updated_at = NOW() WHERE id = $1
 	`, id)
 
@@ -679,7 +679,7 @@ func (r *Router) pingAgent(c *gin.Context) {
 
 	// Get device agent ID
 	var agentID string
-	err = r.db.Pool.QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1", id).Scan(&agentID)
+	err = r.db.Pool().QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1", id).Scan(&agentID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
 		return
@@ -690,7 +690,7 @@ func (r *Router) pingAgent(c *gin.Context) {
 
 	if !isOnline {
 		// Agent is not connected to WebSocket - update status to offline
-		r.db.Pool.Exec(ctx, `
+		r.db.Pool().Exec(ctx, `
 			UPDATE devices SET status = 'offline', updated_at = NOW() WHERE id = $1
 		`, id)
 
@@ -728,7 +728,7 @@ func (r *Router) pingAgent(c *gin.Context) {
 	}
 
 	// Update device status to online and last_seen
-	r.db.Pool.Exec(ctx, `
+	r.db.Pool().Exec(ctx, `
 		UPDATE devices SET status = 'online', last_seen = NOW(), updated_at = NOW() WHERE id = $1
 	`, id)
 

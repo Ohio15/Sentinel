@@ -239,12 +239,12 @@ func (r *Router) downloadAgentUpdate(c *gin.Context) {
 
 // logAgentUpdate records an update download in the database
 func (r *Router) logAgentUpdate(ctx context.Context, agentID, platform, arch, ipAddress string) {
-	r.db.Pool.Exec(ctx, `
+	r.db.Pool().Exec(ctx, `
 		INSERT INTO agent_updates (id, agent_id, from_version, to_version, platform, architecture, ip_address, status, created_at)
 		VALUES ($1, $2, '', $3, $4, $5, $6, 'downloading', NOW())
 	`, uuid.New(), agentID, getCurrentAgentVersion(), platform, arch, ipAddress)
 
-	r.db.Pool.Exec(ctx, `
+	r.db.Pool().Exec(ctx, `
 		UPDATE devices
 		SET previous_agent_version = agent_version,
 		    last_update_check = NOW()
@@ -256,7 +256,7 @@ func (r *Router) logAgentUpdate(ctx context.Context, agentID, platform, arch, ip
 func (r *Router) listAgentVersions(c *gin.Context) {
 	agentVersion := getAgentVersionFromFile()
 
-	rows, err := r.db.Pool.Query(c.Request.Context(), `
+	rows, err := r.db.Pool().Query(c.Request.Context(), `
 		SELECT version, release_date, changelog, is_required, platforms
 		FROM agent_releases
 		ORDER BY release_date DESC
@@ -312,7 +312,7 @@ func (r *Router) listAgentVersions(c *gin.Context) {
 func (r *Router) getDeviceVersionHistory(c *gin.Context) {
 	deviceID := c.Param("id")
 
-	rows, err := r.db.Pool.Query(c.Request.Context(), `
+	rows, err := r.db.Pool().Query(c.Request.Context(), `
 		SELECT au.id, au.from_version, au.to_version, au.status, au.error_message, au.created_at, au.completed_at
 		FROM agent_updates au
 		JOIN devices d ON d.agent_id = au.agent_id
@@ -373,7 +373,7 @@ func (r *Router) reportUpdateStatus(c *gin.Context) {
 		return
 	}
 
-	_, err := r.db.Pool.Exec(c.Request.Context(), `
+	_, err := r.db.Pool().Exec(c.Request.Context(), `
 		UPDATE agent_updates
 		SET status = $1, error_message = $2, completed_at = CASE WHEN $1 IN ('completed', 'failed') THEN NOW() ELSE NULL END
 		WHERE agent_id = $3 AND to_version = $4 AND status = 'downloading'
@@ -385,7 +385,7 @@ func (r *Router) reportUpdateStatus(c *gin.Context) {
 	}
 
 	if req.Status == "completed" {
-		r.db.Pool.Exec(c.Request.Context(), `
+		r.db.Pool().Exec(c.Request.Context(), `
 			UPDATE devices SET agent_version = $1, updated_at = NOW() WHERE agent_id = $2
 		`, req.ToVersion, req.AgentID)
 	}

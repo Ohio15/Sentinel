@@ -33,7 +33,7 @@ func (r *Router) handleDashboardMessage(userID uuid.UUID, message []byte) {
 		ctx := context.Background()
 		deviceUUID, err := uuid.Parse(payload.DeviceID)
 		if err == nil {
-			r.db.Pool.QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1", deviceUUID).Scan(&agentID)
+			r.db.Pool().QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1", deviceUUID).Scan(&agentID)
 		}
 	}
 

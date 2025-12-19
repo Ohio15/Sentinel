@@ -33,8 +33,8 @@ func main() {
 	// Initialize database with connection pool settings
 	dbConfig := &database.Config{
 		URL:      cfg.DatabaseURL,
-		MaxConns: cfg.DBMaxConns,
-		MinConns: cfg.DBMinConns,
+		MaxConns: int32(cfg.DBMaxConns),
+		MinConns: int32(cfg.DBMinConns),
 	}
 	db, err := database.NewWithConfig(dbConfig)
 	if err != nil {

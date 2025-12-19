@@ -384,7 +384,7 @@ func (h *InventoryHandlers) GetSecurityPostureReport(c *gin.Context) {
 
 // Helper methods for database queries
 
-func (h *InventoryHandlers) getDeviceSoftware(ctx interface{}, deviceID uuid.UUID) ([]map[string]interface{}, error) {
+func (h *InventoryHandlers) getDeviceSoftware(ctx context.Context, deviceID uuid.UUID) ([]map[string]interface{}, error) {
 	query := `
 		SELECT name, version, publisher, install_date, install_location, size_bytes, architecture
 		FROM device_software
@@ -392,7 +392,7 @@ func (h *InventoryHandlers) getDeviceSoftware(ctx interface{}, deviceID uuid.UUI
 		ORDER BY name
 	`
 
-	rows, err := h.services.DB.Pool().Query(ctx.(interface{ Done() <-chan struct{} }), query, deviceID)
+	rows, err := h.services.DB.Pool().Query(ctx, query, deviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -419,7 +419,7 @@ func (h *InventoryHandlers) getDeviceSoftware(ctx interface{}, deviceID uuid.UUI
 	return software, nil
 }
 
-func (h *InventoryHandlers) getDeviceServices(ctx interface{}, deviceID uuid.UUID) ([]map[string]interface{}, error) {
+func (h *InventoryHandlers) getDeviceServices(ctx context.Context, deviceID uuid.UUID) ([]map[string]interface{}, error) {
 	query := `
 		SELECT name, display_name, current_state, start_type, path_to_executable, account
 		FROM device_services
@@ -427,7 +427,7 @@ func (h *InventoryHandlers) getDeviceServices(ctx interface{}, deviceID uuid.UUI
 		ORDER BY name
 	`
 
-	rows, err := h.services.DB.Pool().Query(ctx.(interface{ Done() <-chan struct{} }), query, deviceID)
+	rows, err := h.services.DB.Pool().Query(ctx, query, deviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -451,7 +451,7 @@ func (h *InventoryHandlers) getDeviceServices(ctx interface{}, deviceID uuid.UUI
 	return services, nil
 }
 
-func (h *InventoryHandlers) getDeviceSecurity(ctx interface{}, deviceID uuid.UUID) (map[string]interface{}, error) {
+func (h *InventoryHandlers) getDeviceSecurity(ctx context.Context, deviceID uuid.UUID) (map[string]interface{}, error) {
 	query := `
 		SELECT
 			antivirus_product, antivirus_enabled, antivirus_up_to_date, antivirus_realtime_enabled,
@@ -475,7 +475,7 @@ func (h *InventoryHandlers) getDeviceSecurity(ctx interface{}, deviceID uuid.UUI
 	return security, nil
 }
 
-func (h *InventoryHandlers) getDeviceUsers(ctx interface{}, deviceID uuid.UUID) ([]map[string]interface{}, error) {
+func (h *InventoryHandlers) getDeviceUsers(ctx context.Context, deviceID uuid.UUID) ([]map[string]interface{}, error) {
 	query := `
 		SELECT username, full_name, user_type, is_admin, is_disabled, last_logon
 		FROM device_users
@@ -483,7 +483,7 @@ func (h *InventoryHandlers) getDeviceUsers(ctx interface{}, deviceID uuid.UUID) 
 		ORDER BY username
 	`
 
-	rows, err := h.services.DB.Pool().Query(ctx.(interface{ Done() <-chan struct{} }), query, deviceID)
+	rows, err := h.services.DB.Pool().Query(ctx, query, deviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -509,7 +509,7 @@ func (h *InventoryHandlers) getDeviceUsers(ctx interface{}, deviceID uuid.UUID) 
 	return users, nil
 }
 
-func (h *InventoryHandlers) getDeviceUSB(ctx interface{}, deviceID uuid.UUID) ([]map[string]interface{}, error) {
+func (h *InventoryHandlers) getDeviceUSB(ctx context.Context, deviceID uuid.UUID) ([]map[string]interface{}, error) {
 	query := `
 		SELECT friendly_name, device_class, vendor_id, product_id, is_currently_connected, last_connected_at
 		FROM device_usb
@@ -517,7 +517,7 @@ func (h *InventoryHandlers) getDeviceUSB(ctx interface{}, deviceID uuid.UUID) ([
 		ORDER BY last_connected_at DESC
 	`
 
-	rows, err := h.services.DB.Pool().Query(ctx.(interface{ Done() <-chan struct{} }), query, deviceID)
+	rows, err := h.services.DB.Pool().Query(ctx, query, deviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -543,14 +543,14 @@ func (h *InventoryHandlers) getDeviceUSB(ctx interface{}, deviceID uuid.UUID) ([
 	return devices, nil
 }
 
-func (h *InventoryHandlers) getDeviceMonitors(ctx interface{}, deviceID uuid.UUID) ([]map[string]interface{}, error) {
+func (h *InventoryHandlers) getDeviceMonitors(ctx context.Context, deviceID uuid.UUID) ([]map[string]interface{}, error) {
 	query := `
 		SELECT name, manufacturer, resolution_width, resolution_height, is_primary, connection_type
 		FROM device_monitors
 		WHERE device_id = $1
 	`
 
-	rows, err := h.services.DB.Pool().Query(ctx.(interface{ Done() <-chan struct{} }), query, deviceID)
+	rows, err := h.services.DB.Pool().Query(ctx, query, deviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -576,14 +576,14 @@ func (h *InventoryHandlers) getDeviceMonitors(ctx interface{}, deviceID uuid.UUI
 	return monitors, nil
 }
 
-func (h *InventoryHandlers) getDevicePrinters(ctx interface{}, deviceID uuid.UUID) ([]map[string]interface{}, error) {
+func (h *InventoryHandlers) getDevicePrinters(ctx context.Context, deviceID uuid.UUID) ([]map[string]interface{}, error) {
 	query := `
 		SELECT name, driver_name, printer_type, is_default, is_network, status
 		FROM device_printers
 		WHERE device_id = $1
 	`
 
-	rows, err := h.services.DB.Pool().Query(ctx.(interface{ Done() <-chan struct{} }), query, deviceID)
+	rows, err := h.services.DB.Pool().Query(ctx, query, deviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -608,7 +608,7 @@ func (h *InventoryHandlers) getDevicePrinters(ctx interface{}, deviceID uuid.UUI
 	return printers, nil
 }
 
-func (h *InventoryHandlers) getDeviceBIOS(ctx interface{}, deviceID uuid.UUID) (map[string]interface{}, error) {
+func (h *InventoryHandlers) getDeviceBIOS(ctx context.Context, deviceID uuid.UUID) (map[string]interface{}, error) {
 	query := `
 		SELECT manufacturer, version, release_date, is_uefi, secure_boot_capable, secure_boot_enabled
 		FROM device_bios
@@ -619,7 +619,7 @@ func (h *InventoryHandlers) getDeviceBIOS(ctx interface{}, deviceID uuid.UUID) (
 	var releaseDate *time.Time
 	var isUEFI, secureBootCapable, secureBootEnabled bool
 
-	err := h.services.DB.Pool().QueryRow(ctx.(interface{ Done() <-chan struct{} }), query, deviceID).Scan(
+	err := h.services.DB.Pool().QueryRow(ctx, query, deviceID).Scan(
 		&manufacturer, &version, &releaseDate, &isUEFI, &secureBootCapable, &secureBootEnabled,
 	)
 	if err != nil {
@@ -636,10 +636,10 @@ func (h *InventoryHandlers) getDeviceBIOS(ctx interface{}, deviceID uuid.UUID) (
 	}, nil
 }
 
-func (h *InventoryHandlers) getAgentID(ctx interface{}, deviceID uuid.UUID) (string, error) {
+func (h *InventoryHandlers) getAgentID(ctx context.Context, deviceID uuid.UUID) (string, error) {
 	query := `SELECT agent_id FROM devices WHERE id = $1`
 	var agentID string
-	err := h.services.DB.Pool().QueryRow(ctx.(interface{ Done() <-chan struct{} }), query, deviceID).Scan(&agentID)
+	err := h.services.DB.Pool().QueryRow(ctx, query, deviceID).Scan(&agentID)
 	return agentID, err
 }
 
