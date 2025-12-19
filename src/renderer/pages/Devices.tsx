@@ -12,12 +12,6 @@ interface ServerInfo {
   enrollmentToken: string;
 }
 
-interface MsiResult {
-  type: 'success' | 'error';
-  message: string;
-  installCommand?: string;
-}
-
 export function Devices({ onDeviceSelect }: DevicesProps) {
   const { devices, loading, deleteDevice } = useDeviceStore();
   const { clients, currentClientId } = useClientStore();
@@ -34,8 +28,6 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
   const [copied, setCopied] = useState(false);
   const [downloadingPlatform, setDownloadingPlatform] = useState<string | null>(null);
   const [downloadResult, setDownloadResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const [msiDownloading, setMsiDownloading] = useState(false);
-  const [msiResult, setMsiResult] = useState<MsiResult | null>(null);
   const [psRunning, setPsRunning] = useState(false);
 
   useEffect(() => {
@@ -77,7 +69,9 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
         const sizeMB = result.size ? (result.size / 1024 / 1024).toFixed(1) : '?';
         setDownloadResult({
           type: 'success',
-          message: `Agent saved (${sizeMB} MB). Run as Admin with: --install --server=<URL> --token=<TOKEN>`
+          message: result.installCommand
+            ? `Installer saved (${sizeMB} MB). Install command: ${result.installCommand}`
+            : `Installer saved (${sizeMB} MB). Double-click to install.`
         });
       } else {
         setDownloadResult({
@@ -93,39 +87,6 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
     } finally {
       setDownloadingPlatform(null);
       setTimeout(() => setDownloadResult(null), 5000);
-    }
-  };
-
-  const handleMsiDownload = async () => {
-    setMsiDownloading(true);
-    setMsiResult(null);
-
-    try {
-      const result = await window.api.agent.downloadMsi();
-
-      if (result.canceled) {
-        setMsiResult(null);
-      } else if (result.success) {
-        const sizeMB = result.size ? (result.size / 1024 / 1024).toFixed(1) : '?';
-        setMsiResult({
-          type: 'success',
-          message: `MSI saved (${sizeMB} MB)`,
-          installCommand: result.installCommand,
-        });
-      } else {
-        setMsiResult({
-          type: 'error',
-          message: result.error || 'Download failed',
-        });
-      }
-    } catch (error) {
-      setMsiResult({
-        type: 'error',
-        message: error instanceof Error ? error.message : 'Download failed',
-      });
-    } finally {
-      setMsiDownloading(false);
-      setTimeout(() => setMsiResult(null), 10000);
     }
   };
 
@@ -377,9 +338,9 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
 
           {/* Agent Downloads */}
           <div className="card p-6">
-            <h2 className="text-lg font-semibold text-text-primary mb-4">Download Agent</h2>
+            <h2 className="text-lg font-semibold text-text-primary mb-4">Download Agent Installer</h2>
             <p className="text-sm text-text-secondary mb-4">
-              Download the agent executable for your platform, then run the install command below.
+              Download the platform-specific installer. Installation is automatic - just run the downloaded file.
             </p>
 
             {/* Download Result Toast */}
@@ -418,7 +379,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                 <div className="flex-1">
                   <p className="font-medium text-text-primary">Windows</p>
                   <p className="text-xs text-text-secondary">
-                    {downloadingPlatform === 'windows' ? 'Saving...' : 'sentinel-agent.exe'}
+                    {downloadingPlatform === 'windows' ? 'Saving...' : 'sentinel-agent.msi'}
                   </p>
                 </div>
                 {downloadingPlatform === 'windows' ? <SpinnerIcon /> : <DownloadIcon />}
@@ -432,7 +393,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                 <div className="flex-1">
                   <p className="font-medium text-text-primary">macOS</p>
                   <p className="text-xs text-text-secondary">
-                    {downloadingPlatform === 'macos' ? 'Saving...' : 'sentinel-agent'}
+                    {downloadingPlatform === 'macos' ? 'Saving...' : 'sentinel-agent.pkg'}
                   </p>
                 </div>
                 {downloadingPlatform === 'macos' ? <SpinnerIcon /> : <DownloadIcon />}
@@ -446,7 +407,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                 <div className="flex-1">
                   <p className="font-medium text-text-primary">Linux</p>
                   <p className="text-xs text-text-secondary">
-                    {downloadingPlatform === 'linux' ? 'Saving...' : 'sentinel-agent'}
+                    {downloadingPlatform === 'linux' ? 'Saving...' : 'sentinel-agent.deb'}
                   </p>
                 </div>
                 {downloadingPlatform === 'linux' ? <SpinnerIcon /> : <DownloadIcon />}
@@ -454,88 +415,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
             </div>
           </div>
 
-          {/* Enterprise Deployment - MSI */}
-          <div className="card p-6">
-            <h2 className="text-lg font-semibold text-text-primary mb-4">Enterprise Deployment (MSI)</h2>
-            <p className="text-sm text-text-secondary mb-4">
-              Download the MSI installer for enterprise deployment via Group Policy, SCCM, or other deployment tools.
-            </p>
-
-            {/* MSI Result Toast */}
-            {msiResult && (
-              <div className={`mb-4 p-4 rounded-lg ${
-                msiResult.type === 'success'
-                  ? 'bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800'
-                  : 'bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800'
-              }`}>
-                <div className="flex items-center gap-3">
-                  {msiResult.type === 'success' ? (
-                    <CheckIcon className="w-5 h-5 text-green-600" />
-                  ) : (
-                    <ErrorIcon className="w-5 h-5 text-red-600" />
-                  )}
-                  <span className={`text-sm ${
-                    msiResult.type === 'success' ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'
-                  }`}>
-                    {msiResult.message}
-                  </span>
-                  <button
-                    onClick={() => setMsiResult(null)}
-                    className="ml-auto text-gray-400 hover:text-gray-600"
-                  >
-                    <CloseIcon className="w-4 h-4" />
-                  </button>
-                </div>
-                {msiResult.installCommand && (
-                  <div className="mt-3">
-                    <p className="text-xs text-green-600 dark:text-green-400 mb-1">Silent install command:</p>
-                    <div className="relative">
-                      <pre className="bg-gray-900 text-gray-100 p-2 rounded text-xs overflow-x-auto font-mono">
-                        {msiResult.installCommand}
-                      </pre>
-                      <button
-                        onClick={() => copyToClipboard(msiResult.installCommand!)}
-                        className="absolute top-1 right-1 text-xs text-gray-400 hover:text-white"
-                      >
-                        Copy
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <button
-                onClick={handleMsiDownload}
-                disabled={msiDownloading}
-                className="flex items-center gap-3 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors border border-border disabled:opacity-50 disabled:cursor-not-allowed text-left"
-              >
-                <MsiIcon className="w-5 h-5 text-blue-600" />
-                <div className="flex-1">
-                  <p className="font-medium text-text-primary">Windows MSI</p>
-                  <p className="text-xs text-text-secondary">
-                    {msiDownloading ? 'Saving...' : 'sentinel-agent.msi'}
-                  </p>
-                </div>
-                {msiDownloading ? <SpinnerIcon /> : <DownloadIcon />}
-              </button>
-
-              <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-border">
-                <div className="flex items-center gap-2 mb-2">
-                  <TerminalIcon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-                  <span className="font-medium text-text-primary">Silent Install</span>
-                </div>
-                <p className="text-xs text-text-secondary">
-                  Use with Group Policy or SCCM:
-                </p>
-                <code className="text-xs text-gray-600 dark:text-gray-400 block mt-1">
-                  msiexec /i sentinel-agent.msi /qn
-                </code>
-              </div>
-            </div>
-          </div>
-
+          
           {/* Quick Install - PowerShell */}
           <div className="card p-6">
             <h2 className="text-lg font-semibold text-text-primary mb-4">Quick Install (PowerShell)</h2>
