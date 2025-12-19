@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/sentinel/server/internal/api"
-	"github.com/sentinel/server/internal/mdns"
 	"github.com/sentinel/server/internal/metrics"
 	"github.com/sentinel/server/internal/push"
 	"github.com/sentinel/server/internal/queue"
@@ -142,18 +141,6 @@ func main() {
 			log.Fatalf("Server failed: %v", err)
 		}
 	}()
-
-	// Start mDNS advertiser for automatic agent discovery
-	mdnsAdvertiser, err := mdns.NewAdvertiser(cfg.Port, cfg.ServerID, "1.62.0")
-	if err != nil {
-		log.Printf("Warning: mDNS advertiser creation failed: %v", err)
-	} else {
-		if err := mdnsAdvertiser.Start(); err != nil {
-			log.Printf("Warning: mDNS advertisement failed: %v", err)
-		} else {
-			defer mdnsAdvertiser.Stop()
-		}
-	}
 
 	// Wait for interrupt signal
 	quit := make(chan os.Signal, 1)
