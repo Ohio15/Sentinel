@@ -349,9 +349,92 @@ export class AgentManager {
       case 'health_report':
         this.handleHealthReport(agentId, message);
         break;
+      case 'enroll':
+        await this.handleEnrollment(agentId, message, ws);
+        break;
 
       default:
         console.log(`Unknown message type: ${message.type}`);
+    }
+  }
+
+
+  // Handle enrollment/re-enrollment from agent via WebSocket
+  private async handleEnrollment(agentId: string, message: any, ws: WebSocket): Promise<void> {
+    const data = message.data || message.payload || message;
+
+    console.log(`[Enroll] Agent ${agentId} sending enrollment data via WebSocket`);
+
+    // Build device info from enrollment data
+    const deviceInfo = {
+      agentId: agentId,
+      hostname: data.hostname || data.systemInfo?.hostname || 'Unknown',
+      displayName: data.displayName || data.hostname || data.systemInfo?.hostname || 'Unknown',
+      osType: data.osType || data.systemInfo?.os || 'Unknown',
+      osVersion: data.osVersion || data.systemInfo?.osVersion || '',
+      osBuild: data.osBuild || data.systemInfo?.osBuild || '',
+      architecture: data.architecture || data.systemInfo?.arch || '',
+      agentVersion: data.agentVersion || data.version || '',
+      ipAddress: data.ipAddress || data.systemInfo?.ipAddress || '',
+      macAddress: data.macAddress || data.systemInfo?.macAddress || '',
+      platform: data.platform || data.systemInfo?.platform || '',
+      platformFamily: data.platformFamily || data.systemInfo?.platformFamily || '',
+      cpuModel: data.cpuModel || data.systemInfo?.cpu?.model || '',
+      cpuCores: data.cpuCores || data.systemInfo?.cpu?.cores || null,
+      cpuThreads: data.cpuThreads || data.systemInfo?.cpu?.threads || null,
+      cpuSpeed: data.cpuSpeed || data.systemInfo?.cpu?.speed || null,
+      totalMemory: data.totalMemory || data.systemInfo?.memory?.total || null,
+      bootTime: data.bootTime || data.systemInfo?.bootTime || null,
+      gpu: data.gpu || data.systemInfo?.gpu || null,
+      storage: data.storage || data.systemInfo?.storage || null,
+      serialNumber: data.serialNumber || data.systemInfo?.serialNumber || '',
+      manufacturer: data.manufacturer || data.systemInfo?.manufacturer || '',
+      model: data.model || data.systemInfo?.model || '',
+      domain: data.domain || data.systemInfo?.domain || '',
+      metadata: data.metadata || {},
+      tags: data.tags || [],
+    };
+
+    try {
+      const device = await this.database.createOrUpdateDevice(deviceInfo);
+      console.log(`[Enroll] Device ${device.id} created/updated for agent ${agentId}`);
+
+      // Update the connection with the new device ID
+      const conn = this.connections.get(agentId);
+      if (conn) {
+        conn.deviceId = device.id;
+      }
+
+      // Send enrollment response
+      ws.send(JSON.stringify({
+        type: 'enroll_response',
+        success: true,
+        payload: {
+          deviceId: device.id,
+          config: {
+            heartbeatInterval: 30,
+            metricsInterval: 60,
+          },
+        },
+        timestamp: new Date().toISOString(),
+      }));
+
+      // Notify renderer of new device
+      this.notifyRenderer('device:enrolled', {
+        deviceId: device.id,
+        agentId: agentId,
+        hostname: device.hostname,
+      });
+      this.notifyRenderer('devices:online', { agentId, deviceId: device.id, isNew: true });
+      this.notifyRenderer('devices:updated', { deviceId: device.id });
+    } catch (error) {
+      console.error(`[Enroll] Failed to create device for agent ${agentId}:`, error);
+      ws.send(JSON.stringify({
+        type: 'enroll_response',
+        success: false,
+        error: 'Failed to create device record',
+        timestamp: new Date().toISOString(),
+      }));
     }
   }
 
