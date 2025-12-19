@@ -86,6 +86,23 @@ type Message struct {
 // MessageHandler is a function that handles incoming messages
 type MessageHandler func(msg *Message) error
 
+// DeviceInfo contains device information for auto-enrollment
+type DeviceInfo struct {
+	Hostname       string `json:"hostname"`
+	Platform       string `json:"platform"`
+	OSType         string `json:"osType"`
+	OSVersion      string `json:"osVersion"`
+	Architecture   string `json:"architecture"`
+	CPUModel       string `json:"cpuModel"`
+	CPUCores       int    `json:"cpuCores"`
+	TotalMemory    uint64 `json:"totalMemory"`
+	SerialNumber   string `json:"serialNumber"`
+	Manufacturer   string `json:"manufacturer"`
+	Model          string `json:"model"`
+	IPAddress      string `json:"ipAddress"`
+	MACAddress     string `json:"macAddress"`
+}
+
 // Client manages the WebSocket connection to the server
 type Client struct {
 	config            *config.Config
@@ -110,6 +127,7 @@ type Client struct {
 	offlineStore      *offline.Store
 	lastDisconnect    time.Time
 	wasOffline        bool
+	deviceInfo        *DeviceInfo
 }
 
 // New creates a new WebSocket client
@@ -129,6 +147,13 @@ func New(cfg *config.Config, version string) *Client {
 			Timeout: 2 * time.Second,
 		},
 	}
+}
+
+// SetDeviceInfo sets the device information for auto-enrollment
+func (c *Client) SetDeviceInfo(info *DeviceInfo) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.deviceInfo = info
 }
 
 // OnConnect sets the callback for successful connection
@@ -274,13 +299,25 @@ func (c *Client) Connect(ctx context.Context) error {
 
 	log.Println("WebSocket connected")
 
+	// Build auth payload with device info for auto-enrollment
+	c.mu.RLock()
+	deviceInfo := c.deviceInfo
+	c.mu.RUnlock()
+
+	authPayload := map[string]interface{}{
+		"agentId": c.config.AgentID,
+		"token":   c.config.EnrollmentToken,
+	}
+
+	// Include device info if available (for auto-enrollment of orphaned agents)
+	if deviceInfo != nil {
+		authPayload["deviceInfo"] = deviceInfo
+	}
+
 	// Send auth message immediately (server expects auth first)
 	authMsg := map[string]interface{}{
-		"type": MsgTypeAuth,
-		"payload": map[string]interface{}{
-			"agentId": c.config.AgentID,
-			"token":   c.config.EnrollmentToken,
-		},
+		"type":    MsgTypeAuth,
+		"payload": authPayload,
 	}
 	authData, err := json.Marshal(authMsg)
 	if err != nil {
