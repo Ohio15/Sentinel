@@ -291,7 +291,7 @@ export class AgentManager {
 
     switch (message.type) {
       case 'heartbeat':
-        this.handleHeartbeat(agentId, message);
+        await this.handleHeartbeat(agentId, message);
         break;
 
       case 'metrics':
