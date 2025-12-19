@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -32,6 +33,7 @@ import (
 	"github.com/sentinel/agent/internal/updates"
 	"github.com/sentinel/agent/internal/webrtc"
 	"github.com/sentinel/agent/internal/admin"
+	"github.com/sentinel/agent/internal/discovery"
 )
 
 var Version = "1.62.0"
@@ -569,12 +571,35 @@ func (a *Agent) enroll() error {
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("enrollment request failed: %w", err)
+		// Use connection diagnostics for actionable error messages
+		connErr := discovery.DiagnoseConnectionError(a.cfg.ServerURL, err)
+		log.Printf("[Enrollment] Connection failed: %s", connErr.Error())
+		return fmt.Errorf("enrollment failed: %s\nSuggestion: %s", connErr.Message, connErr.Suggestion)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("enrollment failed with status: %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		// Read error body for additional context
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyStr := string(bodyBytes)
+
+		// Provide specific guidance based on status code
+		var suggestion string
+		switch resp.StatusCode {
+		case http.StatusUnauthorized:
+			suggestion = "Enrollment token is invalid or expired. Generate a new token from the Sentinel dashboard."
+		case http.StatusForbidden:
+			suggestion = "Agent is not allowed to enroll. Check server enrollment settings."
+		case http.StatusConflict:
+			suggestion = "Agent ID already enrolled. The agent may need to be removed from the dashboard first."
+		case http.StatusServiceUnavailable:
+			suggestion = "Server is temporarily unavailable. It may be starting up or under maintenance."
+		default:
+			suggestion = "Check server logs for more details."
+		}
+
+		log.Printf("[Enrollment] Server returned status %d: %s", resp.StatusCode, bodyStr)
+		return fmt.Errorf("enrollment failed (HTTP %d): %s\nSuggestion: %s", resp.StatusCode, bodyStr, suggestion)
 	}
 
 	var result struct {
