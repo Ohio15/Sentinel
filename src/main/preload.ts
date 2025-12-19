@@ -145,6 +145,78 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('tickets:deleteTemplate', id),
   },
 
+  // SLA Policies
+  sla: {
+    list: (clientId?: string) => ipcRenderer.invoke('sla:list', clientId),
+    get: (id: string) => ipcRenderer.invoke('sla:get', id),
+    create: (policy: any) => ipcRenderer.invoke('sla:create', policy),
+    update: (id: string, updates: any) => ipcRenderer.invoke('sla:update', id, updates),
+    delete: (id: string) => ipcRenderer.invoke('sla:delete', id),
+    calculateDueDates: (ticketId: string) => ipcRenderer.invoke('sla:calculateDueDates', ticketId),
+    recordFirstResponse: (ticketId: string) => ipcRenderer.invoke('sla:recordFirstResponse', ticketId),
+    pause: (ticketId: string) => ipcRenderer.invoke('sla:pause', ticketId),
+    resume: (ticketId: string) => ipcRenderer.invoke('sla:resume', ticketId),
+    checkBreaches: () => ipcRenderer.invoke('sla:checkBreaches'),
+  },
+
+  // Ticket Categories
+  categories: {
+    list: (clientId?: string) => ipcRenderer.invoke('categories:list', clientId),
+    get: (id: string) => ipcRenderer.invoke('categories:get', id),
+    create: (category: any) => ipcRenderer.invoke('categories:create', category),
+    update: (id: string, updates: any) => ipcRenderer.invoke('categories:update', id, updates),
+    delete: (id: string) => ipcRenderer.invoke('categories:delete', id),
+  },
+
+  // Ticket Tags
+  tags: {
+    list: (clientId?: string) => ipcRenderer.invoke('tags:list', clientId),
+    get: (id: string) => ipcRenderer.invoke('tags:get', id),
+    create: (tag: any) => ipcRenderer.invoke('tags:create', tag),
+    update: (id: string, updates: any) => ipcRenderer.invoke('tags:update', id, updates),
+    delete: (id: string) => ipcRenderer.invoke('tags:delete', id),
+    getAssignments: (ticketId: string) => ipcRenderer.invoke('tags:getAssignments', ticketId),
+    assign: (ticketId: string, tagIds: string[], assignedBy?: string) =>
+      ipcRenderer.invoke('tags:assign', ticketId, tagIds, assignedBy),
+  },
+
+  // Ticket Links
+  links: {
+    list: (ticketId: string) => ipcRenderer.invoke('links:list', ticketId),
+    create: (link: any) => ipcRenderer.invoke('links:create', link),
+    delete: (id: string) => ipcRenderer.invoke('links:delete', id),
+  },
+
+  // Ticket Analytics
+  analytics: {
+    tickets: (params: { clientId?: string; dateFrom?: string; dateTo?: string }) =>
+      ipcRenderer.invoke('analytics:tickets', params),
+  },
+
+  // Knowledge Base
+  kb: {
+    categories: {
+      list: () => ipcRenderer.invoke('kb:categories:list'),
+      get: (id: string) => ipcRenderer.invoke('kb:categories:get', id),
+      create: (category: any) => ipcRenderer.invoke('kb:categories:create', category),
+      update: (id: string, updates: any) => ipcRenderer.invoke('kb:categories:update', id, updates),
+      delete: (id: string) => ipcRenderer.invoke('kb:categories:delete', id),
+    },
+    articles: {
+      list: (options?: { categoryId?: string; status?: string; featured?: boolean; limit?: number; offset?: number }) =>
+        ipcRenderer.invoke('kb:articles:list', options),
+      get: (id: string) => ipcRenderer.invoke('kb:articles:get', id),
+      getBySlug: (slug: string) => ipcRenderer.invoke('kb:articles:getBySlug', slug),
+      create: (article: any) => ipcRenderer.invoke('kb:articles:create', article),
+      update: (id: string, updates: any) => ipcRenderer.invoke('kb:articles:update', id, updates),
+      delete: (id: string) => ipcRenderer.invoke('kb:articles:delete', id),
+      search: (query: string, limit?: number) => ipcRenderer.invoke('kb:articles:search', query, limit),
+      suggest: (ticketSubject: string, limit?: number) => ipcRenderer.invoke('kb:articles:suggest', ticketSubject, limit),
+      featured: (limit?: number) => ipcRenderer.invoke('kb:articles:featured', limit),
+      related: (articleId: string) => ipcRenderer.invoke('kb:articles:related', articleId),
+    },
+  },
+
   // Settings
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),

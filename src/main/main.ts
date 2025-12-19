@@ -601,6 +601,177 @@ function setupIpcHandlers(): void {
     return database.deleteTicketTemplate(id);
   });
 
+  // SLA Policies
+  ipcMain.handle('sla:list', async (_, clientId?: string) => {
+    return database.getSLAPolicies(clientId);
+  });
+
+  ipcMain.handle('sla:get', async (_, id: string) => {
+    return database.getSLAPolicy(id);
+  });
+
+  ipcMain.handle('sla:create', async (_, policy: any) => {
+    return database.createSLAPolicy(policy);
+  });
+
+  ipcMain.handle('sla:update', async (_, id: string, updates: any) => {
+    return database.updateSLAPolicy(id, updates);
+  });
+
+  ipcMain.handle('sla:delete', async (_, id: string) => {
+    return database.deleteSLAPolicy(id);
+  });
+
+  ipcMain.handle('sla:calculateDueDates', async (_, ticketId: string) => {
+    return database.calculateSLADueDates(ticketId);
+  });
+
+  ipcMain.handle('sla:recordFirstResponse', async (_, ticketId: string) => {
+    return database.recordFirstResponse(ticketId);
+  });
+
+  ipcMain.handle('sla:pause', async (_, ticketId: string) => {
+    return database.pauseSLA(ticketId);
+  });
+
+  ipcMain.handle('sla:resume', async (_, ticketId: string) => {
+    return database.resumeSLA(ticketId);
+  });
+
+  ipcMain.handle('sla:checkBreaches', async () => {
+    return database.checkSLABreaches();
+  });
+
+  // Ticket Categories
+  ipcMain.handle('categories:list', async (_, clientId?: string) => {
+    return database.getTicketCategories(clientId);
+  });
+
+  ipcMain.handle('categories:get', async (_, id: string) => {
+    return database.getTicketCategory(id);
+  });
+
+  ipcMain.handle('categories:create', async (_, category: any) => {
+    return database.createTicketCategory(category);
+  });
+
+  ipcMain.handle('categories:update', async (_, id: string, updates: any) => {
+    return database.updateTicketCategory(id, updates);
+  });
+
+  ipcMain.handle('categories:delete', async (_, id: string) => {
+    return database.deleteTicketCategory(id);
+  });
+
+  // Ticket Tags
+  ipcMain.handle('tags:list', async (_, clientId?: string) => {
+    return database.getTicketTags(clientId);
+  });
+
+  ipcMain.handle('tags:get', async (_, id: string) => {
+    return database.getTicketTag(id);
+  });
+
+  ipcMain.handle('tags:create', async (_, tag: any) => {
+    return database.createTicketTag(tag);
+  });
+
+  ipcMain.handle('tags:update', async (_, id: string, updates: any) => {
+    return database.updateTicketTag(id, updates);
+  });
+
+  ipcMain.handle('tags:delete', async (_, id: string) => {
+    return database.deleteTicketTag(id);
+  });
+
+  ipcMain.handle('tags:getAssignments', async (_, ticketId: string) => {
+    return database.getTicketTagAssignments(ticketId);
+  });
+
+  ipcMain.handle('tags:assign', async (_, ticketId: string, tagIds: string[], assignedBy?: string) => {
+    return database.assignTagsToTicket(ticketId, tagIds, assignedBy);
+  });
+
+  // Ticket Links
+  ipcMain.handle('links:list', async (_, ticketId: string) => {
+    return database.getTicketLinks(ticketId);
+  });
+
+  ipcMain.handle('links:create', async (_, link: any) => {
+    return database.createTicketLink(link);
+  });
+
+  ipcMain.handle('links:delete', async (_, id: string) => {
+    return database.deleteTicketLink(id);
+  });
+
+  // Ticket Analytics
+  ipcMain.handle('analytics:tickets', async (_, params: { clientId?: string; dateFrom?: string; dateTo?: string }) => {
+    return database.getTicketAnalytics(params);
+  });
+
+  // Knowledge Base Categories
+  ipcMain.handle('kb:categories:list', async () => {
+    return database.getKBCategories();
+  });
+
+  ipcMain.handle('kb:categories:get', async (_, id: string) => {
+    return database.getKBCategory(id);
+  });
+
+  ipcMain.handle('kb:categories:create', async (_, category: any) => {
+    return database.createKBCategory(category);
+  });
+
+  ipcMain.handle('kb:categories:update', async (_, id: string, updates: any) => {
+    return database.updateKBCategory(id, updates);
+  });
+
+  ipcMain.handle('kb:categories:delete', async (_, id: string) => {
+    return database.deleteKBCategory(id);
+  });
+
+  // Knowledge Base Articles
+  ipcMain.handle('kb:articles:list', async (_, options?: { categoryId?: string; status?: string; featured?: boolean; limit?: number; offset?: number }) => {
+    return database.getKBArticles(options);
+  });
+
+  ipcMain.handle('kb:articles:get', async (_, id: string) => {
+    return database.getKBArticle(id);
+  });
+
+  ipcMain.handle('kb:articles:getBySlug', async (_, slug: string) => {
+    return database.getKBArticleBySlug(slug);
+  });
+
+  ipcMain.handle('kb:articles:create', async (_, article: any) => {
+    return database.createKBArticle(article);
+  });
+
+  ipcMain.handle('kb:articles:update', async (_, id: string, updates: any) => {
+    return database.updateKBArticle(id, updates);
+  });
+
+  ipcMain.handle('kb:articles:delete', async (_, id: string) => {
+    return database.deleteKBArticle(id);
+  });
+
+  ipcMain.handle('kb:articles:search', async (_, query: string, limit?: number) => {
+    return database.searchKBArticles(query, limit);
+  });
+
+  ipcMain.handle('kb:articles:suggest', async (_, ticketSubject: string, limit?: number) => {
+    return database.suggestKBArticles(ticketSubject, limit);
+  });
+
+  ipcMain.handle('kb:articles:featured', async (_, limit?: number) => {
+    return database.getKBFeaturedArticles(limit);
+  });
+
+  ipcMain.handle('kb:articles:related', async (_, articleId: string) => {
+    return database.getKBRelatedArticles(articleId);
+  });
+
   // Settings
   ipcMain.handle('settings:get', async () => {
     return database.getSettings();
