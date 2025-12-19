@@ -239,6 +239,14 @@ export class Server {
       }
 
       const device = await this.database.createOrUpdateDevice(agentInfo);
+
+      // Notify renderer about the new/updated device
+      this.agentManager.notifyDeviceEnrolled({
+        id: device.id,
+        agentId: agentInfo.agentId,
+        hostname: device.hostname,
+      });
+
       res.json({
         success: true,
         deviceId: device.id,
