@@ -1,0 +1,21 @@
+version: 1.63.0
+releaseDate: '2025-12-19T20:47:00.000Z'
+files:
+  - url: sentinel-agent.exe
+    sha512: 77da73b0d592820dcb7a8ab7052048c674c2fbd864ac00aeee411e08bfda47221efcced5ac427755712b9be3d3bd3898216ae14ee20b4a59f7131c68d4634f6b
+    size: 20955648
+  - url: sentinel-desktop.exe
+    sha512: b6e10191891e431d2a32419d697cb1b706c3c2576e7162298914b91c1e68052af4d397e8140fb0a17506d3e03e70a3a615d12b0b37372a43ed724dc2c545d222
+    size: 9334784
+  - url: openh264-2.4.1-win64.dll
+    sha512: 953340695c573d14e554866a5ea26997be9bc61596acf0a7df293c20c1270a4ce148c92b04bf3208f15b282ce0936071c484f8e39c29236c288afedb8e3c3317
+    size: 974944
+  - url: sentinel-watchdog.exe
+    sha512: e92a2443364e6b7a26187285df54d1a2ebf207f05ce9d2ba78b427f6915a75fb66ae46b5fd6eaa0ed3b36cfa331fe645d063b610b831f950438eafffd14af935
+    size: 2964480
+path: sentinel-agent.exe
+sha512: 77da73b0d592820dcb7a8ab7052048c674c2fbd864ac00aeee411e08bfda47221efcced5ac427755712b9be3d3bd3898216ae14ee20b4a59f7131c68d4634f6b
+releaseNotes: |
+  - Improved enrollment error handling with actionable suggestions
+  - Better connection failure diagnostics (DNS, timeout, TLS errors)
+  - Removed mDNS discovery (not suitable for RMM architecture)
