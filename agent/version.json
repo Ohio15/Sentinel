@@ -1,5 +1,5 @@
 {
-  "version": "1.61.5",
+  "version": "1.61.6",
   "releaseDate": "2025-12-19",
   "changelog": "- Enterprise scalability: Distributed WebSocket hub for 5000+ devices\n- Comprehensive inventory: Software, services, security posture collection\n- Mobile device management: iOS/Android support with push notifications\n- Bulk metrics insertion with PostgreSQL partitioning\n- Redis Streams command queue for cross-server routing\n- NGINX load balancer configuration for horizontal scaling\n- Health check endpoints for load balancer integration\n- Delta change detection for inventory updates",
   "platforms": [

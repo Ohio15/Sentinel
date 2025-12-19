@@ -794,6 +794,18 @@ export class AgentManager {
     }
   }
 
+  // Public method to notify renderer about device enrollment (called from HTTP endpoint)
+  public notifyDeviceEnrolled(device: { id: string; agentId: string; hostname: string }): void {
+    console.log('[AgentManager] Notifying renderer of enrolled device:', device.id);
+    this.notifyRenderer('device:enrolled', {
+      deviceId: device.id,
+      agentId: device.agentId,
+      hostname: device.hostname,
+    });
+    this.notifyRenderer('devices:online', { agentId: device.agentId, deviceId: device.id, isNew: true });
+    this.notifyRenderer('devices:updated', { deviceId: device.id });
+  }
+
   private startHeartbeatChecker(): void {
     setInterval(async () => {
       const now = new Date();
