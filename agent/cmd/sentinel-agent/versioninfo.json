@@ -2,13 +2,13 @@
   "FixedFileInfo": {
     "FileVersion": {
       "Major": 1,
-      "Minor": 0,
+      "Minor": 60,
       "Patch": 0,
       "Build": 0
     },
     "ProductVersion": {
       "Major": 1,
-      "Minor": 0,
+      "Minor": 60,
       "Patch": 0,
       "Build": 0
     },
@@ -22,12 +22,12 @@
     "Comments": "Sentinel Agent for Remote Monitoring and Management",
     "CompanyName": "Sentinel",
     "FileDescription": "Sentinel Agent",
-    "FileVersion": "1.0.0.0",
+    "FileVersion": "1.60.0.0",
     "InternalName": "sentinel-agent",
-    "LegalCopyright": "Copyright (c) 2024 Sentinel",
+    "LegalCopyright": "Copyright (c) 2024-2025 Sentinel",
     "OriginalFilename": "sentinel-agent.exe",
     "ProductName": "Sentinel Agent",
-    "ProductVersion": "1.0.0.0"
+    "ProductVersion": "1.60.0.0"
   },
   "VarFileInfo": {
     "Translation": {

@@ -21,30 +21,43 @@ const (
 
 // Message types
 const (
-	MsgTypeAuth         = "auth"
-	MsgTypeAuthResponse = "auth_response"
-	MsgTypeHeartbeat    = "heartbeat"
-	MsgTypeHeartbeatAck = "heartbeat_ack"
-	MsgTypePing         = "ping"
-	MsgTypePong         = "pong"
-	MsgTypeMetrics      = "metrics"
-	MsgTypeCommand      = "execute_command"
-	MsgTypeScript       = "execute_script"
-	MsgTypeResponse     = "response"
-	MsgTypeTerminalStart = "start_terminal"
-	MsgTypeTerminalInput = "terminal_input"
+	MsgTypeAuth           = "auth"
+	MsgTypeAuthResponse   = "auth_response"
+	MsgTypeHeartbeat      = "heartbeat"
+	MsgTypeHeartbeatAck   = "heartbeat_ack"
+	MsgTypePing           = "ping"
+	MsgTypePong           = "pong"
+	MsgTypeMetrics        = "metrics"
+	MsgTypeCommand        = "execute_command"
+	MsgTypeScript         = "execute_script"
+	MsgTypeResponse       = "response"
+	MsgTypeTerminalStart  = "start_terminal"
+	MsgTypeTerminalInput  = "terminal_input"
 	MsgTypeTerminalOutput = "terminal_output"
 	MsgTypeTerminalResize = "terminal_resize"
 	MsgTypeTerminalClose  = "close_terminal"
-	MsgTypeListFiles    = "list_files"
-	MsgTypeFileContent   = "file_content"
-	MsgTypeDownloadFile  = "download_file"
+	MsgTypeListFiles      = "list_files"
+	MsgTypeFileContent    = "file_content"
+	MsgTypeDownloadFile   = "download_file"
 	MsgTypeUploadFile     = "upload_file"
 	MsgTypeStartRemote    = "start_remote"
 	MsgTypeStopRemote     = "stop_remote"
 	MsgTypeRemoteInput    = "remote_input"
 	MsgTypeRemoteFrame    = "remote_frame"
 	MsgTypeUninstallAgent = "uninstall_agent"
+
+	// Inventory message types
+	MsgTypeInventoryFull     = "inventory_full"
+	MsgTypeInventoryDelta    = "inventory_delta"
+	MsgTypeSecurityPosture   = "security_posture"
+	MsgTypeUserAccess        = "user_access"
+	MsgTypeHardwareInventory = "hardware_inventory"
+	MsgTypeRequestInventory  = "request_inventory"
+
+	// Agent update message types
+	MsgTypeCheckUpdate   = "check_update"
+	MsgTypeUpdateAvailable = "update_available"
+	MsgTypeUpdateProgress  = "update_progress"
 )
 
 type Message struct {
