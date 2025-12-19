@@ -118,7 +118,7 @@ CREATE TABLE IF NOT EXISTS kb_article_views (
 -- Create indexes for view tracking
 CREATE INDEX IF NOT EXISTS idx_kb_article_views_article ON kb_article_views(article_id);
 CREATE INDEX IF NOT EXISTS idx_kb_article_views_created ON kb_article_views(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_kb_article_views_date ON kb_article_views(DATE(created_at));
+-- Note: Date-based queries can use range filters on created_at timestamp index
 
 -- ============================================================================
 -- KB RELATED ARTICLES
