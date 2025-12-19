@@ -169,27 +169,11 @@ func (h *MobileHandlers) LocateDevice(c *gin.Context) {
 		return
 	}
 
-	// Get push token for device
 	ctx := c.Request.Context()
-	var pushToken, platform string
-	err = h.services.DB.Pool().QueryRow(ctx, `
-		SELECT pt.token, pt.platform
-		FROM push_tokens pt
-		JOIN mobile_devices md ON pt.device_id = md.device_id
-		WHERE md.device_id = $1 OR md.id = $1
-		AND pt.is_active = true
-		ORDER BY pt.updated_at DESC
-		LIMIT 1
-	`, deviceID).Scan(&pushToken, &platform)
-
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no active push token for device"})
-		return
-	}
 
 	// Send locate command via push notification
 	if h.services.PushService != nil {
-		err = h.services.PushService.SendCommand(ctx, pushToken, platform, "locate", nil)
+		_, err = h.services.PushService.SendCommand(ctx, deviceID, uuid.New().String(), "locate")
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to send locate command"})
 			return
@@ -227,30 +211,13 @@ func (h *MobileHandlers) LockDevice(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	// Get push token
-	var pushToken, platform string
-	err = h.services.DB.Pool().QueryRow(ctx, `
-		SELECT pt.token, pt.platform
-		FROM push_tokens pt
-		JOIN mobile_devices md ON pt.device_id = md.device_id
-		WHERE md.device_id = $1 OR md.id = $1
-		AND pt.is_active = true
-		ORDER BY pt.updated_at DESC
-		LIMIT 1
-	`, deviceID).Scan(&pushToken, &platform)
 
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no active push token for device"})
-		return
 	}
 
 	// Send lock command
 	if h.services.PushService != nil {
-		payload := map[string]interface{}{
-			"pin":     req.PIN,
-			"message": req.Message,
-		}
-		err = h.services.PushService.SendCommand(ctx, pushToken, platform, "lock", payload)
+		_, err = h.services.PushService.SendCommand(ctx, deviceID, uuid.New().String(), "lock")
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to send lock command"})
 			return
@@ -287,26 +254,13 @@ func (h *MobileHandlers) WipeDevice(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	// Get push token
-	var pushToken, platform string
-	err = h.services.DB.Pool().QueryRow(ctx, `
-		SELECT pt.token, pt.platform
-		FROM push_tokens pt
-		JOIN mobile_devices md ON pt.device_id = md.device_id
-		WHERE md.device_id = $1 OR md.id = $1
-		AND pt.is_active = true
-		ORDER BY pt.updated_at DESC
-		LIMIT 1
-	`, deviceID).Scan(&pushToken, &platform)
 
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no active push token for device"})
-		return
 	}
 
 	// Send wipe command
 	if h.services.PushService != nil {
-		err = h.services.PushService.SendCommand(ctx, pushToken, platform, "wipe", nil)
+		_, err = h.services.PushService.SendCommand(ctx, deviceID, uuid.New().String(), "wipe")
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to send wipe command"})
 			return

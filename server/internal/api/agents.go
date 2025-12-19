@@ -31,7 +31,7 @@ var installerPaths = map[string]string{
 
 // listEnrollmentTokens returns all enrollment tokens
 func (r *Router) listEnrollmentTokens(c *gin.Context) {
-	rows, err := r.db.Pool.Query(c.Request.Context(), `
+	rows, err := r.db.Pool().Query(c.Request.Context(), `
 		SELECT id, token, name, description, created_by, expires_at, max_uses, use_count,
 		       is_active, tags, metadata, created_at, updated_at
 		FROM enrollment_tokens
@@ -93,7 +93,7 @@ func (r *Router) createEnrollmentToken(c *gin.Context) {
 	uid := userID.(uuid.UUID)
 
 	var tokenID uuid.UUID
-	err := r.db.Pool.QueryRow(c.Request.Context(), `
+	err := r.db.Pool().QueryRow(c.Request.Context(), `
 		INSERT INTO enrollment_tokens (token, name, description, created_by, expires_at, max_uses, tags, metadata)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id
@@ -121,7 +121,7 @@ func (r *Router) getEnrollmentToken(c *gin.Context) {
 	}
 
 	var t models.EnrollmentToken
-	err = r.db.Pool.QueryRow(c.Request.Context(), `
+	err = r.db.Pool().QueryRow(c.Request.Context(), `
 		SELECT id, token, name, description, created_by, expires_at, max_uses, use_count,
 		       is_active, tags, metadata, created_at, updated_at
 		FROM enrollment_tokens WHERE id = $1
@@ -163,7 +163,7 @@ func (r *Router) updateEnrollmentToken(c *gin.Context) {
 		return
 	}
 
-	_, err = r.db.Pool.Exec(c.Request.Context(), `
+	_, err = r.db.Pool().Exec(c.Request.Context(), `
 		UPDATE enrollment_tokens SET
 			name = COALESCE($1, name),
 			description = COALESCE($2, description),
@@ -192,7 +192,7 @@ func (r *Router) deleteEnrollmentToken(c *gin.Context) {
 		return
 	}
 
-	_, err = r.db.Pool.Exec(c.Request.Context(), `DELETE FROM enrollment_tokens WHERE id = $1`, tokenID)
+	_, err = r.db.Pool().Exec(c.Request.Context(), `DELETE FROM enrollment_tokens WHERE id = $1`, tokenID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete token"})
 		return
@@ -218,7 +218,7 @@ func (r *Router) regenerateEnrollmentToken(c *gin.Context) {
 	}
 	newToken := hex.EncodeToString(tokenBytes)
 
-	_, err = r.db.Pool.Exec(c.Request.Context(), `
+	_, err = r.db.Pool().Exec(c.Request.Context(), `
 		UPDATE enrollment_tokens SET token = $1, use_count = 0 WHERE id = $2
 	`, newToken, tokenID)
 
@@ -282,7 +282,7 @@ func (r *Router) downloadAgentInstaller(c *gin.Context) {
 	var tags []string
 	var metadata map[string]string
 
-	err := r.db.Pool.QueryRow(c.Request.Context(), `
+	err := r.db.Pool().QueryRow(c.Request.Context(), `
 		SELECT id, is_active, expires_at, max_uses, use_count, tags, metadata
 		FROM enrollment_tokens WHERE token = $1
 	`, token).Scan(&tokenID, &isActive, &expiresAt, &maxUses, &useCount, &tags, &metadata)
@@ -322,13 +322,13 @@ func (r *Router) downloadAgentInstaller(c *gin.Context) {
 	}
 
 	// Log download
-	r.db.Pool.Exec(c.Request.Context(), `
+	r.db.Pool().Exec(c.Request.Context(), `
 		INSERT INTO agent_downloads (token_id, platform, architecture, ip_address, user_agent)
 		VALUES ($1, $2, $3, $4, $5)
 	`, tokenID, platform, arch, c.ClientIP(), c.Request.UserAgent())
 
 	// Increment use count
-	r.db.Pool.Exec(c.Request.Context(), `
+	r.db.Pool().Exec(c.Request.Context(), `
 		UPDATE enrollment_tokens SET use_count = use_count + 1 WHERE id = $1
 	`, tokenID)
 

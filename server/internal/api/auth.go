@@ -58,7 +58,7 @@ func (r *Router) login(c *gin.Context) {
 		IsActive     bool
 	}
 
-	err := r.db.Pool.QueryRow(ctx, `
+	err := r.db.Pool().QueryRow(ctx, `
 		SELECT id, email, password_hash, first_name, last_name, role, is_active
 		FROM users WHERE email = $1
 	`, req.Email).Scan(&user.ID, &user.Email, &user.PasswordHash, &user.FirstName, &user.LastName, &user.Role, &user.IsActive)
@@ -95,7 +95,7 @@ func (r *Router) login(c *gin.Context) {
 	}
 
 	// Update last login
-	r.db.Pool.Exec(ctx, "UPDATE users SET last_login = NOW() WHERE id = $1", user.ID)
+	r.db.Pool().Exec(ctx, "UPDATE users SET last_login = NOW() WHERE id = $1", user.ID)
 
 	c.JSON(http.StatusOK, LoginResponse{
 		AccessToken:  accessToken,
@@ -130,7 +130,7 @@ func (r *Router) refreshToken(c *gin.Context) {
 		ExpiresAt time.Time
 	}
 
-	err := r.db.Pool.QueryRow(ctx, `
+	err := r.db.Pool().QueryRow(ctx, `
 		SELECT id, user_id, expires_at FROM sessions
 		WHERE refresh_token_hash = $1
 	`, tokenHash).Scan(&session.ID, &session.UserID, &session.ExpiresAt)
@@ -141,7 +141,7 @@ func (r *Router) refreshToken(c *gin.Context) {
 	}
 
 	if time.Now().After(session.ExpiresAt) {
-		r.db.Pool.Exec(ctx, "DELETE FROM sessions WHERE id = $1", session.ID)
+		r.db.Pool().Exec(ctx, "DELETE FROM sessions WHERE id = $1", session.ID)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Refresh token expired"})
 		return
 	}
@@ -153,7 +153,7 @@ func (r *Router) refreshToken(c *gin.Context) {
 		IsActive bool
 	}
 
-	err = r.db.Pool.QueryRow(ctx, `
+	err = r.db.Pool().QueryRow(ctx, `
 		SELECT email, role, is_active FROM users WHERE id = $1
 	`, session.UserID).Scan(&user.Email, &user.Role, &user.IsActive)
 
@@ -180,7 +180,7 @@ func (r *Router) logout(c *gin.Context) {
 	ctx := context.Background()
 
 	// Delete all sessions for user
-	r.db.Pool.Exec(ctx, "DELETE FROM sessions WHERE user_id = $1", userID)
+	r.db.Pool().Exec(ctx, "DELETE FROM sessions WHERE user_id = $1", userID)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
 }
@@ -190,7 +190,7 @@ func (r *Router) me(c *gin.Context) {
 	ctx := context.Background()
 
 	var user UserResponse
-	err := r.db.Pool.QueryRow(ctx, `
+	err := r.db.Pool().QueryRow(ctx, `
 		SELECT id, email, first_name, last_name, role
 		FROM users WHERE id = $1
 	`, userID).Scan(&user.ID, &user.Email, &user.FirstName, &user.LastName, &user.Role)
@@ -225,7 +225,7 @@ func (r *Router) generateRefreshToken(userID uuid.UUID, ipAddress, userAgent str
 	tokenHash := hashToken(token)
 	expiresAt := time.Now().Add(7 * 24 * time.Hour) // 7 days
 
-	_, err := r.db.Pool.Exec(ctx, `
+	_, err := r.db.Pool().Exec(ctx, `
 		INSERT INTO sessions (user_id, refresh_token_hash, ip_address, user_agent, expires_at)
 		VALUES ($1, $2, $3, $4, $5)
 	`, userID, tokenHash, ipAddress, userAgent, expiresAt)

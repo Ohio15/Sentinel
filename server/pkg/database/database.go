@@ -113,10 +113,11 @@ func (db *DB) Migrate() error {
 	// Available migrations
 	migrationFiles := []string{
 		"migrations/001_initial_schema.sql",
-		"migrations/002_agent_updates.sql",
+		"migrations/002_enrollment_tokens.sql",
 		"migrations/003_metrics_partitioning.sql",
 		"migrations/004_inventory_schema.sql",
 		"migrations/005_mobile_devices.sql",
+		"migrations/006_device_management.sql",
 	}
 
 	// Run pending migrations
