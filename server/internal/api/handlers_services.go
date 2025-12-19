@@ -2,6 +2,7 @@ package api
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/sentinel/server/internal/websocket"
 )
 
 // Handler wrappers that adapt existing handlers to use Services container
@@ -86,12 +87,22 @@ func executeCommandHandler(services *Services) gin.HandlerFunc {
 }
 
 func uninstallAgentHandler(services *Services) gin.HandlerFunc {
-	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis}
+	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub.(*websocket.Hub)}
 	return router.uninstallAgent
 }
 
+func disableDeviceHandler(services *Services) gin.HandlerFunc {
+	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub.(*websocket.Hub)}
+	return router.disableDevice
+}
+
+func enableDeviceHandler(services *Services) gin.HandlerFunc {
+	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub.(*websocket.Hub)}
+	return router.enableDevice
+}
+
 func pingAgentHandler(services *Services) gin.HandlerFunc {
-	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis}
+	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub.(*websocket.Hub)}
 	return router.pingAgent
 }
 

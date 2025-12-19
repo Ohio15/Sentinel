@@ -337,6 +337,32 @@ export class Database {
     await this.query('DELETE FROM devices WHERE id = $1', [id]);
   }
 
+  async disableDevice(id: string): Promise<void> {
+    await this.query(
+      `UPDATE devices SET is_disabled = TRUE, disabled_at = NOW(), status = 'disabled' WHERE id = $1`,
+      [id]
+    );
+  }
+
+  async enableDevice(id: string): Promise<void> {
+    await this.query(
+      `UPDATE devices SET is_disabled = FALSE, disabled_at = NULL, status = 'offline' WHERE id = $1`,
+      [id]
+    );
+  }
+
+  async setDeviceUninstalling(id: string): Promise<void> {
+    await this.query(
+      `UPDATE devices SET status = 'uninstalling' WHERE id = $1`,
+      [id]
+    );
+  }
+
+  async getDeviceStatus(id: string): Promise<string | null> {
+    const result = await this.query('SELECT status FROM devices WHERE id = $1', [id]);
+    return result.rows[0]?.status || null;
+  }
+
   // Metrics methods
   async insertMetrics(deviceId: string, metrics: any): Promise<void> {
     // Support both snake_case (from agent) and camelCase field names
