@@ -65,8 +65,23 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	}
 
 	var authPayload struct {
-		AgentID string `json:"agentId"`
-		Token   string `json:"token"`
+		AgentID    string `json:"agentId"`
+		Token      string `json:"token"`
+		DeviceInfo *struct {
+			Hostname     string `json:"hostname"`
+			Platform     string `json:"platform"`
+			OSType       string `json:"osType"`
+			OSVersion    string `json:"osVersion"`
+			Architecture string `json:"architecture"`
+			CPUModel     string `json:"cpuModel"`
+			CPUCores     int    `json:"cpuCores"`
+			TotalMemory  uint64 `json:"totalMemory"`
+			SerialNumber string `json:"serialNumber"`
+			Manufacturer string `json:"manufacturer"`
+			Model        string `json:"model"`
+			IPAddress    string `json:"ipAddress"`
+			MACAddress   string `json:"macAddress"`
+		} `json:"deviceInfo,omitempty"`
 	}
 	if err := json.Unmarshal(authMsg.Payload, &authPayload); err != nil {
 		conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Invalid auth payload"}`)})
@@ -90,10 +105,29 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 		// Device not found - auto-enroll as a new device
 		log.Printf("Device not found for agent %s, auto-enrolling...", authPayload.AgentID)
 		deviceID = uuid.New()
-		_, insertErr := r.db.Pool().Exec(ctx, `
-			INSERT INTO devices (id, agent_id, hostname, status, created_at, last_seen)
-			VALUES ($1, $2, $3, 'online', NOW(), NOW())
-		`, deviceID, authPayload.AgentID, "Auto-enrolled-"+authPayload.AgentID[:8])
+		var insertErr error
+		if authPayload.DeviceInfo != nil {
+			// Use device info from agent for proper auto-enrollment
+			log.Printf("Auto-enrolling with device info: hostname=%s, platform=%s", 
+				authPayload.DeviceInfo.Hostname, authPayload.DeviceInfo.Platform)
+			_, insertErr = r.db.Pool().Exec(ctx, `
+				INSERT INTO devices (id, agent_id, hostname, platform, os_type, os_version, 
+					architecture, cpu_model, cpu_cores, total_memory, serial_number, 
+					manufacturer, model, ip_address, mac_address, status, created_at, last_seen)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'online', NOW(), NOW())
+			`, deviceID, authPayload.AgentID, authPayload.DeviceInfo.Hostname,
+				authPayload.DeviceInfo.Platform, authPayload.DeviceInfo.OSType, authPayload.DeviceInfo.OSVersion,
+				authPayload.DeviceInfo.Architecture, authPayload.DeviceInfo.CPUModel, authPayload.DeviceInfo.CPUCores,
+				authPayload.DeviceInfo.TotalMemory, authPayload.DeviceInfo.SerialNumber,
+				authPayload.DeviceInfo.Manufacturer, authPayload.DeviceInfo.Model,
+				authPayload.DeviceInfo.IPAddress, authPayload.DeviceInfo.MACAddress)
+		} else {
+			// Fallback to minimal enrollment
+			_, insertErr = r.db.Pool().Exec(ctx, `
+				INSERT INTO devices (id, agent_id, hostname, status, created_at, last_seen)
+				VALUES ($1, $2, $3, 'online', NOW(), NOW())
+			`, deviceID, authPayload.AgentID, "Auto-enrolled-"+authPayload.AgentID[:8])
+		}
 		if insertErr != nil {
 			log.Printf("Failed to auto-enroll device: %v", insertErr)
 			conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Failed to auto-enroll device"}`)})

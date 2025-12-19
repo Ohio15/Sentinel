@@ -34,7 +34,7 @@ import (
 	"github.com/sentinel/agent/internal/admin"
 )
 
-var Version = "1.57.0"
+var Version = "1.62.0"
 
 const ServiceName = "SentinelAgent"
 
@@ -363,6 +363,25 @@ func (a *Agent) Start() error {
 			log.Printf("[Desktop] Status update: sessionID=%d, state=%s, message=%s", sessionID, state, message)
 		},
 	)
+
+	// Collect and set device info for auto-enrollment of orphaned agents
+	if sysInfo, err := a.collector.GetSystemInfo(); err == nil {
+		a.client.SetDeviceInfo(&client.DeviceInfo{
+			Hostname:     sysInfo.Hostname,
+			Platform:     sysInfo.Platform,
+			OSType:       sysInfo.OS,
+			OSVersion:    sysInfo.OSVersion,
+			Architecture: sysInfo.Architecture,
+			CPUModel:     sysInfo.CPUModel,
+			CPUCores:     sysInfo.CPUCores,
+			TotalMemory:  sysInfo.TotalMemory,
+			SerialNumber: sysInfo.SerialNumber,
+			Manufacturer: sysInfo.Manufacturer,
+			Model:        sysInfo.Model,
+			IPAddress:    sysInfo.IPAddress,
+			MACAddress:   sysInfo.MACAddress,
+		})
+	}
 
 	// Set up connection callbacks
 	a.client.OnConnect(a.onConnect)
