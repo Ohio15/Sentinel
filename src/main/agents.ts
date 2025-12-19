@@ -559,10 +559,37 @@ export class AgentManager {
   }
 
   private async handleHeartbeat(agentId: string, message: any): Promise<void> {
-    await this.database.updateDeviceLastSeen(agentId);
+    // Check if device exists, create if not (orphaned agent recovery)
+    let device = await this.database.getDeviceByAgentId(agentId);
+    if (!device) {
+      console.log(`[Heartbeat] Device not found for agent ${agentId}, creating from heartbeat data`);
+      const hostname = message.hostname || `Agent-${agentId.substring(0, 8)}`;
+      device = await this.database.createOrUpdateDevice({
+        agentId,
+        hostname,
+        osType: message.osType || 'Unknown',
+        osVersion: message.osVersion || '',
+        platform: message.platform || 'unknown',
+        architecture: message.architecture || '',
+        agentVersion: message.agentVersion || '',
+      });
+
+      // Update the connection with the new device ID
+      const conn = this.connections.get(agentId);
+      if (conn) {
+        conn.deviceId = device.id;
+      }
+
+      // Notify renderer that a new device was created and is online
+      console.log(`[Heartbeat] New device created: ${device.id} (${device.hostname}), notifying renderer`);
+      this.notifyRenderer('devices:online', { agentId, deviceId: device.id, isNew: true });
+      this.notifyRenderer('devices:updated', { deviceId: device.id });
+    } else {
+      await this.database.updateDeviceLastSeen(agentId);
+    }
 
     // Update agent version if provided in heartbeat
-    if (message.agentVersion) {
+    if (message.agentVersion && device) {
       await this.database.updateDeviceAgentVersion(agentId, message.agentVersion);
     }
 
