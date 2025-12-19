@@ -386,22 +386,22 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
             {downloadResult && (
               <div className={`mb-4 p-4 rounded-lg flex items-center gap-3 ${
                 downloadResult.type === 'success'
-                  ? 'bg-green-50 border border-green-200'
-                  : 'bg-red-50 border border-red-200'
+                  ? 'bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800'
+                  : 'bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800'
               }`}>
                 {downloadResult.type === 'success' ? (
-                  <CheckIcon className="w-5 h-5 text-green-600" />
+                  <CheckIcon className="w-5 h-5 text-green-600 dark:text-green-400" />
                 ) : (
-                  <ErrorIcon className="w-5 h-5 text-red-600" />
+                  <ErrorIcon className="w-5 h-5 text-red-600 dark:text-red-400" />
                 )}
                 <span className={`text-sm ${
-                  downloadResult.type === 'success' ? 'text-green-700' : 'text-red-700'
+                  downloadResult.type === 'success' ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'
                 }`}>
                   {downloadResult.message}
                 </span>
                 <button
                   onClick={() => setDownloadResult(null)}
-                  className="ml-auto text-gray-400 hover:text-gray-600"
+                  className="ml-auto text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
                 >
                   <CloseIcon className="w-4 h-4" />
                 </button>
@@ -412,7 +412,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
               <button
                 onClick={() => handleDownload('windows')}
                 disabled={downloadingPlatform !== null}
-                className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors border border-border disabled:opacity-50 disabled:cursor-not-allowed text-left"
+                className="flex items-center gap-3 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors border border-border disabled:opacity-50 disabled:cursor-not-allowed text-left"
               >
                 <WindowsIcon className="w-5 h-5 text-blue-500" />
                 <div className="flex-1">
@@ -426,9 +426,9 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
               <button
                 onClick={() => handleDownload('macos')}
                 disabled={downloadingPlatform !== null}
-                className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors border border-border disabled:opacity-50 disabled:cursor-not-allowed text-left"
+                className="flex items-center gap-3 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors border border-border disabled:opacity-50 disabled:cursor-not-allowed text-left"
               >
-                <AppleIcon className="w-5 h-5 text-gray-600" />
+                <AppleIcon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
                 <div className="flex-1">
                   <p className="font-medium text-text-primary">macOS</p>
                   <p className="text-xs text-text-secondary">
@@ -440,7 +440,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
               <button
                 onClick={() => handleDownload('linux')}
                 disabled={downloadingPlatform !== null}
-                className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors border border-border disabled:opacity-50 disabled:cursor-not-allowed text-left"
+                className="flex items-center gap-3 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors border border-border disabled:opacity-50 disabled:cursor-not-allowed text-left"
               >
                 <LinuxIcon className="w-5 h-5 text-orange-500" />
                 <div className="flex-1">
@@ -465,8 +465,8 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
             {msiResult && (
               <div className={`mb-4 p-4 rounded-lg ${
                 msiResult.type === 'success'
-                  ? 'bg-green-50 border border-green-200'
-                  : 'bg-red-50 border border-red-200'
+                  ? 'bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800'
+                  : 'bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800'
               }`}>
                 <div className="flex items-center gap-3">
                   {msiResult.type === 'success' ? (
@@ -475,7 +475,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                     <ErrorIcon className="w-5 h-5 text-red-600" />
                   )}
                   <span className={`text-sm ${
-                    msiResult.type === 'success' ? 'text-green-700' : 'text-red-700'
+                    msiResult.type === 'success' ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'
                   }`}>
                     {msiResult.message}
                   </span>
@@ -488,7 +488,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                 </div>
                 {msiResult.installCommand && (
                   <div className="mt-3">
-                    <p className="text-xs text-green-600 mb-1">Silent install command:</p>
+                    <p className="text-xs text-green-600 dark:text-green-400 mb-1">Silent install command:</p>
                     <div className="relative">
                       <pre className="bg-gray-900 text-gray-100 p-2 rounded text-xs overflow-x-auto font-mono">
                         {msiResult.installCommand}
@@ -509,7 +509,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
               <button
                 onClick={handleMsiDownload}
                 disabled={msiDownloading}
-                className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors border border-border disabled:opacity-50 disabled:cursor-not-allowed text-left"
+                className="flex items-center gap-3 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors border border-border disabled:opacity-50 disabled:cursor-not-allowed text-left"
               >
                 <MsiIcon className="w-5 h-5 text-blue-600" />
                 <div className="flex-1">
@@ -521,15 +521,15 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                 {msiDownloading ? <SpinnerIcon /> : <DownloadIcon />}
               </button>
 
-              <div className="p-4 bg-gray-50 rounded-lg border border-border">
+              <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-border">
                 <div className="flex items-center gap-2 mb-2">
-                  <TerminalIcon className="w-5 h-5 text-gray-600" />
+                  <TerminalIcon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
                   <span className="font-medium text-text-primary">Silent Install</span>
                 </div>
                 <p className="text-xs text-text-secondary">
                   Use with Group Policy or SCCM:
                 </p>
-                <code className="text-xs text-gray-600 block mt-1">
+                <code className="text-xs text-gray-600 dark:text-gray-400 block mt-1">
                   msiexec /i sentinel-agent.msi /qn
                 </code>
               </div>
@@ -547,21 +547,21 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
               <button
                 onClick={handlePowerShellInstall}
                 disabled={psRunning}
-                className="flex items-center gap-3 p-4 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors border border-blue-200 disabled:opacity-50 disabled:cursor-not-allowed text-left"
+                className="flex items-center gap-3 p-4 bg-blue-50 dark:bg-blue-900/30 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors border border-blue-200 dark:border-blue-800 disabled:opacity-50 disabled:cursor-not-allowed text-left"
               >
-                <PowerShellIcon className="w-5 h-5 text-blue-700" />
+                <PowerShellIcon className="w-5 h-5 text-blue-700 dark:text-blue-400" />
                 <div className="flex-1">
-                  <p className="font-medium text-blue-900">Run PowerShell Install</p>
-                  <p className="text-xs text-blue-700">
+                  <p className="font-medium text-blue-900 dark:text-blue-100">Run PowerShell Install</p>
+                  <p className="text-xs text-blue-700 dark:text-blue-300">
                     {psRunning ? 'Launching...' : 'Opens elevated PowerShell window'}
                   </p>
                 </div>
-                {psRunning ? <SpinnerIcon /> : <PlayIcon className="w-5 h-5 text-blue-600" />}
+                {psRunning ? <SpinnerIcon /> : <PlayIcon className="w-5 h-5 text-blue-600 dark:text-blue-400" />}
               </button>
 
               <div className="p-4 bg-gray-50 rounded-lg border border-border">
                 <div className="flex items-center gap-2 mb-2">
-                  <InfoIcon className="w-5 h-5 text-gray-500" />
+                  <InfoIcon className="w-5 h-5 text-gray-500 dark:text-gray-400" />
                   <span className="font-medium text-text-primary">What happens</span>
                 </div>
                 <ul className="text-xs text-text-secondary space-y-1">
@@ -581,7 +581,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
               <li>Agents run as a system service and start automatically on boot</li>
               <li>Make sure port {serverInfo.port} is accessible from the target machine</li>
               <li>For Windows, run the command in Command Prompt or PowerShell as Administrator</li>
-              <li>For Linux/macOS, make the binary executable first: <code className="bg-gray-100 px-1 rounded">chmod +x sentinel-agent</code></li>
+              <li>For Linux/macOS, make the binary executable first: <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">chmod +x sentinel-agent</code></li>
               <li>Linux/macOS require sudo privileges for installation</li>
             </ul>
           </div>
@@ -594,7 +594,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
 function StatusBadge({ status }: { status: Device['status'] }) {
   const styles = {
     online: 'badge-success',
-    offline: 'bg-gray-100 text-gray-600',
+    offline: 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300',
     warning: 'badge-warning',
     critical: 'badge-danger',
   };
@@ -612,7 +612,7 @@ function OsIcon({ osType }: { osType: string }) {
   if (type.includes('windows')) {
     return <WindowsIcon className="w-4 h-4 text-blue-500" />;
   } else if (type.includes('mac') || type.includes('darwin')) {
-    return <AppleIcon className="w-4 h-4 text-gray-600" />;
+    return <AppleIcon className="w-4 h-4 text-gray-600 dark:text-gray-400" />;
   } else {
     return <LinuxIcon className="w-4 h-4 text-orange-500" />;
   }
