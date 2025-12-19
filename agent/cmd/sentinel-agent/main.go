@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -33,7 +34,6 @@ import (
 	"github.com/sentinel/agent/internal/updates"
 	"github.com/sentinel/agent/internal/webrtc"
 	"github.com/sentinel/agent/internal/admin"
-	"github.com/sentinel/agent/internal/discovery"
 )
 
 var Version = "1.62.0"
@@ -571,10 +571,28 @@ func (a *Agent) enroll() error {
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
-		// Use connection diagnostics for actionable error messages
-		connErr := discovery.DiagnoseConnectionError(a.cfg.ServerURL, err)
-		log.Printf("[Enrollment] Connection failed: %s", connErr.Error())
-		return fmt.Errorf("enrollment failed: %s\nSuggestion: %s", connErr.Message, connErr.Suggestion)
+		// Provide actionable error messages based on error type
+		errStr := err.Error()
+		var message, suggestion string
+		switch {
+		case strings.Contains(errStr, "no such host"):
+			message = "Cannot resolve server hostname"
+			suggestion = "Check that the server URL is correct. Try using an IP address instead."
+		case strings.Contains(errStr, "connection refused"):
+			message = "Server is not accepting connections"
+			suggestion = "Verify the server is running and the port is correct. Check firewall rules."
+		case strings.Contains(errStr, "i/o timeout") || strings.Contains(errStr, "context deadline exceeded"):
+			message = "Connection timed out"
+			suggestion = "Server may be down or unreachable. Check network connectivity and server status."
+		case strings.Contains(errStr, "certificate") || strings.Contains(errStr, "x509"):
+			message = "TLS/SSL certificate error"
+			suggestion = "Server certificate may be invalid or expired. Check server TLS configuration."
+		default:
+			message = fmt.Sprintf("Connection failed: %v", err)
+			suggestion = "Check server URL and network connectivity."
+		}
+		log.Printf("[Enrollment] %s: %v", message, err)
+		return fmt.Errorf("enrollment failed: %s\nSuggestion: %s", message, suggestion)
 	}
 	defer resp.Body.Close()
 
