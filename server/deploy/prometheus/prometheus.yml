@@ -1,0 +1,44 @@
+# Prometheus configuration for Sentinel RMM Platform
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+rule_files: []
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Sentinel server instances
+  - job_name: 'sentinel-servers'
+    static_configs:
+      - targets:
+          - 'sentinel-server-1:8080'
+          - 'sentinel-server-2:8080'
+          - 'sentinel-server-3:8080'
+    metrics_path: '/metrics'
+    scheme: 'http'
+
+  # NGINX metrics
+  - job_name: 'nginx'
+    static_configs:
+      - targets: ['nginx:8081']
+    metrics_path: '/nginx_status'
+
+  # Redis metrics (requires redis_exporter)
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:6379']
+
+  # PostgreSQL metrics (requires postgres_exporter)
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres:5432']

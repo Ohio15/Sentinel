@@ -12,9 +12,13 @@ type Config struct {
 	Environment string
 	Port        int
 	ServerURL   string
+	ServerID    string // Unique identifier for this server instance
 
 	// Database
-	DatabaseURL string
+	DatabaseURL         string
+	DatabaseReplicaURLs []string // Read replica URLs for scaling
+	DBMaxConns          int      // Maximum database connections
+	DBMinConns          int      // Minimum database connections
 
 	// Redis
 	RedisURL string
@@ -30,21 +34,64 @@ type Config struct {
 
 	// Features
 	MetricsRetentionDays int
+
+	// Scaling Options
+	EnableDistributedHub bool // Enable Redis-backed distributed WebSocket hub
+	MetricsBatchSize     int  // Batch size for bulk metrics insertion
+	MetricsFlushInterval int  // Flush interval in seconds
+
+	// Push Notifications
+	APNsKeyPath   string // Path to APNs .p8 key file
+	APNsKeyID     string // APNs Key ID
+	APNsTeamID    string // Apple Team ID
+	APNsBundleID  string // iOS App Bundle ID
+	APNsSandbox   bool   // Use APNs sandbox environment
+	FCMCredsPath  string // Path to Firebase credentials JSON
+	FCMProjectID  string // Firebase project ID
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		Environment:          getEnv("SERVER_ENV", "development"),
-		Port:                 getEnvInt("PORT", 8080),
-		ServerURL:            getEnv("SERVER_URL", "http://localhost:8080"),
-		DatabaseURL:          getEnv("DATABASE_URL", ""),
-		RedisURL:             getEnv("REDIS_URL", "redis://localhost:6379"),
-		JWTSecret:            getEnv("JWT_SECRET", ""),
-		EnrollmentToken:      getEnv("ENROLLMENT_TOKEN", ""),
-		AllowedOrigins:       getEnvSlice("ALLOWED_ORIGINS", []string{}),
-		RateLimitRequests:    getEnvInt("RATE_LIMIT_REQUESTS", 100),
-		RateLimitWindow:      getEnvInt("RATE_LIMIT_WINDOW", 60),
+		// Server
+		Environment: getEnv("SERVER_ENV", "development"),
+		Port:        getEnvInt("PORT", 8080),
+		ServerURL:   getEnv("SERVER_URL", "http://localhost:8080"),
+		ServerID:    getEnv("SERVER_ID", generateServerID()),
+
+		// Database
+		DatabaseURL:         getEnv("DATABASE_URL", ""),
+		DatabaseReplicaURLs: getEnvSlice("DATABASE_REPLICA_URLS", []string{}),
+		DBMaxConns:          getEnvInt("DB_MAX_CONNS", 50),
+		DBMinConns:          getEnvInt("DB_MIN_CONNS", 10),
+
+		// Redis
+		RedisURL: getEnv("REDIS_URL", "redis://localhost:6379"),
+
+		// Security
+		JWTSecret:       getEnv("JWT_SECRET", ""),
+		EnrollmentToken: getEnv("ENROLLMENT_TOKEN", ""),
+		AllowedOrigins:  getEnvSlice("ALLOWED_ORIGINS", []string{}),
+
+		// Rate Limiting
+		RateLimitRequests: getEnvInt("RATE_LIMIT_REQUESTS", 100),
+		RateLimitWindow:   getEnvInt("RATE_LIMIT_WINDOW", 60),
+
+		// Features
 		MetricsRetentionDays: getEnvInt("METRICS_RETENTION_DAYS", 30),
+
+		// Scaling
+		EnableDistributedHub: getEnvBool("ENABLE_DISTRIBUTED_HUB", false),
+		MetricsBatchSize:     getEnvInt("METRICS_BATCH_SIZE", 100),
+		MetricsFlushInterval: getEnvInt("METRICS_FLUSH_INTERVAL", 5),
+
+		// Push Notifications
+		APNsKeyPath:  getEnv("APNS_KEY_PATH", ""),
+		APNsKeyID:    getEnv("APNS_KEY_ID", ""),
+		APNsTeamID:   getEnv("APNS_TEAM_ID", ""),
+		APNsBundleID: getEnv("APNS_BUNDLE_ID", ""),
+		APNsSandbox:  getEnvBool("APNS_SANDBOX", false),
+		FCMCredsPath: getEnv("FCM_CREDENTIALS_PATH", ""),
+		FCMProjectID: getEnv("FCM_PROJECT_ID", ""),
 	}
 
 	// Validate required fields
@@ -97,4 +144,20 @@ func getEnvSlice(key string, defaultValue []string) []string {
 		return result
 	}
 	return defaultValue
+}
+
+func getEnvBool(key string, defaultValue bool) bool {
+	if value := os.Getenv(key); value != "" {
+		lower := strings.ToLower(value)
+		return lower == "true" || lower == "1" || lower == "yes"
+	}
+	return defaultValue
+}
+
+func generateServerID() string {
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "server"
+	}
+	return fmt.Sprintf("%s-%d", hostname, os.Getpid())
 }
