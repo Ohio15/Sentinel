@@ -220,9 +220,9 @@ body {
 }
 
 .error-message {
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-  color: #dc2626;
+  background: rgba(220, 38, 38, 0.1);
+  border: 1px solid var(--danger);
+  color: var(--danger);
   padding: 0.75rem 1rem;
   border-radius: var(--radius);
   margin-bottom: 1.5rem;
@@ -345,7 +345,7 @@ body {
 }
 
 .status-closed {
-  background: #e5e7eb;
+  background: var(--border);
   color: #6b7280;
 }
 
@@ -376,7 +376,7 @@ body {
 
 .priority-critical {
   background: #fee2e2;
-  color: #dc2626;
+  color: var(--danger);
 }
 
 /* Ticket Form */
@@ -456,7 +456,7 @@ body {
 .ticket-detail-header {
   padding: 1.5rem;
   border-bottom: 1px solid var(--border);
-  background: linear-gradient(to bottom, #fafbfc, white);
+  background: linear-gradient(to bottom, var(--bg), var(--bg-card));
 }
 
 .ticket-detail-subject {
@@ -516,7 +516,7 @@ body {
   margin: 0;
   color: var(--text);
   border-bottom: 1px solid var(--border);
-  background: #fafbfc;
+  background: var(--bg);
   font-size: 1rem;
 }
 
@@ -691,7 +691,7 @@ body {
 .comment-form-container {
   padding: 1rem 1.5rem;
   border-top: 1px solid var(--border);
-  background: #fafbfc;
+  background: var(--bg);
 }
 
 .attachment-previews {
@@ -998,4 +998,28 @@ body {
 .theme-toggle svg {
   width: 20px;
   height: 20px;
+}
+
+
+/* Dark mode select styling */
+.dark select {
+  background-color: var(--bg-card);
+  color: var(--text);
+}
+
+.dark select option {
+  background-color: var(--bg-card);
+  color: var(--text);
+}
+
+/* Dark mode input placeholder */
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: var(--text-muted);
+}
+
+/* Dark mode readonly fields */
+.dark .readonly-field {
+  background-color: var(--bg) !important;
+  color: var(--text-muted) !important;
 }
