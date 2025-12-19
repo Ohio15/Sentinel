@@ -458,13 +458,23 @@ func (c *Client) SendMetrics(metrics interface{}) error {
 	return c.SendJSON(msg)
 }
 
-// SendHeartbeat sends a heartbeat message
+// SendHeartbeat sends a heartbeat message with device info for orphaned agent recovery
 func (c *Client) SendHeartbeat() error {
 	msg := map[string]interface{}{
 		"type":         MsgTypeHeartbeat,
 		"timestamp":    time.Now().Format(time.RFC3339),
 		"agentVersion": c.version,
 	}
+	// Include device info if available (helps with orphaned agent re-enrollment)
+	c.mu.RLock()
+	if c.deviceInfo != nil {
+		msg["hostname"] = c.deviceInfo.Hostname
+		msg["osType"] = c.deviceInfo.OSType
+		msg["osVersion"] = c.deviceInfo.OSVersion
+		msg["platform"] = c.deviceInfo.Platform
+		msg["architecture"] = c.deviceInfo.Architecture
+	}
+	c.mu.RUnlock()
 	return c.SendJSON(msg)
 }
 
