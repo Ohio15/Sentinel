@@ -32,3 +32,4 @@ certs/*.pem
 certs/*.crt
 certs/*.srl
 certs/*.cnf
+server/sentinel.exe
