@@ -13,7 +13,7 @@ interface ServerInfo {
 }
 
 export function Devices({ onDeviceSelect }: DevicesProps) {
-  const { devices, loading, deleteDevice } = useDeviceStore();
+  const { devices, loading, deleteDevice, disableDevice, enableDevice, uninstallDevice } = useDeviceStore();
   const { clients, currentClientId } = useClientStore();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -22,7 +22,8 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
     if (!clientId) return null;
     return clients.find(c => c.id === clientId);
   };
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [actionMenu, setActionMenu] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{ deviceId: string; action: 'disable' | 'uninstall' } | null>(null);
   const [activeTab, setActiveTab] = useState<'devices' | 'installation'>('devices');
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null);
   const [copied, setCopied] = useState(false);
@@ -33,6 +34,15 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
   useEffect(() => {
     loadServerInfo();
   }, []);
+
+  // Close action menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = () => setActionMenu(null);
+    if (actionMenu) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [actionMenu]);
 
   const loadServerInfo = async () => {
     try {
@@ -121,9 +131,33 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
     return matchesSearch && matchesStatus;
   });
 
-  const handleDelete = async (id: string) => {
-    await deleteDevice(id);
-    setDeleteConfirm(null);
+  const handleDisable = async (id: string) => {
+    try {
+      await disableDevice(id);
+      setConfirmAction(null);
+      setActionMenu(null);
+    } catch (error) {
+      console.error('Failed to disable device:', error);
+    }
+  };
+
+  const handleEnable = async (id: string) => {
+    try {
+      await enableDevice(id);
+      setActionMenu(null);
+    } catch (error) {
+      console.error('Failed to enable device:', error);
+    }
+  };
+
+  const handleUninstall = async (id: string) => {
+    try {
+      await uninstallDevice(id);
+      setConfirmAction(null);
+      setActionMenu(null);
+    } catch (error) {
+      console.error('Failed to uninstall agent:', error);
+    }
   };
 
   return (
@@ -184,6 +218,8 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
               <option value="offline">Offline</option>
               <option value="warning">Warning</option>
               <option value="critical">Critical</option>
+              <option value="disabled">Disabled</option>
+              <option value="uninstalling">Uninstalling</option>
             </select>
           </div>
 
@@ -274,30 +310,69 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                         {formatLastSeen(device.lastSeen)}
                       </td>
                       <td className="text-sm">{device.agentVersion}</td>
-                      <td onClick={e => e.stopPropagation()}>
-                        {deleteConfirm === device.id ? (
+                      <td onClick={e => e.stopPropagation()} className="relative">
+                        {confirmAction?.deviceId === device.id ? (
                           <div className="flex gap-2">
                             <button
-                              onClick={() => handleDelete(device.id)}
+                              onClick={() => confirmAction.action === 'disable' ? handleDisable(device.id) : handleUninstall(device.id)}
                               className="btn btn-danger text-xs py-1"
                             >
-                              Confirm
+                              {confirmAction.action === 'disable' ? 'Disable' : 'Uninstall'}
                             </button>
                             <button
-                              onClick={() => setDeleteConfirm(null)}
+                              onClick={() => setConfirmAction(null)}
                               className="btn btn-secondary text-xs py-1"
                             >
                               Cancel
                             </button>
                           </div>
                         ) : (
-                          <button
-                            onClick={() => setDeleteConfirm(device.id)}
-                            className="text-text-secondary hover:text-danger transition-colors"
-                            title="Delete device"
-                          >
-                            <TrashIcon className="w-4 h-4" />
-                          </button>
+                          <div className="relative">
+                            <button
+                              onClick={() => setActionMenu(actionMenu === device.id ? null : device.id)}
+                              className="text-text-secondary hover:text-text-primary transition-colors p-1 rounded hover:bg-gray-100"
+                              title="Device actions"
+                            >
+                              <MoreIcon className="w-4 h-4" />
+                            </button>
+                            {actionMenu === device.id && (
+                              <div className="absolute right-0 top-full mt-1 bg-surface border border-border rounded-lg shadow-lg z-50 min-w-[160px]">
+                                {device.status === 'disabled' ? (
+                                  <button
+                                    onClick={() => handleEnable(device.id)}
+                                    className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 text-success flex items-center gap-2"
+                                  >
+                                    <EnableIcon className="w-4 h-4" />
+                                    Enable Device
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => {
+                                      setConfirmAction({ deviceId: device.id, action: 'disable' });
+                                      setActionMenu(null);
+                                    }}
+                                    className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 text-warning flex items-center gap-2"
+                                  >
+                                    <DisableIcon className="w-4 h-4" />
+                                    Disable Device
+                                  </button>
+                                )}
+                                <div className="border-t border-border"></div>
+                                <button
+                                  onClick={() => {
+                                    setConfirmAction({ deviceId: device.id, action: 'uninstall' });
+                                    setActionMenu(null);
+                                  }}
+                                  className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 text-danger flex items-center gap-2"
+                                  disabled={device.status !== 'online'}
+                                  title={device.status !== 'online' ? 'Device must be online to uninstall' : 'Uninstall agent from device'}
+                                >
+                                  <TrashIcon className="w-4 h-4" />
+                                  Uninstall Agent
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -472,15 +547,17 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
 }
 
 function StatusBadge({ status }: { status: Device['status'] }) {
-  const styles = {
+  const styles: Record<string, string> = {
     online: 'badge-success',
     offline: 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300',
     warning: 'badge-warning',
     critical: 'badge-danger',
+    disabled: 'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-400',
+    uninstalling: 'bg-orange-100 dark:bg-orange-900 text-orange-600 dark:text-orange-300',
   };
 
   return (
-    <span className={`badge ${styles[status]}`}>
+    <span className={`badge ${styles[status] || styles.offline}`}>
       {status.charAt(0).toUpperCase() + status.slice(1)}
     </span>
   );
@@ -554,6 +631,30 @@ function TrashIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+    </svg>
+  );
+}
+
+function MoreIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+    </svg>
+  );
+}
+
+function DisableIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+    </svg>
+  );
+}
+
+function EnableIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
     </svg>
   );
 }

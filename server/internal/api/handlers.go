@@ -81,12 +81,31 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 		return
 	}
 
-	// Get device ID
+	// Get device ID - or auto-enroll if device was deleted
 	ctx := context.Background()
 	var deviceID uuid.UUID
-	err = r.db.Pool.QueryRow(ctx, "SELECT id FROM devices WHERE agent_id = $1", authPayload.AgentID).Scan(&deviceID)
+	var isDisabled bool
+	err = r.db.Pool.QueryRow(ctx, "SELECT id, COALESCE(is_disabled, false) FROM devices WHERE agent_id = $1", authPayload.AgentID).Scan(&deviceID, &isDisabled)
 	if err != nil {
-		conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Device not enrolled"}`)})
+		// Device not found - auto-enroll as a new device
+		log.Printf("Device not found for agent %s, auto-enrolling...", authPayload.AgentID)
+		deviceID = uuid.New()
+		_, insertErr := r.db.Pool.Exec(ctx, `
+			INSERT INTO devices (id, agent_id, hostname, status, created_at, last_seen)
+			VALUES ($1, $2, $3, 'online', NOW(), NOW())
+		`, deviceID, authPayload.AgentID, "Auto-enrolled-"+authPayload.AgentID[:8])
+		if insertErr != nil {
+			log.Printf("Failed to auto-enroll device: %v", insertErr)
+			conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Failed to auto-enroll device"}`)})
+			conn.Close()
+			return
+		}
+		log.Printf("Auto-enrolled device %s with ID %s", authPayload.AgentID, deviceID)
+	}
+
+	// Check if device is disabled
+	if isDisabled {
+		conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Device is disabled"}`)})
 		conn.Close()
 		return
 	}

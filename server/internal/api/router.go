@@ -94,6 +94,8 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 			protected.GET("/devices/:id/metrics", router.getDeviceMetrics)
 			protected.POST("/devices/:id/commands", middleware.RequireRole("admin", "operator"), router.executeCommand)
 			protected.POST("/devices/:id/uninstall", middleware.RequireRole("admin"), router.uninstallAgent)
+			protected.POST("/devices/:id/disable", middleware.RequireRole("admin", "operator"), router.disableDevice)
+			protected.POST("/devices/:id/enable", middleware.RequireRole("admin", "operator"), router.enableDevice)
 			protected.POST("/devices/:id/ping", router.pingAgent)
 			protected.GET("/devices/:id/commands", router.listDeviceCommands)
 
@@ -233,6 +235,8 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			protected.GET("/devices/:id/metrics", getDeviceMetricsHandler(services))
 			protected.POST("/devices/:id/commands", middleware.RequireRole("admin", "operator"), executeCommandHandler(services))
 			protected.POST("/devices/:id/uninstall", middleware.RequireRole("admin"), uninstallAgentHandler(services))
+			protected.POST("/devices/:id/disable", middleware.RequireRole("admin", "operator"), disableDeviceHandler(services))
+			protected.POST("/devices/:id/enable", middleware.RequireRole("admin", "operator"), enableDeviceHandler(services))
 			protected.POST("/devices/:id/ping", pingAgentHandler(services))
 			protected.GET("/devices/:id/commands", listDeviceCommandsHandler(services))
 

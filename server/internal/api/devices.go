@@ -110,6 +110,8 @@ func (r *Router) getDevice(c *gin.Context) {
 	c.JSON(http.StatusOK, d)
 }
 
+// deleteDevice removes a device record - only allowed for devices in 'uninstalling' status
+// This ensures devices can only be deleted after the agent has been properly uninstalled
 func (r *Router) deleteDevice(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -119,6 +121,23 @@ func (r *Router) deleteDevice(c *gin.Context) {
 
 	ctx := context.Background()
 
+	// Check device status - only allow deletion for uninstalling devices
+	var status string
+	err = r.db.Pool.QueryRow(ctx, "SELECT status FROM devices WHERE id = $1", id).Scan(&status)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
+		return
+	}
+
+	if status != "uninstalling" {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error":   "Cannot delete device directly",
+			"message": "Devices can only be removed by uninstalling the agent remotely. Use the 'Uninstall Agent' option to remove this device.",
+		})
+		return
+	}
+
+	// Device is uninstalling - safe to delete
 	result, err := r.db.Pool.Exec(ctx, "DELETE FROM devices WHERE id = $1", id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete device"})
@@ -131,6 +150,114 @@ func (r *Router) deleteDevice(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Device deleted"})
+}
+
+// disableDevice disables a device, preventing the agent from connecting
+func (r *Router) disableDevice(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid device ID"})
+		return
+	}
+
+	ctx := context.Background()
+	userID := c.MustGet("userId").(uuid.UUID)
+
+	// Get agent ID to disconnect if online
+	var agentID string
+	err = r.db.Pool.QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1", id).Scan(&agentID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
+		return
+	}
+
+	// Update device status to disabled
+	result, err := r.db.Pool.Exec(ctx, `
+		UPDATE devices SET
+			is_disabled = TRUE,
+			disabled_at = NOW(),
+			disabled_by = $2,
+			status = 'disabled',
+			updated_at = NOW()
+		WHERE id = $1
+	`, id, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to disable device"})
+		return
+	}
+
+	if result.RowsAffected() == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
+		return
+	}
+
+	// Disconnect the agent if online (it will be rejected on reconnect)
+	if r.hub.IsAgentOnline(agentID) {
+		// Send a disconnect message - agent will try to reconnect but will be rejected
+		msg := websocket.Message{
+			Type:    "disconnect",
+			Payload: json.RawMessage(`{"reason":"Device has been disabled by administrator"}`),
+		}
+		msgBytes, _ := json.Marshal(msg)
+		r.hub.SendToAgent(agentID, msgBytes)
+	}
+
+	// Broadcast status change to dashboards
+	statusMsg, _ := json.Marshal(map[string]interface{}{
+		"type":     "device_status",
+		"deviceId": id.String(),
+		"status":   "disabled",
+	})
+	r.hub.BroadcastToDashboards(statusMsg)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Device disabled successfully",
+		"status":  "disabled",
+	})
+}
+
+// enableDevice re-enables a previously disabled device
+func (r *Router) enableDevice(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid device ID"})
+		return
+	}
+
+	ctx := context.Background()
+
+	// Re-enable the device
+	result, err := r.db.Pool.Exec(ctx, `
+		UPDATE devices SET
+			is_disabled = FALSE,
+			disabled_at = NULL,
+			disabled_by = NULL,
+			status = 'offline',
+			updated_at = NOW()
+		WHERE id = $1
+	`, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to enable device"})
+		return
+	}
+
+	if result.RowsAffected() == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
+		return
+	}
+
+	// Broadcast status change to dashboards
+	statusMsg, _ := json.Marshal(map[string]interface{}{
+		"type":     "device_status",
+		"deviceId": id.String(),
+		"status":   "offline",
+	})
+	r.hub.BroadcastToDashboards(statusMsg)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Device enabled successfully. Agent will reconnect automatically.",
+		"status":  "offline",
+	})
 }
 
 func (r *Router) getDeviceMetrics(c *gin.Context) {

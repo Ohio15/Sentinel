@@ -170,6 +170,81 @@ export class AgentManager {
     };
   }
 
+  async uninstallAgent(deviceId: string): Promise<{ success: boolean; message: string }> {
+    const device = await this.database.getDevice(deviceId);
+    if (!device) {
+      return { success: false, message: 'Device not found' };
+    }
+
+    const isOnline = this.isAgentConnected(device.agentId);
+    if (!isOnline) {
+      return { success: false, message: 'Agent is not connected. Cannot send uninstall command.' };
+    }
+
+    // Set device status to uninstalling
+    await this.database.setDeviceUninstalling(deviceId);
+
+    // Send uninstall command to agent
+    const sent = this.sendToAgent(device.agentId, {
+      type: 'uninstall_agent',
+      requestId: uuidv4(),
+    });
+
+    if (!sent) {
+      return { success: false, message: 'Failed to send uninstall command to agent' };
+    }
+
+    this.notifyRenderer('devices:updated', { deviceId, status: 'uninstalling' });
+
+    return {
+      success: true,
+      message: 'Uninstall command sent to agent',
+    };
+  }
+
+  async disableDevice(deviceId: string): Promise<{ success: boolean; message: string }> {
+    const device = await this.database.getDevice(deviceId);
+    if (!device) {
+      return { success: false, message: 'Device not found' };
+    }
+
+    // Disable in database
+    await this.database.disableDevice(deviceId);
+
+    // If agent is connected, disconnect it
+    if (this.isAgentConnected(device.agentId)) {
+      const conn = this.connections.get(device.agentId);
+      if (conn) {
+        this.sendToAgent(device.agentId, {
+          type: 'disconnect',
+          requestId: uuidv4(),
+          reason: 'Device disabled by administrator',
+        });
+        conn.ws.close();
+        this.connections.delete(device.agentId);
+      }
+    }
+
+    this.notifyRenderer('devices:updated', { deviceId, status: 'disabled' });
+    this.notifyRenderer('devices:offline', { agentId: device.agentId, deviceId });
+
+    return { success: true, message: 'Device disabled' };
+  }
+
+  async enableDevice(deviceId: string): Promise<{ success: boolean; message: string }> {
+    const device = await this.database.getDevice(deviceId);
+    if (!device) {
+      return { success: false, message: 'Device not found' };
+    }
+
+    // Enable in database
+    await this.database.enableDevice(deviceId);
+
+    this.notifyRenderer('devices:updated', { deviceId, status: 'offline' });
+
+    return { success: true, message: 'Device enabled' };
+  }
+
   sendToAgent(agentId: string, message: any): boolean {
     const conn = this.connections.get(agentId);
     if (conn && conn.ws.readyState === WebSocket.OPEN) {

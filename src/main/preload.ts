@@ -8,6 +8,9 @@ contextBridge.exposeInMainWorld('api', {
     get: (id: string) => ipcRenderer.invoke('devices:get', id),
     ping: (deviceId: string) => ipcRenderer.invoke('devices:ping', deviceId),
     delete: (id: string) => ipcRenderer.invoke('devices:delete', id),
+    disable: (id: string) => ipcRenderer.invoke('devices:disable', id),
+    enable: (id: string) => ipcRenderer.invoke('devices:enable', id),
+    uninstall: (id: string) => ipcRenderer.invoke('devices:uninstall', id),
     update: (id: string, updates: { displayName?: string; tags?: string[] }) =>
       ipcRenderer.invoke('devices:update', id, updates),
     getMetrics: (deviceId: string, hours: number) =>
@@ -367,6 +370,9 @@ export interface ElectronAPI {
     get: (id: string) => Promise<Device | null>;
     ping: (deviceId: string) => Promise<{ online: boolean; status: string; message: string }>;
     delete: (id: string) => Promise<void>;
+    disable: (id: string) => Promise<void>;
+    enable: (id: string) => Promise<void>;
+    uninstall: (id: string) => Promise<void>;
     update: (id: string, updates: { displayName?: string; tags?: string[] }) => Promise<Device | null>;
     getMetrics: (deviceId: string, hours: number) => Promise<DeviceMetrics[]>;
     setMetricsInterval: (deviceId: string, intervalMs: number) => Promise<void>;
@@ -529,10 +535,12 @@ interface Device {
   architecture: string;
   agentVersion: string;
   lastSeen: string;
-  status: 'online' | 'offline' | 'warning' | 'critical';
+  status: 'online' | 'offline' | 'warning' | 'critical' | 'disabled' | 'uninstalling';
   ipAddress: string;
   macAddress: string;
   tags: string[];
+  isDisabled?: boolean;
+  disabledAt?: string;
 }
 
 interface DeviceMetrics {

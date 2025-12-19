@@ -42,13 +42,15 @@ export interface Device {
   domain?: string;
   agentVersion: string;
   lastSeen: string;
-  status: 'online' | 'offline' | 'warning' | 'critical';
+  status: 'online' | 'offline' | 'warning' | 'critical' | 'disabled' | 'uninstalling';
   ipAddress: string;
   publicIp?: string;
   macAddress: string;
   tags: string[];
   metadata: Record<string, any>;
   clientId?: string;
+  isDisabled?: boolean;
+  disabledAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -109,6 +111,9 @@ interface DeviceState {
   fetchDevice: (id: string) => Promise<void>;
   fetchMetrics: (deviceId: string, hours?: number) => Promise<void>;
   deleteDevice: (id: string) => Promise<void>;
+  disableDevice: (id: string) => Promise<void>;
+  enableDevice: (id: string) => Promise<void>;
+  uninstallDevice: (id: string) => Promise<void>;
   subscribeToUpdates: () => () => void;
 }
 
@@ -161,6 +166,63 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
       set({ devices: devices.filter(d => d.id !== id) });
     } catch (error: any) {
       set({ error: error.message });
+    }
+  },
+
+  disableDevice: async (id: string) => {
+    try {
+      await window.api.devices.disable(id);
+      const { devices, selectedDevice } = get();
+      const updated = devices.map(d =>
+        d.id === id ? { ...d, status: 'disabled' as const, isDisabled: true, disabledAt: new Date().toISOString() } : d
+      );
+      set({
+        devices: updated,
+        selectedDevice: selectedDevice?.id === id
+          ? { ...selectedDevice, status: 'disabled' as const, isDisabled: true, disabledAt: new Date().toISOString() }
+          : selectedDevice
+      });
+    } catch (error: any) {
+      set({ error: error.message });
+      throw error;
+    }
+  },
+
+  enableDevice: async (id: string) => {
+    try {
+      await window.api.devices.enable(id);
+      const { devices, selectedDevice } = get();
+      const updated = devices.map(d =>
+        d.id === id ? { ...d, status: 'offline' as const, isDisabled: false, disabledAt: undefined } : d
+      );
+      set({
+        devices: updated,
+        selectedDevice: selectedDevice?.id === id
+          ? { ...selectedDevice, status: 'offline' as const, isDisabled: false, disabledAt: undefined }
+          : selectedDevice
+      });
+    } catch (error: any) {
+      set({ error: error.message });
+      throw error;
+    }
+  },
+
+  uninstallDevice: async (id: string) => {
+    try {
+      await window.api.devices.uninstall(id);
+      const { devices, selectedDevice } = get();
+      const updated = devices.map(d =>
+        d.id === id ? { ...d, status: 'uninstalling' as const } : d
+      );
+      set({
+        devices: updated,
+        selectedDevice: selectedDevice?.id === id
+          ? { ...selectedDevice, status: 'uninstalling' as const }
+          : selectedDevice
+      });
+    } catch (error: any) {
+      set({ error: error.message });
+      throw error;
     }
   },
 

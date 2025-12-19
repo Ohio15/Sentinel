@@ -356,7 +356,24 @@ function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('devices:delete', async (_, id: string) => {
+    // Only allow deletion if device is in 'uninstalling' status
+    const status = await database.getDeviceStatus(id);
+    if (status !== 'uninstalling') {
+      throw new Error('Devices can only be removed after uninstalling the agent remotely. Use the Uninstall Agent option.');
+    }
     return database.deleteDevice(id);
+  });
+
+  ipcMain.handle('devices:disable', async (_, id: string) => {
+    return agentManager.disableDevice(id);
+  });
+
+  ipcMain.handle('devices:enable', async (_, id: string) => {
+    return agentManager.enableDevice(id);
+  });
+
+  ipcMain.handle('devices:uninstall', async (_, id: string) => {
+    return agentManager.uninstallAgent(id);
   });
 
   ipcMain.handle('devices:update', async (_, id: string, updates: { displayName?: string; tags?: string[] }) => {
