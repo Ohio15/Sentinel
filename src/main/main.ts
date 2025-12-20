@@ -369,10 +369,10 @@ function setupIpcHandlers(): void {
     if (!device?.agentId) return false;
     // If locally connected, no relay needed
     if (agentManager.isAgentConnected(device.agentId)) return false;
-    // If online in database (connected to external backend), use relay
-    if (device.status === 'online' && device.lastSeen) {
-      const isRecentlyActive = (Date.now() - new Date(device.lastSeen).getTime()) < 90000;
-      return isRecentlyActive && backendRelay.isConfigured();
+    // If agent is NOT locally connected but backend relay is configured and authenticated,
+    // use relay (agent might be connected to Docker backend instead)
+    if (backendRelay.isConfigured() && backendRelay.isAuthenticated()) {
+      return true;
     }
     return false;
   }
