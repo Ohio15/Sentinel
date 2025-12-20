@@ -255,6 +255,11 @@ async function initialize(): Promise<void> {
   backendRelay = new BackendRelay(database);
   await backendRelay.initialize();
 
+  // Set up renderer notification for backend relay
+  backendRelay.setNotifyRenderer((channel, data) => {
+    mainWindow?.webContents.send(channel, data);
+  });
+
   // Initialize embedded server
   server = new Server(database, agentManager);
   await server.start();
@@ -484,6 +489,16 @@ function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('devices:setMetricsInterval', async (_, deviceId: string, intervalMs: number) => {
+    if (await needsRelay(deviceId)) {
+      try {
+        const device = await database.getDevice(deviceId);
+        if (!device?.agentId) throw new Error('Device not found');
+        return await backendRelay.setMetricsInterval(deviceId, device.agentId, intervalMs);
+      } catch (error) {
+        console.error('[IPC] Backend relay setMetricsInterval failed:', error);
+        throw error;
+      }
+    }
     return agentManager.setMetricsInterval(deviceId, intervalMs);
   });
 
@@ -507,39 +522,109 @@ function setupIpcHandlers(): void {
 
   // Remote terminal
   ipcMain.handle('terminal:start', async (_, deviceId: string) => {
+    if (await needsRelay(deviceId)) {
+      try {
+        const device = await database.getDevice(deviceId);
+        if (!device?.agentId) throw new Error('Device not found');
+        return await backendRelay.startTerminal(deviceId, device.agentId);
+      } catch (error) {
+        console.error('[IPC] Backend relay terminal start failed:', error);
+        throw error;
+      }
+    }
     return agentManager.startTerminalSession(deviceId);
   });
 
   ipcMain.handle('terminal:send', async (_, sessionId: string, data: string) => {
+    // Check if this is a relay session
+    if (backendRelay.isRelaySession(sessionId)) {
+      return backendRelay.sendTerminalData(sessionId, data);
+    }
     return agentManager.sendTerminalData(sessionId, data);
   });
 
   ipcMain.handle('terminal:resize', async (_, sessionId: string, cols: number, rows: number) => {
+    if (backendRelay.isRelaySession(sessionId)) {
+      return backendRelay.resizeTerminal(sessionId, cols, rows);
+    }
     return agentManager.resizeTerminal(sessionId, cols, rows);
   });
 
   ipcMain.handle('terminal:close', async (_, sessionId: string) => {
+    if (backendRelay.isRelaySession(sessionId)) {
+      return backendRelay.closeTerminal(sessionId);
+    }
     return agentManager.closeTerminalSession(sessionId);
   });
 
   // File transfer
   ipcMain.handle('files:drives', async (_, deviceId: string) => {
+    if (await needsRelay(deviceId)) {
+      try {
+        const device = await database.getDevice(deviceId);
+        if (!device?.agentId) throw new Error('Device not found');
+        return await backendRelay.listDrives(deviceId, device.agentId);
+      } catch (error) {
+        console.error('[IPC] Backend relay listDrives failed:', error);
+        throw error;
+      }
+    }
     return agentManager.listDrives(deviceId);
   });
 
   ipcMain.handle('files:list', async (_, deviceId: string, remotePath: string) => {
+    if (await needsRelay(deviceId)) {
+      try {
+        const device = await database.getDevice(deviceId);
+        if (!device?.agentId) throw new Error('Device not found');
+        return await backendRelay.listFiles(deviceId, device.agentId, remotePath);
+      } catch (error) {
+        console.error('[IPC] Backend relay listFiles failed:', error);
+        throw error;
+      }
+    }
     return agentManager.listFiles(deviceId, remotePath);
   });
 
   ipcMain.handle('files:download', async (_, deviceId: string, remotePath: string, localPath: string) => {
+    if (await needsRelay(deviceId)) {
+      try {
+        const device = await database.getDevice(deviceId);
+        if (!device?.agentId) throw new Error('Device not found');
+        return await backendRelay.downloadFile(deviceId, device.agentId, remotePath, localPath);
+      } catch (error) {
+        console.error('[IPC] Backend relay downloadFile failed:', error);
+        throw error;
+      }
+    }
     return agentManager.downloadFile(deviceId, remotePath, localPath);
   });
 
   ipcMain.handle('files:upload', async (_, deviceId: string, localPath: string, remotePath: string) => {
+    if (await needsRelay(deviceId)) {
+      try {
+        const device = await database.getDevice(deviceId);
+        if (!device?.agentId) throw new Error('Device not found');
+        return await backendRelay.uploadFile(deviceId, device.agentId, localPath, remotePath);
+      } catch (error) {
+        console.error('[IPC] Backend relay uploadFile failed:', error);
+        throw error;
+      }
+    }
     return agentManager.uploadFile(deviceId, localPath, remotePath);
   });
 
   ipcMain.handle('files:scan', async (_, deviceId: string, path: string, maxDepth: number) => {
+    if (await needsRelay(deviceId)) {
+      try {
+        const device = await database.getDevice(deviceId);
+        if (!device?.agentId) throw new Error('Device not found');
+        return await backendRelay.scanDirectory(deviceId, device.agentId, path, maxDepth);
+      } catch (error) {
+        console.error('[IPC] Backend relay scanDirectory failed:', error);
+        throw error;
+      }
+    }
     return agentManager.scanDirectory(deviceId, path, maxDepth);
   });
 
