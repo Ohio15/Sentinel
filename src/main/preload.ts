@@ -226,6 +226,14 @@ contextBridge.exposeInMainWorld('api', {
     update: (settings: any) => ipcRenderer.invoke('settings:update', settings),
   },
 
+  // Backend (external Docker/standalone server)
+  backend: {
+    getConfig: () => ipcRenderer.invoke('backend:getConfig'),
+    setUrl: (url: string) => ipcRenderer.invoke('backend:setUrl', url),
+    authenticate: (email: string, password: string) => ipcRenderer.invoke('backend:authenticate', email, password),
+    disconnect: () => ipcRenderer.invoke('backend:disconnect'),
+  },
+
 
 
   // Portal Settings

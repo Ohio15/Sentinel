@@ -363,6 +363,84 @@ export class Database {
     return result.rows[0]?.status || null;
   }
 
+  // Backend sync methods - for syncing devices from Docker backend to local database
+  async updateDeviceFromBackend(id: string, device: any): Promise<void> {
+    await this.query(
+      `
+      UPDATE devices SET
+        hostname = COALESCE($1, hostname),
+        display_name = COALESCE($2, display_name),
+        os_type = COALESCE($3, os_type),
+        os_version = COALESCE($4, os_version),
+        architecture = COALESCE($5, architecture),
+        agent_version = COALESCE($6, agent_version),
+        last_seen = COALESCE($7, last_seen),
+        status = COALESCE($8, status),
+        ip_address = COALESCE($9, ip_address),
+        mac_address = COALESCE($10, mac_address),
+        agent_id = COALESCE($11, agent_id),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $12
+    `,
+      [
+        device.hostname,
+        device.displayName || device.hostname,
+        device.osType,
+        device.osVersion,
+        device.architecture,
+        device.agentVersion,
+        device.lastSeen,
+        device.status,
+        device.ipAddress,
+        device.macAddress,
+        device.agentId,
+        id,
+      ]
+    );
+  }
+
+  async createDeviceFromBackend(device: any): Promise<void> {
+    await this.query(
+      `
+      INSERT INTO devices (
+        id, agent_id, hostname, display_name, os_type, os_version,
+        architecture, agent_version, last_seen, status,
+        ip_address, mac_address, tags, metadata, client_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      ON CONFLICT (id) DO UPDATE SET
+        hostname = EXCLUDED.hostname,
+        display_name = EXCLUDED.display_name,
+        os_type = EXCLUDED.os_type,
+        os_version = EXCLUDED.os_version,
+        architecture = EXCLUDED.architecture,
+        agent_version = EXCLUDED.agent_version,
+        last_seen = EXCLUDED.last_seen,
+        status = EXCLUDED.status,
+        ip_address = EXCLUDED.ip_address,
+        mac_address = EXCLUDED.mac_address,
+        agent_id = EXCLUDED.agent_id,
+        updated_at = CURRENT_TIMESTAMP
+    `,
+      [
+        device.id,
+        device.agentId,
+        device.hostname,
+        device.displayName || device.hostname,
+        device.osType,
+        device.osVersion,
+        device.architecture,
+        device.agentVersion,
+        device.lastSeen || new Date().toISOString(),
+        device.status || 'offline',
+        device.ipAddress,
+        device.macAddress,
+        JSON.stringify(device.tags || []),
+        JSON.stringify(device.metadata || {}),
+        device.clientId || null,
+      ]
+    );
+  }
+
   // Metrics methods
   async insertMetrics(deviceId: string, metrics: any): Promise<void> {
     // Support both snake_case (from agent) and camelCase field names
