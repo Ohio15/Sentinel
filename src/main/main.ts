@@ -8,6 +8,7 @@ import { Server } from './server';
 import { AgentManager } from './agents';
 import { GrpcServer } from './grpc-server';
 import { listCertificates, renewCertificates, getCACertificate, getCertsDir } from './cert-manager';
+import { BackendRelay } from './backend-relay';
 import * as os from 'os';
 
 // Disable GPU acceleration to prevent crashes on some systems
@@ -176,6 +177,7 @@ let database: Database;
 let server: Server;
 let agentManager: AgentManager;
 let grpcServer: GrpcServer;
+let backendRelay: BackendRelay;
 let isQuitting = false;
 
 // Ensure single instance - focus existing window if already running
@@ -248,6 +250,10 @@ async function initialize(): Promise<void> {
 
   // Initialize agent manager
   agentManager = new AgentManager(database);
+
+  // Initialize backend relay for external backend support
+  backendRelay = new BackendRelay(database);
+  await backendRelay.initialize();
 
   // Initialize embedded server
   server = new Server(database, agentManager);
@@ -329,6 +335,43 @@ function setupUpdaterHandlers(): void {
 }
 
 function setupIpcHandlers(): void {
+  // Backend relay configuration
+  ipcMain.handle('backend:getConfig', async () => {
+    return {
+      url: backendRelay.getBackendUrl(),
+      isConfigured: backendRelay.isConfigured(),
+    };
+  });
+
+  ipcMain.handle('backend:setUrl', async (_, url: string) => {
+    backendRelay.setBackendUrl(url);
+    await database.updateSettings({ externalBackendUrl: url });
+    return { success: true };
+  });
+
+  ipcMain.handle('backend:authenticate', async (_, username: string, password: string) => {
+    try {
+      const success = await backendRelay.authenticate(username, password);
+      return { success };
+    } catch (error) {
+      return { success: false, error: (error as Error).message };
+    }
+  });
+
+  // Helper function to check if agent needs relay
+  async function needsRelay(deviceId: string): Promise<boolean> {
+    const device = await database.getDevice(deviceId);
+    if (!device?.agentId) return false;
+    // If locally connected, no relay needed
+    if (agentManager.isAgentConnected(device.agentId)) return false;
+    // If online in database (connected to external backend), use relay
+    if (device.status === 'online' && device.lastSeen) {
+      const isRecentlyActive = (Date.now() - new Date(device.lastSeen).getTime()) < 90000;
+      return isRecentlyActive && backendRelay.isConfigured();
+    }
+    return false;
+  }
+
   // Device management
   ipcMain.handle('devices:list', async (_, clientId?: string) => {
     const devices = await database.getDevices(clientId);
@@ -384,14 +427,38 @@ function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('devices:disable', async (_, id: string) => {
+    if (await needsRelay(id)) {
+      try {
+        return await backendRelay.disableDevice(id);
+      } catch (error) {
+        console.error('[IPC] Backend relay disable failed:', error);
+        throw error;
+      }
+    }
     return agentManager.disableDevice(id);
   });
 
   ipcMain.handle('devices:enable', async (_, id: string) => {
+    if (await needsRelay(id)) {
+      try {
+        return await backendRelay.enableDevice(id);
+      } catch (error) {
+        console.error('[IPC] Backend relay enable failed:', error);
+        throw error;
+      }
+    }
     return agentManager.enableDevice(id);
   });
 
   ipcMain.handle('devices:uninstall', async (_, id: string) => {
+    if (await needsRelay(id)) {
+      try {
+        return await backendRelay.uninstallAgent(id);
+      } catch (error) {
+        console.error('[IPC] Backend relay uninstall failed:', error);
+        throw error;
+      }
+    }
     return agentManager.uninstallAgent(id);
   });
 
@@ -401,6 +468,14 @@ function setupIpcHandlers(): void {
 
   
   ipcMain.handle('devices:ping', async (_, deviceId: string) => {
+    if (await needsRelay(deviceId)) {
+      try {
+        return await backendRelay.pingDevice(deviceId);
+      } catch (error) {
+        console.error('[IPC] Backend relay ping failed:', error);
+        throw error;
+      }
+    }
     return agentManager.pingAgent(deviceId);
   });
 
@@ -414,6 +489,15 @@ function setupIpcHandlers(): void {
 
   // Commands
   ipcMain.handle('commands:execute', async (_, deviceId: string, command: string, type: string) => {
+    // Check if we need to relay through external backend
+    if (await needsRelay(deviceId)) {
+      try {
+        return await backendRelay.executeCommand(deviceId, command, type);
+      } catch (error) {
+        console.error('[IPC] Backend relay command failed:', error);
+        throw error;
+      }
+    }
     return agentManager.executeCommand(deviceId, command, type);
   });
 
