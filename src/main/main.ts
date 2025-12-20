@@ -332,11 +332,24 @@ function setupIpcHandlers(): void {
   // Device management
   ipcMain.handle('devices:list', async (_, clientId?: string) => {
     const devices = await database.getDevices(clientId);
-    // Override status based on actual WebSocket connection state
-    return devices.map(device => ({
-      ...device,
-      status: device.agentId && agentManager.isAgentConnected(device.agentId) ? 'online' : 'offline'
-    }));
+    // Check local WebSocket connection first, but trust database status if agent
+    // is connected to external backend (e.g., Docker) and has recent activity
+    return devices.map(device => {
+      if (device.agentId && agentManager.isAgentConnected(device.agentId)) {
+        return { ...device, status: 'online' };
+      }
+      // Trust database status - agent may be connected to Docker backend
+      // Consider online if lastSeen is within 90 seconds (heartbeat interval + buffer)
+      if (device.status === 'online' && device.lastSeen) {
+        const lastSeenTime = new Date(device.lastSeen).getTime();
+        const now = Date.now();
+        const isRecentlyActive = (now - lastSeenTime) < 90000; // 90 seconds
+        if (isRecentlyActive) {
+          return { ...device, status: 'online' };
+        }
+      }
+      return { ...device, status: device.isDisabled ? 'disabled' : 'offline' };
+    });
   });
 
   ipcMain.handle('devices:get', async (_, id: string) => {
@@ -344,13 +357,19 @@ function setupIpcHandlers(): void {
     const device = await database.getDevice(id);
     console.log('[IPC] devices:get result:', device ? device.hostname : 'null');
     if (device) {
-      // Override status based on actual WebSocket connection state
-      const isConnected = device.agentId && agentManager.isAgentConnected(device.agentId);
-      console.log('[IPC] devices:get isConnected:', isConnected, 'agentId:', device.agentId);
-      return {
-        ...device,
-        status: isConnected ? 'online' : 'offline'
-      };
+      // Check local connection first, then trust database status with recent activity check
+      const isLocallyConnected = device.agentId && agentManager.isAgentConnected(device.agentId);
+      let status = 'offline';
+      if (isLocallyConnected) {
+        status = 'online';
+      } else if (device.status === 'online' && device.lastSeen) {
+        const lastSeenTime = new Date(device.lastSeen).getTime();
+        const isRecentlyActive = (Date.now() - lastSeenTime) < 90000;
+        if (isRecentlyActive) status = 'online';
+      }
+      if (device.isDisabled) status = 'disabled';
+      console.log('[IPC] devices:get status:', status, 'agentId:', device.agentId);
+      return { ...device, status };
     }
     return device;
   });
