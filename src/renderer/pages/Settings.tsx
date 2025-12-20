@@ -79,6 +79,14 @@ export function Settings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const { theme, setTheme } = useThemeStore();
+  // External backend state
+  const [backendUrl, setBackendUrl] = useState('');
+  const [backendEmail, setBackendEmail] = useState('');
+  const [backendPassword, setBackendPassword] = useState('');
+  const [backendConnecting, setBackendConnecting] = useState(false);
+  const [backendConnected, setBackendConnected] = useState(false);
+  const [backendError, setBackendError] = useState('');
+
 
   // Portal settings state
   const [activeTab, setActiveTab] = useState<'general' | 'portal'>('general');
@@ -105,12 +113,17 @@ export function Settings() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [settingsData, infoData] = await Promise.all([
+      const [settingsData, infoData, backendConfig] = await Promise.all([
         window.api.settings.get(),
         window.api.server.getInfo(),
+        window.api.backend.getConfig().catch(() => ({ url: '', isConfigured: false })),
       ]);
       setSettings(settingsData);
       setServerInfo(infoData);
+      if (backendConfig.url) {
+        setBackendUrl(backendConfig.url);
+        setBackendConnected(backendConfig.isConfigured);
+      }
     } catch (error) {
       console.error('Failed to load settings:', error);
     } finally {
@@ -182,6 +195,42 @@ export function Settings() {
       loadPortalData();
     } catch (error: any) {
       alert(`Error deleting tenant mapping: ${error.message}`);
+    }
+  };
+
+  const handleConnectBackend = async () => {
+    if (!backendUrl) {
+      setBackendError('Please enter a backend URL');
+      return;
+    }
+    if (!backendEmail || !backendPassword) {
+      setBackendError('Please enter credentials');
+      return;
+    }
+
+    setBackendConnecting(true);
+    setBackendError('');
+
+    try {
+      // Set the URL first
+      await window.api.backend.setUrl(backendUrl);
+
+      // Then authenticate
+      const result = await window.api.backend.authenticate(backendEmail, backendPassword);
+
+      if (result.success) {
+        setBackendConnected(true);
+        setBackendPassword(''); // Clear password after successful connection
+        alert('Successfully connected to external backend');
+      } else {
+        setBackendError(result.error || 'Authentication failed');
+        setBackendConnected(false);
+      }
+    } catch (error) {
+      setBackendError(error.message || 'Connection failed');
+      setBackendConnected(false);
+    } finally {
+      setBackendConnecting(false);
     }
   };
 
@@ -367,6 +416,72 @@ export function Settings() {
                 <p className="text-sm text-text-secondary">Connected Agents</p>
                 <p className="text-lg font-semibold text-text-primary">{serverInfo.agentCount}</p>
               </div>
+            </div>
+          </div>
+
+          {/* External Backend */}
+          <div className="card p-6">
+            <h2 className="text-lg font-semibold text-text-primary mb-4">External Backend</h2>
+            <p className="text-sm text-text-secondary mb-4">
+              Connect to a Docker or standalone Sentinel backend to manage agents connected to that server.
+              This enables commands, ping, and other operations for remotely-connected agents.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="md:col-span-2">
+                <label className="label">Backend URL</label>
+                <input
+                  type="url"
+                  value={backendUrl}
+                  onChange={e => setBackendUrl(e.target.value)}
+                  className="input"
+                  placeholder="http://localhost:8090"
+                />
+                <p className="text-xs text-text-secondary mt-1">
+                  The URL of your Docker or standalone Sentinel server
+                </p>
+              </div>
+              <div>
+                <label className="label">Email</label>
+                <input
+                  type="email"
+                  value={backendEmail}
+                  onChange={e => setBackendEmail(e.target.value)}
+                  className="input"
+                  placeholder="admin@sentinel.local"
+                />
+              </div>
+              <div>
+                <label className="label">Password</label>
+                <input
+                  type="password"
+                  value={backendPassword}
+                  onChange={e => setBackendPassword(e.target.value)}
+                  className="input"
+                  placeholder="Enter password"
+                />
+              </div>
+            </div>
+            {backendError && (
+              <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                <p className="text-sm text-danger">{backendError}</p>
+              </div>
+            )}
+            <div className="flex items-center gap-4 mt-4">
+              <button
+                onClick={handleConnectBackend}
+                disabled={backendConnecting}
+                className="btn btn-primary"
+              >
+                {backendConnecting ? 'Connecting...' : 'Connect'}
+              </button>
+              {backendConnected && (
+                <div className="flex items-center gap-2 text-success">
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  <span className="text-sm font-medium">Connected</span>
+                </div>
+              )}
             </div>
           </div>
 
