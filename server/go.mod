@@ -1,6 +1,6 @@
 module github.com/sentinel/server
 
-go 1.24.0
+go 1.23
 
 require (
 	github.com/gin-gonic/gin v1.9.1
@@ -10,6 +10,7 @@ require (
 	github.com/jackc/pgx/v5 v5.5.2
 	github.com/redis/go-redis/v9 v9.4.0
 	golang.org/x/crypto v0.18.0
+	golang.org/x/oauth2 v0.23.0
 )
 
 require (
@@ -40,7 +41,6 @@ require (
 	github.com/ugorji/go/codec v1.2.11 // indirect
 	golang.org/x/arch v0.3.0 // indirect
 	golang.org/x/net v0.17.0 // indirect
-	golang.org/x/oauth2 v0.34.0 // indirect
 	golang.org/x/sync v0.1.0 // indirect
 	golang.org/x/sys v0.26.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
