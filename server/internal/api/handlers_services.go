@@ -288,12 +288,16 @@ func getDeviceVersionHistoryHandler(services *Services) gin.HandlerFunc {
 
 // WebSocket handlers
 func handleAgentWebSocketWithServices(services *Services) gin.HandlerFunc {
-	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis}
+	// Type assert to get the concrete Hub type
+	hub, _ := services.Hub.(*websocket.Hub)
+	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: hub}
 	return router.handleAgentWebSocket
 }
 
 func handleDashboardWebSocketWithServices(services *Services) gin.HandlerFunc {
-	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis}
+	// Type assert to get the concrete Hub type
+	hub, _ := services.Hub.(*websocket.Hub)
+	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: hub}
 	return router.handleDashboardWebSocket
 }
 

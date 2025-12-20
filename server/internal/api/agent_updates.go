@@ -373,15 +373,25 @@ func (r *Router) reportUpdateStatus(c *gin.Context) {
 		return
 	}
 
-	_, err := r.db.Pool().Exec(c.Request.Context(), `
+	// Try to update existing record first
+	result, err := r.db.Pool().Exec(c.Request.Context(), `
 		UPDATE agent_updates
 		SET status = $1, error_message = $2, completed_at = CASE WHEN $1 IN ('completed', 'failed') THEN NOW() ELSE NULL END
 		WHERE agent_id = $3 AND to_version = $4 AND status = 'downloading'
 	`, req.Status, req.Error, req.AgentID, req.ToVersion)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update status"})
-		return
+		log.Printf("Failed to update agent_updates: %v", err)
+		// Continue anyway - we don't want to block agent updates
+	}
+
+	// If no rows were updated, insert a new record
+	if err == nil && result.RowsAffected() == 0 {
+		r.db.Pool().Exec(c.Request.Context(), `
+			INSERT INTO agent_updates (id, agent_id, from_version, to_version, platform, architecture, ip_address, status, error_message, created_at, completed_at)
+			VALUES ($1, $2, $3, $4, '', '', $5, $6, $7, NOW(), CASE WHEN $6 IN ('completed', 'failed') THEN NOW() ELSE NULL END)
+			ON CONFLICT DO NOTHING
+		`, uuid.New(), req.AgentID, req.FromVersion, req.ToVersion, c.ClientIP(), req.Status, req.Error)
 	}
 
 	if req.Status == "completed" {
