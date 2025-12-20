@@ -17,13 +17,15 @@ func (r *Router) handleDashboardMessage(userID uuid.UUID, message []byte) {
 
 	// Extract target info from payload
 	var payload struct {
-		AgentID   string          `json:"agentId"`
-		DeviceID  string          `json:"deviceId"`
-		SessionID string          `json:"sessionId"`
-		Data      json.RawMessage `json:"data"`
-		Path      string          `json:"path"`
-		Cols      int             `json:"cols"`
-		Rows      int             `json:"rows"`
+		AgentID    string          `json:"agentId"`
+		DeviceID   string          `json:"deviceId"`
+		SessionID  string          `json:"sessionId"`
+		Data       json.RawMessage `json:"data"`
+		Path       string          `json:"path"`
+		Cols       int             `json:"cols"`
+		Rows       int             `json:"rows"`
+		MaxDepth   int             `json:"maxDepth"`
+		IntervalMs int             `json:"intervalMs"`
 	}
 	json.Unmarshal(msg.Payload, &payload)
 
@@ -96,6 +98,15 @@ func (r *Router) handleDashboardMessage(userID uuid.UUID, message []byte) {
 		})
 		r.hub.SendToAgent(agentID, agentMsg)
 
+	case ws.MsgTypeListDrives:
+		// Forward list drives request to agent
+		agentMsg, _ := json.Marshal(ws.Message{
+			Type:      ws.MsgTypeListDrives,
+			RequestID: msg.RequestID,
+			Payload:   json.RawMessage("{}"),
+		})
+		r.hub.SendToAgent(agentID, agentMsg)
+
 	case ws.MsgTypeListFiles:
 		// Forward file list request to agent
 		agentMsg, _ := json.Marshal(ws.Message{
@@ -103,6 +114,29 @@ func (r *Router) handleDashboardMessage(userID uuid.UUID, message []byte) {
 			RequestID: msg.RequestID,
 			Payload: json.RawMessage(mustMarshal(map[string]interface{}{
 				"path": payload.Path,
+			})),
+		})
+		r.hub.SendToAgent(agentID, agentMsg)
+
+	case ws.MsgTypeScanDirectory:
+		// Forward directory scan request to agent
+		agentMsg, _ := json.Marshal(ws.Message{
+			Type:      ws.MsgTypeScanDirectory,
+			RequestID: msg.RequestID,
+			Payload: json.RawMessage(mustMarshal(map[string]interface{}{
+				"path":     payload.Path,
+				"maxDepth": payload.MaxDepth,
+			})),
+		})
+		r.hub.SendToAgent(agentID, agentMsg)
+
+	case ws.MsgTypeSetMetricsInterval:
+		// Forward metrics interval request to agent
+		agentMsg, _ := json.Marshal(ws.Message{
+			Type:      ws.MsgTypeSetMetricsInterval,
+			RequestID: msg.RequestID,
+			Payload: json.RawMessage(mustMarshal(map[string]interface{}{
+				"intervalMs": payload.IntervalMs,
 			})),
 		})
 		r.hub.SendToAgent(agentID, agentMsg)

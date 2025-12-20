@@ -310,6 +310,17 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 			"payload":  msg.Payload,
 		})
 		r.hub.BroadcastToDashboards(broadcastMsg)
+
+	case ws.MsgTypeScanProgress:
+		// Forward scan progress to dashboards
+		broadcastMsg, _ := json.Marshal(map[string]interface{}{
+			"type":      ws.MsgTypeScanProgress,
+			"deviceId":  deviceID,
+			"agentId":   agentID,
+			"requestId": msg.RequestID,
+			"payload":   msg.Payload,
+		})
+		r.hub.BroadcastToDashboards(broadcastMsg)
 	}
 }
 
