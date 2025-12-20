@@ -43,6 +43,73 @@ export class BackendRelay {
     this.setupWebSocketListeners();
   }
 
+  // Sync devices from Docker backend to local SQLite
+  async syncDevices(): Promise<void> {
+    if (!this.isAuthenticated()) {
+      console.log('[BackendRelay] Not authenticated, skipping device sync');
+      return;
+    }
+
+    try {
+      console.log('[BackendRelay] Syncing devices from backend...');
+      const devices = await this.makeRequest('GET', '/api/devices');
+
+      if (!Array.isArray(devices)) {
+        console.log('[BackendRelay] No devices returned from backend');
+        return;
+      }
+
+      console.log(`[BackendRelay] Got ${devices.length} devices from backend`);
+
+      for (const device of devices) {
+        try {
+          // Check if device exists locally
+          const existingDevice = await this.database.getDevice(device.id);
+
+          if (existingDevice) {
+            // Update existing device
+            await this.database.updateDeviceFromBackend(device.id, {
+              hostname: device.hostname,
+              displayName: device.displayName,
+              osType: device.osType,
+              osVersion: device.osVersion,
+              architecture: device.architecture,
+              agentVersion: device.agentVersion,
+              ipAddress: device.ipAddress,
+              macAddress: device.macAddress,
+              status: device.status,
+              lastSeen: device.lastSeen,
+              agentId: device.agentId,
+            });
+          } else {
+            // Create new device
+            await this.database.createDeviceFromBackend({
+              id: device.id,
+              hostname: device.hostname,
+              displayName: device.displayName,
+              osType: device.osType,
+              osVersion: device.osVersion,
+              architecture: device.architecture,
+              agentVersion: device.agentVersion,
+              ipAddress: device.ipAddress,
+              macAddress: device.macAddress,
+              status: device.status,
+              lastSeen: device.lastSeen,
+              agentId: device.agentId,
+              clientId: device.clientId,
+            });
+          }
+        } catch (error) {
+          console.error(`[BackendRelay] Failed to sync device ${device.id}:`, error);
+        }
+      }
+
+      console.log('[BackendRelay] Device sync complete');
+    } catch (error) {
+      console.error('[BackendRelay] Device sync failed:', error);
+    }
+  }
+
   private setupWebSocketListeners(): void {
     // Forward terminal output to renderer
     this.websocket.on('terminal:data', (data) => {
@@ -154,6 +221,13 @@ export class BackendRelay {
       } catch (wsError) {
         console.error('[BackendRelay] WebSocket connection failed:', wsError);
         // Continue without WebSocket - HTTP operations will still work
+      }
+
+      // Sync devices from backend to local database
+      try {
+        await this.syncDevices();
+      } catch (syncError) {
+        console.error('[BackendRelay] Initial device sync failed:', syncError);
       }
 
       return true;
