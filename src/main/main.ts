@@ -4,12 +4,13 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as dotenv from 'dotenv';
 import { Database } from './database';
-import { Server } from './server';
-import { AgentManager } from './agents';
-import { GrpcServer } from './grpc-server';
 import { listCertificates, renewCertificates, getCACertificate, getCertsDir } from './cert-manager';
 import { BackendRelay } from './backend-relay';
 import * as os from 'os';
+
+// Note: Server-only architecture - all agent operations go through BackendRelay
+// AgentManager, Server, and GrpcServer have been removed from Electron
+// Agents connect to the Go server (Docker or standalone), not to Electron
 
 // Disable GPU acceleration to prevent crashes on some systems
 app.disableHardwareAcceleration();
@@ -174,9 +175,6 @@ function setupAutoUpdater(): void {
 
 let mainWindow: BrowserWindow | null = null;
 let database: Database;
-let server: Server;
-let agentManager: AgentManager;
-let grpcServer: GrpcServer;
 let backendRelay: BackendRelay;
 let isQuitting = false;
 
@@ -244,14 +242,12 @@ function createWindow(): void {
 }
 
 async function initialize(): Promise<void> {
-  // Initialize database
+  // Initialize database (for local caching and settings)
   database = new Database();
   await database.initialize();
 
-  // Initialize agent manager
-  agentManager = new AgentManager(database);
-
-  // Initialize backend relay for external backend support
+  // Initialize backend relay - this is now the ONLY way to communicate with agents
+  // Agents connect to the Go server (Docker or standalone), not to Electron
   backendRelay = new BackendRelay(database);
   await backendRelay.initialize();
 
@@ -260,23 +256,8 @@ async function initialize(): Promise<void> {
     mainWindow?.webContents.send(channel, data);
   });
 
-  // Initialize embedded server
-  server = new Server(database, agentManager);
-  await server.start();
-
-  // Initialize gRPC server (Data Plane - HTTP port + 1)
-  const httpPort = server.getPort();
-  const grpcPort = httpPort + 1;
-  grpcServer = new GrpcServer(database, agentManager, grpcPort);
-  try {
-    await grpcServer.start();
-    console.log('Dual-channel architecture initialized:');
-    console.log(`  - WebSocket Control Plane: port ${httpPort}`);
-    console.log(`  - gRPC Data Plane: port ${grpcPort}`);
-  } catch (error) {
-    console.error('Failed to start gRPC server:', error);
-    // gRPC is optional, continue without it
-  }
+  console.log('Server-only architecture initialized');
+  console.log('Agents connect to Go server, Electron is UI client only');
 
   // Setup IPC handlers
   setupIpcHandlers();
@@ -311,14 +292,6 @@ function setupUpdaterHandlers(): void {
     // Clean up resources before quitting for update
     try {
       console.log('Preparing to install update...');
-      if (grpcServer) {
-        console.log('Stopping gRPC server...');
-        await grpcServer.stop();
-      }
-      if (server) {
-        console.log('Stopping WebSocket server...');
-        await server.stop();
-      }
       if (database) {
         console.log('Closing database...');
         await database.close();
@@ -363,40 +336,41 @@ function setupIpcHandlers(): void {
     }
   });
 
-  // Helper function to check if agent needs relay
-  async function needsRelay(deviceId: string): Promise<boolean> {
-    const device = await database.getDevice(deviceId);
-    if (!device?.agentId) return false;
-    // If locally connected, no relay needed
-    if (agentManager.isAgentConnected(device.agentId)) return false;
-    // If agent is NOT locally connected but backend relay is configured and authenticated,
-    // use relay (agent might be connected to Docker backend instead)
-    if (backendRelay.isConfigured() && backendRelay.isAuthenticated()) {
-      return true;
+  // Helper function to ensure backend is connected
+  function ensureBackendConnected(): void {
+    if (!backendRelay.isConfigured()) {
+      throw new Error('Backend server not configured. Go to Settings to configure the server URL.');
     }
-    return false;
+    if (!backendRelay.isAuthenticated()) {
+      throw new Error('Not authenticated with backend server. Go to Settings to log in.');
+    }
+  }
+
+  // Helper function to get device with agentId
+  async function getDeviceWithAgent(deviceId: string): Promise<{ id: string; agentId: string }> {
+    const device = await database.getDevice(deviceId);
+    if (!device) throw new Error('Device not found');
+    if (!device.agentId) throw new Error('Device has no agent ID');
+    return device;
   }
 
   // Device management
   ipcMain.handle('devices:list', async (_, clientId?: string) => {
     const devices = await database.getDevices(clientId);
-    // Check local WebSocket connection first, but trust database status if agent
-    // is connected to external backend (e.g., Docker) and has recent activity
+    // Trust database status - agents report to Go server which updates the database
+    // Consider online if lastSeen is within 90 seconds (heartbeat interval + buffer)
     return devices.map(device => {
-      if (device.agentId && agentManager.isAgentConnected(device.agentId)) {
-        return { ...device, status: 'online' };
+      if (device.isDisabled) {
+        return { ...device, status: 'disabled' };
       }
-      // Trust database status - agent may be connected to Docker backend
-      // Consider online if lastSeen is within 90 seconds (heartbeat interval + buffer)
       if (device.status === 'online' && device.lastSeen) {
         const lastSeenTime = new Date(device.lastSeen).getTime();
-        const now = Date.now();
-        const isRecentlyActive = (now - lastSeenTime) < 90000; // 90 seconds
+        const isRecentlyActive = (Date.now() - lastSeenTime) < 90000; // 90 seconds
         if (isRecentlyActive) {
           return { ...device, status: 'online' };
         }
       }
-      return { ...device, status: device.isDisabled ? 'disabled' : 'offline' };
+      return { ...device, status: 'offline' };
     });
   });
 
@@ -405,17 +379,15 @@ function setupIpcHandlers(): void {
     const device = await database.getDevice(id);
     console.log('[IPC] devices:get result:', device ? device.hostname : 'null');
     if (device) {
-      // Check local connection first, then trust database status with recent activity check
-      const isLocallyConnected = device.agentId && agentManager.isAgentConnected(device.agentId);
+      // Trust database status with recent activity check
       let status = 'offline';
-      if (isLocallyConnected) {
-        status = 'online';
+      if (device.isDisabled) {
+        status = 'disabled';
       } else if (device.status === 'online' && device.lastSeen) {
         const lastSeenTime = new Date(device.lastSeen).getTime();
         const isRecentlyActive = (Date.now() - lastSeenTime) < 90000;
         if (isRecentlyActive) status = 'online';
       }
-      if (device.isDisabled) status = 'disabled';
       console.log('[IPC] devices:get status:', status, 'agentId:', device.agentId);
       return { ...device, status };
     }
@@ -432,56 +404,28 @@ function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('devices:disable', async (_, id: string) => {
-    if (await needsRelay(id)) {
-      try {
-        return await backendRelay.disableDevice(id);
-      } catch (error) {
-        console.error('[IPC] Backend relay disable failed:', error);
-        throw error;
-      }
-    }
-    return agentManager.disableDevice(id);
+    ensureBackendConnected();
+    return backendRelay.disableDevice(id);
   });
 
   ipcMain.handle('devices:enable', async (_, id: string) => {
-    if (await needsRelay(id)) {
-      try {
-        return await backendRelay.enableDevice(id);
-      } catch (error) {
-        console.error('[IPC] Backend relay enable failed:', error);
-        throw error;
-      }
-    }
-    return agentManager.enableDevice(id);
+    ensureBackendConnected();
+    return backendRelay.enableDevice(id);
   });
 
   ipcMain.handle('devices:uninstall', async (_, id: string) => {
-    if (await needsRelay(id)) {
-      try {
-        return await backendRelay.uninstallAgent(id);
-      } catch (error) {
-        console.error('[IPC] Backend relay uninstall failed:', error);
-        throw error;
-      }
-    }
-    return agentManager.uninstallAgent(id);
+    ensureBackendConnected();
+    return backendRelay.uninstallAgent(id);
   });
 
   ipcMain.handle('devices:update', async (_, id: string, updates: { displayName?: string; tags?: string[] }) => {
     return database.updateDevice(id, updates);
   });
 
-  
+
   ipcMain.handle('devices:ping', async (_, deviceId: string) => {
-    if (await needsRelay(deviceId)) {
-      try {
-        return await backendRelay.pingDevice(deviceId);
-      } catch (error) {
-        console.error('[IPC] Backend relay ping failed:', error);
-        throw error;
-      }
-    }
-    return agentManager.pingAgent(deviceId);
+    ensureBackendConnected();
+    return backendRelay.pingDevice(deviceId);
   });
 
   ipcMain.handle('devices:getMetrics', async (_, deviceId: string, hours: number) => {
@@ -489,31 +433,15 @@ function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('devices:setMetricsInterval', async (_, deviceId: string, intervalMs: number) => {
-    if (await needsRelay(deviceId)) {
-      try {
-        const device = await database.getDevice(deviceId);
-        if (!device?.agentId) throw new Error('Device not found');
-        return await backendRelay.setMetricsInterval(deviceId, device.agentId, intervalMs);
-      } catch (error) {
-        console.error('[IPC] Backend relay setMetricsInterval failed:', error);
-        throw error;
-      }
-    }
-    return agentManager.setMetricsInterval(deviceId, intervalMs);
+    ensureBackendConnected();
+    const device = await getDeviceWithAgent(deviceId);
+    return backendRelay.setMetricsInterval(deviceId, device.agentId, intervalMs);
   });
 
   // Commands
   ipcMain.handle('commands:execute', async (_, deviceId: string, command: string, type: string) => {
-    // Check if we need to relay through external backend
-    if (await needsRelay(deviceId)) {
-      try {
-        return await backendRelay.executeCommand(deviceId, command, type);
-      } catch (error) {
-        console.error('[IPC] Backend relay command failed:', error);
-        throw error;
-      }
-    }
-    return agentManager.executeCommand(deviceId, command, type);
+    ensureBackendConnected();
+    return backendRelay.executeCommand(deviceId, command, type);
   });
 
   ipcMain.handle('commands:getHistory', async (_, deviceId: string) => {
@@ -522,137 +450,82 @@ function setupIpcHandlers(): void {
 
   // Remote terminal
   ipcMain.handle('terminal:start', async (_, deviceId: string) => {
-    if (await needsRelay(deviceId)) {
-      try {
-        const device = await database.getDevice(deviceId);
-        if (!device?.agentId) throw new Error('Device not found');
-        return await backendRelay.startTerminal(deviceId, device.agentId);
-      } catch (error) {
-        console.error('[IPC] Backend relay terminal start failed:', error);
-        throw error;
-      }
-    }
-    return agentManager.startTerminalSession(deviceId);
+    ensureBackendConnected();
+    const device = await getDeviceWithAgent(deviceId);
+    return backendRelay.startTerminal(deviceId, device.agentId);
   });
 
   ipcMain.handle('terminal:send', async (_, sessionId: string, data: string) => {
-    // Check if this is a relay session
-    if (backendRelay.isRelaySession(sessionId)) {
-      return backendRelay.sendTerminalData(sessionId, data);
-    }
-    return agentManager.sendTerminalData(sessionId, data);
+    return backendRelay.sendTerminalData(sessionId, data);
   });
 
   ipcMain.handle('terminal:resize', async (_, sessionId: string, cols: number, rows: number) => {
-    if (backendRelay.isRelaySession(sessionId)) {
-      return backendRelay.resizeTerminal(sessionId, cols, rows);
-    }
-    return agentManager.resizeTerminal(sessionId, cols, rows);
+    return backendRelay.resizeTerminal(sessionId, cols, rows);
   });
 
   ipcMain.handle('terminal:close', async (_, sessionId: string) => {
-    if (backendRelay.isRelaySession(sessionId)) {
-      return backendRelay.closeTerminal(sessionId);
-    }
-    return agentManager.closeTerminalSession(sessionId);
+    return backendRelay.closeTerminal(sessionId);
   });
 
   // File transfer
   ipcMain.handle('files:drives', async (_, deviceId: string) => {
-    if (await needsRelay(deviceId)) {
-      try {
-        const device = await database.getDevice(deviceId);
-        if (!device?.agentId) throw new Error('Device not found');
-        return await backendRelay.listDrives(deviceId, device.agentId);
-      } catch (error) {
-        console.error('[IPC] Backend relay listDrives failed:', error);
-        throw error;
-      }
-    }
-    return agentManager.listDrives(deviceId);
+    ensureBackendConnected();
+    const device = await getDeviceWithAgent(deviceId);
+    return backendRelay.listDrives(deviceId, device.agentId);
   });
 
   ipcMain.handle('files:list', async (_, deviceId: string, remotePath: string) => {
-    if (await needsRelay(deviceId)) {
-      try {
-        const device = await database.getDevice(deviceId);
-        if (!device?.agentId) throw new Error('Device not found');
-        return await backendRelay.listFiles(deviceId, device.agentId, remotePath);
-      } catch (error) {
-        console.error('[IPC] Backend relay listFiles failed:', error);
-        throw error;
-      }
-    }
-    return agentManager.listFiles(deviceId, remotePath);
+    ensureBackendConnected();
+    const device = await getDeviceWithAgent(deviceId);
+    return backendRelay.listFiles(deviceId, device.agentId, remotePath);
   });
 
   ipcMain.handle('files:download', async (_, deviceId: string, remotePath: string, localPath: string) => {
-    if (await needsRelay(deviceId)) {
-      try {
-        const device = await database.getDevice(deviceId);
-        if (!device?.agentId) throw new Error('Device not found');
-        return await backendRelay.downloadFile(deviceId, device.agentId, remotePath, localPath);
-      } catch (error) {
-        console.error('[IPC] Backend relay downloadFile failed:', error);
-        throw error;
-      }
-    }
-    return agentManager.downloadFile(deviceId, remotePath, localPath);
+    ensureBackendConnected();
+    const device = await getDeviceWithAgent(deviceId);
+    return backendRelay.downloadFile(deviceId, device.agentId, remotePath, localPath);
   });
 
   ipcMain.handle('files:upload', async (_, deviceId: string, localPath: string, remotePath: string) => {
-    if (await needsRelay(deviceId)) {
-      try {
-        const device = await database.getDevice(deviceId);
-        if (!device?.agentId) throw new Error('Device not found');
-        return await backendRelay.uploadFile(deviceId, device.agentId, localPath, remotePath);
-      } catch (error) {
-        console.error('[IPC] Backend relay uploadFile failed:', error);
-        throw error;
-      }
-    }
-    return agentManager.uploadFile(deviceId, localPath, remotePath);
+    ensureBackendConnected();
+    const device = await getDeviceWithAgent(deviceId);
+    return backendRelay.uploadFile(deviceId, device.agentId, localPath, remotePath);
   });
 
   ipcMain.handle('files:scan', async (_, deviceId: string, path: string, maxDepth: number) => {
-    if (await needsRelay(deviceId)) {
-      try {
-        const device = await database.getDevice(deviceId);
-        if (!device?.agentId) throw new Error('Device not found');
-        return await backendRelay.scanDirectory(deviceId, device.agentId, path, maxDepth);
-      } catch (error) {
-        console.error('[IPC] Backend relay scanDirectory failed:', error);
-        throw error;
-      }
-    }
-    return agentManager.scanDirectory(deviceId, path, maxDepth);
+    ensureBackendConnected();
+    const device = await getDeviceWithAgent(deviceId);
+    return backendRelay.scanDirectory(deviceId, device.agentId, path, maxDepth);
   });
 
   ipcMain.handle('files:downloadToSandbox', async (_, deviceId: string, remotePath: string) => {
-    const path = await import('path');
-    const fs = await import('fs');
-    const os = await import('os');
-    const crypto = await import('crypto');
-    
+    ensureBackendConnected();
+    const device = await getDeviceWithAgent(deviceId);
+
+    const pathModule = await import('path');
+    const fsModule = await import('fs');
+    const osModule = await import('os');
+    const cryptoModule = await import('crypto');
+
     // Create sandbox directory in user's app data
-    const sandboxDir = path.join(os.homedir(), '.sentinel', 'sandbox');
-    if (!fs.existsSync(sandboxDir)) {
-      fs.mkdirSync(sandboxDir, { recursive: true });
+    const sandboxDir = pathModule.join(osModule.homedir(), '.sentinel', 'sandbox');
+    if (!fsModule.existsSync(sandboxDir)) {
+      fsModule.mkdirSync(sandboxDir, { recursive: true });
     }
-    
+
     // Generate unique filename with timestamp and hash
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const hash = crypto.randomBytes(4).toString('hex');
-    const originalName = path.basename(remotePath);
+    const hash = cryptoModule.randomBytes(4).toString('hex');
+    const originalName = pathModule.basename(remotePath);
     const sandboxFilename = `${timestamp}_${hash}_${originalName}`;
-    const localPath = path.join(sandboxDir, sandboxFilename);
-    
-    await agentManager.downloadFile(deviceId, remotePath, localPath);
-    
+    const localPath = pathModule.join(sandboxDir, sandboxFilename);
+
+    await backendRelay.downloadFile(deviceId, device.agentId, remotePath, localPath);
+
     // Calculate SHA256 hash of downloaded file
-    const fileBuffer = fs.readFileSync(localPath);
-    const sha256Hash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
-    
+    const fileBuffer = fsModule.readFileSync(localPath);
+    const sha256Hash = cryptoModule.createHash('sha256').update(fileBuffer).digest('hex');
+
     return {
       localPath,
       sandboxDir,
@@ -663,34 +536,35 @@ function setupIpcHandlers(): void {
     };
   });
 
-  // Remote desktop
-  ipcMain.handle('remote:startSession', async (_, deviceId: string) => {
-    return agentManager.startRemoteSession(deviceId);
+  // Remote desktop - not yet implemented in server-only mode
+  // These require WebRTC/WebSocket relay through the Go server
+  ipcMain.handle('remote:startSession', async () => {
+    throw new Error('Remote desktop is not yet available. Feature coming soon.');
   });
 
-  ipcMain.handle('remote:stopSession', async (_, sessionId: string) => {
-    return agentManager.stopRemoteSession(sessionId);
+  ipcMain.handle('remote:stopSession', async () => {
+    throw new Error('Remote desktop is not yet available. Feature coming soon.');
   });
 
-  ipcMain.handle('remote:sendInput', async (_, sessionId: string, input: any) => {
-    return agentManager.sendRemoteInput(sessionId, input);
+  ipcMain.handle('remote:sendInput', async () => {
+    throw new Error('Remote desktop is not yet available. Feature coming soon.');
   });
 
-  // WebRTC Remote Desktop
-  ipcMain.handle('webrtc:start', async (_, deviceId: string, offer: any) => {
-    return agentManager.startWebRTCSession(deviceId, offer);
+  // WebRTC Remote Desktop - not yet implemented in server-only mode
+  ipcMain.handle('webrtc:start', async () => {
+    throw new Error('WebRTC remote desktop is not yet available. Feature coming soon.');
   });
 
-  ipcMain.handle('webrtc:stop', async (_, deviceId: string) => {
-    return agentManager.stopWebRTCSession(deviceId);
+  ipcMain.handle('webrtc:stop', async () => {
+    throw new Error('WebRTC remote desktop is not yet available. Feature coming soon.');
   });
 
-  ipcMain.handle('webrtc:signal', async (_, deviceId: string, signal: any) => {
-    return agentManager.sendWebRTCSignal(deviceId, signal);
+  ipcMain.handle('webrtc:signal', async () => {
+    throw new Error('WebRTC remote desktop is not yet available. Feature coming soon.');
   });
 
-  ipcMain.handle('webrtc:setQuality', async (_, deviceId: string, quality: string) => {
-    return agentManager.setWebRTCQuality(deviceId, quality);
+  ipcMain.handle('webrtc:setQuality', async () => {
+    throw new Error('WebRTC remote desktop is not yet available. Feature coming soon.');
   });
 
   // Alerts
@@ -740,7 +614,8 @@ function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('scripts:execute', async (_, scriptId: string, deviceIds: string[]) => {
-    return agentManager.executeScript(scriptId, deviceIds);
+    ensureBackendConnected();
+    return backendRelay.executeScript(scriptId, deviceIds);
   });
 
   // Tickets
@@ -1051,7 +926,7 @@ function setupIpcHandlers(): void {
     if (smtp.fromName !== undefined) updates.smtpFromName = smtp.fromName;
 
     await database.updateSettings(updates);
-    await server.initializePortalServices();
+    // Portal services are handled by the Go server, not Electron
     return { success: true };
   });
 
@@ -1111,16 +986,14 @@ function setupIpcHandlers(): void {
     return { success: true, count: deviceIds.length };
   });
 
-  // Server info
+  // Server info - now returns info about the connected Go backend
   ipcMain.handle('server:getInfo', async () => {
-    // Count agents: local connections + database online (connected to Docker backend)
-    const localCount = agentManager.getConnectedAgentCount();
-    let dbOnlineCount = 0;
+    // Count online agents from database (agents connect to Go server)
+    let onlineCount = 0;
     try {
       const devices = await database.getDevices();
       const now = Date.now();
-      dbOnlineCount = devices.filter(d => {
-        if (d.agentId && agentManager.isAgentConnected(d.agentId)) return false; // Already counted
+      onlineCount = devices.filter(d => {
         if (d.status === 'online' && d.lastSeen) {
           const lastSeenTime = new Date(d.lastSeen).getTime();
           return (now - lastSeenTime) < 90000; // 90 seconds
@@ -1128,17 +1001,24 @@ function setupIpcHandlers(): void {
         return false;
       }).length;
     } catch (e) { /* ignore */ }
+
+    const backendUrl = backendRelay.getBackendUrl();
     return {
-      port: server.getPort(),
-      grpcPort: grpcServer?.getPort() || 8082,
-      agentCount: localCount + dbOnlineCount,
-      grpcAgentCount: grpcServer?.getConnectionCount() || 0,
-      enrollmentToken: server.getEnrollmentToken(),
+      backendUrl: backendUrl || 'Not configured',
+      isConnected: backendRelay.isAuthenticated(),
+      isWebSocketConnected: backendRelay.isWebSocketConnected(),
+      agentCount: onlineCount,
+      // Legacy fields for compatibility - agents connect to Go server, not Electron
+      port: 0,
+      grpcPort: 0,
+      grpcAgentCount: 0,
+      enrollmentToken: 'Configure in Go server',
     };
   });
 
   ipcMain.handle('server:regenerateToken', async () => {
-    return server.regenerateEnrollmentToken();
+    // Token management is handled by the Go server
+    throw new Error('Token regeneration is managed by the Go server. Use the server admin interface.');
   });
 
   // Certificate management
@@ -1156,11 +1036,8 @@ function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('certs:distribute', async () => {
-    const caCert = getCACertificate();
-    if (!caCert) {
-      return { success: 0, failed: 0, total: 0, error: 'CA certificate not found' };
-    }
-    return agentManager.broadcastCertificate(caCert.content, caCert.hash);
+    // Certificate distribution is handled by the Go server
+    throw new Error('Certificate distribution is managed by the Go server. Use the server admin interface.');
   });
 
   ipcMain.handle('certs:getAgentStatus', async () => {
@@ -1193,13 +1070,28 @@ function setupIpcHandlers(): void {
   });
 
 
-  // Agent installer
+  // Agent installer - agents now connect to Go server, not Electron
   ipcMain.handle('agent:getInstallerCommand', async (_, platform: string) => {
-    return server.getAgentInstallerCommand(platform);
+    const serverUrl = backendRelay.getBackendUrl();
+    if (!serverUrl) {
+      throw new Error('Backend server not configured. Go to Settings to configure the server URL.');
+    }
+    // Enrollment token is managed by the Go server
+    const platformCommands: Record<string, string> = {
+      windows: `# Download agent from ${serverUrl}/api/agents/download/windows\n# Install with: sentinel-agent.exe -install -server=${serverUrl} -token=YOUR_TOKEN`,
+      macos: `curl -o sentinel-agent ${serverUrl}/api/agents/download/macos && chmod +x sentinel-agent && sudo ./sentinel-agent -install -server=${serverUrl} -token=YOUR_TOKEN`,
+      linux: `curl -o sentinel-agent ${serverUrl}/api/agents/download/linux && chmod +x sentinel-agent && sudo ./sentinel-agent -install -server=${serverUrl} -token=YOUR_TOKEN`,
+    };
+    return platformCommands[platform.toLowerCase()] || 'Unsupported platform';
   });
 
   // Agent download with save dialog
   ipcMain.handle('agent:download', async (_, platform: string) => {
+    const serverUrl = backendRelay.getBackendUrl();
+    if (!serverUrl) {
+      return { success: false, error: 'Backend server not configured. Go to Settings to configure the server URL.' };
+    }
+
     // Use installer packages instead of raw binaries
     const agentDir = app.isPackaged
       ? path.join(process.resourcesPath, 'agent')
@@ -1256,26 +1148,21 @@ function setupIpcHandlers(): void {
       return { success: false, canceled: true };
     }
 
-    // Get server info
-    const localIp = getLocalIpAddress();
-    const serverPort = server.getPort();
-    const serverUrl = `http://${localIp}:${serverPort}`;
-    const enrollmentToken = server.getEnrollmentToken();
-
     try {
       const rawInstallerData = fs.readFileSync(sourcePath);
 
       // Embed config for non-MSI installers (PKG/DEB use placeholder replacement)
       // MSI uses command-line properties instead
+      // Note: Token needs to be obtained from Go server
       const installerData = platform.toLowerCase() !== 'windows'
-        ? embedConfigInInstaller(rawInstallerData, serverUrl, enrollmentToken)
+        ? embedConfigInInstaller(rawInstallerData, serverUrl, 'YOUR_TOKEN')
         : rawInstallerData;
 
       await fs.promises.writeFile(result.filePath, installerData);
 
       // Return install command based on platform
       const installCommands: Record<string, string> = {
-        windows: `msiexec /i "${result.filePath}" SERVERURL="${serverUrl}" ENROLLMENTTOKEN="${enrollmentToken}" /qn`,
+        windows: `msiexec /i "${result.filePath}" SERVERURL="${serverUrl}" ENROLLMENTTOKEN="YOUR_TOKEN" /qn`,
         macos: `sudo installer -pkg "${result.filePath}" -target /`,
         linux: `sudo dpkg -i "${result.filePath}"`,
       };
@@ -1285,6 +1172,7 @@ function setupIpcHandlers(): void {
         filePath: result.filePath,
         size: installerData.length,
         installCommand: installCommands[platform.toLowerCase()],
+        note: 'Replace YOUR_TOKEN with the enrollment token from the Go server.',
       };
     } catch (error: any) {
       return {
@@ -1296,6 +1184,11 @@ function setupIpcHandlers(): void {
 
   // MSI download with save dialog
   ipcMain.handle('agent:downloadMsi', async () => {
+    const serverUrl = backendRelay.getBackendUrl();
+    if (!serverUrl) {
+      return { success: false, error: 'Backend server not configured. Go to Settings to configure the server URL.' };
+    }
+
     const agentDir = app.isPackaged
       ? path.join(process.resourcesPath, 'agent')
       : path.join(__dirname, '..', '..', 'release', 'agent');
@@ -1324,15 +1217,7 @@ function setupIpcHandlers(): void {
 
     try {
       // Read MSI file
-      let msiData = fs.readFileSync(sourcePath);
-
-      // Get server info for embedding in the MSI
-      // For MSI, we'll create a transform file or embed via property table
-      // For now, we copy and provide install command with parameters
-      const localIp = getLocalIpAddress();
-      const serverPort = server.getPort();
-      const serverUrl = `http://${localIp}:${serverPort}`;
-      const enrollmentToken = server.getEnrollmentToken();
+      const msiData = fs.readFileSync(sourcePath);
 
       // Write the MSI file
       await fs.promises.writeFile(result.filePath, msiData);
@@ -1341,7 +1226,8 @@ function setupIpcHandlers(): void {
         success: true,
         filePath: result.filePath,
         size: msiData.length,
-        installCommand: `msiexec /i "${result.filePath}" SERVERURL="${serverUrl}" ENROLLMENTTOKEN="${enrollmentToken}" /qn`,
+        installCommand: `msiexec /i "${result.filePath}" SERVERURL="${serverUrl}" ENROLLMENTTOKEN="YOUR_TOKEN" /qn`,
+        note: 'Replace YOUR_TOKEN with the enrollment token from the Go server.',
       };
     } catch (error: any) {
       return {
@@ -1353,33 +1239,36 @@ function setupIpcHandlers(): void {
 
   // Get MSI install command
   ipcMain.handle('agent:getMsiCommand', async () => {
-    const localIp = getLocalIpAddress();
-    const serverPort = server.getPort();
-    const serverUrl = `http://${localIp}:${serverPort}`;
-    const enrollmentToken = server.getEnrollmentToken();
+    const serverUrl = backendRelay.getBackendUrl();
+    if (!serverUrl) {
+      throw new Error('Backend server not configured. Go to Settings to configure the server URL.');
+    }
 
     return {
       serverUrl,
-      enrollmentToken,
-      command: `msiexec /i "sentinel-agent.msi" SERVERURL="${serverUrl}" ENROLLMENTTOKEN="${enrollmentToken}" /qn`,
+      enrollmentToken: 'Obtain from Go server admin interface',
+      command: `msiexec /i "sentinel-agent.msi" SERVERURL="${serverUrl}" ENROLLMENTTOKEN="YOUR_TOKEN" /qn`,
+      note: 'Replace YOUR_TOKEN with the enrollment token from the Go server.',
     };
   });
 
   // Execute PowerShell install script with UAC elevation
   ipcMain.handle('agent:runPowerShellInstall', async () => {
-    const localIp = getLocalIpAddress();
-    const serverPort = server.getPort();
-    const serverUrl = `http://${localIp}:${serverPort}`;
-    const enrollmentToken = server.getEnrollmentToken();
+    const serverUrl = backendRelay.getBackendUrl();
+    if (!serverUrl) {
+      return { success: false, error: 'Backend server not configured. Go to Settings to configure the server URL.' };
+    }
 
     // PowerShell script that downloads and installs the agent
+    // Note: Token needs to be obtained from Go server
     const psScript = `
 $ErrorActionPreference = 'Stop'
+$token = Read-Host 'Enter enrollment token from Go server'
 $agentPath = Join-Path $env:TEMP 'sentinel-agent.exe'
 Write-Host 'Downloading Sentinel Agent...' -ForegroundColor Cyan
-Invoke-WebRequest -Uri '${serverUrl}/api/agent/download/windows' -OutFile $agentPath -UseBasicParsing
+Invoke-WebRequest -Uri '${serverUrl}/api/agents/download/windows' -OutFile $agentPath -UseBasicParsing
 Write-Host 'Installing agent...' -ForegroundColor Green
-Start-Process -FilePath $agentPath -ArgumentList '--install','--server=${serverUrl}','--token=${enrollmentToken}' -Wait
+Start-Process -FilePath $agentPath -ArgumentList '--install',"--server=${serverUrl}","--token=$token" -Wait
 Write-Host 'Installation complete!' -ForegroundColor Green
 Read-Host 'Press Enter to close'
 `;
@@ -1412,115 +1301,19 @@ Read-Host 'Press Enter to close'
 }
 
 // Helper function to collect diagnostics and post as ticket comments
+// Note: In server-only mode, diagnostics collection is handled by the Go server
 async function collectAndPostDiagnostics(ticketId: string, deviceId: string): Promise<void> {
   try {
-    console.log(`Collecting diagnostics for ticket ${ticketId} from device ${deviceId}`);
-
-    // Collect diagnostics (8 hours back)
-    const diagnostics = await agentManager.collectDiagnostics(deviceId, 8);
-
-    if (!diagnostics) {
-      console.log('No diagnostics data received');
-      return;
-    }
-
-    const timestamp = new Date().toISOString();
-
-    // Post System Errors as a comment
-    if (diagnostics.systemErrors && diagnostics.systemErrors.length > 0) {
-      const systemErrorsContent = formatLogEntries('System Errors (Event Viewer)', diagnostics.systemErrors);
-      await database.createTicketComment({
-        ticketId,
-        content: systemErrorsContent,
-        authorName: 'Sentinel Diagnostics',
-        isInternal: true,
-      });
-    }
-
-    // Post Application Logs as a comment
-    if (diagnostics.applicationLogs && diagnostics.applicationLogs.length > 0) {
-      const appLogsContent = formatLogEntries('Application Logs', diagnostics.applicationLogs);
-      await database.createTicketComment({
-        ticketId,
-        content: appLogsContent,
-        authorName: 'Sentinel Diagnostics',
-        isInternal: true,
-      });
-    }
-
-    // Post Security Events as a comment
-    if (diagnostics.securityEvents && diagnostics.securityEvents.length > 0) {
-      const securityContent = formatLogEntries('Security Events (Audit Failures)', diagnostics.securityEvents);
-      await database.createTicketComment({
-        ticketId,
-        content: securityContent,
-        authorName: 'Sentinel Diagnostics',
-        isInternal: true,
-      });
-    }
-
-    // Post Hardware Events as a comment
-    if (diagnostics.hardwareEvents && diagnostics.hardwareEvents.length > 0) {
-      const hardwareContent = formatLogEntries('Hardware Events', diagnostics.hardwareEvents);
-      await database.createTicketComment({
-        ticketId,
-        content: hardwareContent,
-        authorName: 'Sentinel Diagnostics',
-        isInternal: true,
-      });
-    }
-
-    // Post Network Events as a comment
-    if (diagnostics.networkEvents && diagnostics.networkEvents.length > 0) {
-      const networkContent = formatLogEntries('Network Events', diagnostics.networkEvents);
-      await database.createTicketComment({
-        ticketId,
-        content: networkContent,
-        authorName: 'Sentinel Diagnostics',
-        isInternal: true,
-      });
-    }
-
-    // Post Recent Crashes as a comment
-    if (diagnostics.recentCrashes && diagnostics.recentCrashes.length > 0) {
-      const crashesContent = formatLogEntries('Recent Application Crashes', diagnostics.recentCrashes);
-      await database.createTicketComment({
-        ticketId,
-        content: crashesContent,
-        authorName: 'Sentinel Diagnostics',
-        isInternal: true,
-      });
-    }
-
-    // Post Active Programs as a comment
-    if (diagnostics.activePrograms && diagnostics.activePrograms.length > 0) {
-      const programsContent = formatActivePrograms(diagnostics.activePrograms);
-      await database.createTicketComment({
-        ticketId,
-        content: programsContent,
-        authorName: 'Sentinel Diagnostics',
-        isInternal: true,
-      });
-    }
-
-    // Post summary comment
+    console.log(`[Diagnostics] Ticket ${ticketId} - diagnostics collection is handled by Go server`);
+    // In server-only mode, we post a note that diagnostics are not yet available
     await database.createTicketComment({
       ticketId,
-      content: `**Automatic Diagnostics Collection Complete**\n\nCollected at: ${timestamp}\nTime range: Past 8 hours\n\n- System Errors: ${diagnostics.systemErrors?.length || 0}\n- Application Logs: ${diagnostics.applicationLogs?.length || 0}\n- Security Events: ${diagnostics.securityEvents?.length || 0}\n- Hardware Events: ${diagnostics.hardwareEvents?.length || 0}\n- Network Events: ${diagnostics.networkEvents?.length || 0}\n- Recent Crashes: ${diagnostics.recentCrashes?.length || 0}\n- Active Programs: ${diagnostics.activePrograms?.length || 0}`,
-      authorName: 'Sentinel Diagnostics',
+      content: `**Automatic Diagnostics**\n\nDiagnostics collection for device ${deviceId} is managed by the Go server. Check the server logs for detailed diagnostics.\n\n*Feature enhancement: Server-side diagnostics collection coming soon.*`,
+      authorName: 'Sentinel System',
       isInternal: true,
     });
-
-    console.log(`Diagnostics posted to ticket ${ticketId}`);
   } catch (error) {
-    console.error(`Failed to collect/post diagnostics for ticket ${ticketId}:`, error);
-    // Post error comment
-    await database.createTicketComment({
-      ticketId,
-      content: `**Diagnostics Collection Failed**\n\nUnable to collect diagnostics from the device. The agent may be offline or unresponsive.\n\nError: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      authorName: 'Sentinel Diagnostics',
-      isInternal: true,
-    }).catch(() => {});
+    console.error(`Failed to post diagnostics note for ticket ${ticketId}:`, error);
   }
 }
 
@@ -1605,15 +1398,7 @@ app.on('before-quit', async (event) => {
     console.log('Shutting down gracefully...');
 
     try {
-      // Stop servers and close database first
-      if (grpcServer) {
-        console.log('Stopping gRPC server...');
-        await grpcServer.stop();
-      }
-      if (server) {
-        console.log('Stopping WebSocket server...');
-        await server.stop();
-      }
+      // Close database connection
       if (database) {
         console.log('Closing database...');
         await database.close();
