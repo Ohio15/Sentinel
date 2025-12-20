@@ -249,13 +249,17 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 		r.checkAlertRules(deviceID, metrics.CPUPercent, metrics.MemoryPercent, metrics.DiskPercent)
 
 	case ws.MsgTypeResponse:
+		// Agent sends response data at root level, not in payload field
+		// Parse from raw message instead of msg.Payload
 		var response struct {
+			Type      string          `json:"type"`
 			RequestID string          `json:"requestId"`
 			Success   bool            `json:"success"`
 			Data      json.RawMessage `json:"data"`
 			Error     string          `json:"error"`
 		}
-		if err := json.Unmarshal(msg.Payload, &response); err != nil {
+		if err := json.Unmarshal(message, &response); err != nil {
+			log.Printf("[Handler] Failed to parse response: %v", err)
 			return
 		}
 
@@ -278,8 +282,17 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 			`, status, data.Output, response.Error, data.CommandID)
 		}
 
-		// Broadcast to dashboards
-		r.hub.BroadcastToDashboards(message)
+		// Forward response to dashboards with requestId preserved
+		broadcastMsg, _ := json.Marshal(map[string]interface{}{
+			"type":      ws.MsgTypeResponse,
+			"requestId": response.RequestID,
+			"success":   response.Success,
+			"data":      response.Data,
+			"error":     response.Error,
+			"deviceId":  deviceID.String(),
+			"agentId":   agentID,
+		})
+		r.hub.BroadcastToDashboards(broadcastMsg)
 
 	case ws.MsgTypeTerminalOutput:
 		// Forward terminal output to dashboards
