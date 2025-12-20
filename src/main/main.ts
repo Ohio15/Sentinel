@@ -944,10 +944,25 @@ function setupIpcHandlers(): void {
 
   // Server info
   ipcMain.handle('server:getInfo', async () => {
+    // Count agents: local connections + database online (connected to Docker backend)
+    const localCount = agentManager.getConnectedAgentCount();
+    let dbOnlineCount = 0;
+    try {
+      const devices = await database.getDevices();
+      const now = Date.now();
+      dbOnlineCount = devices.filter(d => {
+        if (d.agentId && agentManager.isAgentConnected(d.agentId)) return false; // Already counted
+        if (d.status === 'online' && d.lastSeen) {
+          const lastSeenTime = new Date(d.lastSeen).getTime();
+          return (now - lastSeenTime) < 90000; // 90 seconds
+        }
+        return false;
+      }).length;
+    } catch (e) { /* ignore */ }
     return {
       port: server.getPort(),
       grpcPort: grpcServer?.getPort() || 8082,
-      agentCount: agentManager.getConnectedAgentCount(),
+      agentCount: localCount + dbOnlineCount,
       grpcAgentCount: grpcServer?.getConnectionCount() || 0,
       enrollmentToken: server.getEnrollmentToken(),
     };
