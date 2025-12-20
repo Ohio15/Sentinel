@@ -164,10 +164,10 @@ export class BackendWebSocket extends EventEmitter {
       clearTimeout(pending.timeout);
       this.pendingRequests.delete(message.requestId);
 
-      if (message.type === 'error' || message.error) {
+      if (message.type === 'error' || message.error || message.success === false) {
         pending.reject(new Error(message.error || message.message || 'Request failed'));
       } else {
-        pending.resolve(message);
+        pending.resolve(message.data || message);
       }
       return;
     }
