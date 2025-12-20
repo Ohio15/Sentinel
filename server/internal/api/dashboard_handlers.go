@@ -51,104 +51,104 @@ func (r *Router) handleDashboardMessage(userID uuid.UUID, message []byte) {
 	switch msg.Type {
 	case ws.MsgTypeTerminalStart:
 		// Forward terminal start request to agent
-		agentMsg, _ := json.Marshal(ws.Message{
-			Type:      ws.MsgTypeTerminalStart,
-			RequestID: msg.RequestID,
-			Payload: json.RawMessage(mustMarshal(map[string]interface{}{
+		agentMsg, _ := json.Marshal(map[string]interface{}{
+			"type":      ws.MsgTypeTerminalStart,
+			"requestId": msg.RequestID,
+			"data": map[string]interface{}{
 				"sessionId": payload.SessionID,
 				"cols":      payload.Cols,
 				"rows":      payload.Rows,
-			})),
+			},
 		})
 		r.hub.SendToAgent(agentID, agentMsg)
 
 	case ws.MsgTypeTerminalInput:
 		// Forward terminal input to agent
-		agentMsg, _ := json.Marshal(ws.Message{
-			Type:      ws.MsgTypeTerminalInput,
-			RequestID: msg.RequestID,
-			Payload: json.RawMessage(mustMarshal(map[string]interface{}{
+		agentMsg, _ := json.Marshal(map[string]interface{}{
+			"type":      ws.MsgTypeTerminalInput,
+			"requestId": msg.RequestID,
+			"data": map[string]interface{}{
 				"sessionId": payload.SessionID,
 				"data":      payload.Data,
-			})),
+			},
 		})
 		r.hub.SendToAgent(agentID, agentMsg)
 
 	case ws.MsgTypeTerminalResize:
 		// Forward terminal resize to agent
-		agentMsg, _ := json.Marshal(ws.Message{
-			Type:      ws.MsgTypeTerminalResize,
-			RequestID: msg.RequestID,
-			Payload: json.RawMessage(mustMarshal(map[string]interface{}{
+		agentMsg, _ := json.Marshal(map[string]interface{}{
+			"type":      ws.MsgTypeTerminalResize,
+			"requestId": msg.RequestID,
+			"data": map[string]interface{}{
 				"sessionId": payload.SessionID,
 				"cols":      payload.Cols,
 				"rows":      payload.Rows,
-			})),
+			},
 		})
 		r.hub.SendToAgent(agentID, agentMsg)
 
 	case ws.MsgTypeTerminalClose:
 		// Forward terminal close to agent
-		agentMsg, _ := json.Marshal(ws.Message{
-			Type:      ws.MsgTypeTerminalClose,
-			RequestID: msg.RequestID,
-			Payload: json.RawMessage(mustMarshal(map[string]interface{}{
+		agentMsg, _ := json.Marshal(map[string]interface{}{
+			"type":      ws.MsgTypeTerminalClose,
+			"requestId": msg.RequestID,
+			"data": map[string]interface{}{
 				"sessionId": payload.SessionID,
-			})),
+			},
 		})
 		r.hub.SendToAgent(agentID, agentMsg)
 
 	case ws.MsgTypeListDrives:
 		// Forward list drives request to agent
-		agentMsg, _ := json.Marshal(ws.Message{
-			Type:      ws.MsgTypeListDrives,
-			RequestID: msg.RequestID,
-			Payload:   json.RawMessage("{}"),
+		agentMsg, _ := json.Marshal(map[string]interface{}{
+			"type":      ws.MsgTypeListDrives,
+			"requestId": msg.RequestID,
+			"data":      map[string]interface{}{},
 		})
 		r.hub.SendToAgent(agentID, agentMsg)
 
 	case ws.MsgTypeListFiles:
 		// Forward file list request to agent
-		agentMsg, _ := json.Marshal(ws.Message{
-			Type:      ws.MsgTypeListFiles,
-			RequestID: msg.RequestID,
-			Payload: json.RawMessage(mustMarshal(map[string]interface{}{
+		agentMsg, _ := json.Marshal(map[string]interface{}{
+			"type":      ws.MsgTypeListFiles,
+			"requestId": msg.RequestID,
+			"data": map[string]interface{}{
 				"path": payload.Path,
-			})),
+			},
 		})
 		r.hub.SendToAgent(agentID, agentMsg)
 
 	case ws.MsgTypeScanDirectory:
 		// Forward directory scan request to agent
-		agentMsg, _ := json.Marshal(ws.Message{
-			Type:      ws.MsgTypeScanDirectory,
-			RequestID: msg.RequestID,
-			Payload: json.RawMessage(mustMarshal(map[string]interface{}{
+		agentMsg, _ := json.Marshal(map[string]interface{}{
+			"type":      ws.MsgTypeScanDirectory,
+			"requestId": msg.RequestID,
+			"data": map[string]interface{}{
 				"path":     payload.Path,
 				"maxDepth": payload.MaxDepth,
-			})),
+			},
 		})
 		r.hub.SendToAgent(agentID, agentMsg)
 
 	case ws.MsgTypeSetMetricsInterval:
 		// Forward metrics interval request to agent
-		agentMsg, _ := json.Marshal(ws.Message{
-			Type:      ws.MsgTypeSetMetricsInterval,
-			RequestID: msg.RequestID,
-			Payload: json.RawMessage(mustMarshal(map[string]interface{}{
+		agentMsg, _ := json.Marshal(map[string]interface{}{
+			"type":      ws.MsgTypeSetMetricsInterval,
+			"requestId": msg.RequestID,
+			"data": map[string]interface{}{
 				"intervalMs": payload.IntervalMs,
-			})),
+			},
 		})
 		r.hub.SendToAgent(agentID, agentMsg)
 
 	case ws.MsgTypeDownloadFile:
 		// Forward file download request to agent
-		agentMsg, _ := json.Marshal(ws.Message{
-			Type:      ws.MsgTypeDownloadFile,
-			RequestID: msg.RequestID,
-			Payload: json.RawMessage(mustMarshal(map[string]interface{}{
+		agentMsg, _ := json.Marshal(map[string]interface{}{
+			"type":      ws.MsgTypeDownloadFile,
+			"requestId": msg.RequestID,
+			"data": map[string]interface{}{
 				"path": payload.Path,
-			})),
+			},
 		})
 		r.hub.SendToAgent(agentID, agentMsg)
 
@@ -158,23 +158,23 @@ func (r *Router) handleDashboardMessage(userID uuid.UUID, message []byte) {
 
 	case ws.MsgTypeStartRemote:
 		// Forward remote desktop start request to agent
-		agentMsg, _ := json.Marshal(ws.Message{
-			Type:      ws.MsgTypeStartRemote,
-			RequestID: msg.RequestID,
-			Payload: json.RawMessage(mustMarshal(map[string]interface{}{
+		agentMsg, _ := json.Marshal(map[string]interface{}{
+			"type":      ws.MsgTypeStartRemote,
+			"requestId": msg.RequestID,
+			"data": map[string]interface{}{
 				"sessionId": payload.SessionID,
-			})),
+			},
 		})
 		r.hub.SendToAgent(agentID, agentMsg)
 
 	case ws.MsgTypeStopRemote:
 		// Forward remote desktop stop request to agent
-		agentMsg, _ := json.Marshal(ws.Message{
-			Type:      ws.MsgTypeStopRemote,
-			RequestID: msg.RequestID,
-			Payload: json.RawMessage(mustMarshal(map[string]interface{}{
+		agentMsg, _ := json.Marshal(map[string]interface{}{
+			"type":      ws.MsgTypeStopRemote,
+			"requestId": msg.RequestID,
+			"data": map[string]interface{}{
 				"sessionId": payload.SessionID,
-			})),
+			},
 		})
 		r.hub.SendToAgent(agentID, agentMsg)
 
