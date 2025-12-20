@@ -6,6 +6,8 @@
  * Docker/standalone backend instance.
  */
 
+import { BackendWebSocket } from './backend-websocket';
+
 // Native fetch available in Node.js 18+ (bundled with Electron 25+)
 
 interface BackendConfig {
@@ -20,13 +22,65 @@ interface AuthTokens {
   expiresAt: number;
 }
 
+// Terminal session tracking for relay
+interface RelayTerminalSession {
+  sessionId: string;
+  deviceId: string;
+  agentId: string;
+}
+
 export class BackendRelay {
   private config: BackendConfig | null = null;
   private tokens: AuthTokens | null = null;
   private database: any; // Reference to database for getting settings
+  private websocket: BackendWebSocket;
+  private terminalSessions: Map<string, RelayTerminalSession> = new Map();
+  private notifyRenderer: ((channel: string, data: any) => void) | null = null;
 
   constructor(database: any) {
     this.database = database;
+    this.websocket = new BackendWebSocket();
+    this.setupWebSocketListeners();
+  }
+
+  private setupWebSocketListeners(): void {
+    // Forward terminal output to renderer
+    this.websocket.on('terminal:data', (data) => {
+      if (this.notifyRenderer) {
+        this.notifyRenderer('terminal:data', data);
+      }
+    });
+
+    // Forward file progress to renderer
+    this.websocket.on('files:progress', (data) => {
+      if (this.notifyRenderer) {
+        this.notifyRenderer('files:progress', data);
+      }
+    });
+
+    // Forward metrics updates to renderer
+    this.websocket.on('metrics:updated', (data) => {
+      if (this.notifyRenderer) {
+        this.notifyRenderer('metrics:updated', data);
+      }
+    });
+
+    // Forward device status updates
+    this.websocket.on('devices:online', (data) => {
+      if (this.notifyRenderer) {
+        this.notifyRenderer('devices:online', data);
+      }
+    });
+
+    this.websocket.on('devices:offline', (data) => {
+      if (this.notifyRenderer) {
+        this.notifyRenderer('devices:offline', data);
+      }
+    });
+  }
+
+  setNotifyRenderer(fn: (channel: string, data: any) => void): void {
+    this.notifyRenderer = fn;
   }
 
   async initialize(): Promise<void> {
@@ -45,6 +99,7 @@ export class BackendRelay {
   setBackendUrl(url: string): void {
     this.config = { url: url.replace(/\/$/, '') }; // Remove trailing slash
     this.tokens = null; // Clear tokens when URL changes
+    this.websocket.disconnect(); // Disconnect WebSocket when URL changes
     console.log('[BackendRelay] Backend URL set to:', url);
   }
 
@@ -54,6 +109,14 @@ export class BackendRelay {
 
   isConfigured(): boolean {
     return !!this.config?.url;
+  }
+
+  isAuthenticated(): boolean {
+    return !!this.tokens && Date.now() < this.tokens.expiresAt;
+  }
+
+  isWebSocketConnected(): boolean {
+    return this.websocket.isConnected();
   }
 
   async authenticate(username: string, password: string): Promise<boolean> {
@@ -82,10 +145,31 @@ export class BackendRelay {
       this.config.username = username;
       this.config.password = password;
       console.log('[BackendRelay] Authentication successful');
+
+      // Connect WebSocket with the new token
+      try {
+        this.websocket.setCredentials(this.config.url, this.tokens.accessToken);
+        await this.websocket.connect();
+        console.log('[BackendRelay] WebSocket connected');
+      } catch (wsError) {
+        console.error('[BackendRelay] WebSocket connection failed:', wsError);
+        // Continue without WebSocket - HTTP operations will still work
+      }
+
       return true;
     } catch (error) {
       console.error('[BackendRelay] Authentication error:', error);
       return false;
+    }
+  }
+
+  async ensureWebSocketConnected(): Promise<void> {
+    if (!this.websocket.isConnected()) {
+      await this.ensureAuthenticated();
+      if (this.tokens && this.config?.url) {
+        this.websocket.setCredentials(this.config.url, this.tokens.accessToken);
+        await this.websocket.connect();
+      }
     }
   }
 
@@ -107,6 +191,10 @@ export class BackendRelay {
               refreshToken: data.refreshToken || this.tokens.refreshToken,
               expiresAt: Date.now() + (data.expiresIn * 1000) - 60000,
             };
+            // Update WebSocket with new token
+            if (this.config?.url) {
+              this.websocket.setCredentials(this.config.url, this.tokens.accessToken);
+            }
             return;
           }
         } catch (error) {
@@ -192,24 +280,82 @@ export class BackendRelay {
     return this.makeRequest('POST', `/api/devices/${deviceId}/inventory/collect`);
   }
 
-  // File operations - these may need WebSocket, so we'll handle them specially
-  async listFiles(deviceId: string, path: string): Promise<any> {
-    // File operations go through WebSocket in the backend
-    // For now, we'll throw an error indicating this needs WebSocket
-    throw new Error('File operations require direct WebSocket connection - not supported via relay');
+  // Terminal operations (via WebSocket)
+  async startTerminal(deviceId: string, agentId: string): Promise<{ sessionId: string }> {
+    await this.ensureWebSocketConnected();
+    const result = await this.websocket.startTerminal(deviceId, agentId);
+    // Track the session
+    this.terminalSessions.set(result.sessionId, {
+      sessionId: result.sessionId,
+      deviceId,
+      agentId,
+    });
+    return result;
   }
 
-  async listDrives(deviceId: string): Promise<any> {
-    throw new Error('File operations require direct WebSocket connection - not supported via relay');
+  async sendTerminalData(sessionId: string, data: string): Promise<void> {
+    const session = this.terminalSessions.get(sessionId);
+    if (!session) {
+      throw new Error('Terminal session not found');
+    }
+    await this.ensureWebSocketConnected();
+    await this.websocket.sendTerminalInput(sessionId, session.agentId, data);
   }
 
-  // Terminal and Remote Desktop - these also need WebSocket
-  async startTerminal(deviceId: string): Promise<any> {
-    throw new Error('Terminal requires direct WebSocket connection - not supported via relay');
+  async resizeTerminal(sessionId: string, cols: number, rows: number): Promise<void> {
+    const session = this.terminalSessions.get(sessionId);
+    if (!session) {
+      throw new Error('Terminal session not found');
+    }
+    await this.ensureWebSocketConnected();
+    await this.websocket.resizeTerminal(sessionId, session.agentId, cols, rows);
   }
 
-  async startRemoteSession(deviceId: string): Promise<any> {
-    throw new Error('Remote desktop requires direct WebSocket connection - not supported via relay');
+  async closeTerminal(sessionId: string): Promise<void> {
+    const session = this.terminalSessions.get(sessionId);
+    if (!session) {
+      // Session may already be closed
+      return;
+    }
+    try {
+      if (this.websocket.isConnected()) {
+        await this.websocket.closeTerminal(sessionId, session.agentId);
+      }
+    } finally {
+      this.terminalSessions.delete(sessionId);
+    }
+  }
+
+  // File operations (via WebSocket)
+  async listDrives(deviceId: string, agentId: string): Promise<any[]> {
+    await this.ensureWebSocketConnected();
+    return this.websocket.listDrives(deviceId, agentId);
+  }
+
+  async listFiles(deviceId: string, agentId: string, path: string): Promise<any[]> {
+    await this.ensureWebSocketConnected();
+    return this.websocket.listFiles(deviceId, agentId, path);
+  }
+
+  async downloadFile(deviceId: string, agentId: string, remotePath: string, localPath: string): Promise<void> {
+    await this.ensureWebSocketConnected();
+    return this.websocket.downloadFile(deviceId, agentId, remotePath, localPath);
+  }
+
+  async uploadFile(deviceId: string, agentId: string, localPath: string, remotePath: string): Promise<void> {
+    await this.ensureWebSocketConnected();
+    return this.websocket.uploadFile(deviceId, agentId, localPath, remotePath);
+  }
+
+  async scanDirectory(deviceId: string, agentId: string, path: string, maxDepth: number): Promise<any> {
+    await this.ensureWebSocketConnected();
+    return this.websocket.scanDirectory(deviceId, agentId, path, maxDepth);
+  }
+
+  // Metrics interval (via WebSocket)
+  async setMetricsInterval(deviceId: string, agentId: string, intervalMs: number): Promise<void> {
+    await this.ensureWebSocketConnected();
+    return this.websocket.setMetricsInterval(deviceId, agentId, intervalMs);
   }
 
   // Agent management
@@ -223,5 +369,14 @@ export class BackendRelay {
 
   async enableDevice(deviceId: string): Promise<any> {
     return this.makeRequest('POST', `/api/devices/${deviceId}/enable`);
+  }
+
+  // Check if a terminal session is a relay session
+  isRelaySession(sessionId: string): boolean {
+    return this.terminalSessions.has(sessionId);
+  }
+
+  getRelaySession(sessionId: string): RelayTerminalSession | undefined {
+    return this.terminalSessions.get(sessionId);
   }
 }
