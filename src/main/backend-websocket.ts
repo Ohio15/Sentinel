@@ -239,11 +239,13 @@ export class BackendWebSocket extends EventEmitter {
     const sessionId = uuidv4();
     const response = await this.sendRequest({
       type: 'start_terminal',
-      agentId,
-      deviceId,
-      sessionId,
+      payload: {
+        agentId,
+        deviceId,
+        sessionId,
+      },
     });
-    return { sessionId: response.sessionId || sessionId };
+    return { sessionId: response.sessionId || response.payload?.sessionId || sessionId };
   }
 
   async sendTerminalInput(sessionId: string, agentId: string, data: string): Promise<void> {
@@ -253,9 +255,11 @@ export class BackendWebSocket extends EventEmitter {
     // Terminal input is fire-and-forget (no response expected)
     this.ws.send(JSON.stringify({
       type: 'terminal_input',
-      sessionId,
-      agentId,
-      data,
+      payload: {
+        sessionId,
+        agentId,
+        data,
+      },
     }));
   }
 
@@ -265,10 +269,12 @@ export class BackendWebSocket extends EventEmitter {
     }
     this.ws.send(JSON.stringify({
       type: 'terminal_resize',
-      sessionId,
-      agentId,
-      cols,
-      rows,
+      payload: {
+        sessionId,
+        agentId,
+        cols,
+        rows,
+      },
     }));
   }
 
@@ -278,8 +284,10 @@ export class BackendWebSocket extends EventEmitter {
     }
     this.ws.send(JSON.stringify({
       type: 'close_terminal',
-      sessionId,
-      agentId,
+      payload: {
+        sessionId,
+        agentId,
+      },
     }));
   }
 
@@ -287,8 +295,10 @@ export class BackendWebSocket extends EventEmitter {
   async listDrives(deviceId: string, agentId: string): Promise<any[]> {
     const response = await this.sendRequest({
       type: 'list_drives',
-      agentId,
-      deviceId,
+      payload: {
+        agentId,
+        deviceId,
+      },
     });
     return response.drives || response.payload?.drives || [];
   }
@@ -296,9 +306,11 @@ export class BackendWebSocket extends EventEmitter {
   async listFiles(deviceId: string, agentId: string, path: string): Promise<any[]> {
     const response = await this.sendRequest({
       type: 'list_files',
-      agentId,
-      deviceId,
-      path,
+      payload: {
+        agentId,
+        deviceId,
+        path,
+      },
     });
     return response.files || response.payload?.files || [];
   }
@@ -308,30 +320,35 @@ export class BackendWebSocket extends EventEmitter {
     // For now, send the request and let the backend handle it
     await this.sendRequest({
       type: 'download_file',
-      agentId,
-      deviceId,
-      remotePath,
-      localPath,
+      payload: {
+        agentId,
+        deviceId,
+        path: remotePath,
+      },
     }, 300000); // 5 minute timeout for downloads
   }
 
   async uploadFile(deviceId: string, agentId: string, localPath: string, remotePath: string): Promise<void> {
     await this.sendRequest({
       type: 'upload_file',
-      agentId,
-      deviceId,
-      localPath,
-      remotePath,
+      payload: {
+        agentId,
+        deviceId,
+        localPath,
+        remotePath,
+      },
     }, 300000); // 5 minute timeout for uploads
   }
 
   async scanDirectory(deviceId: string, agentId: string, path: string, maxDepth: number): Promise<any> {
     const response = await this.sendRequest({
       type: 'scan_directory',
-      agentId,
-      deviceId,
-      path,
-      maxDepth,
+      payload: {
+        agentId,
+        deviceId,
+        path,
+        maxDepth,
+      },
     }, 600000); // 10 minute timeout for scans
     return response;
   }
@@ -340,9 +357,11 @@ export class BackendWebSocket extends EventEmitter {
   async setMetricsInterval(deviceId: string, agentId: string, intervalMs: number): Promise<void> {
     await this.sendRequest({
       type: 'set_metrics_interval',
-      agentId,
-      deviceId,
-      intervalMs,
+      payload: {
+        agentId,
+        deviceId,
+        intervalMs,
+      },
     });
   }
 }
