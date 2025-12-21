@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -475,7 +476,7 @@ func rateLimitMiddleware(cache *cache.Cache, maxRequests int, windowSeconds int)
 		}
 
 		if int(count) > maxRequests {
-			c.Header("Retry-After", string(rune(windowSeconds)))
+			c.Header("Retry-After", strconv.Itoa(windowSeconds))
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error": "Rate limit exceeded. Please try again later.",
 			})

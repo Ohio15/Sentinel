@@ -1,4 +1,4 @@
-﻿package client
+package client
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -17,59 +18,59 @@ import (
 
 // Message types
 const (
-	MsgTypeAuth          = "auth"
-	MsgTypeAuthResponse  = "auth_response"
-	MsgTypeHandshake     = "handshake"
-	MsgTypeHeartbeat     = "heartbeat"
-	MsgTypeHeartbeatAck  = "heartbeat_ack"
-	MsgTypePing          = "ping"
-	MsgTypePong          = "pong"
-	MsgTypeMetrics       = "metrics"
-	MsgTypeResponse      = "response"
-	MsgTypeExecuteCmd    = "execute_command"
-	MsgTypeExecuteScript = "execute_script"
-	MsgTypeStartTerminal = "start_terminal"
-	MsgTypeTerminalInput = "terminal_input"
-	MsgTypeTerminalOutput = "terminal_output"
-	MsgTypeTerminalResize = "terminal_resize"
-	MsgTypeCloseTerminal = "close_terminal"
-	MsgTypeListDrives    = "list_drives"
-	MsgTypeListFiles     = "list_files"
-	MsgTypeScanDirectory = "scan_directory"
-	MsgTypeDownloadFile  = "download_file"
-	MsgTypeUploadFile    = "upload_file"
-	MsgTypeFileData      = "file_data"
-	MsgTypeScanProgress  = "scan_progress"
-	MsgTypeStartRemote   = "start_remote"
-	MsgTypeStopRemote    = "stop_remote"
-	MsgTypeRemoteInput   = "remote_input"
-	MsgTypeRemoteFrame   = "remote_frame"
-	MsgTypeEvent         = "event"
+	MsgTypeAuth               = "auth"
+	MsgTypeAuthResponse       = "auth_response"
+	MsgTypeHandshake          = "handshake"
+	MsgTypeHeartbeat          = "heartbeat"
+	MsgTypeHeartbeatAck       = "heartbeat_ack"
+	MsgTypePing               = "ping"
+	MsgTypePong               = "pong"
+	MsgTypeMetrics            = "metrics"
+	MsgTypeResponse           = "response"
+	MsgTypeExecuteCmd         = "execute_command"
+	MsgTypeExecuteScript      = "execute_script"
+	MsgTypeStartTerminal      = "start_terminal"
+	MsgTypeTerminalInput      = "terminal_input"
+	MsgTypeTerminalOutput     = "terminal_output"
+	MsgTypeTerminalResize     = "terminal_resize"
+	MsgTypeCloseTerminal      = "close_terminal"
+	MsgTypeListDrives         = "list_drives"
+	MsgTypeListFiles          = "list_files"
+	MsgTypeScanDirectory      = "scan_directory"
+	MsgTypeDownloadFile       = "download_file"
+	MsgTypeUploadFile         = "upload_file"
+	MsgTypeFileData           = "file_data"
+	MsgTypeScanProgress       = "scan_progress"
+	MsgTypeStartRemote        = "start_remote"
+	MsgTypeStopRemote         = "stop_remote"
+	MsgTypeRemoteInput        = "remote_input"
+	MsgTypeRemoteFrame        = "remote_frame"
+	MsgTypeEvent              = "event"
 	MsgTypeError              = "error"
 	MsgTypeCollectDiagnostics = "collect_diagnostics"
 	MsgTypeUninstallAgent     = "uninstall_agent"
 	// WebRTC signaling messages
-	MsgTypeWebRTCStart     = "webrtc_start"
-	MsgTypeWebRTCSignal    = "webrtc_signal"
-	MsgTypeWebRTCStop      = "webrtc_stop"
+	MsgTypeWebRTCStart  = "webrtc_start"
+	MsgTypeWebRTCSignal = "webrtc_signal"
+	MsgTypeWebRTCStop   = "webrtc_stop"
 	// Admin management messages
-	MsgTypeAdminDiscover   = "admin_discover"
-	MsgTypeAdminDemote     = "admin_demote"
-	MsgTypeAdminEvent      = "admin_event"
+	MsgTypeAdminDiscover = "admin_discover"
+	MsgTypeAdminDemote   = "admin_demote"
+	MsgTypeAdminEvent    = "admin_event"
 	// Configuration messages
 	MsgTypeSetMetricsInterval = "set_metrics_interval"
 	// Certificate management messages
 	MsgTypeUpdateCertificate = "update_certificate"
 	MsgTypeCertUpdateAck     = "cert_update_ack"
 	// System update status
-	MsgTypeUpdateStatus      = "update_status"
+	MsgTypeUpdateStatus = "update_status"
 	// Sync protocol messages
-	MsgTypeSyncRequest       = "sync_request"
-	MsgTypeSyncResponse      = "sync_response"
-	MsgTypeBulkMetrics       = "bulk_metrics"
-	MsgTypeBulkMetricsAck    = "bulk_metrics_ack"
-	MsgTypeCommandResult     = "command_result"
-	MsgTypeHealthReport      = "health_report"
+	MsgTypeSyncRequest    = "sync_request"
+	MsgTypeSyncResponse   = "sync_response"
+	MsgTypeBulkMetrics    = "bulk_metrics"
+	MsgTypeBulkMetricsAck = "bulk_metrics_ack"
+	MsgTypeCommandResult  = "command_result"
+	MsgTypeHealthReport   = "health_report"
 )
 
 // Message represents a WebSocket message
@@ -88,19 +89,19 @@ type MessageHandler func(msg *Message) error
 
 // DeviceInfo contains device information for auto-enrollment
 type DeviceInfo struct {
-	Hostname       string `json:"hostname"`
-	Platform       string `json:"platform"`
-	OSType         string `json:"osType"`
-	OSVersion      string `json:"osVersion"`
-	Architecture   string `json:"architecture"`
-	CPUModel       string `json:"cpuModel"`
-	CPUCores       int    `json:"cpuCores"`
-	TotalMemory    uint64 `json:"totalMemory"`
-	SerialNumber   string `json:"serialNumber"`
-	Manufacturer   string `json:"manufacturer"`
-	Model          string `json:"model"`
-	IPAddress      string `json:"ipAddress"`
-	MACAddress     string `json:"macAddress"`
+	Hostname     string `json:"hostname"`
+	Platform     string `json:"platform"`
+	OSType       string `json:"osType"`
+	OSVersion    string `json:"osVersion"`
+	Architecture string `json:"architecture"`
+	CPUModel     string `json:"cpuModel"`
+	CPUCores     int    `json:"cpuCores"`
+	TotalMemory  uint64 `json:"totalMemory"`
+	SerialNumber string `json:"serialNumber"`
+	Manufacturer string `json:"manufacturer"`
+	Model        string `json:"model"`
+	IPAddress    string `json:"ipAddress"`
+	MACAddress   string `json:"macAddress"`
 }
 
 // Client manages the WebSocket connection to the server
@@ -114,6 +115,7 @@ type Client struct {
 	maxReconnect      time.Duration
 	mu                sync.RWMutex
 	done              chan struct{}
+	doneClosed        atomic.Bool
 	sendQueue         chan []byte
 	onConnect         func()
 	onDisconnect      func()
@@ -245,7 +247,6 @@ func (c *Client) waitForServer(ctx context.Context) bool {
 		}
 	}
 }
-
 
 // Connect establishes a WebSocket connection to the server
 func (c *Client) Connect(ctx context.Context) error {
@@ -394,11 +395,14 @@ func (c *Client) forceClose() {
 	c.connected = false
 	c.authenticated = false
 
-	// Signal done to trigger reconnection
-	select {
-	case <-c.done:
-		// Already closed
-	default:
+	// Signal done to trigger reconnection (safe close)
+	c.signalDone()
+}
+
+// signalDone safely closes the done channel to trigger reconnection
+// Uses atomic flag to prevent double-close panic
+func (c *Client) signalDone() {
+	if c.doneClosed.CompareAndSwap(false, true) {
 		close(c.done)
 	}
 }
@@ -501,8 +505,6 @@ func (c *Client) SendEvent(severity, title, message string) error {
 	return c.SendJSON(msg)
 }
 
-
-
 // SendRemoteFrame sends a remote desktop frame to the server
 func (c *Client) SendRemoteFrame(sessionID string, data string, width, height int) error {
 	msg := map[string]interface{}{
@@ -524,12 +526,7 @@ func (c *Client) readLoop(ctx context.Context) {
 		c.lastDisconnect = time.Now()
 		c.wasOffline = true
 		// Signal done channel to trigger reconnection in RunWithReconnect
-		select {
-		case <-c.done:
-			// Already closed
-		default:
-			close(c.done)
-		}
+		c.signalDone()
 		c.mu.Unlock()
 
 		if c.onDisconnect != nil {
@@ -670,7 +667,7 @@ func (c *Client) writeLoop(ctx context.Context) {
 
 // Close closes the WebSocket connection
 func (c *Client) Close() error {
-	close(c.done)
+	c.signalDone()
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -721,6 +718,7 @@ func (c *Client) RunWithReconnect(ctx context.Context) {
 		select {
 		case <-c.done:
 			c.done = make(chan struct{})
+			c.doneClosed.Store(false)
 		default:
 		}
 		c.mu.Unlock()

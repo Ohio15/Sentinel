@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"crypto/subtle"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -8,6 +10,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
+
+var ErrInvalidSigningMethod = errors.New("invalid signing method")
 
 type Claims struct {
 	UserID uuid.UUID `json:"userId"`
@@ -41,8 +45,12 @@ func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
 			return
 		}
 
-		// Parse and validate token
+		// Parse and validate token with algorithm validation
 		token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+			// Validate the signing method to prevent "none" algorithm attacks
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, ErrInvalidSigningMethod
+			}
 			return []byte(jwtSecret), nil
 		})
 
@@ -78,7 +86,8 @@ func AgentAuthMiddleware(enrollmentToken string) gin.HandlerFunc {
 			return
 		}
 
-		if token != enrollmentToken {
+		// Use constant-time comparison to prevent timing attacks
+		if subtle.ConstantTimeCompare([]byte(token), []byte(enrollmentToken)) != 1 {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid agent token"})
 			c.Abort()
 			return
