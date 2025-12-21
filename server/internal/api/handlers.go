@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"strings"
@@ -108,7 +110,7 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 		var insertErr error
 		if authPayload.DeviceInfo != nil {
 			// Use device info from agent for proper auto-enrollment
-			log.Printf("Auto-enrolling with device info: hostname=%s, platform=%s", 
+			log.Printf("Auto-enrolling with device info: hostname=%s, platform=%s",
 				authPayload.DeviceInfo.Hostname, authPayload.DeviceInfo.Platform)
 			_, insertErr = r.db.Pool().Exec(ctx, `
 				INSERT INTO devices (id, agent_id, hostname, platform, os_type, os_version, 
@@ -399,7 +401,7 @@ func (r *Router) checkAlertRules(deviceID uuid.UUID, cpu, memory, disk float64) 
 					INSERT INTO alerts (device_id, rule_id, severity, title, message)
 					VALUES ($1, $2, $3, $4, $5)
 				`, deviceID, rule.ID, rule.Severity, rule.Name,
-					rule.Metric+" is "+rule.Operator+" "+string(rune(int(rule.Threshold))))
+					rule.Metric+" is "+rule.Operator+" "+fmt.Sprintf("%.2f", rule.Threshold))
 			}
 		}
 	}
@@ -468,23 +470,199 @@ func (r *Router) listScripts(c *gin.Context) {
 }
 
 func (r *Router) createScript(c *gin.Context) {
-	c.JSON(http.StatusCreated, gin.H{})
+	var req struct {
+		Name        string   `json:"name" binding:"required"`
+		Description string   `json:"description"`
+		Language    string   `json:"language" binding:"required"`
+		Content     string   `json:"content" binding:"required"`
+		OSTypes     []string `json:"osTypes"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	validLanguages := map[string]bool{"powershell": true, "bash": true, "python": true, "batch": true}
+	if !validLanguages[req.Language] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid language"})
+		return
+	}
+
+	userID := c.MustGet("userId").(uuid.UUID)
+	ctx := context.Background()
+
+	var id uuid.UUID
+	err := r.db.Pool().QueryRow(ctx, `
+		INSERT INTO scripts (name, description, language, content, os_types, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
+	`, req.Name, req.Description, req.Language, req.Content, req.OSTypes, userID).Scan(&id)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create script"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"id": id, "name": req.Name, "language": req.Language})
 }
 
 func (r *Router) getScript(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{})
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid script ID"})
+		return
+	}
+
+	ctx := context.Background()
+	var s struct {
+		ID          uuid.UUID
+		Name        string
+		Description *string
+		Language    string
+		Content     string
+		OSTypes     []string
+		CreatedAt   time.Time
+		UpdatedAt   time.Time
+	}
+
+	err = r.db.Pool().QueryRow(ctx, `
+		SELECT id, name, description, language, content, os_types, created_at, updated_at
+		FROM scripts WHERE id = $1
+	`, id).Scan(&s.ID, &s.Name, &s.Description, &s.Language, &s.Content, &s.OSTypes, &s.CreatedAt, &s.UpdatedAt)
+
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Script not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"id": s.ID, "name": s.Name, "description": s.Description,
+		"language": s.Language, "content": s.Content, "osTypes": s.OSTypes,
+		"createdAt": s.CreatedAt, "updatedAt": s.UpdatedAt,
+	})
 }
 
 func (r *Router) updateScript(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{})
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid script ID"})
+		return
+	}
+
+	var req struct {
+		Name        string   `json:"name"`
+		Description string   `json:"description"`
+		Language    string   `json:"language"`
+		Content     string   `json:"content"`
+		OSTypes     []string `json:"osTypes"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx := context.Background()
+	_, err = r.db.Pool().Exec(ctx, `
+		UPDATE scripts SET name = COALESCE(NULLIF($1, ''), name),
+		description = COALESCE(NULLIF($2, ''), description),
+		language = COALESCE(NULLIF($3, ''), language),
+		content = COALESCE(NULLIF($4, ''), content),
+		os_types = COALESCE($5, os_types), updated_at = NOW()
+		WHERE id = $6
+	`, req.Name, req.Description, req.Language, req.Content, req.OSTypes, id)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update script"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Script updated successfully"})
 }
 
 func (r *Router) deleteScript(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{})
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid script ID"})
+		return
+	}
+
+	ctx := context.Background()
+	result, err := r.db.Pool().Exec(ctx, "DELETE FROM scripts WHERE id = $1", id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete script"})
+		return
+	}
+
+	if result.RowsAffected() == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Script not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Script deleted successfully"})
 }
 
 func (r *Router) executeScript(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{})
+	scriptID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid script ID"})
+		return
+	}
+
+	var req struct {
+		DeviceID string `json:"deviceId" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	deviceID, err := uuid.Parse(req.DeviceID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid device ID"})
+		return
+	}
+
+	ctx := context.Background()
+	var script struct {
+		Language string
+		Content  string
+	}
+
+	err = r.db.Pool().QueryRow(ctx, "SELECT language, content FROM scripts WHERE id = $1", scriptID).Scan(&script.Language, &script.Content)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Script not found"})
+		return
+	}
+
+	userID := c.MustGet("userId").(uuid.UUID)
+	var commandID uuid.UUID
+	err = r.db.Pool().QueryRow(ctx, `
+		INSERT INTO commands (device_id, user_id, command_type, command, status)
+		VALUES ($1, $2, $3, $4, 'pending') RETURNING id
+	`, deviceID, userID, script.Language, script.Content).Scan(&commandID)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create command"})
+		return
+	}
+
+	msg, _ := json.Marshal(map[string]interface{}{
+		"type":      "execute",
+		"requestId": commandID.String(),
+		"payload": map[string]interface{}{
+			"commandId": commandID.String(),
+			"type":      script.Language,
+			"command":   script.Content,
+		},
+	})
+
+	var agentID string
+	r.db.Pool().QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1", deviceID).Scan(&agentID)
+	r.hub.SendToAgent(agentID, msg)
+
+	c.JSON(http.StatusOK, gin.H{"commandId": commandID, "message": "Script execution started"})
 }
 
 // Alerts handlers
@@ -554,7 +732,45 @@ func (r *Router) listAlerts(c *gin.Context) {
 }
 
 func (r *Router) getAlert(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{})
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid alert ID"})
+		return
+	}
+
+	ctx := context.Background()
+	var a struct {
+		ID             uuid.UUID
+		DeviceID       uuid.UUID
+		DeviceName     *string
+		RuleID         *uuid.UUID
+		Severity       string
+		Title          string
+		Message        *string
+		Status         string
+		AcknowledgedAt *time.Time
+		ResolvedAt     *time.Time
+		CreatedAt      time.Time
+	}
+
+	err = r.db.Pool().QueryRow(ctx, `
+		SELECT a.id, a.device_id, d.hostname, a.rule_id, a.severity, a.title, a.message,
+			   a.status, a.acknowledged_at, a.resolved_at, a.created_at
+		FROM alerts a LEFT JOIN devices d ON a.device_id = d.id WHERE a.id = $1
+	`, id).Scan(&a.ID, &a.DeviceID, &a.DeviceName, &a.RuleID, &a.Severity, &a.Title, &a.Message,
+		&a.Status, &a.AcknowledgedAt, &a.ResolvedAt, &a.CreatedAt)
+
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Alert not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"id": a.ID, "deviceId": a.DeviceID, "deviceName": a.DeviceName,
+		"severity": a.Severity, "title": a.Title, "message": a.Message,
+		"status": a.Status, "acknowledgedAt": a.AcknowledgedAt,
+		"resolvedAt": a.ResolvedAt, "createdAt": a.CreatedAt,
+	})
 }
 
 func (r *Router) acknowledgeAlert(c *gin.Context) {
@@ -630,19 +846,139 @@ func (r *Router) listAlertRules(c *gin.Context) {
 }
 
 func (r *Router) createAlertRule(c *gin.Context) {
-	c.JSON(http.StatusCreated, gin.H{})
+	var req struct {
+		Name            string  `json:"name" binding:"required"`
+		Description     string  `json:"description"`
+		Metric          string  `json:"metric" binding:"required"`
+		Operator        string  `json:"operator" binding:"required"`
+		Threshold       float64 `json:"threshold" binding:"required"`
+		Severity        string  `json:"severity" binding:"required"`
+		CooldownMinutes int     `json:"cooldownMinutes"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx := context.Background()
+	var id uuid.UUID
+	err := r.db.Pool().QueryRow(ctx, `
+		INSERT INTO alert_rules (name, description, metric, operator, threshold, severity, cooldown_minutes)
+		VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id
+	`, req.Name, req.Description, req.Metric, req.Operator, req.Threshold, req.Severity, req.CooldownMinutes).Scan(&id)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create alert rule"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"id": id, "name": req.Name})
 }
 
 func (r *Router) getAlertRule(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{})
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid alert rule ID"})
+		return
+	}
+
+	ctx := context.Background()
+	var rule struct {
+		ID              uuid.UUID
+		Name            string
+		Description     *string
+		Enabled         bool
+		Metric          string
+		Operator        string
+		Threshold       float64
+		Severity        string
+		CooldownMinutes int
+		CreatedAt       time.Time
+	}
+
+	err = r.db.Pool().QueryRow(ctx, `
+		SELECT id, name, description, enabled, metric, operator, threshold, severity, cooldown_minutes, created_at
+		FROM alert_rules WHERE id = $1
+	`, id).Scan(&rule.ID, &rule.Name, &rule.Description, &rule.Enabled, &rule.Metric,
+		&rule.Operator, &rule.Threshold, &rule.Severity, &rule.CooldownMinutes, &rule.CreatedAt)
+
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Alert rule not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"id": rule.ID, "name": rule.Name, "description": rule.Description,
+		"enabled": rule.Enabled, "metric": rule.Metric, "operator": rule.Operator,
+		"threshold": rule.Threshold, "severity": rule.Severity,
+		"cooldownMinutes": rule.CooldownMinutes, "createdAt": rule.CreatedAt,
+	})
 }
 
 func (r *Router) updateAlertRule(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{})
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid alert rule ID"})
+		return
+	}
+
+	var req struct {
+		Name            string  `json:"name"`
+		Description     string  `json:"description"`
+		Enabled         *bool   `json:"enabled"`
+		Metric          string  `json:"metric"`
+		Operator        string  `json:"operator"`
+		Threshold       float64 `json:"threshold"`
+		Severity        string  `json:"severity"`
+		CooldownMinutes int     `json:"cooldownMinutes"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx := context.Background()
+	_, err = r.db.Pool().Exec(ctx, `
+		UPDATE alert_rules SET 
+			name = COALESCE(NULLIF($1, ''), name),
+			description = COALESCE(NULLIF($2, ''), description),
+			metric = COALESCE(NULLIF($3, ''), metric),
+			operator = COALESCE(NULLIF($4, ''), operator),
+			severity = COALESCE(NULLIF($5, ''), severity),
+			updated_at = NOW()
+		WHERE id = $6
+	`, req.Name, req.Description, req.Metric, req.Operator, req.Severity, id)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update alert rule"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Alert rule updated successfully"})
 }
 
 func (r *Router) deleteAlertRule(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{})
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid alert rule ID"})
+		return
+	}
+
+	ctx := context.Background()
+	result, err := r.db.Pool().Exec(ctx, "DELETE FROM alert_rules WHERE id = $1", id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete alert rule"})
+		return
+	}
+
+	if result.RowsAffected() == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Alert rule not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Alert rule deleted successfully"})
 }
 
 // Settings handlers
@@ -669,7 +1005,25 @@ func (r *Router) getSettings(c *gin.Context) {
 }
 
 func (r *Router) updateSettings(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{})
+	var req map[string]string
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx := context.Background()
+	for key, value := range req {
+		_, err := r.db.Pool().Exec(ctx, `
+			INSERT INTO settings (key, value) VALUES ($1, $2)
+			ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()
+		`, key, value)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update settings"})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Settings updated successfully"})
 }
 
 // Users handlers
@@ -788,22 +1142,22 @@ func (r *Router) updateUser(c *gin.Context) {
 	argNum := 1
 
 	if req.Email != "" {
-		updates = append(updates, "email = $"+string(rune('0'+argNum)))
+		updates = append(updates, "email = $"+strconv.Itoa(argNum))
 		args = append(args, req.Email)
 		argNum++
 	}
 	if req.FirstName != "" {
-		updates = append(updates, "first_name = $"+string(rune('0'+argNum)))
+		updates = append(updates, "first_name = $"+strconv.Itoa(argNum))
 		args = append(args, req.FirstName)
 		argNum++
 	}
 	if req.LastName != "" {
-		updates = append(updates, "last_name = $"+string(rune('0'+argNum)))
+		updates = append(updates, "last_name = $"+strconv.Itoa(argNum))
 		args = append(args, req.LastName)
 		argNum++
 	}
 	if req.Role != "" {
-		updates = append(updates, "role = $"+string(rune('0'+argNum)))
+		updates = append(updates, "role = $"+strconv.Itoa(argNum))
 		args = append(args, req.Role)
 		argNum++
 	}
@@ -813,7 +1167,7 @@ func (r *Router) updateUser(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
 			return
 		}
-		updates = append(updates, "password_hash = $"+string(rune('0'+argNum)))
+		updates = append(updates, "password_hash = $"+strconv.Itoa(argNum))
 		args = append(args, hashedPassword)
 		argNum++
 	}
@@ -824,7 +1178,7 @@ func (r *Router) updateUser(c *gin.Context) {
 	}
 
 	args = append(args, id)
-	query := "UPDATE users SET " + strings.Join(updates, ", ") + ", updated_at = NOW() WHERE id = $" + string(rune('0'+argNum))
+	query := "UPDATE users SET " + strings.Join(updates, ", ") + ", updated_at = NOW() WHERE id = $" + strconv.Itoa(argNum)
 
 	_, err = r.db.Pool().Exec(ctx, query, args...)
 	if err != nil {
