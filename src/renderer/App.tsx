@@ -19,6 +19,7 @@ import { useDeviceStore } from './stores/deviceStore';
 import { useAlertStore } from './stores/alertStore';
 import { useClientStore } from './stores/clientStore';
 import { UpdateNotification } from './components/UpdateNotification';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 type Page = 'dashboard' | 'devices' | 'device-detail' | 'alerts' | 'scripts' | 'certificates' | 'settings' | 'tickets' | 'ticket-detail' | 'tickets-kanban' | 'tickets-calendar' | 'tickets-analytics' | 'knowledge-base' | 'clients';
 
@@ -83,51 +84,115 @@ function App() {
   const renderPage = () => {
     switch (currentPage) {
       case 'dashboard':
-        return <Dashboard onDeviceSelect={handleDeviceSelect} />;
+        return (
+          <ErrorBoundary key="dashboard">
+            <Dashboard onDeviceSelect={handleDeviceSelect} />
+          </ErrorBoundary>
+        );
       case 'devices':
-        return <Devices onDeviceSelect={handleDeviceSelect} />;
+        return (
+          <ErrorBoundary key="devices">
+            <Devices onDeviceSelect={handleDeviceSelect} />
+          </ErrorBoundary>
+        );
       case 'device-detail':
         return selectedDeviceId ? (
-          <DeviceDetail deviceId={selectedDeviceId} onBack={handleBackToDevices} />
+          <ErrorBoundary key={`device-${selectedDeviceId}`}>
+            <DeviceDetail deviceId={selectedDeviceId} onBack={handleBackToDevices} />
+          </ErrorBoundary>
         ) : (
-          <Devices onDeviceSelect={handleDeviceSelect} />
+          <ErrorBoundary key="devices-fallback">
+            <Devices onDeviceSelect={handleDeviceSelect} />
+          </ErrorBoundary>
         );
       case 'alerts':
-        return <Alerts />;
+        return (
+          <ErrorBoundary key="alerts">
+            <Alerts />
+          </ErrorBoundary>
+        );
       case 'scripts':
-        return <Scripts />;
+        return (
+          <ErrorBoundary key="scripts">
+            <Scripts />
+          </ErrorBoundary>
+        );
       case 'settings':
-        return <Settings />;
+        return (
+          <ErrorBoundary key="settings">
+            <Settings />
+          </ErrorBoundary>
+        );
       case 'tickets':
-        return <Tickets onTicketSelect={handleTicketSelect} />;
+        return (
+          <ErrorBoundary key="tickets">
+            <Tickets onTicketSelect={handleTicketSelect} />
+          </ErrorBoundary>
+        );
       case 'ticket-detail':
         return selectedTicketId ? (
-          <TicketDetail ticketId={selectedTicketId} onBack={handleBackToTickets} />
+          <ErrorBoundary key={`device-${selectedDeviceId}`}>
+            <TicketDetail ticketId={selectedTicketId} onBack={handleBackToTickets} />
+          </ErrorBoundary>
         ) : (
-          <Tickets onTicketSelect={handleTicketSelect} />
+          <ErrorBoundary key="tickets-fallback">
+            <Tickets onTicketSelect={handleTicketSelect} />
+          </ErrorBoundary>
         );
       case 'clients':
-        return <Clients />;
+        return (
+          <ErrorBoundary key="clients">
+            <Clients />
+          </ErrorBoundary>
+        );
       case 'certificates':
-        return <Certificates />;
+        return (
+          <ErrorBoundary key="certificates">
+            <Certificates />
+          </ErrorBoundary>
+        );
       case 'tickets-kanban':
-        return <TicketsKanban onTicketSelect={handleTicketSelect} />;
+        return (
+          <ErrorBoundary key="tickets-kanban">
+            <TicketsKanban onTicketSelect={handleTicketSelect} />
+          </ErrorBoundary>
+        );
       case 'tickets-calendar':
-        return <TicketsCalendar onTicketSelect={handleTicketSelect} />;
+        return (
+          <ErrorBoundary key="tickets-calendar">
+            <TicketsCalendar onTicketSelect={handleTicketSelect} />
+          </ErrorBoundary>
+        );
       case 'tickets-analytics':
-        return <TicketAnalytics />;
+        return (
+          <ErrorBoundary key="tickets-analytics">
+            <TicketAnalytics />
+          </ErrorBoundary>
+        );
       case 'knowledge-base':
-        return <KnowledgeBase />;
+        return (
+          <ErrorBoundary key="knowledge-base">
+            <KnowledgeBase />
+          </ErrorBoundary>
+        );
       default:
-        return <Dashboard onDeviceSelect={handleDeviceSelect} />;
+        return (
+          <ErrorBoundary key="dashboard-default">
+            <Dashboard onDeviceSelect={handleDeviceSelect} />
+          </ErrorBoundary>
+        );
     }
   };
 
   return (
     <div className="flex h-screen bg-background">
-      <Sidebar currentPage={currentPage} onNavigate={handleNavigate} />
+      <ErrorBoundary>
+        <Sidebar currentPage={currentPage} onNavigate={handleNavigate} />
+      </ErrorBoundary>
       <div className="flex-1 flex flex-col overflow-hidden">
-        <Header />
+        <ErrorBoundary>
+          <Header />
+        </ErrorBoundary>
         <main className="flex-1 overflow-auto p-6">
           {renderPage()}
         </main>
