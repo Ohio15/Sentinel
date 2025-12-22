@@ -357,6 +357,19 @@ function setupIpcHandlers(): void {
 
   // Device management
   ipcMain.handle('devices:list', async (_, clientId?: string) => {
+    // When backend is authenticated, fetch fresh data from API
+    if (backendRelay.isConfigured() && backendRelay.isAuthenticated()) {
+      try {
+        const devices = await backendRelay.getDevices();
+        // Also sync to local database for offline access
+        backendRelay.syncDevices().catch(err => console.error('[IPC] Background sync failed:', err));
+        return devices;
+      } catch (error) {
+        console.error('[IPC] Failed to fetch devices from backend, falling back to local:', error);
+      }
+    }
+
+    // Fallback to local database
     const devices = await database.getDevices(clientId);
     // Trust database status - agents report to Go server which updates the database
     // Consider online if lastSeen is within 90 seconds (heartbeat interval + buffer)
@@ -377,6 +390,19 @@ function setupIpcHandlers(): void {
 
   ipcMain.handle('devices:get', async (_, id: string) => {
     console.log('[IPC] devices:get called with id:', id);
+    
+    // When backend is authenticated, fetch fresh data from API
+    if (backendRelay.isConfigured() && backendRelay.isAuthenticated()) {
+      try {
+        const device = await backendRelay.getDevice(id);
+        console.log('[IPC] devices:get from backend:', device ? device.hostname : 'null');
+        return device;
+      } catch (error) {
+        console.error('[IPC] Failed to fetch device from backend, falling back to local:', error);
+      }
+    }
+    
+    // Fallback to local database
     const device = await database.getDevice(id);
     console.log('[IPC] devices:get result:', device ? device.hostname : 'null');
     if (device) {
