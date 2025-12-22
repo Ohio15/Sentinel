@@ -729,7 +729,9 @@ function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('tickets:getStats', async () => {
-    // Stats still from local DB as summary
+    if (backendRelay.isAuthenticated()) {
+      return backendRelay.getTicketStats();
+    }
     return database.getTicketStats();
   });
 

@@ -577,6 +577,20 @@ export class BackendRelay {
     return this.makeRequest('GET', `/api/tickets/${ticketId}/timeline`);
   }
 
+  async getTicketStats(): Promise<any> {
+    const response = await this.makeRequest('GET', '/api/tickets/stats');
+    // Transform server response format to match frontend expected format
+    const byStatus = response.byStatus || {};
+    return {
+      openCount: byStatus.open || 0,
+      inProgressCount: byStatus.inProgress || 0,
+      waitingCount: byStatus.waiting || 0,
+      resolvedCount: byStatus.resolved || 0,
+      closedCount: byStatus.closed || 0,
+      totalCount: (byStatus.open || 0) + (byStatus.inProgress || 0) + (byStatus.waiting || 0) + (byStatus.resolved || 0) + (byStatus.closed || 0),
+    };
+  }
+
   // ==================== TICKET TEMPLATES ====================
 
   async getTicketTemplates(): Promise<any[]> {
