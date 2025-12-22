@@ -117,8 +117,9 @@ services:
       - no-new-privileges:true
     read_only: true
     tmpfs:
-      - /var/cache/nginx
-      - /var/run
+      - /var/cache/nginx:uid=101,gid=101
+      - /var/run:uid=101,gid=101
+      - /tmp:uid=101,gid=101
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.frontend.rule=Host(`${DOMAIN}`)"
