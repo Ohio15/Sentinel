@@ -357,10 +357,15 @@ function setupIpcHandlers(): void {
 
   // Device management
   ipcMain.handle('devices:list', async (_, clientId?: string) => {
+    const isConfigured = backendRelay.isConfigured();
+    const isAuthenticated = backendRelay.isAuthenticated();
+    console.log('[IPC] devices:list called, backend configured:', isConfigured, 'authenticated:', isAuthenticated);
+
     // When backend is authenticated, fetch fresh data from API
-    if (backendRelay.isConfigured() && backendRelay.isAuthenticated()) {
+    if (isConfigured && isAuthenticated) {
       try {
         const devices = await backendRelay.getDevices();
+        console.log('[IPC] devices:list from backend:', devices?.length, 'devices');
         // Also sync to local database for offline access
         backendRelay.syncDevices().catch(err => console.error('[IPC] Background sync failed:', err));
         return devices;
@@ -369,6 +374,7 @@ function setupIpcHandlers(): void {
       }
     }
 
+    console.log('[IPC] devices:list using local database fallback');
     // Fallback to local database
     const devices = await database.getDevices(clientId);
     // Trust database status - agents report to Go server which updates the database

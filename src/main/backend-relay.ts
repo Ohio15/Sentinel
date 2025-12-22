@@ -66,38 +66,49 @@ export class BackendRelay {
           // Check if device exists locally
           const existingDevice = await this.database.getDevice(device.id);
 
+          // Sync ALL device fields (not just basic ones) for complete offline access
+          const fullDeviceData = {
+            id: device.id,
+            agentId: device.agentId,
+            hostname: device.hostname,
+            displayName: device.displayName,
+            osType: device.osType,
+            osVersion: device.osVersion,
+            osBuild: device.osBuild,
+            platform: device.platform,
+            platformFamily: device.platformFamily,
+            architecture: device.architecture,
+            cpuModel: device.cpuModel,
+            cpuCores: device.cpuCores,
+            cpuThreads: device.cpuThreads,
+            cpuSpeed: device.cpuSpeed,
+            totalMemory: device.totalMemory,
+            bootTime: device.bootTime,
+            gpu: device.gpu,
+            storage: device.storage,
+            serialNumber: device.serialNumber,
+            manufacturer: device.manufacturer,
+            model: device.model,
+            domain: device.domain,
+            agentVersion: device.agentVersion,
+            lastSeen: device.lastSeen,
+            status: device.status,
+            ipAddress: device.ipAddress,
+            publicIp: device.publicIp,
+            macAddress: device.macAddress,
+            tags: device.tags,
+            metadata: device.metadata,
+            clientId: device.clientId,
+            createdAt: device.createdAt,
+            updatedAt: device.updatedAt,
+          };
+
           if (existingDevice) {
-            // Update existing device
-            await this.database.updateDeviceFromBackend(device.id, {
-              hostname: device.hostname,
-              displayName: device.displayName,
-              osType: device.osType,
-              osVersion: device.osVersion,
-              architecture: device.architecture,
-              agentVersion: device.agentVersion,
-              ipAddress: device.ipAddress,
-              macAddress: device.macAddress,
-              status: device.status,
-              lastSeen: device.lastSeen,
-              agentId: device.agentId,
-            });
+            // Update existing device with all fields
+            await this.database.updateDeviceFromBackend(device.id, fullDeviceData);
           } else {
-            // Create new device
-            await this.database.createDeviceFromBackend({
-              id: device.id,
-              hostname: device.hostname,
-              displayName: device.displayName,
-              osType: device.osType,
-              osVersion: device.osVersion,
-              architecture: device.architecture,
-              agentVersion: device.agentVersion,
-              ipAddress: device.ipAddress,
-              macAddress: device.macAddress,
-              status: device.status,
-              lastSeen: device.lastSeen,
-              agentId: device.agentId,
-              clientId: device.clientId,
-            });
+            // Create new device with all fields
+            await this.database.createDeviceFromBackend(fullDeviceData);
           }
         } catch (error) {
           console.error(`[BackendRelay] Failed to sync device ${device.id}:`, error);
