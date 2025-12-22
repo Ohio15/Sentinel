@@ -33,3 +33,5 @@ certs/*.crt
 certs/*.srl
 certs/*.cnf
 server/sentinel.exe
+# Backup files from API migration
+*.bak

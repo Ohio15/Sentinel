@@ -453,4 +453,487 @@ export class BackendRelay {
   getRelaySession(sessionId: string): RelayTerminalSession | undefined {
     return this.terminalSessions.get(sessionId);
   }
+
+  // ==================== CLIENT MANAGEMENT ====================
+
+  async getClients(): Promise<any[]> {
+    return this.makeRequest('GET', '/api/clients');
+  }
+
+  async getClient(clientId: string): Promise<any> {
+    return this.makeRequest('GET', `/api/clients/${clientId}`);
+  }
+
+  async createClient(data: any): Promise<any> {
+    return this.makeRequest('POST', '/api/clients', data);
+  }
+
+  async updateClient(clientId: string, data: any): Promise<any> {
+    return this.makeRequest('PUT', `/api/clients/${clientId}`, data);
+  }
+
+  async deleteClient(clientId: string): Promise<any> {
+    return this.makeRequest('DELETE', `/api/clients/${clientId}`);
+  }
+
+  async getClientDevices(clientId: string): Promise<any[]> {
+    return this.makeRequest('GET', `/api/clients/${clientId}/devices`);
+  }
+
+  async getClientTickets(clientId: string): Promise<any[]> {
+    return this.makeRequest('GET', `/api/clients/${clientId}/tickets`);
+  }
+
+  // ==================== TICKET MANAGEMENT ====================
+
+  async getTickets(filters?: { status?: string; priority?: string; clientId?: string }): Promise<any[]> {
+    const params = new URLSearchParams();
+    if (filters?.status) params.append('status', filters.status);
+    if (filters?.priority) params.append('priority', filters.priority);
+    if (filters?.clientId) params.append('clientId', filters.clientId);
+    const query = params.toString();
+    return this.makeRequest('GET', `/api/tickets${query ? '?' + query : ''}`);
+  }
+
+  async getTicket(ticketId: string): Promise<any> {
+    return this.makeRequest('GET', `/api/tickets/${ticketId}`);
+  }
+
+  async createTicket(data: any): Promise<any> {
+    return this.makeRequest('POST', '/api/tickets', data);
+  }
+
+  async updateTicket(ticketId: string, data: any): Promise<any> {
+    return this.makeRequest('PUT', `/api/tickets/${ticketId}`, data);
+  }
+
+  async deleteTicket(ticketId: string): Promise<any> {
+    return this.makeRequest('DELETE', `/api/tickets/${ticketId}`);
+  }
+
+  async getTicketComments(ticketId: string): Promise<any[]> {
+    return this.makeRequest('GET', `/api/tickets/${ticketId}/comments`);
+  }
+
+  async addTicketComment(ticketId: string, content: string, isInternal: boolean = false): Promise<any> {
+    return this.makeRequest('POST', `/api/tickets/${ticketId}/comments`, { content, isInternal });
+  }
+
+  async updateTicketComment(ticketId: string, commentId: string, content: string): Promise<any> {
+    return this.makeRequest('PUT', `/api/tickets/${ticketId}/comments/${commentId}`, { content });
+  }
+
+  async deleteTicketComment(ticketId: string, commentId: string): Promise<any> {
+    return this.makeRequest('DELETE', `/api/tickets/${ticketId}/comments/${commentId}`);
+  }
+
+  async getTicketAttachments(ticketId: string): Promise<any[]> {
+    return this.makeRequest('GET', `/api/tickets/${ticketId}/attachments`);
+  }
+
+  async getTicketTimeline(ticketId: string): Promise<any[]> {
+    return this.makeRequest('GET', `/api/tickets/${ticketId}/timeline`);
+  }
+
+  // ==================== TICKET TEMPLATES ====================
+
+  async getTicketTemplates(): Promise<any[]> {
+    return this.makeRequest('GET', '/api/ticket-templates');
+  }
+
+  async getTicketTemplate(templateId: string): Promise<any> {
+    return this.makeRequest('GET', `/api/ticket-templates/${templateId}`);
+  }
+
+  async createTicketTemplate(data: any): Promise<any> {
+    return this.makeRequest('POST', '/api/ticket-templates', data);
+  }
+
+  async updateTicketTemplate(templateId: string, data: any): Promise<any> {
+    return this.makeRequest('PUT', `/api/ticket-templates/${templateId}`, data);
+  }
+
+  async deleteTicketTemplate(templateId: string): Promise<any> {
+    return this.makeRequest('DELETE', `/api/ticket-templates/${templateId}`);
+  }
+
+  // ==================== SLA POLICIES ====================
+
+  async getSLAPolicies(clientId?: string): Promise<any[]> {
+    const query = clientId ? `?clientId=${clientId}` : '';
+    return this.makeRequest('GET', `/api/sla-policies${query}`);
+  }
+
+  async getSLAPolicy(policyId: string): Promise<any> {
+    return this.makeRequest('GET', `/api/sla-policies/${policyId}`);
+  }
+
+  async createSLAPolicy(data: any): Promise<any> {
+    return this.makeRequest('POST', '/api/sla-policies', data);
+  }
+
+  async updateSLAPolicy(policyId: string, data: any): Promise<any> {
+    return this.makeRequest('PUT', `/api/sla-policies/${policyId}`, data);
+  }
+
+  async deleteSLAPolicy(policyId: string): Promise<any> {
+    return this.makeRequest('DELETE', `/api/sla-policies/${policyId}`);
+  }
+
+  // ==================== TICKET CATEGORIES ====================
+
+  async getTicketCategories(): Promise<any[]> {
+    return this.makeRequest('GET', '/api/ticket-categories');
+  }
+
+  async getTicketCategory(categoryId: string): Promise<any> {
+    return this.makeRequest('GET', `/api/ticket-categories/${categoryId}`);
+  }
+
+  async createTicketCategory(data: any): Promise<any> {
+    return this.makeRequest('POST', '/api/ticket-categories', data);
+  }
+
+  async updateTicketCategory(categoryId: string, data: any): Promise<any> {
+    return this.makeRequest('PUT', `/api/ticket-categories/${categoryId}`, data);
+  }
+
+  async deleteTicketCategory(categoryId: string): Promise<any> {
+    return this.makeRequest('DELETE', `/api/ticket-categories/${categoryId}`);
+  }
+
+  // ==================== TICKET TAGS ====================
+
+  async getTicketTags(): Promise<any[]> {
+    return this.makeRequest('GET', '/api/ticket-tags');
+  }
+
+  async getTicketTag(tagId: string): Promise<any> {
+    return this.makeRequest('GET', `/api/ticket-tags/${tagId}`);
+  }
+
+  async createTicketTag(data: any): Promise<any> {
+    return this.makeRequest('POST', '/api/ticket-tags', data);
+  }
+
+  async updateTicketTag(tagId: string, data: any): Promise<any> {
+    return this.makeRequest('PUT', `/api/ticket-tags/${tagId}`, data);
+  }
+
+  async deleteTicketTag(tagId: string): Promise<any> {
+    return this.makeRequest('DELETE', `/api/ticket-tags/${tagId}`);
+  }
+
+  async addTagToTicket(ticketId: string, tagId: string): Promise<any> {
+    return this.makeRequest('POST', `/api/tickets/${ticketId}/tags/${tagId}`);
+  }
+
+  async removeTagFromTicket(ticketId: string, tagId: string): Promise<any> {
+    return this.makeRequest('DELETE', `/api/tickets/${ticketId}/tags/${tagId}`);
+  }
+
+  // ==================== TICKET LINKS ====================
+
+  async getTicketLinks(ticketId: string): Promise<any[]> {
+    return this.makeRequest('GET', `/api/tickets/${ticketId}/links`);
+  }
+
+  async createTicketLink(ticketId: string, data: { linkedTicketId: string; linkType: string }): Promise<any> {
+    return this.makeRequest('POST', `/api/tickets/${ticketId}/links`, data);
+  }
+
+  async deleteTicketLink(ticketId: string, linkId: string): Promise<any> {
+    return this.makeRequest('DELETE', `/api/tickets/${ticketId}/links/${linkId}`);
+  }
+
+  // ==================== CUSTOM FIELDS ====================
+
+  async getCustomFieldDefinitions(): Promise<any[]> {
+    return this.makeRequest('GET', '/api/custom-fields');
+  }
+
+  async getCustomFieldDefinition(fieldId: string): Promise<any> {
+    return this.makeRequest('GET', `/api/custom-fields/${fieldId}`);
+  }
+
+  async createCustomFieldDefinition(data: any): Promise<any> {
+    return this.makeRequest('POST', '/api/custom-fields', data);
+  }
+
+  async updateCustomFieldDefinition(fieldId: string, data: any): Promise<any> {
+    return this.makeRequest('PUT', `/api/custom-fields/${fieldId}`, data);
+  }
+
+  async deleteCustomFieldDefinition(fieldId: string): Promise<any> {
+    return this.makeRequest('DELETE', `/api/custom-fields/${fieldId}`);
+  }
+
+  async getTicketCustomFields(ticketId: string): Promise<any[]> {
+    return this.makeRequest('GET', `/api/tickets/${ticketId}/custom-fields`);
+  }
+
+  async setTicketCustomField(ticketId: string, fieldId: string, value: any): Promise<any> {
+    return this.makeRequest('PUT', `/api/tickets/${ticketId}/custom-fields/${fieldId}`, { value });
+  }
+
+  // ==================== KNOWLEDGE BASE ====================
+
+  async getKBCategories(): Promise<any[]> {
+    return this.makeRequest('GET', '/api/kb/categories');
+  }
+
+  async getKBCategory(categoryId: string): Promise<any> {
+    return this.makeRequest('GET', `/api/kb/categories/${categoryId}`);
+  }
+
+  async createKBCategory(data: any): Promise<any> {
+    return this.makeRequest('POST', '/api/kb/categories', data);
+  }
+
+  async updateKBCategory(categoryId: string, data: any): Promise<any> {
+    return this.makeRequest('PUT', `/api/kb/categories/${categoryId}`, data);
+  }
+
+  async deleteKBCategory(categoryId: string): Promise<any> {
+    return this.makeRequest('DELETE', `/api/kb/categories/${categoryId}`);
+  }
+
+  async getKBArticles(categoryId?: string, search?: string): Promise<any[]> {
+    const params = new URLSearchParams();
+    if (categoryId) params.append('categoryId', categoryId);
+    if (search) params.append('search', search);
+    const query = params.toString();
+    return this.makeRequest('GET', `/api/kb/articles${query ? '?' + query : ''}`);
+  }
+
+  async getKBArticle(articleId: string): Promise<any> {
+    return this.makeRequest('GET', `/api/kb/articles/${articleId}`);
+  }
+
+  async createKBArticle(data: any): Promise<any> {
+    return this.makeRequest('POST', '/api/kb/articles', data);
+  }
+
+  async updateKBArticle(articleId: string, data: any): Promise<any> {
+    return this.makeRequest('PUT', `/api/kb/articles/${articleId}`, data);
+  }
+
+  async deleteKBArticle(articleId: string): Promise<any> {
+    return this.makeRequest('DELETE', `/api/kb/articles/${articleId}`);
+  }
+
+  // ==================== DEVICE MANAGEMENT ====================
+
+  async getDevices(): Promise<any[]> {
+    return this.makeRequest('GET', '/api/devices');
+  }
+
+  async updateDevice(deviceId: string, data: any): Promise<any> {
+    return this.makeRequest('PUT', `/api/devices/${deviceId}`, data);
+  }
+
+  async deleteDevice(deviceId: string): Promise<any> {
+    return this.makeRequest('DELETE', `/api/devices/${deviceId}`);
+  }
+
+  async getDeviceAlerts(deviceId: string): Promise<any[]> {
+    return this.makeRequest('GET', `/api/devices/${deviceId}/alerts`);
+  }
+
+  async getDeviceSoftware(deviceId: string): Promise<any[]> {
+    return this.makeRequest('GET', `/api/devices/${deviceId}/software`);
+  }
+
+  async getDeviceServices(deviceId: string): Promise<any[]> {
+    return this.makeRequest('GET', `/api/devices/${deviceId}/services`);
+  }
+
+  async getDeviceProcesses(deviceId: string): Promise<any[]> {
+    return this.makeRequest('GET', `/api/devices/${deviceId}/processes`);
+  }
+
+  async restartDevice(deviceId: string, delay?: number): Promise<any> {
+    return this.makeRequest('POST', `/api/devices/${deviceId}/restart`, { delay });
+  }
+
+  async shutdownDevice(deviceId: string, delay?: number): Promise<any> {
+    return this.makeRequest('POST', `/api/devices/${deviceId}/shutdown`, { delay });
+  }
+
+  // ==================== ALERTS ====================
+
+  async getAlerts(filters?: { deviceId?: string; severity?: string; acknowledged?: boolean }): Promise<any[]> {
+    const params = new URLSearchParams();
+    if (filters?.deviceId) params.append('deviceId', filters.deviceId);
+    if (filters?.severity) params.append('severity', filters.severity);
+    if (filters?.acknowledged !== undefined) params.append('acknowledged', String(filters.acknowledged));
+    const query = params.toString();
+    return this.makeRequest('GET', `/api/alerts${query ? '?' + query : ''}`);
+  }
+
+  async getAlert(alertId: string): Promise<any> {
+    return this.makeRequest('GET', `/api/alerts/${alertId}`);
+  }
+
+  async acknowledgeAlert(alertId: string): Promise<any> {
+    return this.makeRequest('POST', `/api/alerts/${alertId}/acknowledge`);
+  }
+
+  async resolveAlert(alertId: string): Promise<any> {
+    return this.makeRequest('POST', `/api/alerts/${alertId}/resolve`);
+  }
+
+  async deleteAlert(alertId: string): Promise<any> {
+    return this.makeRequest('DELETE', `/api/alerts/${alertId}`);
+  }
+
+  // ==================== ALERT RULES ====================
+
+  async getAlertRules(): Promise<any[]> {
+    return this.makeRequest('GET', '/api/alert-rules');
+  }
+
+  async getAlertRule(ruleId: string): Promise<any> {
+    return this.makeRequest('GET', `/api/alert-rules/${ruleId}`);
+  }
+
+  async createAlertRule(data: any): Promise<any> {
+    return this.makeRequest('POST', '/api/alert-rules', data);
+  }
+
+  async updateAlertRule(ruleId: string, data: any): Promise<any> {
+    return this.makeRequest('PUT', `/api/alert-rules/${ruleId}`, data);
+  }
+
+  async deleteAlertRule(ruleId: string): Promise<any> {
+    return this.makeRequest('DELETE', `/api/alert-rules/${ruleId}`);
+  }
+
+  // ==================== SCRIPTS ====================
+
+  async getScripts(): Promise<any[]> {
+    return this.makeRequest('GET', '/api/scripts');
+  }
+
+  async getScript(scriptId: string): Promise<any> {
+    return this.makeRequest('GET', `/api/scripts/${scriptId}`);
+  }
+
+  async createScript(data: any): Promise<any> {
+    return this.makeRequest('POST', '/api/scripts', data);
+  }
+
+  async updateScript(scriptId: string, data: any): Promise<any> {
+    return this.makeRequest('PUT', `/api/scripts/${scriptId}`, data);
+  }
+
+  async deleteScript(scriptId: string): Promise<any> {
+    return this.makeRequest('DELETE', `/api/scripts/${scriptId}`);
+  }
+
+  async getScriptExecutions(scriptId: string): Promise<any[]> {
+    return this.makeRequest('GET', `/api/scripts/${scriptId}/executions`);
+  }
+
+  // ==================== USERS ====================
+
+  async getUsers(): Promise<any[]> {
+    return this.makeRequest('GET', '/api/users');
+  }
+
+  async getUser(userId: string): Promise<any> {
+    return this.makeRequest('GET', `/api/users/${userId}`);
+  }
+
+  async createUser(data: any): Promise<any> {
+    return this.makeRequest('POST', '/api/users', data);
+  }
+
+  async updateUser(userId: string, data: any): Promise<any> {
+    return this.makeRequest('PUT', `/api/users/${userId}`, data);
+  }
+
+  async deleteUser(userId: string): Promise<any> {
+    return this.makeRequest('DELETE', `/api/users/${userId}`);
+  }
+
+  async getCurrentUser(): Promise<any> {
+    return this.makeRequest('GET', '/api/users/me');
+  }
+
+  async updateCurrentUser(data: any): Promise<any> {
+    return this.makeRequest('PUT', '/api/users/me', data);
+  }
+
+  async changePassword(currentPassword: string, newPassword: string): Promise<any> {
+    return this.makeRequest('POST', '/api/users/me/password', { currentPassword, newPassword });
+  }
+
+  // ==================== ENROLLMENT TOKENS ====================
+
+  async getEnrollmentTokens(): Promise<any[]> {
+    return this.makeRequest('GET', '/api/enrollment-tokens');
+  }
+
+  async getEnrollmentToken(tokenId: string): Promise<any> {
+    return this.makeRequest('GET', `/api/enrollment-tokens/${tokenId}`);
+  }
+
+  async createEnrollmentToken(data: any): Promise<any> {
+    return this.makeRequest('POST', '/api/enrollment-tokens', data);
+  }
+
+  async revokeEnrollmentToken(tokenId: string): Promise<any> {
+    return this.makeRequest('DELETE', `/api/enrollment-tokens/${tokenId}`);
+  }
+
+  // ==================== DASHBOARD ====================
+
+  async getDashboardStats(): Promise<any> {
+    return this.makeRequest('GET', '/api/dashboard/stats');
+  }
+
+  async getDashboardAlerts(): Promise<any[]> {
+    return this.makeRequest('GET', '/api/dashboard/alerts');
+  }
+
+  async getDashboardActivity(): Promise<any[]> {
+    return this.makeRequest('GET', '/api/dashboard/activity');
+  }
+
+  // ==================== SETTINGS ====================
+
+  async getSettings(): Promise<any> {
+    return this.makeRequest('GET', '/api/settings');
+  }
+
+  async updateSettings(data: any): Promise<any> {
+    return this.makeRequest('PUT', '/api/settings', data);
+  }
+
+  // ==================== PORTAL SESSIONS ====================
+
+  async getPortalSessions(): Promise<any[]> {
+    return this.makeRequest('GET', '/api/portal-sessions');
+  }
+
+  async createPortalSession(clientId: string): Promise<any> {
+    return this.makeRequest('POST', '/api/portal-sessions', { clientId });
+  }
+
+  async deletePortalSession(sessionId: string): Promise<any> {
+    return this.makeRequest('DELETE', `/api/portal-sessions/${sessionId}`);
+  }
+
+  // ==================== AUDIT LOG ====================
+
+  async getAuditLogs(filters?: { userId?: string; action?: string; from?: string; to?: string }): Promise<any[]> {
+    const params = new URLSearchParams();
+    if (filters?.userId) params.append('userId', filters.userId);
+    if (filters?.action) params.append('action', filters.action);
+    if (filters?.from) params.append('from', filters.from);
+    if (filters?.to) params.append('to', filters.to);
+    const query = params.toString();
+    return this.makeRequest('GET', `/api/audit-logs${query ? '?' + query : ''}`);
+  }
 }

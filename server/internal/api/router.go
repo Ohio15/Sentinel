@@ -316,6 +316,86 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			protected.POST("/mobile/devices/:id/locate", middleware.RequireRole("admin", "operator"), locateMobileDeviceHandler(services))
 			protected.POST("/mobile/devices/:id/lock", middleware.RequireRole("admin", "operator"), lockMobileDeviceHandler(services))
 			protected.POST("/mobile/devices/:id/wipe", middleware.RequireRole("admin"), wipeMobileDeviceHandler(services))
+
+			// Clients
+			protected.GET("/clients", listClientsHandler(services))
+			protected.GET("/clients/:id", getClientHandler(services))
+			protected.POST("/clients", middleware.RequireRole("admin"), createClientHandler(services))
+			protected.PUT("/clients/:id", middleware.RequireRole("admin"), updateClientHandler(services))
+			protected.DELETE("/clients/:id", middleware.RequireRole("admin"), deleteClientHandler(services))
+			protected.POST("/devices/:id/assign-client", middleware.RequireRole("admin", "operator"), assignDeviceToClientHandler(services))
+			protected.POST("/clients/bulk-assign-devices", middleware.RequireRole("admin", "operator"), bulkAssignDevicesToClientHandler(services))
+
+			// Tickets
+			protected.GET("/tickets", listTicketsHandler(services))
+			protected.GET("/tickets/:id", getTicketHandler(services))
+			protected.POST("/tickets", createTicketHandler(services))
+			protected.PUT("/tickets/:id", updateTicketHandler(services))
+			protected.DELETE("/tickets/:id", middleware.RequireRole("admin"), deleteTicketHandler(services))
+			protected.GET("/tickets/:id/comments", getTicketCommentsHandler(services))
+			protected.POST("/tickets/:id/comments", createTicketCommentHandler(services))
+			protected.PUT("/tickets/comments/:commentId", updateTicketCommentHandler(services))
+			protected.DELETE("/tickets/comments/:commentId", deleteTicketCommentHandler(services))
+			protected.GET("/tickets/:id/activity", getTicketActivityHandler(services))
+			protected.GET("/tickets/stats", getTicketStatsHandler(services))
+			protected.GET("/ticket-templates", listTicketTemplatesHandler(services))
+			protected.GET("/ticket-templates/:id", getTicketTemplateHandler(services))
+			protected.POST("/ticket-templates", middleware.RequireRole("admin", "operator"), createTicketTemplateHandler(services))
+			protected.PUT("/ticket-templates/:id", middleware.RequireRole("admin", "operator"), updateTicketTemplateHandler(services))
+			protected.DELETE("/ticket-templates/:id", middleware.RequireRole("admin"), deleteTicketTemplateHandler(services))
+
+			// SLA Policies
+			protected.GET("/sla-policies", listSLAPoliciesHandler(services))
+			protected.GET("/sla-policies/:id", getSLAPolicyHandler(services))
+			protected.POST("/sla-policies", middleware.RequireRole("admin"), createSLAPolicyHandler(services))
+			protected.PUT("/sla-policies/:id", middleware.RequireRole("admin"), updateSLAPolicyHandler(services))
+			protected.DELETE("/sla-policies/:id", middleware.RequireRole("admin"), deleteSLAPolicyHandler(services))
+
+			// Ticket Categories
+			protected.GET("/ticket-categories", listTicketCategoriesHandler(services))
+			protected.GET("/ticket-categories/:id", getTicketCategoryHandler(services))
+			protected.POST("/ticket-categories", middleware.RequireRole("admin"), createTicketCategoryHandler(services))
+			protected.PUT("/ticket-categories/:id", middleware.RequireRole("admin"), updateTicketCategoryHandler(services))
+			protected.DELETE("/ticket-categories/:id", middleware.RequireRole("admin"), deleteTicketCategoryHandler(services))
+
+			// Ticket Tags
+			protected.GET("/ticket-tags", listTicketTagsHandler(services))
+			protected.GET("/ticket-tags/:id", getTicketTagHandler(services))
+			protected.POST("/ticket-tags", middleware.RequireRole("admin", "operator"), createTicketTagHandler(services))
+			protected.PUT("/ticket-tags/:id", middleware.RequireRole("admin", "operator"), updateTicketTagHandler(services))
+			protected.DELETE("/ticket-tags/:id", middleware.RequireRole("admin"), deleteTicketTagHandler(services))
+			protected.GET("/tickets/:id/tags", getTicketTagsHandler(services))
+			protected.POST("/tickets/:id/tags", assignTicketTagHandler(services))
+			protected.DELETE("/tickets/:id/tags/:tagId", removeTicketTagHandler(services))
+
+			// Ticket Links
+			protected.GET("/tickets/:id/links", getTicketLinksHandler(services))
+			protected.POST("/tickets/:id/links", createTicketLinkHandler(services))
+			protected.DELETE("/ticket-links/:id", deleteTicketLinkHandler(services))
+
+			// Custom Field Definitions
+			protected.GET("/custom-fields", listCustomFieldDefinitionsHandler(services))
+			protected.GET("/custom-fields/:id", getCustomFieldDefinitionHandler(services))
+			protected.POST("/custom-fields", middleware.RequireRole("admin"), createCustomFieldDefinitionHandler(services))
+			protected.PUT("/custom-fields/:id", middleware.RequireRole("admin"), updateCustomFieldDefinitionHandler(services))
+			protected.DELETE("/custom-fields/:id", middleware.RequireRole("admin"), deleteCustomFieldDefinitionHandler(services))
+
+			// Knowledge Base Categories
+			protected.GET("/kb/categories", listKBCategoriesHandler(services))
+			protected.GET("/kb/categories/:id", getKBCategoryHandler(services))
+			protected.POST("/kb/categories", middleware.RequireRole("admin", "operator"), createKBCategoryHandler(services))
+			protected.PUT("/kb/categories/:id", middleware.RequireRole("admin", "operator"), updateKBCategoryHandler(services))
+			protected.DELETE("/kb/categories/:id", middleware.RequireRole("admin"), deleteKBCategoryHandler(services))
+
+			// Knowledge Base Articles
+			protected.GET("/kb/articles", listKBArticlesHandler(services))
+			protected.GET("/kb/articles/:id", getKBArticleHandler(services))
+			protected.POST("/kb/articles", middleware.RequireRole("admin", "operator"), createKBArticleHandler(services))
+			protected.PUT("/kb/articles/:id", middleware.RequireRole("admin", "operator"), updateKBArticleHandler(services))
+			protected.DELETE("/kb/articles/:id", middleware.RequireRole("admin"), deleteKBArticleHandler(services))
+			protected.POST("/kb/articles/:id/feedback", submitKBArticleFeedbackHandler(services))
+			protected.GET("/kb/articles/:id/feedback", getKBArticleFeedbackHandler(services))
+			protected.POST("/kb/articles/:id/view", recordKBArticleViewHandler(services))
 		}
 
 		// Mobile enrollment routes (public with token)
