@@ -220,21 +220,28 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 		r.hub.SendToAgent(agentID, ackMsg)
 
 	case ws.MsgTypeMetrics:
-		var metrics struct {
-			CPUPercent       float64 `json:"cpuPercent"`
-			MemoryPercent    float64 `json:"memoryPercent"`
-			MemoryUsedBytes  int64   `json:"memoryUsedBytes"`
-			MemoryTotalBytes int64   `json:"memoryTotalBytes"`
-			DiskPercent      float64 `json:"diskPercent"`
-			DiskUsedBytes    int64   `json:"diskUsedBytes"`
-			DiskTotalBytes   int64   `json:"diskTotalBytes"`
-			NetworkRxBytes   int64   `json:"networkRxBytes"`
-			NetworkTxBytes   int64   `json:"networkTxBytes"`
-			ProcessCount     int     `json:"processCount"`
+		// Agent sends metrics in "data" field with snake_case keys
+		var metricsMsg struct {
+			Data struct {
+				CPUPercent      float64 `json:"cpu_percent"`
+				MemoryPercent   float64 `json:"memory_percent"`
+				MemoryUsed      uint64  `json:"memory_used"`
+				MemoryAvailable uint64  `json:"memory_available"`
+				DiskPercent     float64 `json:"disk_percent"`
+				DiskUsed        uint64  `json:"disk_used"`
+				DiskTotal       uint64  `json:"disk_total"`
+				NetworkRxBytes  uint64  `json:"network_rx_bytes"`
+				NetworkTxBytes  uint64  `json:"network_tx_bytes"`
+				ProcessCount    int     `json:"process_count"`
+			} `json:"data"`
 		}
-		if err := json.Unmarshal(msg.Payload, &metrics); err != nil {
+		if err := json.Unmarshal(message, &metricsMsg); err != nil {
+			log.Printf("Error parsing metrics from %s: %v", agentID, err)
 			return
 		}
+		m := metricsMsg.Data
+		// Compute total memory from used + available
+		memoryTotalBytes := int64(m.MemoryUsed + m.MemoryAvailable)
 
 		// Insert metrics
 		if _, err := r.db.Pool().Exec(ctx, `
@@ -242,23 +249,34 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 				memory_total_bytes, disk_percent, disk_used_bytes, disk_total_bytes,
 				network_rx_bytes, network_tx_bytes, process_count)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-		`, deviceID, metrics.CPUPercent, metrics.MemoryPercent, metrics.MemoryUsedBytes,
-			metrics.MemoryTotalBytes, metrics.DiskPercent, metrics.DiskUsedBytes,
-			metrics.DiskTotalBytes, metrics.NetworkRxBytes, metrics.NetworkTxBytes,
-			metrics.ProcessCount); err != nil {
+		`, deviceID, m.CPUPercent, m.MemoryPercent, int64(m.MemoryUsed),
+			memoryTotalBytes, m.DiskPercent, int64(m.DiskUsed),
+			int64(m.DiskTotal), int64(m.NetworkRxBytes), int64(m.NetworkTxBytes),
+			m.ProcessCount); err != nil {
 			log.Printf("Error inserting metrics for device %s: %v", deviceID, err)
 		}
 
-		// Broadcast to dashboards
+		// Broadcast to dashboards (convert to camelCase for frontend)
 		broadcastMsg, _ := json.Marshal(map[string]interface{}{
 			"type":     "device_metrics",
 			"deviceId": deviceID,
-			"metrics":  metrics,
+			"metrics": map[string]interface{}{
+				"cpuPercent":       m.CPUPercent,
+				"memoryPercent":    m.MemoryPercent,
+				"memoryUsedBytes":  m.MemoryUsed,
+				"memoryTotalBytes": memoryTotalBytes,
+				"diskPercent":      m.DiskPercent,
+				"diskUsedBytes":    m.DiskUsed,
+				"diskTotalBytes":   m.DiskTotal,
+				"networkRxBytes":   m.NetworkRxBytes,
+				"networkTxBytes":   m.NetworkTxBytes,
+				"processCount":     m.ProcessCount,
+			},
 		})
 		r.hub.BroadcastToDashboards(broadcastMsg)
 
 		// Check alert rules
-		r.checkAlertRules(deviceID, metrics.CPUPercent, metrics.MemoryPercent, metrics.DiskPercent)
+		r.checkAlertRules(deviceID, m.CPUPercent, m.MemoryPercent, m.DiskPercent)
 
 	case ws.MsgTypeResponse:
 		// Agent sends response data at root level, not in payload field
