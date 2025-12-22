@@ -240,6 +240,8 @@ interface DetailViewProps {
 
 function CPUDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProps) {
   const cpuPercent = latestMetrics?.cpuPercent ?? 0;
+  const cpuPerCore = latestMetrics?.cpuPerCore ?? [];
+  const topProcesses = latestMetrics?.topProcesses ?? [];
 
   return (
     <div>
@@ -262,6 +264,26 @@ function CPUDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProps) 
         maxValue={100}
       />
 
+      {/* Per-core CPU usage grid (Task Manager style) */}
+      {cpuPerCore.length > 0 && (
+        <div className="mt-4">
+          <div className="text-sm text-text-secondary mb-2">Logical processors</div>
+          <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${Math.min(cpuPerCore.length, 8)}, 1fr)` }}>
+            {cpuPerCore.map((corePercent, idx) => (
+              <div key={idx} className="relative h-10 bg-gray-100 border border-border rounded overflow-hidden" title={`Core ${idx}: ${corePercent.toFixed(0)}%`}>
+                <div
+                  className="absolute bottom-0 left-0 right-0 bg-[#0078d4] transition-all duration-300"
+                  style={{ height: `${Math.min(corePercent, 100)}%` }}
+                />
+                <div className="absolute inset-0 flex items-center justify-center text-xs font-medium">
+                  {corePercent.toFixed(0)}%
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-x-12 gap-y-2 mt-6 text-sm">
         <StatRow label="Utilization" value={`${cpuPercent.toFixed(0)}%`} />
         <StatRow label="Speed" value={systemInfo?.cpuSpeed ? `${(systemInfo.cpuSpeed / 1000).toFixed(2)} GHz` : 'N/A'} />
@@ -275,6 +297,41 @@ function CPUDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProps) 
         <StatRow label="Cores" value={systemInfo?.cpuCores?.toString() ?? 'N/A'} />
         <StatRow label="Logical processors" value={systemInfo?.cpuThreads?.toString() ?? 'N/A'} />
       </div>
+
+      {/* Top processes by CPU (Task Manager style) */}
+      {topProcesses.length > 0 && (
+        <div className="mt-6">
+          <div className="text-sm text-text-secondary mb-2">Top processes by CPU</div>
+          <div className="bg-gray-50 border border-border rounded overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-100 border-b border-border">
+                <tr>
+                  <th className="text-left px-3 py-2 font-medium">Name</th>
+                  <th className="text-right px-3 py-2 font-medium w-20">PID</th>
+                  <th className="text-right px-3 py-2 font-medium w-20">CPU</th>
+                  <th className="text-right px-3 py-2 font-medium w-24">Memory</th>
+                </tr>
+              </thead>
+              <tbody>
+                {topProcesses.slice(0, 10).map((proc, idx) => (
+                  <tr key={proc.pid} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                    <td className="px-3 py-1.5 truncate max-w-[200px]" title={proc.name}>{proc.name}</td>
+                    <td className="px-3 py-1.5 text-right text-text-secondary">{proc.pid}</td>
+                    <td className="px-3 py-1.5 text-right">
+                      <span className={proc.cpuPercent > 50 ? 'text-orange-600 font-medium' : ''}>
+                        {proc.cpuPercent.toFixed(1)}%
+                      </span>
+                    </td>
+                    <td className="px-3 py-1.5 text-right text-text-secondary">
+                      {formatBytes(proc.memoryRss)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
