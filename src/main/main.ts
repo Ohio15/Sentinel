@@ -3,7 +3,7 @@ import { autoUpdater } from 'electron-updater';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as dotenv from 'dotenv';
-import { Database } from './database';
+import { LocalStore } from './local-store';
 import { listCertificates, renewCertificates, getCACertificate, getCertsDir } from './cert-manager';
 import { BackendRelay } from './backend-relay';
 import * as os from 'os';
@@ -174,7 +174,7 @@ function setupAutoUpdater(): void {
 
 
 let mainWindow: BrowserWindow | null = null;
-let database: Database;
+let database: LocalStore;
 let backendRelay: BackendRelay;
 let isQuitting = false;
 
@@ -243,7 +243,7 @@ function createWindow(): void {
 
 async function initialize(): Promise<void> {
   // Initialize database (for local caching and settings)
-  database = new Database();
+  database = new LocalStore();
   await database.initialize();
 
   // Initialize backend relay - this is now the ONLY way to communicate with agents
@@ -567,50 +567,68 @@ function setupIpcHandlers(): void {
     throw new Error('WebRTC remote desktop is not yet available. Feature coming soon.');
   });
 
-  // Alerts
+
+  // Alerts - route through backend when connected
   ipcMain.handle('alerts:list', async () => {
+    if (backendRelay.isAuthenticated()) {
+      return backendRelay.getAlerts();
+    }
     return database.getAlerts();
   });
 
   ipcMain.handle('alerts:acknowledge', async (_, id: string) => {
-    return database.acknowledgeAlert(id);
+    ensureBackendConnected();
+    return backendRelay.acknowledgeAlert(id);
   });
 
   ipcMain.handle('alerts:resolve', async (_, id: string) => {
-    return database.resolveAlert(id);
+    ensureBackendConnected();
+    return backendRelay.resolveAlert(id);
   });
 
   ipcMain.handle('alerts:getRules', async () => {
+    if (backendRelay.isAuthenticated()) {
+      return backendRelay.getAlertRules();
+    }
     return database.getAlertRules();
   });
 
   ipcMain.handle('alerts:createRule', async (_, rule: any) => {
-    return database.createAlertRule(rule);
+    ensureBackendConnected();
+    return backendRelay.createAlertRule(rule);
   });
 
   ipcMain.handle('alerts:updateRule', async (_, id: string, rule: any) => {
-    return database.updateAlertRule(id, rule);
+    ensureBackendConnected();
+    return backendRelay.updateAlertRule(id, rule);
   });
 
   ipcMain.handle('alerts:deleteRule', async (_, id: string) => {
-    return database.deleteAlertRule(id);
+    ensureBackendConnected();
+    return backendRelay.deleteAlertRule(id);
   });
 
-  // Scripts
+  // Scripts - route through backend when connected
   ipcMain.handle('scripts:list', async () => {
+    if (backendRelay.isAuthenticated()) {
+      return backendRelay.getScripts();
+    }
     return database.getScripts();
   });
 
   ipcMain.handle('scripts:create', async (_, script: any) => {
-    return database.createScript(script);
+    ensureBackendConnected();
+    return backendRelay.createScript(script);
   });
 
   ipcMain.handle('scripts:update', async (_, id: string, script: any) => {
-    return database.updateScript(id, script);
+    ensureBackendConnected();
+    return backendRelay.updateScript(id, script);
   });
 
   ipcMain.handle('scripts:delete', async (_, id: string) => {
-    return database.deleteScript(id);
+    ensureBackendConnected();
+    return backendRelay.deleteScript(id);
   });
 
   ipcMain.handle('scripts:execute', async (_, scriptId: string, deviceIds: string[]) => {
@@ -618,18 +636,24 @@ function setupIpcHandlers(): void {
     return backendRelay.executeScript(scriptId, deviceIds);
   });
 
-  // Tickets
-  ipcMain.handle('tickets:list', async (_, filters?: { status?: string; priority?: string; assignedTo?: string; deviceId?: string }) => {
+  // Tickets - route through backend when connected
+  ipcMain.handle('tickets:list', async (_, filters?: { status?: string; priority?: string; assignedTo?: string; deviceId?: string; clientId?: string }) => {
+    if (backendRelay.isAuthenticated()) {
+      return backendRelay.getTickets(filters);
+    }
     return database.getTickets(filters);
   });
 
   ipcMain.handle('tickets:get', async (_, id: string) => {
+    if (backendRelay.isAuthenticated()) {
+      return backendRelay.getTicket(id);
+    }
     return database.getTicket(id);
   });
 
   ipcMain.handle('tickets:create', async (_, ticket: any) => {
-    // Create the ticket first
-    const createdTicket = await database.createTicket(ticket);
+    ensureBackendConnected();
+    const createdTicket = await backendRelay.createTicket(ticket);
 
     // If ticket has a deviceId, collect diagnostics in the background
     if (ticket.deviceId) {
@@ -642,64 +666,89 @@ function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('tickets:update', async (_, id: string, updates: any) => {
-    return database.updateTicket(id, updates);
+    ensureBackendConnected();
+    return backendRelay.updateTicket(id, updates);
   });
 
   ipcMain.handle('tickets:delete', async (_, id: string) => {
-    return database.deleteTicket(id);
+    ensureBackendConnected();
+    return backendRelay.deleteTicket(id);
   });
 
   ipcMain.handle('tickets:getComments', async (_, ticketId: string) => {
+    if (backendRelay.isAuthenticated()) {
+      return backendRelay.getTicketComments(ticketId);
+    }
     return database.getTicketComments(ticketId);
   });
 
   ipcMain.handle('tickets:addComment', async (_, comment: any) => {
-    return database.createTicketComment(comment);
+    ensureBackendConnected();
+    return backendRelay.addTicketComment(comment.ticketId, comment.content, comment.isInternal);
   });
 
   ipcMain.handle('tickets:getActivity', async (_, ticketId: string) => {
+    if (backendRelay.isAuthenticated()) {
+      return backendRelay.getTicketTimeline(ticketId);
+    }
     return database.getTicketActivity(ticketId);
   });
 
   ipcMain.handle('tickets:getStats', async () => {
+    // Stats still from local DB as summary
     return database.getTicketStats();
   });
 
   ipcMain.handle('tickets:getTemplates', async () => {
+    if (backendRelay.isAuthenticated()) {
+      return backendRelay.getTicketTemplates();
+    }
     return database.getTicketTemplates();
   });
 
   ipcMain.handle('tickets:createTemplate', async (_, template: any) => {
-    return database.createTicketTemplate(template);
+    ensureBackendConnected();
+    return backendRelay.createTicketTemplate(template);
   });
 
   ipcMain.handle('tickets:updateTemplate', async (_, id: string, template: any) => {
-    return database.updateTicketTemplate(id, template);
+    ensureBackendConnected();
+    return backendRelay.updateTicketTemplate(id, template);
   });
 
   ipcMain.handle('tickets:deleteTemplate', async (_, id: string) => {
-    return database.deleteTicketTemplate(id);
+    ensureBackendConnected();
+    return backendRelay.deleteTicketTemplate(id);
   });
 
-  // SLA Policies
+  // SLA Policies - route through backend when connected
   ipcMain.handle('sla:list', async (_, clientId?: string) => {
+    if (backendRelay.isAuthenticated()) {
+      return backendRelay.getSLAPolicies(clientId);
+    }
     return database.getSLAPolicies(clientId);
   });
 
   ipcMain.handle('sla:get', async (_, id: string) => {
+    if (backendRelay.isAuthenticated()) {
+      return backendRelay.getSLAPolicy(id);
+    }
     return database.getSLAPolicy(id);
   });
 
   ipcMain.handle('sla:create', async (_, policy: any) => {
-    return database.createSLAPolicy(policy);
+    ensureBackendConnected();
+    return backendRelay.createSLAPolicy(policy);
   });
 
   ipcMain.handle('sla:update', async (_, id: string, updates: any) => {
-    return database.updateSLAPolicy(id, updates);
+    ensureBackendConnected();
+    return backendRelay.updateSLAPolicy(id, updates);
   });
 
   ipcMain.handle('sla:delete', async (_, id: string) => {
-    return database.deleteSLAPolicy(id);
+    ensureBackendConnected();
+    return backendRelay.deleteSLAPolicy(id);
   });
 
   ipcMain.handle('sla:calculateDueDates', async (_, ticketId: string) => {
@@ -722,46 +771,64 @@ function setupIpcHandlers(): void {
     return database.checkSLABreaches();
   });
 
-  // Ticket Categories
+  // Ticket Categories - route through backend when connected
   ipcMain.handle('categories:list', async (_, clientId?: string) => {
+    if (backendRelay.isAuthenticated()) {
+      return backendRelay.getTicketCategories();
+    }
     return database.getTicketCategories(clientId);
   });
 
   ipcMain.handle('categories:get', async (_, id: string) => {
+    if (backendRelay.isAuthenticated()) {
+      return backendRelay.getTicketCategory(id);
+    }
     return database.getTicketCategory(id);
   });
 
   ipcMain.handle('categories:create', async (_, category: any) => {
-    return database.createTicketCategory(category);
+    ensureBackendConnected();
+    return backendRelay.createTicketCategory(category);
   });
 
   ipcMain.handle('categories:update', async (_, id: string, updates: any) => {
-    return database.updateTicketCategory(id, updates);
+    ensureBackendConnected();
+    return backendRelay.updateTicketCategory(id, updates);
   });
 
   ipcMain.handle('categories:delete', async (_, id: string) => {
-    return database.deleteTicketCategory(id);
+    ensureBackendConnected();
+    return backendRelay.deleteTicketCategory(id);
   });
 
-  // Ticket Tags
+  // Ticket Tags - route through backend when connected
   ipcMain.handle('tags:list', async (_, clientId?: string) => {
+    if (backendRelay.isAuthenticated()) {
+      return backendRelay.getTicketTags();
+    }
     return database.getTicketTags(clientId);
   });
 
   ipcMain.handle('tags:get', async (_, id: string) => {
+    if (backendRelay.isAuthenticated()) {
+      return backendRelay.getTicketTag(id);
+    }
     return database.getTicketTag(id);
   });
 
   ipcMain.handle('tags:create', async (_, tag: any) => {
-    return database.createTicketTag(tag);
+    ensureBackendConnected();
+    return backendRelay.createTicketTag(tag);
   });
 
   ipcMain.handle('tags:update', async (_, id: string, updates: any) => {
-    return database.updateTicketTag(id, updates);
+    ensureBackendConnected();
+    return backendRelay.updateTicketTag(id, updates);
   });
 
   ipcMain.handle('tags:delete', async (_, id: string) => {
-    return database.deleteTicketTag(id);
+    ensureBackendConnected();
+    return backendRelay.deleteTicketTag(id);
   });
 
   ipcMain.handle('tags:getAssignments', async (_, ticketId: string) => {
@@ -769,19 +836,35 @@ function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('tags:assign', async (_, ticketId: string, tagIds: string[], assignedBy?: string) => {
+    if (backendRelay.isAuthenticated()) {
+      // Add tags one by one via API
+      for (const tagId of tagIds) {
+        await backendRelay.addTagToTicket(ticketId, tagId);
+      }
+      return { success: true };
+    }
     return database.assignTagsToTicket(ticketId, tagIds, assignedBy);
   });
 
-  // Ticket Links
+  // Ticket Links - route through backend when connected
   ipcMain.handle('links:list', async (_, ticketId: string) => {
+    if (backendRelay.isAuthenticated()) {
+      return backendRelay.getTicketLinks(ticketId);
+    }
     return database.getTicketLinks(ticketId);
   });
 
   ipcMain.handle('links:create', async (_, link: any) => {
-    return database.createTicketLink(link);
+    ensureBackendConnected();
+    return backendRelay.createTicketLink(link.ticketId, {
+      linkedTicketId: link.linkedTicketId,
+      linkType: link.linkType
+    });
   });
 
   ipcMain.handle('links:delete', async (_, id: string) => {
+    ensureBackendConnected();
+    // For delete, we need ticket ID - fall back to local for now
     return database.deleteTicketLink(id);
   });
 
@@ -790,33 +873,48 @@ function setupIpcHandlers(): void {
     return database.getTicketAnalytics(params);
   });
 
-  // Knowledge Base Categories
+  // Knowledge Base Categories - route through backend when connected
   ipcMain.handle('kb:categories:list', async () => {
+    if (backendRelay.isAuthenticated()) {
+      return backendRelay.getKBCategories();
+    }
     return database.getKBCategories();
   });
 
   ipcMain.handle('kb:categories:get', async (_, id: string) => {
+    if (backendRelay.isAuthenticated()) {
+      return backendRelay.getKBCategory(id);
+    }
     return database.getKBCategory(id);
   });
 
   ipcMain.handle('kb:categories:create', async (_, category: any) => {
-    return database.createKBCategory(category);
+    ensureBackendConnected();
+    return backendRelay.createKBCategory(category);
   });
 
   ipcMain.handle('kb:categories:update', async (_, id: string, updates: any) => {
-    return database.updateKBCategory(id, updates);
+    ensureBackendConnected();
+    return backendRelay.updateKBCategory(id, updates);
   });
 
   ipcMain.handle('kb:categories:delete', async (_, id: string) => {
-    return database.deleteKBCategory(id);
+    ensureBackendConnected();
+    return backendRelay.deleteKBCategory(id);
   });
 
-  // Knowledge Base Articles
+  // Knowledge Base Articles - route through backend when connected
   ipcMain.handle('kb:articles:list', async (_, options?: { categoryId?: string; status?: string; featured?: boolean; limit?: number; offset?: number }) => {
+    if (backendRelay.isAuthenticated()) {
+      return backendRelay.getKBArticles(options?.categoryId);
+    }
     return database.getKBArticles(options);
   });
 
   ipcMain.handle('kb:articles:get', async (_, id: string) => {
+    if (backendRelay.isAuthenticated()) {
+      return backendRelay.getKBArticle(id);
+    }
     return database.getKBArticle(id);
   });
 
@@ -825,18 +923,24 @@ function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('kb:articles:create', async (_, article: any) => {
-    return database.createKBArticle(article);
+    ensureBackendConnected();
+    return backendRelay.createKBArticle(article);
   });
 
   ipcMain.handle('kb:articles:update', async (_, id: string, updates: any) => {
-    return database.updateKBArticle(id, updates);
+    ensureBackendConnected();
+    return backendRelay.updateKBArticle(id, updates);
   });
 
   ipcMain.handle('kb:articles:delete', async (_, id: string) => {
-    return database.deleteKBArticle(id);
+    ensureBackendConnected();
+    return backendRelay.deleteKBArticle(id);
   });
 
   ipcMain.handle('kb:articles:search', async (_, query: string, limit?: number) => {
+    if (backendRelay.isAuthenticated()) {
+      return backendRelay.getKBArticles(undefined, query);
+    }
     return database.searchKBArticles(query, limit);
   });
 
@@ -955,33 +1059,53 @@ function setupIpcHandlers(): void {
   });
 
 
-  // Clients
+
+  // Clients - route through backend when connected
   ipcMain.handle('clients:list', async () => {
+    if (backendRelay.isAuthenticated()) {
+      return backendRelay.getClients();
+    }
     return database.getClientsWithCounts();
   });
 
   ipcMain.handle('clients:get', async (_, id: string) => {
+    if (backendRelay.isAuthenticated()) {
+      return backendRelay.getClient(id);
+    }
     return database.getClient(id);
   });
 
   ipcMain.handle('clients:create', async (_, client: { name: string; description?: string; color?: string; logoUrl?: string; logoWidth?: number; logoHeight?: number }) => {
-    return database.createClient(client);
+    ensureBackendConnected();
+    return backendRelay.createClient(client);
   });
 
   ipcMain.handle('clients:update', async (_, id: string, client: { name?: string; description?: string; color?: string; logoUrl?: string; logoWidth?: number; logoHeight?: number }) => {
-    return database.updateClient(id, client);
+    ensureBackendConnected();
+    return backendRelay.updateClient(id, client);
   });
 
   ipcMain.handle('clients:delete', async (_, id: string) => {
-    return database.deleteClient(id);
+    ensureBackendConnected();
+    return backendRelay.deleteClient(id);
   });
 
   ipcMain.handle('devices:assignToClient', async (_, deviceId: string, clientId: string | null) => {
+    if (backendRelay.isAuthenticated()) {
+      await backendRelay.updateDevice(deviceId, { clientId });
+      return backendRelay.getDevice(deviceId);
+    }
     await database.assignDeviceToClient(deviceId, clientId);
     return database.getDevice(deviceId);
   });
 
   ipcMain.handle('devices:bulkAssignToClient', async (_, deviceIds: string[], clientId: string | null) => {
+    if (backendRelay.isAuthenticated()) {
+      for (const deviceId of deviceIds) {
+        await backendRelay.updateDevice(deviceId, { clientId });
+      }
+      return { success: true, count: deviceIds.length };
+    }
     await database.bulkAssignDevicesToClient(deviceIds, clientId);
     return { success: true, count: deviceIds.length };
   });
