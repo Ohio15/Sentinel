@@ -1,7 +1,7 @@
 {
-  "version": "1.63.0",
-  "releaseDate": "2025-12-19",
-  "changelog": "- Improved enrollment error handling with actionable suggestions\n- Better connection failure diagnostics (DNS, timeout, TLS errors)\n- Removed mDNS discovery (not suitable for RMM architecture)",
+  "version": "1.65.0",
+  "releaseDate": "2025-12-22",
+  "changelog": "- Added per-core CPU metrics collection (Task Manager style)\n- Added top processes streaming with CPU/memory usage\n- Improved real-time metrics reporting",
   "platforms": [
     "windows",
     "linux",
