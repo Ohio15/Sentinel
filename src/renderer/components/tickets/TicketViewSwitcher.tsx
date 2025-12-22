@@ -1,6 +1,5 @@
 import React from 'react';
 import { List, Kanban, Calendar, BarChart3 } from 'lucide-react';
-import { useNavigate, useLocation } from 'react-router-dom';
 
 type ViewType = 'table' | 'kanban' | 'calendar' | 'analytics';
 
@@ -8,14 +7,13 @@ interface ViewOption {
   type: ViewType;
   label: string;
   icon: React.ElementType;
-  path: string;
 }
 
 const viewOptions: ViewOption[] = [
-  { type: 'table', label: 'Table', icon: List, path: '/tickets' },
-  { type: 'kanban', label: 'Kanban', icon: Kanban, path: '/tickets/kanban' },
-  { type: 'calendar', label: 'Calendar', icon: Calendar, path: '/tickets/calendar' },
-  { type: 'analytics', label: 'Analytics', icon: BarChart3, path: '/tickets/analytics' }
+  { type: 'table', label: 'Table', icon: List },
+  { type: 'kanban', label: 'Kanban', icon: Kanban },
+  { type: 'calendar', label: 'Calendar', icon: Calendar },
+  { type: 'analytics', label: 'Analytics', icon: BarChart3 }
 ];
 
 interface TicketViewSwitcherProps {
@@ -25,25 +23,16 @@ interface TicketViewSwitcherProps {
 }
 
 export function TicketViewSwitcher({
-  currentView,
+  currentView = 'table',
   onChange,
-  useRouting = true
+  useRouting = false
 }: TicketViewSwitcherProps) {
-  const navigate = useNavigate();
-  const location = useLocation();
-
-  // Determine current view from path if using routing
-  const activeView = useRouting
-    ? viewOptions.find((v) => v.path === location.pathname)?.type || 'table'
-    : currentView || 'table';
+  // Note: useRouting is kept for API compatibility but routing is handled
+  // by the parent component via onChange callback since the app uses
+  // state-based navigation, not react-router
 
   const handleViewChange = (view: ViewType) => {
-    if (useRouting) {
-      const option = viewOptions.find((v) => v.type === view);
-      if (option) {
-        navigate(option.path);
-      }
-    } else if (onChange) {
+    if (onChange) {
       onChange(view);
     }
   };
@@ -52,7 +41,7 @@ export function TicketViewSwitcher({
     <div className="inline-flex items-center bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
       {viewOptions.map((option) => {
         const Icon = option.icon;
-        const isActive = activeView === option.type;
+        const isActive = currentView === option.type;
 
         return (
           <button
@@ -80,24 +69,11 @@ export function TicketViewSwitcher({
 
 // Compact version for smaller spaces
 export function TicketViewSwitcherCompact({
-  currentView,
-  onChange,
-  useRouting = true
+  currentView = 'table',
+  onChange
 }: TicketViewSwitcherProps) {
-  const navigate = useNavigate();
-  const location = useLocation();
-
-  const activeView = useRouting
-    ? viewOptions.find((v) => v.path === location.pathname)?.type || 'table'
-    : currentView || 'table';
-
   const handleViewChange = (view: ViewType) => {
-    if (useRouting) {
-      const option = viewOptions.find((v) => v.type === view);
-      if (option) {
-        navigate(option.path);
-      }
-    } else if (onChange) {
+    if (onChange) {
       onChange(view);
     }
   };
@@ -106,7 +82,7 @@ export function TicketViewSwitcherCompact({
     <div className="inline-flex items-center border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
       {viewOptions.map((option, index) => {
         const Icon = option.icon;
-        const isActive = activeView === option.type;
+        const isActive = currentView === option.type;
 
         return (
           <button
@@ -137,29 +113,16 @@ interface TicketViewDropdownProps extends TicketViewSwitcherProps {
 }
 
 export function TicketViewDropdown({
-  currentView,
+  currentView = 'table',
   onChange,
-  useRouting = true,
   className = ''
 }: TicketViewDropdownProps) {
-  const navigate = useNavigate();
-  const location = useLocation();
-
-  const activeView = useRouting
-    ? viewOptions.find((v) => v.path === location.pathname)?.type || 'table'
-    : currentView || 'table';
-
-  const activeOption = viewOptions.find((v) => v.type === activeView) || viewOptions[0];
+  const activeOption = viewOptions.find((v) => v.type === currentView) || viewOptions[0];
   const Icon = activeOption.icon;
 
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const view = e.target.value as ViewType;
-    if (useRouting) {
-      const option = viewOptions.find((v) => v.type === view);
-      if (option) {
-        navigate(option.path);
-      }
-    } else if (onChange) {
+    if (onChange) {
       onChange(view);
     }
   };
@@ -168,7 +131,7 @@ export function TicketViewDropdown({
     <div className={`relative ${className}`}>
       <Icon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 dark:text-gray-400 pointer-events-none" />
       <select
-        value={activeView}
+        value={currentView}
         onChange={handleChange}
         className="appearance-none w-full pl-9 pr-8 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
       >
