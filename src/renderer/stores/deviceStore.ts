@@ -76,6 +76,16 @@ export interface NetworkInterfaceMetric {
   errorsOut: number;
 }
 
+export interface ProcessMetric {
+  pid: number;
+  name: string;
+  cpuPercent: number;
+  memPercent: number;
+  memoryRss: number;
+  status: string;
+  username?: string;
+}
+
 export interface DeviceMetrics {
   timestamp: string;
   cpuPercent: number;
@@ -98,6 +108,9 @@ export interface DeviceMetrics {
   memoryNonPagedPool?: number;
   gpuMetrics?: GPUMetric[];
   networkInterfaces?: NetworkInterfaceMetric[];
+  // Task Manager style per-core CPU and top processes
+  cpuPerCore?: number[];
+  topProcesses?: ProcessMetric[];
 }
 
 interface DeviceState {

@@ -82,10 +82,22 @@ type NetworkInterfaceMetric struct {
 	ErrorsOut     uint64 `json:"errors_out"`
 }
 
+// ProcessMetric contains per-process resource usage for top processes
+type ProcessMetric struct {
+	PID        int32   `json:"pid"`
+	Name       string  `json:"name"`
+	CPUPercent float64 `json:"cpu_percent"`
+	MemPercent float64 `json:"mem_percent"`
+	MemoryRSS  uint64  `json:"memory_rss"`
+	Status     string  `json:"status"`
+	Username   string  `json:"username,omitempty"`
+}
+
 // Metrics contains current system metrics
 type Metrics struct {
 	Timestamp       time.Time     `json:"timestamp"`
 	CPUPercent      float64       `json:"cpu_percent"`
+	CPUPerCore      []float64     `json:"cpu_per_core,omitempty"`
 	MemoryPercent   float64       `json:"memory_percent"`
 	MemoryUsed      uint64        `json:"memory_used"`
 	MemoryAvailable uint64        `json:"memory_available"`
@@ -106,6 +118,8 @@ type Metrics struct {
 	MemoryNonPagedPool   uint64                   `json:"memory_non_paged_pool"`
 	GPUMetrics           []GPUMetrics             `json:"gpu_metrics,omitempty"`
 	NetworkInterfaces    []NetworkInterfaceMetric `json:"network_interfaces,omitempty"`
+	// Top processes by CPU usage (Task Manager style)
+	TopProcesses []ProcessMetric `json:"top_processes,omitempty"`
 }
 
 // Collector handles system metrics collection
@@ -276,6 +290,12 @@ func (c *Collector) Collect(ctx context.Context) (*Metrics, error) {
 		metrics.CPUPercent = cpuPercent[0]
 	}
 
+	// Per-core CPU usage (Task Manager style)
+	cpuPerCore, err := cpu.PercentWithContext(ctx, 0, true)
+	if err == nil && len(cpuPerCore) > 0 {
+		metrics.CPUPerCore = cpuPerCore
+	}
+
 	// Memory usage
 	memInfo, err := mem.VirtualMemoryWithContext(ctx)
 	if err == nil {
@@ -340,6 +360,9 @@ func (c *Collector) Collect(ctx context.Context) (*Metrics, error) {
 
 	// Network per-interface stats
 	metrics.NetworkInterfaces = c.collectNetworkPerInterface(ctx)
+
+	// Top processes by CPU (Task Manager style streaming)
+	metrics.TopProcesses = c.collectTopProcesses(ctx, 10)
 
 	c.lastCheck = time.Now()
 	return metrics, nil
@@ -542,6 +565,78 @@ func (c *Collector) collectNetworkPerInterface(ctx context.Context) []NetworkInt
 		c.lastInterfaceStats[io.Name] = io
 
 		result = append(result, metric)
+	}
+
+	return result
+}
+
+// collectTopProcesses returns the top N processes by CPU usage
+func (c *Collector) collectTopProcesses(ctx context.Context, limit int) []ProcessMetric {
+	procs, err := process.ProcessesWithContext(ctx)
+	if err != nil {
+		return nil
+	}
+
+	// Collect process metrics
+	type procWithMetrics struct {
+		metric ProcessMetric
+		cpu    float64
+	}
+
+	procList := make([]procWithMetrics, 0, len(procs))
+	for _, p := range procs {
+		cpuPercent, err := p.CPUPercentWithContext(ctx)
+		if err != nil {
+			continue
+		}
+
+		name, _ := p.NameWithContext(ctx)
+		memPercent, _ := p.MemoryPercentWithContext(ctx)
+		memInfo, _ := p.MemoryInfoWithContext(ctx)
+		statusSlice, _ := p.StatusWithContext(ctx)
+		username, _ := p.UsernameWithContext(ctx)
+
+		var rss uint64
+		if memInfo != nil {
+			rss = memInfo.RSS
+		}
+
+		status := ""
+		if len(statusSlice) > 0 {
+			status = statusSlice[0]
+		}
+
+		procList = append(procList, procWithMetrics{
+			metric: ProcessMetric{
+				PID:        p.Pid,
+				Name:       name,
+				CPUPercent: cpuPercent,
+				MemPercent: float64(memPercent),
+				MemoryRSS:  rss,
+				Status:     status,
+				Username:   username,
+			},
+			cpu: cpuPercent,
+		})
+	}
+
+	// Sort by CPU usage (descending) using simple bubble sort
+	for i := 0; i < len(procList)-1; i++ {
+		for j := i + 1; j < len(procList); j++ {
+			if procList[j].cpu > procList[i].cpu {
+				procList[i], procList[j] = procList[j], procList[i]
+			}
+		}
+	}
+
+	// Return top N
+	if len(procList) > limit {
+		procList = procList[:limit]
+	}
+
+	result := make([]ProcessMetric, len(procList))
+	for i, p := range procList {
+		result[i] = p.metric
 	}
 
 	return result
