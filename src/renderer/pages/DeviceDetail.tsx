@@ -208,8 +208,8 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
     try {
       const result = await window.api.commands.execute(deviceId, command, commandType);
       setCommandOutput(result.output || 'Command executed successfully');
-    } catch (error: any) {
-      setCommandOutput(`Error: ${error.message}`);
+    } catch (error: unknown) {
+      setCommandOutput(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsExecuting(false);
     }

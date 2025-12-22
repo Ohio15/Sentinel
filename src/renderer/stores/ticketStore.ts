@@ -127,8 +127,8 @@ export const useTicketStore = create<TicketState>((set, get) => ({
       const appliedFilters = filters || get().filters;
       const tickets = await window.api.tickets.list(appliedFilters);
       set({ tickets, loading: false });
-    } catch (error: any) {
-      set({ error: error.message, loading: false });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error', loading: false });
     }
   },
 
@@ -142,8 +142,8 @@ export const useTicketStore = create<TicketState>((set, get) => ({
         get().fetchComments(id);
         get().fetchActivity(id);
       }
-    } catch (error: any) {
-      set({ error: error.message, loading: false });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error', loading: false });
     }
   },
 
@@ -156,8 +156,8 @@ export const useTicketStore = create<TicketState>((set, get) => ({
         loading: false,
       }));
       return newTicket;
-    } catch (error: any) {
-      set({ error: error.message, loading: false });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error', loading: false });
       throw error;
     }
   },
@@ -172,8 +172,8 @@ export const useTicketStore = create<TicketState>((set, get) => ({
         loading: false,
       }));
       return updatedTicket;
-    } catch (error: any) {
-      set({ error: error.message, loading: false });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error', loading: false });
       throw error;
     }
   },
@@ -187,8 +187,8 @@ export const useTicketStore = create<TicketState>((set, get) => ({
         selectedTicket: state.selectedTicket?.id === id ? null : state.selectedTicket,
         loading: false,
       }));
-    } catch (error: any) {
-      set({ error: error.message, loading: false });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error', loading: false });
       throw error;
     }
   },
@@ -197,7 +197,7 @@ export const useTicketStore = create<TicketState>((set, get) => ({
     try {
       const comments = await window.api.tickets.getComments(ticketId);
       set({ ticketComments: comments });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to fetch comments:', error);
     }
   },
@@ -209,7 +209,7 @@ export const useTicketStore = create<TicketState>((set, get) => ({
         ticketComments: [...state.ticketComments, newComment],
       }));
       return newComment;
-    } catch (error: any) {
+    } catch (error: unknown) {
       throw error;
     }
   },
@@ -218,7 +218,7 @@ export const useTicketStore = create<TicketState>((set, get) => ({
     try {
       const activity = await window.api.tickets.getActivity(ticketId);
       set({ ticketActivity: activity });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to fetch activity:', error);
     }
   },
@@ -227,7 +227,7 @@ export const useTicketStore = create<TicketState>((set, get) => ({
     try {
       const stats = await window.api.tickets.getStats();
       set({ stats });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to fetch stats:', error);
     }
   },
@@ -236,7 +236,7 @@ export const useTicketStore = create<TicketState>((set, get) => ({
     try {
       const templates = await window.api.tickets.getTemplates();
       set({ templates });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to fetch templates:', error);
     }
   },

@@ -47,7 +47,7 @@ export interface Device {
   publicIp?: string;
   macAddress: string;
   tags: string[];
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
   clientId?: string;
   isDisabled?: boolean;
   disabledAt?: string;
@@ -130,8 +130,8 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
       // Pass undefined instead of null to get all devices
       const devices = await window.api.devices.list(clientId || undefined);
       set({ devices, loading: false });
-    } catch (error: any) {
-      set({ error: error.message, loading: false });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error', loading: false });
     }
   },
 
@@ -142,9 +142,9 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
       const device = await window.api.devices.get(id);
       console.log('[DeviceStore] fetchDevice result:', device);
       set({ selectedDevice: device, loading: false });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[DeviceStore] fetchDevice error:', error);
-      set({ error: error.message, loading: false });
+      set({ error: error instanceof Error ? error.message : 'Unknown error', loading: false });
     }
   },
 
@@ -154,7 +154,7 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
       const metrics = await window.api.devices.getMetrics(deviceId, hours);
       console.log('[DeviceStore] fetchMetrics returned', metrics.length, 'metrics');
       set({ metrics });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to fetch metrics:', error);
     }
   },
@@ -164,8 +164,8 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
       await window.api.devices.delete(id);
       const { devices } = get();
       set({ devices: devices.filter(d => d.id !== id) });
-    } catch (error: any) {
-      set({ error: error.message });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error' });
     }
   },
 
@@ -182,8 +182,8 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
           ? { ...selectedDevice, status: 'disabled' as const, isDisabled: true, disabledAt: new Date().toISOString() }
           : selectedDevice
       });
-    } catch (error: any) {
-      set({ error: error.message });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error' });
       throw error;
     }
   },
@@ -201,8 +201,8 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
           ? { ...selectedDevice, status: 'offline' as const, isDisabled: false, disabledAt: undefined }
           : selectedDevice
       });
-    } catch (error: any) {
-      set({ error: error.message });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error' });
       throw error;
     }
   },
@@ -220,14 +220,14 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
           ? { ...selectedDevice, status: 'uninstalling' as const }
           : selectedDevice
       });
-    } catch (error: any) {
-      set({ error: error.message });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error' });
       throw error;
     }
   },
 
   subscribeToUpdates: () => {
-    const unsubOnline = window.api.on('devices:online', async (data: any) => {
+    const unsubOnline = window.api.on('devices:online', async (data) => {
       const { devices } = get();
       const existingDevice = devices.find(d => d.agentId === data.agentId);
 
@@ -252,7 +252,7 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
       }
     });
 
-    const unsubOffline = window.api.on('devices:offline', (data: any) => {
+    const unsubOffline = window.api.on('devices:offline', (data) => {
       const { devices } = get();
       const updated = devices.map(d =>
         d.agentId === data.agentId ? { ...d, status: 'offline' as const } : d
@@ -260,14 +260,14 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
       set({ devices: updated });
     });
 
-    const unsubUpdated = window.api.on('devices:updated', (data: any) => {
+    const unsubUpdated = window.api.on('devices:updated', (data) => {
       console.log('[DeviceStore] devices:updated received', data);
       // Refetch devices to get the latest list
       get().fetchDevices();
     });
 
     let metricsReceivedCount = 0;
-    const unsubMetrics = window.api.on('metrics:updated', (data: any) => {
+    const unsubMetrics = window.api.on('metrics:updated', (data) => {
       metricsReceivedCount++;
       const { selectedDevice, metrics } = get();
 

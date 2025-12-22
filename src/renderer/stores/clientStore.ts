@@ -45,8 +45,8 @@ export const useClientStore = create<ClientState>()(
         try {
           const clients = await window.api.clients.list();
           set({ clients, loading: false });
-        } catch (error: any) {
-          set({ error: error.message, loading: false });
+        } catch (error: unknown) {
+          set({ error: error instanceof Error ? error.message : 'Unknown error', loading: false });
         }
       },
 
@@ -60,8 +60,8 @@ export const useClientStore = create<ClientState>()(
           const { clients } = get();
           set({ clients: [...clients, newClient] });
           return newClient;
-        } catch (error: any) {
-          set({ error: error.message });
+        } catch (error: unknown) {
+          set({ error: error instanceof Error ? error.message : 'Unknown error' });
           throw error;
         }
       },
@@ -76,8 +76,8 @@ export const useClientStore = create<ClientState>()(
             });
           }
           return updatedClient;
-        } catch (error: any) {
-          set({ error: error.message });
+        } catch (error: unknown) {
+          set({ error: error instanceof Error ? error.message : 'Unknown error' });
           throw error;
         }
       },
@@ -91,8 +91,8 @@ export const useClientStore = create<ClientState>()(
             // Reset to "All Clients" if current client is deleted
             currentClientId: currentClientId === id ? null : currentClientId
           });
-        } catch (error: any) {
-          set({ error: error.message });
+        } catch (error: unknown) {
+          set({ error: error instanceof Error ? error.message : 'Unknown error' });
           throw error;
         }
       },

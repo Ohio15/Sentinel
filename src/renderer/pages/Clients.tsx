@@ -205,8 +205,8 @@ function ClientModal({ client, onClose, onSave }: ClientModalProps) {
         logoWidth: logoWidth || 32,
         logoHeight: logoHeight || 32,
       });
-    } catch (err: any) {
-      setError(err.message || 'Failed to save client');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
       setSaving(false);
     }
   };

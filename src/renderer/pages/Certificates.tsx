@@ -242,8 +242,8 @@ export function Certificates() {
       await renewCertificates();
       setShowRenewConfirm(false);
       alert('Certificates renewed successfully!');
-    } catch (err: any) {
-      alert(`Failed to renew certificates: ${err.message}`);
+    } catch (err: unknown) {
+      alert(`Failed to renew certificates: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
 
@@ -251,8 +251,8 @@ export function Certificates() {
     try {
       const result = await distributeCertificates();
       alert(`Certificate distributed to ${result.success} agents (${result.failed} failed)`);
-    } catch (err: any) {
-      alert(`Failed to distribute certificate: ${err.message}`);
+    } catch (err: unknown) {
+      alert(`Failed to distribute certificate: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
 

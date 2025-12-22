@@ -218,11 +218,11 @@ export function RemoteDesktop({ deviceId, isOnline }: RemoteDesktopProps) {
         quality
       });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Connection error:', error);
       cleanup();
       setConnecting(false);
-      alert('Failed to connect: ' + (error.message || 'Unknown error'));
+      alert('Failed to connect: ' + (error instanceof Error ? error.message : 'Unknown error'));
     }
   };
 

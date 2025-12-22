@@ -55,7 +55,7 @@ export function UpdateNotification() {
     });
 
     const unsubError = window.api.updater.onError((err) => {
-      setError(err.message);
+      setError(err instanceof Error ? err.message : 'Unknown error');
       setState('error');
     });
 
@@ -73,8 +73,8 @@ export function UpdateNotification() {
     setError(null);
     try {
       await window.api.updater.checkForUpdates();
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
       setState('error');
     }
   };
@@ -84,8 +84,8 @@ export function UpdateNotification() {
     setProgress({ percent: 0, bytesPerSecond: 0, transferred: 0, total: 0 });
     try {
       await window.api.updater.downloadUpdate();
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
       setState('error');
     }
   };
