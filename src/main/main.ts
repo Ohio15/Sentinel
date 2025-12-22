@@ -318,6 +318,7 @@ function setupIpcHandlers(): void {
     return {
       url: backendRelay.getBackendUrl(),
       isConfigured: backendRelay.isConfigured(),
+      isAuthenticated: backendRelay.isAuthenticated(),
     };
   });
 

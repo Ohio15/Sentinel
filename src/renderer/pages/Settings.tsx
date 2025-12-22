@@ -116,13 +116,13 @@ export function Settings() {
       const [settingsData, infoData, backendConfig] = await Promise.all([
         window.api.settings.get(),
         window.api.server.getInfo(),
-        window.api.backend.getConfig().catch(() => ({ url: '', isConfigured: false })),
+        window.api.backend.getConfig().catch(() => ({ url: '', isConfigured: false, isAuthenticated: false })),
       ]);
       setSettings(settingsData);
       setServerInfo(infoData);
       if (backendConfig.url) {
         setBackendUrl(backendConfig.url);
-        setBackendConnected(backendConfig.isConfigured);
+        setBackendConnected(backendConfig.isAuthenticated || false);
       }
     } catch (error) {
       console.error('Failed to load settings:', error);
