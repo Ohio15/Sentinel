@@ -157,6 +157,24 @@ export class BackendRelay {
       if (backendUrl) {
         this.config = { url: backendUrl };
         console.log('[BackendRelay] Initialized with URL:', backendUrl);
+        
+        // Load saved credentials and auto-authenticate
+        const savedUsername = await this.database.getSetting('backendUsername');
+        const savedPassword = await this.database.getSetting('backendPassword');
+        
+        if (savedUsername && savedPassword) {
+          console.log('[BackendRelay] Found saved credentials, auto-authenticating...');
+          try {
+            const success = await this.authenticate(savedUsername, savedPassword, true);
+            if (success) {
+              console.log('[BackendRelay] Auto-authentication successful');
+            } else {
+              console.log('[BackendRelay] Auto-authentication failed, credentials may have changed');
+            }
+          } catch (authError) {
+            console.error('[BackendRelay] Auto-authentication error:', authError);
+          }
+        }
       }
     } catch (error) {
       console.log('[BackendRelay] No external backend configured');
@@ -186,7 +204,7 @@ export class BackendRelay {
     return this.websocket.isConnected();
   }
 
-  async authenticate(username: string, password: string): Promise<boolean> {
+  async authenticate(username: string, password: string, isAutoLogin: boolean = false): Promise<boolean> {
     if (!this.config?.url) {
       throw new Error('Backend URL not configured');
     }
@@ -212,6 +230,19 @@ export class BackendRelay {
       this.config.username = username;
       this.config.password = password;
       console.log('[BackendRelay] Authentication successful');
+
+      // Save credentials for auto-login on next startup (only on manual login)
+      if (!isAutoLogin) {
+        try {
+          await this.database.updateSettings({
+            backendUsername: username,
+            backendPassword: password
+          });
+          console.log('[BackendRelay] Credentials saved for auto-login');
+        } catch (saveError) {
+          console.error('[BackendRelay] Failed to save credentials:', saveError);
+        }
+      }
 
       // Connect WebSocket with the new token
       try {
