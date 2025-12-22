@@ -462,7 +462,8 @@ function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('devices:getMetrics', async (_, deviceId: string, hours: number) => {
-    return database.getDeviceMetrics(deviceId, hours);
+    ensureBackendConnected();
+    return backendRelay.getDeviceMetrics(deviceId, hours);
   });
 
   ipcMain.handle('devices:setMetricsInterval', async (_, deviceId: string, intervalMs: number) => {
