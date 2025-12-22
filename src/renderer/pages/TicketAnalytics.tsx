@@ -61,6 +61,12 @@ const PRIORITY_COLORS: Record<string, string> = {
   low: '#9CA3AF'
 };
 
+type ViewType = 'table' | 'kanban' | 'calendar' | 'analytics';
+
+interface TicketAnalyticsProps {
+  onViewChange?: (view: ViewType) => void;
+}
+
 const TYPE_COLORS: Record<string, string> = {
   incident: '#EF4444',
   request: '#3B82F6',
@@ -68,7 +74,7 @@ const TYPE_COLORS: Record<string, string> = {
   change: '#10B981'
 };
 
-export function TicketAnalytics() {
+export function TicketAnalytics({ onViewChange }: TicketAnalyticsProps) {
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState('30');
@@ -136,7 +142,7 @@ export function TicketAnalytics() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <h1 className="text-2xl font-bold text-text-primary">Tickets</h1>
-          <TicketViewSwitcher />
+          <TicketViewSwitcher useRouting={false} currentView="analytics" onChange={onViewChange} />
         </div>
         <div className="flex items-center gap-3">
           <select

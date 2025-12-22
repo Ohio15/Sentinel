@@ -12,11 +12,14 @@ interface Category {
   isActive: boolean;
 }
 
+type ViewType = 'table' | 'kanban' | 'calendar' | 'analytics';
+
 interface TicketsProps {
   onTicketSelect: (ticketId: string) => void;
+  onViewChange?: (view: ViewType) => void;
 }
 
-export function Tickets({ onTicketSelect }: TicketsProps) {
+export function Tickets({ onTicketSelect, onViewChange }: TicketsProps) {
   const {
     tickets,
     stats,
@@ -125,7 +128,8 @@ export function Tickets({ onTicketSelect }: TicketsProps) {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <h1 className="text-2xl font-bold text-text-primary">Tickets</h1>
-          <TicketViewSwitcher />
+          {/* Disable routing - app uses state-based navigation */}
+          <TicketViewSwitcher useRouting={false} currentView="table" onChange={onViewChange} />
         </div>
         <button
           onClick={() => setShowCreateModal(true)}

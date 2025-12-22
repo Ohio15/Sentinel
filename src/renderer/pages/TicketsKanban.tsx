@@ -235,11 +235,13 @@ function KanbanColumnComponent({ column, tickets, onTicketClick }: KanbanColumnP
   );
 }
 
+type ViewType = 'table' | 'kanban' | 'calendar' | 'analytics';
+
 interface TicketsKanbanProps {
   onTicketSelect?: (ticketId: string) => void;
 }
 
-export function TicketsKanban({ onTicketSelect }: TicketsKanbanProps) {
+export function TicketsKanban({ onTicketSelect, onViewChange }: TicketsKanbanProps) {
   const navigate = useNavigate();
   const { tickets, fetchTickets, updateTicket, loading } = useTicketStore();
   const [activeTicket, setActiveTicket] = useState<Ticket | null>(null);
@@ -330,7 +332,7 @@ export function TicketsKanban({ onTicketSelect }: TicketsKanbanProps) {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <h1 className="text-2xl font-bold text-text-primary">Tickets</h1>
-          <TicketViewSwitcher />
+          <TicketViewSwitcher useRouting={false} currentView="kanban" onChange={onViewChange} />
         </div>
         <button
           onClick={() => setShowCreateModal(true)}

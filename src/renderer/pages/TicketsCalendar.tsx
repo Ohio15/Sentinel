@@ -9,6 +9,8 @@ import { useTicketStore, Ticket } from '../stores/ticketStore';
 import { TicketViewSwitcher } from '../components/tickets';
 import { Plus, AlertTriangle, Clock, CheckCircle } from 'lucide-react';
 
+type ViewType = 'table' | 'kanban' | 'calendar' | 'analytics';
+
 interface TicketsCalendarProps {
   onTicketSelect?: (ticketId: string) => void;
 }
@@ -30,7 +32,7 @@ const priorityIndicators: Record<string, string> = {
   low: '#9CA3AF'
 };
 
-export function TicketsCalendar({ onTicketSelect }: TicketsCalendarProps) {
+export function TicketsCalendar({ onTicketSelect, onViewChange }: TicketsCalendarProps) {
   const navigate = useNavigate();
   const { tickets, fetchTickets, loading } = useTicketStore();
   const [view, setView] = useState<'dayGridMonth' | 'timeGridWeek' | 'timeGridDay'>('dayGridMonth');
@@ -167,7 +169,7 @@ export function TicketsCalendar({ onTicketSelect }: TicketsCalendarProps) {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <h1 className="text-2xl font-bold text-text-primary">Tickets</h1>
-          <TicketViewSwitcher />
+          <TicketViewSwitcher useRouting={false} currentView="calendar" onChange={onViewChange} />
         </div>
         <div className="flex items-center gap-3">
           {/* Filter */}

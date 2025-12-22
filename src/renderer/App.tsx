@@ -81,6 +81,17 @@ function App() {
     setCurrentPage('tickets');
   };
 
+  // Handle ticket view switching (table, kanban, calendar, analytics)
+  const handleTicketViewChange = (view: 'table' | 'kanban' | 'calendar' | 'analytics') => {
+    const viewToPage: Record<string, Page> = {
+      'table': 'tickets',
+      'kanban': 'tickets-kanban',
+      'calendar': 'tickets-calendar',
+      'analytics': 'tickets-analytics'
+    };
+    setCurrentPage(viewToPage[view] || 'tickets');
+  };
+
   const renderPage = () => {
     switch (currentPage) {
       case 'dashboard':
@@ -126,17 +137,17 @@ function App() {
       case 'tickets':
         return (
           <ErrorBoundary key="tickets">
-            <Tickets onTicketSelect={handleTicketSelect} />
+            <Tickets onTicketSelect={handleTicketSelect} onViewChange={handleTicketViewChange} />
           </ErrorBoundary>
         );
       case 'ticket-detail':
         return selectedTicketId ? (
-          <ErrorBoundary key={`device-${selectedDeviceId}`}>
+          <ErrorBoundary key={`ticket-${selectedTicketId}`}>
             <TicketDetail ticketId={selectedTicketId} onBack={handleBackToTickets} />
           </ErrorBoundary>
         ) : (
           <ErrorBoundary key="tickets-fallback">
-            <Tickets onTicketSelect={handleTicketSelect} />
+            <Tickets onTicketSelect={handleTicketSelect} onViewChange={handleTicketViewChange} />
           </ErrorBoundary>
         );
       case 'clients':
@@ -154,19 +165,19 @@ function App() {
       case 'tickets-kanban':
         return (
           <ErrorBoundary key="tickets-kanban">
-            <TicketsKanban onTicketSelect={handleTicketSelect} />
+            <TicketsKanban onTicketSelect={handleTicketSelect} onViewChange={handleTicketViewChange} />
           </ErrorBoundary>
         );
       case 'tickets-calendar':
         return (
           <ErrorBoundary key="tickets-calendar">
-            <TicketsCalendar onTicketSelect={handleTicketSelect} />
+            <TicketsCalendar onTicketSelect={handleTicketSelect} onViewChange={handleTicketViewChange} />
           </ErrorBoundary>
         );
       case 'tickets-analytics':
         return (
           <ErrorBoundary key="tickets-analytics">
-            <TicketAnalytics />
+            <TicketAnalytics onViewChange={handleTicketViewChange} />
           </ErrorBoundary>
         );
       case 'knowledge-base':
