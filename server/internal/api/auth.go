@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"log"
 	"net/http"
 	"time"
 
@@ -95,13 +96,20 @@ func (r *Router) login(c *gin.Context) {
 	}
 
 	// Update last login
-	r.db.Pool().Exec(ctx, "UPDATE users SET last_login = NOW() WHERE id = $1", user.ID)
+	if _, err := r.db.Pool().Exec(ctx, "UPDATE users SET last_login = NOW() WHERE id = $1", user.ID); err != nil {
+		log.Printf("Error updating last login for user %s: %v", user.ID, err)
+	}
 
-	c.JSON(http.StatusOK, LoginResponse{
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
-		ExpiresIn:    3600, // 1 hour
-		User: UserResponse{
+	// Generate new CSRF token on login
+	csrfConfig := middleware.DefaultCSRFConfig()
+	csrfToken := middleware.SetNewCSRFToken(c, csrfConfig)
+
+	c.JSON(http.StatusOK, gin.H{
+		"accessToken":  accessToken,
+		"refreshToken": refreshToken,
+		"expiresIn":    3600,
+		"csrfToken":    csrfToken,
+		"user": UserResponse{
 			ID:        user.ID,
 			Email:     user.Email,
 			FirstName: user.FirstName,
@@ -141,7 +149,9 @@ func (r *Router) refreshToken(c *gin.Context) {
 	}
 
 	if time.Now().After(session.ExpiresAt) {
-		r.db.Pool().Exec(ctx, "DELETE FROM sessions WHERE id = $1", session.ID)
+		if _, err := r.db.Pool().Exec(ctx, "DELETE FROM sessions WHERE id = $1", session.ID); err != nil {
+			log.Printf("Error deleting expired session %s: %v", session.ID, err)
+		}
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Refresh token expired"})
 		return
 	}
@@ -180,7 +190,9 @@ func (r *Router) logout(c *gin.Context) {
 	ctx := context.Background()
 
 	// Delete all sessions for user
-	r.db.Pool().Exec(ctx, "DELETE FROM sessions WHERE user_id = $1", userID)
+	if _, err := r.db.Pool().Exec(ctx, "DELETE FROM sessions WHERE user_id = $1", userID); err != nil {
+		log.Printf("Error deleting sessions for user %s: %v", userID, err)
+	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
 }

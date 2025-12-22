@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"log"
 	"fmt"
 	"io"
 	"net/http"
@@ -52,6 +53,7 @@ func (r *Router) listEnrollmentTokens(c *gin.Context) {
 			&t.CreatedAt, &t.UpdatedAt,
 		)
 		if err != nil {
+			log.Printf("Error scanning enrollment token row: %v", err)
 			continue
 		}
 		// Mask the token for display (show only first 8 chars)
@@ -322,15 +324,19 @@ func (r *Router) downloadAgentInstaller(c *gin.Context) {
 	}
 
 	// Log download
-	r.db.Pool().Exec(c.Request.Context(), `
+	if _, err := r.db.Pool().Exec(c.Request.Context(), `
 		INSERT INTO agent_downloads (token_id, platform, architecture, ip_address, user_agent)
 		VALUES ($1, $2, $3, $4, $5)
-	`, tokenID, platform, arch, c.ClientIP(), c.Request.UserAgent())
+	`, tokenID, platform, arch, c.ClientIP(), c.Request.UserAgent()); err != nil {
+		log.Printf("Error logging agent download: %v", err)
+	}
 
 	// Increment use count
-	r.db.Pool().Exec(c.Request.Context(), `
+	if _, err := r.db.Pool().Exec(c.Request.Context(), `
 		UPDATE enrollment_tokens SET use_count = use_count + 1 WHERE id = $1
-	`, tokenID)
+	`, tokenID); err != nil {
+		log.Printf("Error incrementing token use count: %v", err)
+	}
 
 	// Generate unique agent ID for this download
 	agentID := uuid.New().String()

@@ -1,5 +1,5 @@
 -- Sentinel RMM PostgreSQL Schema
--- Migration: 002_tickets
+-- Migration: 002b_tickets
 
 -- Tickets table
 CREATE TABLE IF NOT EXISTS tickets (

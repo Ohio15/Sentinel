@@ -31,6 +31,14 @@ services:
       - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
       - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
       - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 64M
 
   # Backend API Server
   backend:
@@ -121,6 +129,14 @@ services:
       - "traefik.http.routers.frontend.priority=1"
       - "traefik.http.routers.api.priority=2"
       - "traefik.http.routers.ws.priority=2"
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 64M
 
   # PostgreSQL Database
   postgres:

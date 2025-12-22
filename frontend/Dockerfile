@@ -24,6 +24,13 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 # Copy built assets from builder
 COPY --from=builder /app/dist /usr/share/nginx/html
 
+# Create nginx cache directories with proper permissions
+RUN mkdir -p /var/cache/nginx /var/run && \
+    chown -R nginx:nginx /var/cache/nginx /var/run /usr/share/nginx/html
+
+# Switch to non-root user
+USER nginx
+
 # Expose port
 EXPOSE 80
 

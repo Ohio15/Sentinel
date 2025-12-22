@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"sentinel-agent/internal/security"
+	"github.com/sentinel/agent/internal/security"
 )
 
 // CollectionType represents the type of inventory collection
