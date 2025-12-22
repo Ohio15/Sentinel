@@ -83,6 +83,7 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 		// Protected routes (require JWT)
 		protected := api.Group("")
 		protected.Use(middleware.AuthMiddleware(cfg.JWTSecret))
+		protected.Use(middleware.CSRFMiddleware(middleware.DefaultCSRFConfig()))
 		{
 			// Auth
 			protected.POST("/auth/logout", router.logout)
@@ -224,6 +225,7 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 		// Protected routes (require JWT)
 		protected := api.Group("")
 		protected.Use(middleware.AuthMiddleware(services.Config.JWTSecret))
+		protected.Use(middleware.CSRFMiddleware(middleware.DefaultCSRFConfig()))
 		{
 			// Auth
 			protected.POST("/auth/logout", logoutHandler(services))
@@ -441,7 +443,7 @@ func corsMiddleware(cfg *config.Config) gin.HandlerFunc {
 		}
 
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization, X-Enrollment-Token, X-Agent-Token")
+		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization, X-Enrollment-Token, X-Agent-Token, X-CSRF-Token")
 		c.Header("Access-Control-Max-Age", "86400")
 
 		if c.Request.Method == "OPTIONS" {

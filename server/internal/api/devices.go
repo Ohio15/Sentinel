@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -46,12 +47,17 @@ func (r *Router) listDevices(c *gin.Context) {
 			&d.IPAddress, &d.PublicIP, &d.MACAddress, &tags, &metadata,
 			&d.CreatedAt, &d.UpdatedAt)
 		if err != nil {
+			log.Printf("Error scanning device row: %v", err)
 			continue
 		}
 		d.Tags = tags
 		d.Metadata = metadata
-		json.Unmarshal(gpuJSON, &d.GPU)
-		json.Unmarshal(storageJSON, &d.Storage)
+		if err := json.Unmarshal(gpuJSON, &d.GPU); err != nil && len(gpuJSON) > 0 {
+			log.Printf("Error unmarshaling GPU data for device %s: %v", d.ID, err)
+		}
+		if err := json.Unmarshal(storageJSON, &d.Storage); err != nil && len(storageJSON) > 0 {
+			log.Printf("Error unmarshaling storage data for device %s: %v", d.ID, err)
+		}
 
 		// Check if agent is currently connected
 		if r.hub.IsAgentOnline(d.AgentID) {
@@ -100,8 +106,12 @@ func (r *Router) getDevice(c *gin.Context) {
 
 	d.Tags = tags
 	d.Metadata = metadata
-	json.Unmarshal(gpuJSON, &d.GPU)
-	json.Unmarshal(storageJSON, &d.Storage)
+	if err := json.Unmarshal(gpuJSON, &d.GPU); err != nil && len(gpuJSON) > 0 {
+		log.Printf("Error unmarshaling GPU data for device %s: %v", d.ID, err)
+	}
+	if err := json.Unmarshal(storageJSON, &d.Storage); err != nil && len(storageJSON) > 0 {
+		log.Printf("Error unmarshaling storage data for device %s: %v", d.ID, err)
+	}
 
 	if r.hub.IsAgentOnline(d.AgentID) {
 		d.Status = "online"
@@ -298,6 +308,7 @@ func (r *Router) getDeviceMetrics(c *gin.Context) {
 			&m.MemoryTotalBytes, &m.DiskPercent, &m.DiskUsedBytes, &m.DiskTotalBytes,
 			&m.NetworkRxBytes, &m.NetworkTxBytes, &m.ProcessCount)
 		if err != nil {
+			log.Printf("Error scanning metrics row for device %s: %v", id, err)
 			continue
 		}
 		metrics = append(metrics, m)
@@ -376,9 +387,11 @@ func (r *Router) executeCommand(c *gin.Context) {
 	}
 
 	// Update command status to running
-	r.db.Pool().Exec(ctx, `
+	if _, err := r.db.Pool().Exec(ctx, `
 		UPDATE commands SET status = 'running', started_at = NOW() WHERE id = $1
-	`, commandID)
+	`, commandID); err != nil {
+		log.Printf("Error updating command %s status to running: %v", commandID, err)
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"commandId": commandID,
@@ -522,6 +535,7 @@ func (r *Router) listDeviceCommands(c *gin.Context) {
 			&cmd.Status, &cmd.Output, &cmd.ErrorMessage, &cmd.ExitCode,
 			&cmd.CreatedBy, &cmd.CreatedAt, &cmd.StartedAt, &cmd.CompletedAt)
 		if err != nil {
+			log.Printf("Error scanning command row for device %s: %v", id, err)
 			continue
 		}
 		commands = append(commands, cmd)
@@ -570,6 +584,7 @@ func (r *Router) listCommands(c *gin.Context) {
 			&cmd.Status, &cmd.Output, &cmd.ErrorMessage, &cmd.ExitCode,
 			&cmd.CreatedBy, &cmd.CreatedAt, &cmd.StartedAt, &cmd.CompletedAt)
 		if err != nil {
+			log.Printf("Error scanning command row: %v", err)
 			continue
 		}
 		commands = append(commands, cmd)
@@ -654,9 +669,11 @@ func (r *Router) uninstallAgent(c *gin.Context) {
 	}
 
 	// Mark device as pending uninstall in database
-	r.db.Pool().Exec(ctx, `
+	if _, err := r.db.Pool().Exec(ctx, `
 		UPDATE devices SET status = 'uninstalling', updated_at = NOW() WHERE id = $1
-	`, id)
+	`, id); err != nil {
+		log.Printf("Error updating device %s status to uninstalling: %v", id, err)
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":   "Uninstall command sent to agent",
@@ -690,9 +707,11 @@ func (r *Router) pingAgent(c *gin.Context) {
 
 	if !isOnline {
 		// Agent is not connected to WebSocket - update status to offline
-		r.db.Pool().Exec(ctx, `
+		if _, err := r.db.Pool().Exec(ctx, `
 			UPDATE devices SET status = 'offline', updated_at = NOW() WHERE id = $1
-		`, id)
+		`, id); err != nil {
+			log.Printf("Error updating device %s status to offline: %v", id, err)
+		}
 
 		// Broadcast offline status to dashboards
 		statusMsg, _ := json.Marshal(map[string]interface{}{
@@ -728,9 +747,11 @@ func (r *Router) pingAgent(c *gin.Context) {
 	}
 
 	// Update device status to online and last_seen
-	r.db.Pool().Exec(ctx, `
+	if _, err := r.db.Pool().Exec(ctx, `
 		UPDATE devices SET status = 'online', last_seen = NOW(), updated_at = NOW() WHERE id = $1
-	`, id)
+	`, id); err != nil {
+		log.Printf("Error updating device %s status to online: %v", id, err)
+	}
 
 	// Broadcast online status to dashboards
 	statusMsg, _ := json.Marshal(map[string]interface{}{

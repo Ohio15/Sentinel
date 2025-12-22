@@ -2,7 +2,6 @@ package security
 
 import (
 	"context"
-	"fmt"
 	"os/exec"
 	"runtime"
 	"strconv"
