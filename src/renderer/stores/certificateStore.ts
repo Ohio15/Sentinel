@@ -60,8 +60,8 @@ export const useCertificateStore = create<CertificateState>((set, get) => ({
         currentCertHash: caCertHash,
         loading: false,
       });
-    } catch (error: any) {
-      set({ error: error.message, loading: false });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error', loading: false });
     }
   },
 
@@ -69,7 +69,7 @@ export const useCertificateStore = create<CertificateState>((set, get) => ({
     try {
       const agentStatuses = await window.api.certs.getAgentStatus();
       set({ agentStatuses });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to fetch agent cert statuses:', error);
     }
   },
@@ -84,8 +84,8 @@ export const useCertificateStore = create<CertificateState>((set, get) => ({
       // Refresh the certificates list after renewal
       await get().fetchCertificates();
       set({ renewing: false });
-    } catch (error: any) {
-      set({ error: error.message, renewing: false });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error', renewing: false });
       throw error;
     }
   },
@@ -97,8 +97,8 @@ export const useCertificateStore = create<CertificateState>((set, get) => ({
       // Update will come via event subscription
       set({ distributing: false });
       return result;
-    } catch (error: any) {
-      set({ error: error.message, distributing: false });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error', distributing: false });
       throw error;
     }
   },

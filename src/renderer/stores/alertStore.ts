@@ -54,8 +54,8 @@ export const useAlertStore = create<AlertState>((set, get) => ({
     try {
       const alerts = await window.api.alerts.list();
       set({ alerts, loading: false });
-    } catch (error: any) {
-      set({ error: error.message, loading: false });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error', loading: false });
     }
   },
 
@@ -68,8 +68,8 @@ export const useAlertStore = create<AlertState>((set, get) => ({
           a.id === id ? { ...a, status: 'acknowledged' as const, acknowledgedAt: new Date().toISOString() } : a
         ),
       });
-    } catch (error: any) {
-      set({ error: error.message });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error' });
     }
   },
 
@@ -82,8 +82,8 @@ export const useAlertStore = create<AlertState>((set, get) => ({
           a.id === id ? { ...a, status: 'resolved' as const, resolvedAt: new Date().toISOString() } : a
         ),
       });
-    } catch (error: any) {
-      set({ error: error.message });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error' });
     }
   },
 
@@ -91,8 +91,8 @@ export const useAlertStore = create<AlertState>((set, get) => ({
     try {
       const rules = await window.api.alerts.getRules();
       set({ rules });
-    } catch (error: any) {
-      set({ error: error.message });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error' });
     }
   },
 
@@ -101,8 +101,8 @@ export const useAlertStore = create<AlertState>((set, get) => ({
       const newRule = await window.api.alerts.createRule(rule);
       const { rules } = get();
       set({ rules: [...rules, newRule] });
-    } catch (error: any) {
-      set({ error: error.message });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error' });
     }
   },
 
@@ -111,8 +111,8 @@ export const useAlertStore = create<AlertState>((set, get) => ({
       const updatedRule = await window.api.alerts.updateRule(id, rule);
       const { rules } = get();
       set({ rules: rules.map(r => r.id === id ? updatedRule : r) });
-    } catch (error: any) {
-      set({ error: error.message });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error' });
     }
   },
 
@@ -121,8 +121,8 @@ export const useAlertStore = create<AlertState>((set, get) => ({
       await window.api.alerts.deleteRule(id);
       const { rules } = get();
       set({ rules: rules.filter(r => r.id !== id) });
-    } catch (error: any) {
-      set({ error: error.message });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error' });
     }
   },
 

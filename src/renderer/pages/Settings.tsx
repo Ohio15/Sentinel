@@ -157,8 +157,8 @@ export function Settings() {
     try {
       await window.api.portal.updateSettings(portalSettings);
       alert('Portal settings saved successfully');
-    } catch (error: any) {
-      alert(`Error saving portal settings: ${error.message}`);
+    } catch (error: unknown) {
+      alert(`Error saving portal settings: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setSavingPortal(false);
     }
@@ -182,8 +182,8 @@ export function Settings() {
       setNewTenant({ clientId: '', tenantId: '', tenantName: '' });
       setShowAddTenant(false);
       loadPortalData();
-    } catch (error: any) {
-      alert(`Error adding tenant mapping: ${error.message}`);
+    } catch (error: unknown) {
+      alert(`Error adding tenant mapping: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -193,8 +193,8 @@ export function Settings() {
     try {
       await window.api.portal.deleteClientTenant(id);
       loadPortalData();
-    } catch (error: any) {
-      alert(`Error deleting tenant mapping: ${error.message}`);
+    } catch (error: unknown) {
+      alert(`Error deleting tenant mapping: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -227,7 +227,7 @@ export function Settings() {
         setBackendConnected(false);
       }
     } catch (error) {
-      setBackendError(error.message || 'Connection failed');
+      setBackendError(error instanceof Error ? error.message : 'Unknown error');
       setBackendConnected(false);
     } finally {
       setBackendConnecting(false);
@@ -240,8 +240,8 @@ export function Settings() {
     try {
       await window.api.settings.update(settings);
       alert('Settings saved successfully');
-    } catch (error: any) {
-      alert(`Error saving settings: ${error.message}`);
+    } catch (error: unknown) {
+      alert(`Error saving settings: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setSaving(false);
     }

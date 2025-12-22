@@ -2,7 +2,7 @@
 
 interface SidebarProps {
   currentPage: string;
-  onNavigate: (page: any) => void;
+  onNavigate: (page: 'dashboard' | 'devices' | 'device-detail' | 'alerts' | 'scripts' | 'certificates' | 'settings' | 'tickets' | 'ticket-detail' | 'tickets-kanban' | 'tickets-calendar' | 'tickets-analytics' | 'knowledge-base' | 'clients') => void;
 }
 
 export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
@@ -44,7 +44,7 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
           {menuItems.map((item) => (
             <li key={item.id}>
               <button
-                onClick={() => onNavigate(item.id)}
+                onClick={() => onNavigate(item.id as Parameters<typeof onNavigate>[0])}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
                   currentPage === item.id ||
                   (currentPage === 'device-detail' && item.id === 'devices') ||

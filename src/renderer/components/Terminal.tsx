@@ -50,9 +50,9 @@ export function Terminal({ deviceId, isOnline }: TerminalProps) {
       setConnected(true);
       setOutput(['Connected to remote terminal.\n']);
       inputRef.current?.focus();
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[Terminal] terminal.start error:', error);
-      setOutput([`Failed to connect: ${error.message}\n`]);
+      setOutput([`Failed to connect: ${error instanceof Error ? error.message : 'Unknown error'}\n`]);
     } finally {
       setConnecting(false);
     }

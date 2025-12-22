@@ -1,3 +1,4 @@
+import { Device } from '../stores/deviceStore';
 import React, { useState, useEffect } from 'react';
 
 interface Script {
@@ -188,7 +189,7 @@ function ExecuteScriptForm({ scriptId }: { scriptId: string }) {
 
   const loadDevices = async () => {
     const data = await window.api.devices.list();
-    setDevices(data.filter((d: any) => d.status === 'online'));
+    setDevices(data.filter((d: Device) => d.status === 'online'));
   };
 
   const handleExecute = async () => {
@@ -201,8 +202,8 @@ function ExecuteScriptForm({ scriptId }: { scriptId: string }) {
     try {
       await window.api.scripts.execute(scriptId, selectedDevices);
       alert('Script execution started');
-    } catch (error: any) {
-      alert(`Error: ${error.message}`);
+    } catch (error: unknown) {
+      alert(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setExecuting(false);
     }

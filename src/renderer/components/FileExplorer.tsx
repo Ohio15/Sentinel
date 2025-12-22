@@ -66,8 +66,8 @@ export function FileExplorer({ deviceId, isOnline }: FileExplorerProps) {
       setDrives(driveList);
       setViewMode('drives');
       setCurrentPath('');
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setLoading(false);
     }
@@ -81,8 +81,8 @@ export function FileExplorer({ deviceId, isOnline }: FileExplorerProps) {
       setFiles(entries);
       setCurrentPath(path);
       setViewMode('files');
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setLoading(false);
     }
@@ -130,8 +130,8 @@ export function FileExplorer({ deviceId, isOnline }: FileExplorerProps) {
       const localPath = `${file.name}`;
       await window.api.files.download(deviceId, file.path, localPath);
       alert('File downloaded successfully');
-    } catch (err: any) {
-      alert(`Download failed: ${err.message}`);
+    } catch (err: unknown) {
+      alert(`Download failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
 

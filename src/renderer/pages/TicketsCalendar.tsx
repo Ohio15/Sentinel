@@ -4,7 +4,7 @@ import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import interactionPlugin from '@fullcalendar/interaction';
-import { EventClickArg, EventContentArg } from '@fullcalendar/core';
+import { EventClickArg, EventContentArg, EventInput } from '@fullcalendar/core';
 import { useTicketStore, Ticket } from '../stores/ticketStore';
 import { TicketViewSwitcher } from '../components/tickets';
 import { Plus, AlertTriangle, Clock, CheckCircle } from 'lucide-react';
@@ -44,7 +44,7 @@ export function TicketsCalendar({ onTicketSelect }: TicketsCalendarProps) {
 
   // Convert tickets to calendar events
   const getEvents = () => {
-    const events: any[] = [];
+    const events: EventInput[] = [];
 
     tickets.forEach((ticket) => {
       const colors = statusColors[ticket.status] || statusColors.open;
