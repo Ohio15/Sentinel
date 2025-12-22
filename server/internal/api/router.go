@@ -18,7 +18,7 @@ type Router struct {
 	config *config.Config
 	db     *database.DB
 	cache  *cache.Cache
-	hub    *websocket.Hub
+	hub    WebSocketHub
 }
 
 func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *websocket.Hub) *gin.Engine {

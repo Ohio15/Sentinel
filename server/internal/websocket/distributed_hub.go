@@ -410,3 +410,34 @@ func (h *DistributedHub) Close() {
 
 	log.Printf("Distributed hub shutdown complete for server: %s", h.serverID)
 }
+
+// WebSocketHub interface implementation wrappers
+func (h *DistributedHub) SendToAgent(agentID string, message []byte) error {
+	return h.SendToAgentDistributed(agentID, message)
+}
+
+func (h *DistributedHub) BroadcastToDashboards(message []byte) {
+	h.BroadcastToDashboardsDistributed(message)
+}
+
+func (h *DistributedHub) IsAgentOnline(agentID string) bool {
+	return h.IsAgentOnlineGlobal(agentID)
+}
+
+func (h *DistributedHub) RegisterAgent(conn *websocket.Conn, agentID string, deviceID uuid.UUID) *Client {
+	return h.RegisterAgentDistributed(conn, agentID, deviceID)
+}
+
+func (h *DistributedHub) RegisterDashboard(conn *websocket.Conn, userID uuid.UUID) *Client {
+	// DistributedHub doesn't have dashboard registration yet - create local client
+	client := &Client{
+		hub:      nil,
+		conn:     conn,
+		send:     make(chan []byte, 256),
+		agentID:  "",
+		deviceID: uuid.Nil,
+		userID:   userID,
+		isAgent:  false,
+	}
+	return client
+}
