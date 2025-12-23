@@ -51,8 +51,10 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 	api := r.Group("/api")
 	{
 		// Public routes with rate limiting
+		// DC-001: Apply authentication rate limiting middleware for brute force protection
 		auth := api.Group("/auth")
 		auth.Use(rateLimitMiddleware(cache, cfg.RateLimitRequests, cfg.RateLimitWindow))
+		auth.Use(middleware.AuthRateLimitMiddleware())
 		{
 			auth.POST("/login", router.login)
 			auth.POST("/refresh", router.refreshToken)
@@ -194,8 +196,10 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 	api := r.Group("/api")
 	{
 		// Public routes with rate limiting
+		// DC-001: Apply authentication rate limiting middleware for brute force protection
 		auth := api.Group("/auth")
 		auth.Use(rateLimitMiddleware(services.Redis, services.Config.RateLimitRequests, services.Config.RateLimitWindow))
+		auth.Use(middleware.AuthRateLimitMiddleware())
 		{
 			auth.POST("/login", loginHandler(services))
 			auth.POST("/refresh", refreshTokenHandler(services))
