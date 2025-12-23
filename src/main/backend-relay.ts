@@ -52,9 +52,10 @@ export class BackendRelay {
 
     try {
       console.log('[BackendRelay] Syncing devices from backend...');
-      const devices = await this.makeRequest('GET', '/api/devices');
+      const response = await this.makeRequest('GET', '/api/devices');
+      const devices = response?.devices || [];
 
-      if (!Array.isArray(devices)) {
+      if (!Array.isArray(devices) || devices.length === 0) {
         console.log('[BackendRelay] No devices returned from backend');
         return;
       }
@@ -790,7 +791,8 @@ export class BackendRelay {
   // ==================== DEVICE MANAGEMENT ====================
 
   async getDevices(): Promise<any[]> {
-    return this.makeRequest('GET', '/api/devices');
+    const response = await this.makeRequest('GET', '/api/devices');
+    return response?.devices || [];
   }
 
   async updateDevice(deviceId: string, data: any): Promise<any> {
