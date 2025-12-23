@@ -91,6 +91,7 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 
 			// Devices
 			protected.GET("/devices", router.listDevices)
+			protected.GET("/devices/cert-status", router.getDeviceCertStatuses)
 			protected.GET("/devices/:id", router.getDevice)
 			protected.DELETE("/devices/:id", middleware.RequireRole("admin", "operator"), router.deleteDevice)
 			protected.GET("/devices/:id/metrics", router.getDeviceMetrics)
@@ -233,6 +234,7 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 
 			// Devices
 			protected.GET("/devices", listDevicesHandler(services))
+			protected.GET("/devices/cert-status", getDeviceCertStatusesHandler(services))
 			protected.GET("/devices/:id", getDeviceHandler(services))
 			protected.DELETE("/devices/:id", middleware.RequireRole("admin", "operator"), deleteDeviceHandler(services))
 			protected.GET("/devices/:id/metrics", getDeviceMetricsHandler(services))

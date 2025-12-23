@@ -1201,6 +1201,15 @@ function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('certs:getAgentStatus', async () => {
+    // Try to get from backend server if connected
+    if (backendRelay.isConfigured() && backendRelay.isAuthenticated()) {
+      try {
+        return await backendRelay.getAgentCertStatuses();
+      } catch (error) {
+        console.error('[IPC] Failed to get cert statuses from backend:', error);
+      }
+    }
+    // Fall back to local database
     return database.getAgentCertStatuses();
   });
 
