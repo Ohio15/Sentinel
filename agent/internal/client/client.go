@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/sentinel/agent/internal/config"
 	"github.com/sentinel/agent/internal/offline"
+	"github.com/sentinel/agent/internal/paths"
 )
 
 // Message types
@@ -306,8 +307,9 @@ func (c *Client) Connect(ctx context.Context) error {
 	c.mu.RUnlock()
 
 	authPayload := map[string]interface{}{
-		"agentId": c.config.AgentID,
-		"token":   c.config.EnrollmentToken,
+		"agentId":    c.config.AgentID,
+		"token":      c.config.EnrollmentToken,
+		"caCertHash": paths.GetCACertHash(),
 	}
 
 	// Include device info if available (for auto-enrollment of orphaned agents)
@@ -409,10 +411,15 @@ func (c *Client) signalDone() {
 
 // Authenticate sends authentication message to the server
 func (c *Client) Authenticate() error {
+	authPayload := map[string]interface{}{
+		"agentId":    c.config.AgentID,
+		"token":      c.config.EnrollmentToken,
+		"caCertHash": paths.GetCACertHash(),
+	}
+
 	msg := map[string]interface{}{
 		"type":    MsgTypeAuth,
-		"agentId": c.config.AgentID,
-		"token":   c.config.EnrollmentToken,
+		"payload": authPayload,
 	}
 
 	return c.SendJSON(msg)

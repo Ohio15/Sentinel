@@ -4,6 +4,8 @@
 package paths
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -124,4 +126,23 @@ func ExecutableFilesInInstallDir() []string {
 // Join is a convenience wrapper around filepath.Join for constructing paths.
 func Join(elem ...string) string {
 	return filepath.Join(elem...)
+}
+
+// CACertPath returns the full path to the CA certificate file.
+const CACertFileName = "ca-cert.pem"
+
+var CACertPath = func() string {
+	return filepath.Join(CertsDir(), CACertFileName)
+}
+
+// GetCACertHash reads the CA certificate and returns its SHA-256 hash.
+// Returns empty string if certificate doesn't exist or can't be read.
+func GetCACertHash() string {
+	certPath := CACertPath()
+	data, err := os.ReadFile(certPath)
+	if err != nil {
+		return ""
+	}
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:])
 }

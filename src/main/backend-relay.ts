@@ -805,6 +805,10 @@ export class BackendRelay {
     return this.makeRequest('GET', `/api/devices/${deviceId}/alerts`);
   }
 
+  async getAgentCertStatuses(): Promise<any[]> {
+    return this.makeRequest('GET', '/api/devices/cert-status');
+  }
+
   async getDeviceSoftware(deviceId: string): Promise<any[]> {
     return this.makeRequest('GET', `/api/devices/${deviceId}/software`);
   }

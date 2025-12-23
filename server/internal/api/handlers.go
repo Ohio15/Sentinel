@@ -43,6 +43,73 @@ func (r *Router) getUpgrader() websocket.Upgrader {
 	}
 }
 
+
+
+// getDeviceCertStatuses returns certificate status for all devices
+func (r *Router) getDeviceCertStatuses(c *gin.Context) {
+	ctx := context.Background()
+
+	type CertStatus struct {
+		AgentID       string  `json:"agentId"`
+		AgentName     *string `json:"agentName"`
+		CACertHash    *string `json:"caCertHash"`
+		DistributedAt *string `json:"distributedAt"`
+		ConfirmedAt   *string `json:"confirmedAt"`
+	}
+
+	rows, err := r.db.Pool().Query(ctx, `
+		SELECT
+			agent_id,
+			hostname,
+			ca_cert_hash,
+			ca_cert_distributed_at,
+			ca_cert_updated_at
+		FROM devices
+		WHERE agent_id IS NOT NULL
+		ORDER BY hostname
+	`)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch certificate statuses"})
+		return
+	}
+	defer rows.Close()
+
+	var statuses []CertStatus
+	for rows.Next() {
+		var (
+			agentID       string
+			hostname      *string
+			caCertHash    *string
+			distributedAt *time.Time
+			updatedAt     *time.Time
+		)
+		if err := rows.Scan(&agentID, &hostname, &caCertHash, &distributedAt, &updatedAt); err != nil {
+			continue
+		}
+
+		status := CertStatus{
+			AgentID:    agentID,
+			AgentName:  hostname,
+			CACertHash: caCertHash,
+		}
+		if distributedAt != nil {
+			t := distributedAt.Format(time.RFC3339)
+			status.DistributedAt = &t
+		}
+		if updatedAt != nil {
+			t := updatedAt.Format(time.RFC3339)
+			status.ConfirmedAt = &t
+		}
+		statuses = append(statuses, status)
+	}
+
+	if statuses == nil {
+		statuses = []CertStatus{}
+	}
+
+	c.JSON(http.StatusOK, statuses)
+}
+
 // WebSocket Handlers
 
 func (r *Router) handleAgentWebSocket(c *gin.Context) {
@@ -69,6 +136,7 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	var authPayload struct {
 		AgentID    string `json:"agentId"`
 		Token      string `json:"token"`
+		CACertHash string `json:"caCertHash"`
 		DeviceInfo *struct {
 			Hostname     string `json:"hostname"`
 			Platform     string `json:"platform"`
@@ -113,22 +181,26 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 			log.Printf("Auto-enrolling with device info: hostname=%s, platform=%s",
 				authPayload.DeviceInfo.Hostname, authPayload.DeviceInfo.Platform)
 			_, insertErr = r.db.Pool().Exec(ctx, `
-				INSERT INTO devices (id, agent_id, hostname, platform, os_type, os_version, 
-					architecture, cpu_model, cpu_cores, total_memory, serial_number, 
-					manufacturer, model, ip_address, mac_address, status, created_at, last_seen)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'online', NOW(), NOW())
+				INSERT INTO devices (id, agent_id, hostname, platform, os_type, os_version,
+					architecture, cpu_model, cpu_cores, total_memory, serial_number,
+					manufacturer, model, ip_address, mac_address, status, created_at, last_seen,
+					ca_cert_hash, ca_cert_updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'online', NOW(), NOW(),
+					NULLIF($16, ''), CASE WHEN $16 != '' THEN NOW() ELSE NULL END)
 			`, deviceID, authPayload.AgentID, authPayload.DeviceInfo.Hostname,
 				authPayload.DeviceInfo.Platform, authPayload.DeviceInfo.OSType, authPayload.DeviceInfo.OSVersion,
 				authPayload.DeviceInfo.Architecture, authPayload.DeviceInfo.CPUModel, authPayload.DeviceInfo.CPUCores,
 				authPayload.DeviceInfo.TotalMemory, authPayload.DeviceInfo.SerialNumber,
 				authPayload.DeviceInfo.Manufacturer, authPayload.DeviceInfo.Model,
-				authPayload.DeviceInfo.IPAddress, authPayload.DeviceInfo.MACAddress)
+				authPayload.DeviceInfo.IPAddress, authPayload.DeviceInfo.MACAddress, authPayload.CACertHash)
 		} else {
 			// Fallback to minimal enrollment
 			_, insertErr = r.db.Pool().Exec(ctx, `
-				INSERT INTO devices (id, agent_id, hostname, status, created_at, last_seen)
-				VALUES ($1, $2, $3, 'online', NOW(), NOW())
-			`, deviceID, authPayload.AgentID, "Auto-enrolled-"+authPayload.AgentID[:8])
+				INSERT INTO devices (id, agent_id, hostname, status, created_at, last_seen,
+					ca_cert_hash, ca_cert_updated_at)
+				VALUES ($1, $2, $3, 'online', NOW(), NOW(),
+					NULLIF($4, ''), CASE WHEN $4 != '' THEN NOW() ELSE NULL END)
+			`, deviceID, authPayload.AgentID, "Auto-enrolled-"+authPayload.AgentID[:8], authPayload.CACertHash)
 		}
 		if insertErr != nil {
 			log.Printf("Failed to auto-enroll device: %v", insertErr)
@@ -152,9 +224,15 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	// Register client
 	client := r.hub.RegisterAgent(conn, authPayload.AgentID, deviceID)
 
-	// Update device status
-	if _, err := r.db.Pool().Exec(ctx, "UPDATE devices SET status = 'online', last_seen = NOW() WHERE id = $1", deviceID); err != nil {
-		log.Printf("Error updating device %s status to online: %v", deviceID, err)
+	// Update device status and certificate hash
+	if authPayload.CACertHash != "" {
+		if _, err := r.db.Pool().Exec(ctx, "UPDATE devices SET status = 'online', last_seen = NOW(), ca_cert_hash = $2, ca_cert_updated_at = NOW() WHERE id = $1", deviceID, authPayload.CACertHash); err != nil {
+			log.Printf("Error updating device %s status to online: %v", deviceID, err)
+		}
+	} else {
+		if _, err := r.db.Pool().Exec(ctx, "UPDATE devices SET status = 'online', last_seen = NOW() WHERE id = $1", deviceID); err != nil {
+			log.Printf("Error updating device %s status to online: %v", deviceID, err)
+		}
 	}
 
 	// Broadcast online status to dashboards
