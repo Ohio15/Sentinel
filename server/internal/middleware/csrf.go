@@ -138,3 +138,12 @@ func SetNewCSRFToken(c *gin.Context, config CSRFConfig) string {
 	c.SetCookie(csrfCookieName, token, maxAge, config.Path, config.Domain, config.Secure, false)
 	return token
 }
+
+// RotateCSRFToken generates a new CSRF token, invalidating the old one
+// DC-001 FIX: Should be called on privilege escalation (role changes)
+// This prevents session fixation attacks by ensuring the CSRF token
+// changes when user privileges change
+func RotateCSRFToken(c *gin.Context) string {
+	config := DefaultCSRFConfig()
+	return SetNewCSRFToken(c, config)
+}

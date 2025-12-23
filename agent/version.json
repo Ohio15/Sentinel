@@ -1,7 +1,7 @@
 {
-  "version": "1.65.0",
-  "releaseDate": "2025-12-22",
-  "changelog": "- Added per-core CPU metrics collection (Task Manager style)\n- Added top processes streaming with CPU/memory usage\n- Improved real-time metrics reporting",
+  "version": "1.66.0",
+  "releaseDate": "2025-12-23",
+  "changelog": "- Fixed 8 security vulnerabilities (SQL injection, XSS, path traversal, auth bypass)\n- Added pagination support for devices and audit logs API\n- Implemented rate limiting for authentication endpoints\n- Added comprehensive audit logging system\n- Improved input validation and sanitization\n- Enhanced error handling with actionable suggestions",
   "platforms": [
     "windows",
     "linux",

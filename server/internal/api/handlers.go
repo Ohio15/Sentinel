@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/sentinel/server/internal/middleware"
 	ws "github.com/sentinel/server/internal/websocket"
 )
 
@@ -1269,6 +1270,16 @@ func (r *Router) updateUser(c *gin.Context) {
 
 	ctx := context.Background()
 
+	// DC-001 FIX: Get old role before update to detect privilege changes
+	var oldRole string
+	if req.Role != "" {
+		err = r.db.Pool().QueryRow(ctx, "SELECT role FROM users WHERE id = $1", id).Scan(&oldRole)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+			return
+		}
+	}
+
 	// Build dynamic update query
 	updates := make([]string, 0)
 	args := make([]interface{}, 0)
@@ -1316,6 +1327,18 @@ func (r *Router) updateUser(c *gin.Context) {
 	_, err = r.db.Pool().Exec(ctx, query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update user"})
+		return
+	}
+
+	// DC-001 FIX: Rotate CSRF token on privilege escalation
+	// This prevents session fixation attacks when user privileges change
+	if req.Role != "" && req.Role != oldRole {
+		newCSRFToken := middleware.RotateCSRFToken(c)
+		log.Printf("Rotated CSRF token for user %s due to role change: %s -> %s", id, oldRole, req.Role)
+		c.JSON(http.StatusOK, gin.H{
+			"message":   "User updated successfully",
+			"csrfToken": newCSRFToken,
+		})
 		return
 	}
 

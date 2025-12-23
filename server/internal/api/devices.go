@@ -17,6 +17,45 @@ import (
 func (r *Router) listDevices(c *gin.Context) {
 	ctx := context.Background()
 
+	// Parse pagination parameters
+	page := 1
+	pageSize := 100 // Default page size
+	const maxPageSize = 500
+
+	if p := c.Query("page"); p != "" {
+		if parsed, err := strconv.Atoi(p); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+
+	if ps := c.Query("pageSize"); ps != "" {
+		if parsed, err := strconv.Atoi(ps); err == nil && parsed > 0 {
+			if parsed > maxPageSize {
+				pageSize = maxPageSize
+			} else {
+				pageSize = parsed
+			}
+		}
+	}
+
+	// Calculate offset for pagination
+	offset := (page - 1) * pageSize
+
+	// Get total count of devices for pagination metadata
+	var total int
+	err := r.db.Pool().QueryRow(ctx, `SELECT COUNT(*) FROM devices`).Scan(&total)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count devices"})
+		return
+	}
+
+	// Calculate total pages
+	totalPages := (total + pageSize - 1) / pageSize
+	if totalPages < 1 {
+		totalPages = 1
+	}
+
+	// Query devices with pagination using LIMIT and OFFSET
 	rows, err := r.db.Pool().Query(ctx, `
 		SELECT id, agent_id, hostname, display_name, os_type, os_version, os_build,
 			   platform, platform_family, architecture, cpu_model, cpu_cores, cpu_threads,
@@ -25,7 +64,8 @@ func (r *Router) listDevices(c *gin.Context) {
 			   COALESCE(host(ip_address), '' ) as ip_address, COALESCE(host(public_ip), '' ) as public_ip, mac_address, tags, metadata, created_at, updated_at
 		FROM devices
 		ORDER BY hostname
-	`)
+		LIMIT $1 OFFSET $2
+	`, pageSize, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch devices"})
 		return
@@ -67,8 +107,16 @@ func (r *Router) listDevices(c *gin.Context) {
 		devices = append(devices, d)
 	}
 
-	c.JSON(http.StatusOK, devices)
+	// Return paginated response with metadata
+	c.JSON(http.StatusOK, gin.H{
+		"devices":    devices,
+		"total":      total,
+		"page":       page,
+		"pageSize":   pageSize,
+		"totalPages": totalPages,
+	})
 }
+
 
 func (r *Router) getDevice(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))

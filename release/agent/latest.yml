@@ -1,0 +1,24 @@
+version: 1.66.0
+releaseDate: '2025-12-23T13:30:00.000Z'
+files:
+  - url: sentinel-agent.exe
+    sha512: 6ce057705556a65abe0ae552a7b89ea94e892a52910c6c649a9b8e3bfccf4190bfae7a44dd5ac45097c6b92d29850fd48d8f7ee4d69dbed2733a0a80e1c27e26
+    size: 30352384
+  - url: sentinel-desktop.exe
+    sha512: b6e10191891e431d2a32419d697cb1b706c3c2576e7162298914b91c1e68052af4d397e8140fb0a17506d3e03e70a3a615d12b0b37372a43ed724dc2c545d222
+    size: 9334784
+  - url: openh264-2.4.1-win64.dll
+    sha512: 953340695c573d14e554866a5ea26997be9bc61596acf0a7df293c20c1270a4ce148c92b04bf3208f15b282ce0936071c484f8e39c29236c288afedb8e3c3317
+    size: 974944
+  - url: sentinel-watchdog.exe
+    sha512: efaccab1d3aac4d1b2bfb1703bb11868b7ba470f5495fdeb538cb27c3ab1e8b0399a0d1279b92dd01117b3567ae9e52d6a8908d4ee36e914cfe88e09eae5721d
+    size: 4415488
+path: sentinel-agent.exe
+sha512: 6ce057705556a65abe0ae552a7b89ea94e892a52910c6c649a9b8e3bfccf4190bfae7a44dd5ac45097c6b92d29850fd48d8f7ee4d69dbed2733a0a80e1c27e26
+releaseNotes: |
+  - Fixed 8 security vulnerabilities (SQL injection, XSS, path traversal, auth bypass)
+  - Added pagination support for devices and audit logs API
+  - Implemented rate limiting for authentication endpoints
+  - Added comprehensive audit logging system
+  - Improved input validation and sanitization
+  - Enhanced error handling with actionable suggestions
