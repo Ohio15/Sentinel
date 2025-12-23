@@ -55,7 +55,9 @@ export function Tickets({ onTicketSelect, onViewChange }: TicketsProps) {
     setFilters({ ...filters, [key]: value || undefined });
   };
 
-  const filteredTickets = tickets.filter((ticket) => {
+  // Ensure tickets is an array (defensive check)
+  const ticketList = Array.isArray(tickets) ? tickets : [];
+  const filteredTickets = ticketList.filter((ticket) => {
     // Search filter
     const matchesSearch = searchTerm
       ? ticket.subject.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -228,7 +230,7 @@ export function Tickets({ onTicketSelect, onViewChange }: TicketsProps) {
             className="input w-auto"
           >
             <option value="">All Categories</option>
-            {categories.filter((c) => c.isActive).map((cat) => (
+            {(Array.isArray(categories) ? categories : []).filter((c) => c.isActive).map((cat) => (
               <option key={cat.id} value={cat.id}>
                 {cat.name}
               </option>

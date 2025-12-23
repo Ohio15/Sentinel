@@ -10,20 +10,24 @@ export function Dashboard({ onDeviceSelect }: DashboardProps) {
   const { devices } = useDeviceStore();
   const { alerts } = useAlertStore();
 
-  const stats = useMemo(() => {
-    const online = devices.filter(d => d.status === 'online').length;
-    const offline = devices.filter(d => d.status === 'offline').length;
-    const warning = devices.filter(d => d.status === 'warning').length;
-    const critical = devices.filter(d => d.status === 'critical').length;
-    const openAlerts = alerts.filter(a => a.status === 'open').length;
-    const criticalAlerts = alerts.filter(a => a.status === 'open' && a.severity === 'critical').length;
+  // Ensure arrays are valid (defensive check for API response issues)
+  const deviceList = Array.isArray(devices) ? devices : [];
+  const alertList = Array.isArray(alerts) ? alerts : [];
 
-    return { online, offline, warning, critical, total: devices.length, openAlerts, criticalAlerts };
-  }, [devices, alerts]);
+  const stats = useMemo(() => {
+    const online = deviceList.filter(d => d.status === 'online').length;
+    const offline = deviceList.filter(d => d.status === 'offline').length;
+    const warning = deviceList.filter(d => d.status === 'warning').length;
+    const critical = deviceList.filter(d => d.status === 'critical').length;
+    const openAlerts = alertList.filter(a => a.status === 'open').length;
+    const criticalAlerts = alertList.filter(a => a.status === 'open' && a.severity === 'critical').length;
+
+    return { online, offline, warning, critical, total: deviceList.length, openAlerts, criticalAlerts };
+  }, [deviceList, alertList]);
 
   const recentAlerts = useMemo(() => {
-    return alerts.filter(a => a.status === 'open').slice(0, 5);
-  }, [alerts]);
+    return alertList.filter(a => a.status === 'open').slice(0, 5);
+  }, [alertList]);
 
   return (
     <div className="space-y-6">
