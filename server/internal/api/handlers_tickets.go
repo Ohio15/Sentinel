@@ -314,13 +314,14 @@ func (r *Router) createTicket(c *gin.Context) {
 
 	var id uuid.UUID
 	var ticketNumber int
+	var createdAt, updatedAt time.Time
 	err := r.db.Pool().QueryRow(ctx, `
 		INSERT INTO tickets (subject, description, status, priority, type, device_id, client_id,
 			requester_name, requester_email, assigned_to, tags, due_date, category_id, custom_fields)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-		RETURNING id, ticket_number
+		RETURNING id, ticket_number, created_at, updated_at
 	`, req.Subject, req.Description, req.Status, req.Priority, req.Type, deviceID, clientID,
-		req.RequesterName, req.RequesterEmail, req.AssignedTo, tagsJSON, req.DueDate, categoryID, customFieldsJSON).Scan(&id, &ticketNumber)
+		req.RequesterName, req.RequesterEmail, req.AssignedTo, tagsJSON, req.DueDate, categoryID, customFieldsJSON).Scan(&id, &ticketNumber, &createdAt, &updatedAt)
 
 	if err != nil {
 		log.Printf("Error creating ticket: %v", err)
@@ -331,10 +332,26 @@ func (r *Router) createTicket(c *gin.Context) {
 	// Log activity
 	r.logTicketActivity(ctx, id, "created", "", "", "", "System")
 
+	// Return full ticket data for frontend state management
 	c.JSON(http.StatusCreated, gin.H{
-		"id":           id,
-		"ticketNumber": ticketNumber,
-		"subject":      req.Subject,
+		"id":             id,
+		"ticketNumber":   ticketNumber,
+		"subject":        req.Subject,
+		"description":    req.Description,
+		"status":         req.Status,
+		"priority":       req.Priority,
+		"type":           req.Type,
+		"deviceId":       deviceID,
+		"clientId":       clientID,
+		"requesterName":  req.RequesterName,
+		"requesterEmail": req.RequesterEmail,
+		"assignedTo":     req.AssignedTo,
+		"tags":           req.Tags,
+		"dueDate":        req.DueDate,
+		"categoryId":     categoryID,
+		"customFields":   req.CustomFields,
+		"createdAt":      createdAt,
+		"updatedAt":      updatedAt,
 	})
 }
 
@@ -637,8 +654,6 @@ func (r *Router) logTicketActivity(ctx context.Context, ticketID uuid.UUID, acti
 func (r *Router) getTicketStats(c *gin.Context) {
 	ctx := context.Background()
 
-	stats := make(map[string]interface{})
-
 	// Count by status
 	var open, inProgress, waiting, resolved, closed int
 	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM tickets WHERE status = 'open'").Scan(&open)
@@ -647,44 +662,17 @@ func (r *Router) getTicketStats(c *gin.Context) {
 	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM tickets WHERE status = 'resolved'").Scan(&resolved)
 	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM tickets WHERE status = 'closed'").Scan(&closed)
 
-	stats["byStatus"] = map[string]int{
-		"open":       open,
-		"inProgress": inProgress,
-		"waiting":    waiting,
-		"resolved":   resolved,
-		"closed":     closed,
-	}
+	total := open + inProgress + waiting + resolved + closed
 
-	// Count by priority
-	var urgent, high, medium, low int
-	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM tickets WHERE priority = 'urgent' AND status NOT IN ('resolved', 'closed')").Scan(&urgent)
-	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM tickets WHERE priority = 'high' AND status NOT IN ('resolved', 'closed')").Scan(&high)
-	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM tickets WHERE priority = 'medium' AND status NOT IN ('resolved', 'closed')").Scan(&medium)
-	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM tickets WHERE priority = 'low' AND status NOT IN ('resolved', 'closed')").Scan(&low)
-
-	stats["byPriority"] = map[string]int{
-		"urgent": urgent,
-		"high":   high,
-		"medium": medium,
-		"low":    low,
-	}
-
-	// SLA breaches
-	var responseBreached, resolutionBreached int
-	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM tickets WHERE sla_response_breached = true AND status NOT IN ('resolved', 'closed')").Scan(&responseBreached)
-	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM tickets WHERE sla_resolution_breached = true AND status NOT IN ('resolved', 'closed')").Scan(&resolutionBreached)
-
-	stats["slaBreaches"] = map[string]int{
-		"response":   responseBreached,
-		"resolution": resolutionBreached,
-	}
-
-	// Created today
-	var createdToday int
-	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM tickets WHERE created_at >= CURRENT_DATE").Scan(&createdToday)
-	stats["createdToday"] = createdToday
-
-	c.JSON(http.StatusOK, stats)
+	// Return stats in format expected by frontend
+	c.JSON(http.StatusOK, gin.H{
+		"openCount":       open,
+		"inProgressCount": inProgress,
+		"waitingCount":    waiting,
+		"resolvedCount":   resolved,
+		"closedCount":     closed,
+		"totalCount":      total,
+	})
 }
 
 // Ticket templates
