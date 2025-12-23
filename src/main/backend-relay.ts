@@ -19,6 +19,7 @@ interface BackendConfig {
 interface AuthTokens {
   accessToken: string;
   refreshToken: string;
+  csrfToken: string;
   expiresAt: number;
 }
 
@@ -246,6 +247,7 @@ export class BackendRelay {
       this.tokens = {
         accessToken: data.accessToken,
         refreshToken: data.refreshToken,
+        csrfToken: data.csrfToken || '',
         expiresAt: Date.now() + (data.expiresIn * 1000) - 60000, // Refresh 1 min before expiry
       };
       this.config.username = username;
@@ -315,6 +317,7 @@ export class BackendRelay {
             this.tokens = {
               accessToken: data.accessToken,
               refreshToken: data.refreshToken || this.tokens.refreshToken,
+              csrfToken: data.csrfToken || this.tokens.csrfToken,
               expiresAt: Date.now() + (data.expiresIn * 1000) - 60000,
             };
             // Update WebSocket with new token
@@ -348,12 +351,20 @@ export class BackendRelay {
 
     await this.ensureAuthenticated();
 
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${this.tokens!.accessToken}`,
+    };
+
+    // Add CSRF token for state-changing requests (POST, PUT, DELETE, PATCH)
+    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method.toUpperCase()) && this.tokens?.csrfToken) {
+      headers['X-CSRF-Token'] = this.tokens.csrfToken;
+      headers['Cookie'] = `csrf_token=${this.tokens.csrfToken}`;
+    }
+
     const options: any = {
       method,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.tokens!.accessToken}`,
-      },
+      headers,
     };
 
     if (body) {
