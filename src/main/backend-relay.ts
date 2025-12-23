@@ -162,35 +162,44 @@ export class BackendRelay {
   }
 
   async initialize(): Promise<void> {
+    const DEFAULT_BACKEND_URL = 'http://localhost:8090';
+
     try {
-      // Load backend URL from settings
-      const backendUrl = await this.database.getSetting('externalBackendUrl');
-      if (backendUrl) {
-        this.config = { url: backendUrl };
-        console.log('[BackendRelay] Initialized with URL:', backendUrl);
-        
-        // Load saved credentials and auto-authenticate
-        const savedUsername = await this.database.getSetting('backendUsername');
-        const savedPassword = await this.database.getSetting('backendPassword');
-        
-        if (savedUsername && savedPassword) {
-          console.log('[BackendRelay] Found saved credentials, auto-authenticating...');
-          try {
-            const success = await this.authenticate(savedUsername, savedPassword, true);
-            if (success) {
-              console.log('[BackendRelay] Auto-authentication successful');
-            } else {
-              console.log('[BackendRelay] Auto-authentication failed, credentials may have changed');
-            }
-          } catch (authError) {
-            console.error('[BackendRelay] Auto-authentication error:', authError);
+      // Load backend URL from settings, with default fallback
+      let backendUrl = await this.database.getSetting('externalBackendUrl');
+
+      // Use default URL if none configured
+      if (!backendUrl) {
+        backendUrl = DEFAULT_BACKEND_URL;
+        console.log('[BackendRelay] No URL configured, using default:', DEFAULT_BACKEND_URL);
+      }
+
+      this.config = { url: backendUrl };
+      console.log('[BackendRelay] Initialized with URL:', backendUrl);
+
+      // Load saved credentials and auto-authenticate
+      const savedUsername = await this.database.getSetting('backendUsername');
+      const savedPassword = await this.database.getSetting('backendPassword');
+
+      if (savedUsername && savedPassword) {
+        console.log('[BackendRelay] Found saved credentials, auto-authenticating...');
+        try {
+          const success = await this.authenticate(savedUsername, savedPassword, true);
+          if (success) {
+            console.log('[BackendRelay] Auto-authentication successful');
+          } else {
+            console.log('[BackendRelay] Auto-authentication failed, credentials may have changed');
           }
+        } catch (authError) {
+          console.error('[BackendRelay] Auto-authentication error:', authError);
         }
       }
     } catch (error) {
-      console.log('[BackendRelay] No external backend configured');
+      console.log('[BackendRelay] No external backend configured, using default');
+      this.config = { url: DEFAULT_BACKEND_URL };
     }
   }
+
 
   setBackendUrl(url: string): void {
     this.config = { url: url.replace(/\/$/, '') }; // Remove trailing slash
