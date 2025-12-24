@@ -1,7 +1,7 @@
 {
-  "version": "1.66.0",
-  "releaseDate": "2025-12-23",
-  "changelog": "- Fixed 8 security vulnerabilities (SQL injection, XSS, path traversal, auth bypass)\n- Added pagination support for devices and audit logs API\n- Implemented rate limiting for authentication endpoints\n- Added comprehensive audit logging system\n- Improved input validation and sanitization\n- Enhanced error handling with actionable suggestions",
+  "version": "1.66.1",
+  "releaseDate": "2025-12-24",
+  "changelog": "- Added comprehensive QA documentation and architecture review\n- Added test suites for API endpoints and middleware\n- Fixed CSRF token handling for state-changing API requests\n- Added defensive array checks to Dashboard and Tickets pages",
   "platforms": [
     "windows",
     "linux",
