@@ -151,7 +151,8 @@ func (h *Hub) Run() {
 					select {
 					case client.send <- message:
 					default:
-						close(client.send)
+						// Buffer full - drop this message instead of closing connection
+						// This prevents disconnects during high-frequency metrics updates
 					}
 				}
 			}
@@ -204,7 +205,7 @@ func (h *Hub) RegisterAgent(conn *websocket.Conn, agentID string, deviceID uuid.
 	client := &Client{
 		hub:      h,
 		conn:     conn,
-		send:     make(chan []byte, 256),
+		send:     make(chan []byte, 1024),
 		agentID:  agentID,
 		deviceID: deviceID,
 		isAgent:  true,
@@ -218,7 +219,7 @@ func (h *Hub) RegisterDashboard(conn *websocket.Conn, userID uuid.UUID) *Client 
 	client := &Client{
 		hub:     h,
 		conn:    conn,
-		send:    make(chan []byte, 256),
+		send:    make(chan []byte, 1024),
 		userID:  userID,
 		isAgent: false,
 	}

@@ -141,7 +141,7 @@ func New(cfg *config.Config, version string) *Client {
 		reconnectDelay: 500 * time.Millisecond,
 		maxReconnect:   2 * time.Second,
 		done:           make(chan struct{}),
-		sendQueue:      make(chan []byte, 100),
+		sendQueue:      make(chan []byte, 1024),
 		version:        version,
 		pingInterval:   5 * time.Second,
 		pongTimeout:    5 * time.Second,
