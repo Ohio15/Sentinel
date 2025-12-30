@@ -1,5 +1,5 @@
 {
-  "version": "1.66.1",
+  "version": "1.66.3",
   "releaseDate": "2025-12-24",
   "changelog": "- Added comprehensive QA documentation and architecture review\n- Added test suites for API endpoints and middleware\n- Fixed CSRF token handling for state-changing API requests\n- Added defensive array checks to Dashboard and Tickets pages",
   "platforms": [

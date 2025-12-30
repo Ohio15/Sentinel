@@ -69,7 +69,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		AgentID:           uuid.New().String(),
 		HeartbeatInterval: 10,
-		MetricsInterval:   5, // 5 seconds default, can be reduced on-demand for real-time view
+		MetricsInterval:   1, // 1 second default - matches Windows Task Manager behavior
 		Enrolled:          false,
 	}
 }
