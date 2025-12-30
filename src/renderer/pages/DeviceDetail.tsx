@@ -144,17 +144,17 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
     : null;
 
 
-  // Real-time metrics for Overview and Performance tabs (1 second intervals like Windows Task Manager)
+  // Real-time metrics for Overview and Performance tabs (500ms intervals for ultra-smooth updates)
   useEffect(() => {
     // Enable 1-second updates for both overview and performance tabs
     if (activeTab !== 'performance' && activeTab !== 'overview') return;
 
     // Don't fetch historical metrics here - we want fresh real-time data
     // The metrics subscription will provide live updates
-    console.log(`[DeviceDetail] ${activeTab} tab active, requesting 1s metrics interval`);
+    console.log(`[DeviceDetail] ${activeTab} tab active, requesting 500ms metrics interval`);
 
     // Request 1-second interval metrics from the agent (matches Windows Task Manager)
-    window.api.devices.setMetricsInterval(deviceId, 1000).catch(err => {
+    window.api.devices.setMetricsInterval(deviceId, 500).catch(err => {
       console.log('Failed to set metrics interval:', err);
     });
 

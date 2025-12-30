@@ -1,4 +1,46 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
+
+// Animated value hook for smooth number transitions
+function useAnimatedValue(targetValue: number, duration: number = 300): number {
+  const [displayValue, setDisplayValue] = useState(targetValue);
+  const animationRef = useRef<number>(0);
+  const startTimeRef = useRef<number>(0);
+  const startValueRef = useRef<number>(targetValue);
+
+  useEffect(() => {
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+    }
+
+    startValueRef.current = displayValue;
+    startTimeRef.current = performance.now();
+
+    const animate = (currentTime: number) => {
+      const elapsed = currentTime - startTimeRef.current;
+      const progress = Math.min(elapsed / duration, 1);
+      
+      // Ease-out cubic for smooth deceleration
+      const easeOut = 1 - Math.pow(1 - progress, 3);
+      const newValue = startValueRef.current + (targetValue - startValueRef.current) * easeOut;
+      
+      setDisplayValue(newValue);
+
+      if (progress < 1) {
+        animationRef.current = requestAnimationFrame(animate);
+      }
+    };
+
+    animationRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, [targetValue, duration]);
+
+  return displayValue;
+}
 import { DeviceMetrics } from '../stores/deviceStore';
 
 interface PerformanceViewProps {
@@ -183,7 +225,7 @@ function ResourceSidebarItem({ resource, isSelected, onClick, metrics }: Resourc
 
     const width = 60;
     const height = 30;
-    const values = metrics.slice(-30).map(m => {
+    const values = metrics.slice(-60).map(m => {
       switch (resource.type) {
         case 'cpu': return m.cpuPercent ?? 0;
         case 'memory': return m.memoryPercent ?? 0;
@@ -239,7 +281,8 @@ interface DetailViewProps {
 }
 
 function CPUDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProps) {
-  const cpuPercent = latestMetrics?.cpuPercent ?? 0;
+  const cpuPercentRaw = latestMetrics?.cpuPercent ?? 0;
+  const cpuPercent = useAnimatedValue(cpuPercentRaw, 400);
   const cpuPerCore = latestMetrics?.cpuPerCore ?? [];
   const topProcesses = latestMetrics?.topProcesses ?? [];
 
@@ -272,7 +315,7 @@ function CPUDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProps) 
             {cpuPerCore.map((corePercent, idx) => (
               <div key={idx} className="relative h-10 bg-gray-100 border border-border rounded overflow-hidden" title={`Core ${idx}: ${corePercent.toFixed(0)}%`}>
                 <div
-                  className="absolute bottom-0 left-0 right-0 bg-[#0078d4] transition-all duration-300"
+                  className="absolute bottom-0 left-0 right-0 bg-[#0078d4] transition-all duration-500 ease-out"
                   style={{ height: `${Math.min(corePercent, 100)}%` }}
                 />
                 <div className="absolute inset-0 flex items-center justify-center text-xs font-medium">
@@ -338,7 +381,8 @@ function CPUDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProps) 
 
 // Memory Detail View
 function MemoryDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProps) {
-  const memPercent = latestMetrics?.memoryPercent ?? 0;
+  const memPercentRaw = latestMetrics?.memoryPercent ?? 0;
+  const memPercent = useAnimatedValue(memPercentRaw, 400);
   const memUsed = latestMetrics?.memoryUsedBytes ?? 0;
   const memTotal = systemInfo?.totalMemory ?? 0;
   const memAvailable = memTotal - memUsed;
@@ -551,7 +595,7 @@ function PerformanceGraph({ metrics, dataKey, color, label, maxValue }: Performa
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const animatedValuesRef = React.useRef<number[]>([]);
   const animationRef = React.useRef<number>(0);
-  const TOTAL_POINTS = 60;
+  const TOTAL_POINTS = 120;
 
   // Get target values (padded to 60 points)
   const targetValues = useMemo(() => {
@@ -578,7 +622,7 @@ function PerformanceGraph({ metrics, dataKey, color, label, maxValue }: Performa
     const width = canvas.width;
     const height = canvas.height;
     const padding = 4;
-    const lerp = 0.15; // Interpolation speed (higher = faster)
+    const lerp = 0.08; // Slower interpolation for smoother animation
 
     const draw = () => {
       // Interpolate animated values toward target values
@@ -587,7 +631,7 @@ function PerformanceGraph({ metrics, dataKey, color, label, maxValue }: Performa
         const target = targetValues[i] ?? 0;
         const current = animatedValuesRef.current[i];
         const diff = target - current;
-        if (Math.abs(diff) > 0.1) {
+        if (Math.abs(diff) > 0.01) {
           animatedValuesRef.current[i] = current + diff * lerp;
           needsAnimation = true;
         } else {

@@ -304,7 +304,7 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
           return;
         }
 
-        // Sliding window - 60 points = 60 seconds at 1s intervals (matches Windows Task Manager)
+        // Sliding window - 120 points = 60 seconds at 500ms intervals (smoother than Task Manager)
         const newMetrics = [{
           timestamp: new Date().toISOString(),
           cpuPercent: m.cpuPercent,
@@ -327,7 +327,7 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
           memoryNonPagedPool: m.memoryNonPagedPool || m.memory_non_paged_pool || 0,
           gpuMetrics: m.gpuMetrics || m.gpu_metrics || [],
           networkInterfaces: m.networkInterfaces || m.network_interfaces || [],
-        }, ...metrics.slice(0, 59)];
+        }, ...metrics.slice(0, 119)];
         set({ metrics: newMetrics });
         console.log('[DeviceStore] metrics updated, count:', newMetrics.length,
           'CPU:', m.cpuPercent?.toFixed(1), 'MEM:', m.memoryPercent?.toFixed(1));
