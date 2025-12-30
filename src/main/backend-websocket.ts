@@ -196,6 +196,16 @@ export class BackendWebSocket extends EventEmitter {
         this.emit('metrics:updated', message.payload || message);
         break;
 
+      case 'device_metrics':
+        // Server broadcasts metrics with type "device_metrics" and data at root level
+        // Transform to the format expected by deviceStore
+        this.emit('metrics:updated', {
+          deviceId: message.deviceId,
+          metrics: message.metrics,
+          source: 'websocket',
+        });
+        break;
+
       case 'device_online':
         this.emit('devices:online', message.payload || message);
         break;
