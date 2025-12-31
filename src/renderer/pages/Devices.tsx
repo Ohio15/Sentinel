@@ -248,7 +248,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
               </p>
             </div>
           ) : (
-            <div className="card overflow-hidden">
+            <div className="card overflow-x-auto">
               <table>
                 <thead>
                   <tr>

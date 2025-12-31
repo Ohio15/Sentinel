@@ -1,7 +1,7 @@
 {
-  "version": "1.66.6",
+  "version": "1.66.9",
   "releaseDate": "2025-12-31",
-  "changelog": "- Fixed race condition where agent could delete staged file before watchdog applies update\\n- Fixed rollback retry loop by cleaning up update-request.json after rollback",
+  "changelog": "- Fixed device status incorrectly showing offline (increased timeout to 90s)\\n- Fixed ellipsis dropdown menu visibility being clipped in device list",
   "platforms": [
     "windows",
     "linux",
