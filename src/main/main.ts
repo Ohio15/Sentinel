@@ -378,14 +378,14 @@ function setupIpcHandlers(): void {
     // Fallback to local database
     const devices = await database.getDevices(clientId);
     // Trust database status - agents report to Go server which updates the database
-    // Consider online if lastSeen is within 90 seconds (heartbeat interval + buffer)
+    // Consider online if lastSeen is within 30 seconds (heartbeat interval + buffer)
     return devices.map(device => {
       if (device.isDisabled) {
         return { ...device, status: 'disabled' };
       }
       if (device.status === 'online' && device.lastSeen) {
         const lastSeenTime = new Date(device.lastSeen).getTime();
-        const isRecentlyActive = (Date.now() - lastSeenTime) < 90000; // 90 seconds
+        const isRecentlyActive = (Date.now() - lastSeenTime) < 30000; // 30 seconds
         if (isRecentlyActive) {
           return { ...device, status: 'online' };
         }
@@ -418,7 +418,7 @@ function setupIpcHandlers(): void {
         status = 'disabled';
       } else if (device.status === 'online' && device.lastSeen) {
         const lastSeenTime = new Date(device.lastSeen).getTime();
-        const isRecentlyActive = (Date.now() - lastSeenTime) < 90000;
+        const isRecentlyActive = (Date.now() - lastSeenTime) < 30000;
         if (isRecentlyActive) status = 'online';
       }
       console.log('[IPC] devices:get status:', status, 'agentId:', device.agentId);
@@ -1156,7 +1156,7 @@ function setupIpcHandlers(): void {
       onlineCount = devices.filter(d => {
         if (d.status === 'online' && d.lastSeen) {
           const lastSeenTime = new Date(d.lastSeen).getTime();
-          return (now - lastSeenTime) < 90000; // 90 seconds
+          return (now - lastSeenTime) < 30000; // 30 seconds
         }
         return false;
       }).length;
