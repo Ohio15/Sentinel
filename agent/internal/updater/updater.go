@@ -489,6 +489,22 @@ func (u *Updater) checkAndUpdate(ctx context.Context) {
 		u.updateMu.Unlock()
 	}()
 
+	// Check if watchdog is already handling an update (update-request.json exists)
+	existingRequest, err := ipc.ReadUpdateRequest()
+	if err == nil && existingRequest != nil {
+		log.Printf("Update request already exists for v%s, watchdog will handle it", existingRequest.Version)
+		return
+	}
+
+	// Also check if there's a pending/applying status from watchdog
+	existingStatus, err := ipc.ReadUpdateStatus()
+	if err == nil && existingStatus != nil {
+		if existingStatus.State == ipc.StatePending || existingStatus.State == ipc.StateApplying {
+			log.Printf("Update already in state %s by watchdog, skipping", existingStatus.State)
+			return
+		}
+	}
+
 	log.Println("Checking for updates...")
 	u.updateStatus(StatePending, "Checking for updates...", 0)
 

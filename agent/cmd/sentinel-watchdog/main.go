@@ -1013,6 +1013,9 @@ func (ws *watchdogService) rollbackUpdate(backupPath, targetPath string, status 
 	status.CompletedAt = time.Now()
 	ipc.WriteUpdateStatus(status)
 
+	// Clean up request file to prevent retry loops
+	ipc.DeleteUpdateRequest()
+
 	logMessage("Rollback completed")
 }
 
