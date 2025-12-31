@@ -240,6 +240,18 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
   },
 
   subscribeToUpdates: () => {
+    // Periodic refresh every 10 seconds for faster agent detection
+    const refreshInterval = setInterval(() => {
+      get().fetchDevices();
+    }, 10000);
+
+    // Refresh on window focus for immediate updates after tab switch
+    const handleFocus = () => {
+      console.log('[DeviceStore] Window focused, refreshing devices...');
+      get().fetchDevices();
+    };
+    window.addEventListener('focus', handleFocus);
+
     const unsubOnline = window.api.on('devices:online', async (data) => {
       const { devices } = get();
       const existingDevice = devices.find(d => d.agentId === data.agentId);
@@ -337,6 +349,8 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
     });
 
     return () => {
+      clearInterval(refreshInterval);
+      window.removeEventListener('focus', handleFocus);
       unsubOnline();
       unsubOffline();
       unsubUpdated();
