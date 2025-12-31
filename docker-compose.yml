@@ -62,6 +62,7 @@ services:
     volumes:
       - ./installers:/app/installers:ro
       - ./agent/version.json:/app/agent/version.json:ro
+      - ./release/agent:/app/release/agent:ro
     depends_on:
       postgres:
         condition: service_healthy

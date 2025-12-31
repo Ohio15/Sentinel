@@ -227,6 +227,14 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			agents.GET("/script/:platform", getAgentInstallScriptHandler(services))
 		}
 
+		// Bootstrap routes (public - for bootstrapper-based installation)
+		bootstrap := api.Group("/bootstrap")
+		{
+			bootstrap.GET("/agent-info", getBootstrapAgentInfoHandler(services))
+			bootstrap.GET("/download", downloadBootstrapHandler(services))
+			bootstrap.GET("/agent", downloadBootstrapAgentHandler(services))
+		}
+
 		// Protected routes (require JWT)
 		protected := api.Group("")
 		protected.Use(middleware.AuthMiddleware(services.Config.JWTSecret))

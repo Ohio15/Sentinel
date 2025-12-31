@@ -385,7 +385,7 @@ function setupIpcHandlers(): void {
       }
       if (device.status === 'online' && device.lastSeen) {
         const lastSeenTime = new Date(device.lastSeen).getTime();
-        const isRecentlyActive = (Date.now() - lastSeenTime) < 30000; // 30 seconds
+        const isRecentlyActive = (Date.now() - lastSeenTime) < 90000; // 90 seconds (3x heartbeat interval)
         if (isRecentlyActive) {
           return { ...device, status: 'online' };
         }
@@ -1156,7 +1156,7 @@ function setupIpcHandlers(): void {
       onlineCount = devices.filter(d => {
         if (d.status === 'online' && d.lastSeen) {
           const lastSeenTime = new Date(d.lastSeen).getTime();
-          return (now - lastSeenTime) < 30000; // 30 seconds
+          return (now - lastSeenTime) < 90000; // 90 seconds (3x heartbeat interval)
         }
         return false;
       }).length;
