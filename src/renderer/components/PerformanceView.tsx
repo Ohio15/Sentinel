@@ -353,7 +353,7 @@ function StatRow({ label, value, subValue }: { label: string; value: React.React
 
 // CPU Detail View
 function CPUDetailView({ metrics, history }: { metrics: DeviceMetrics; history: DeviceMetrics[] }) {
-  const cpuHistory = useMemo(() => history.map(m => m.cpu?.usage || 0).slice(-120), [history]);
+  const cpuHistory = useMemo(() => (history || []).map(m => m.cpu?.usage || 0).slice(-120), [history]);
   const coreUsages = metrics.cpu?.perCore || [];
   
   return (
@@ -393,7 +393,7 @@ function CPUDetailView({ metrics, history }: { metrics: DeviceMetrics; history: 
 
 // Memory Detail View
 function MemoryDetailView({ metrics, history }: { metrics: DeviceMetrics; history: DeviceMetrics[] }) {
-  const memHistory = useMemo(() => history.map(m => {
+  const memHistory = useMemo(() => (history || []).map(m => {
     const used = m.memory?.used || 0;
     const total = m.memory?.total || 1;
     return (used / total) * 100;
@@ -437,8 +437,8 @@ function MemoryDetailView({ metrics, history }: { metrics: DeviceMetrics; histor
 
 // Disk Detail View
 function DiskDetailView({ metrics, history }: { metrics: DeviceMetrics; history: DeviceMetrics[] }) {
-  const readHistory = useMemo(() => history.map(m => m.disk?.readSpeed || 0).slice(-120), [history]);
-  const writeHistory = useMemo(() => history.map(m => m.disk?.writeSpeed || 0).slice(-120), [history]);
+  const readHistory = useMemo(() => (history || []).map(m => m.disk?.readSpeed || 0).slice(-120), [history]);
+  const writeHistory = useMemo(() => (history || []).map(m => m.disk?.writeSpeed || 0).slice(-120), [history]);
   const maxIO = Math.max(...readHistory, ...writeHistory, 1024 * 1024);
   
   const disks = metrics.disk?.disks || [];
@@ -495,8 +495,8 @@ function DiskDetailView({ metrics, history }: { metrics: DeviceMetrics; history:
 
 // Network Detail View  
 function NetworkDetailView({ metrics, history }: { metrics: DeviceMetrics; history: DeviceMetrics[] }) {
-  const downloadHistory = useMemo(() => history.map(m => m.network?.downloadSpeed || 0).slice(-120), [history]);
-  const uploadHistory = useMemo(() => history.map(m => m.network?.uploadSpeed || 0).slice(-120), [history]);
+  const downloadHistory = useMemo(() => (history || []).map(m => m.network?.downloadSpeed || 0).slice(-120), [history]);
+  const uploadHistory = useMemo(() => (history || []).map(m => m.network?.uploadSpeed || 0).slice(-120), [history]);
   const maxNet = Math.max(...downloadHistory, ...uploadHistory, 1024 * 1024);
   
   const interfaces = metrics.network?.interfaces || [];
@@ -552,8 +552,8 @@ function NetworkDetailView({ metrics, history }: { metrics: DeviceMetrics; histo
 
 // GPU Detail View
 function GPUDetailView({ metrics, history }: { metrics: DeviceMetrics; history: DeviceMetrics[] }) {
-  const gpuHistory = useMemo(() => history.map(m => m.gpu?.usage || 0).slice(-120), [history]);
-  const memHistory = useMemo(() => history.map(m => {
+  const gpuHistory = useMemo(() => (history || []).map(m => m.gpu?.usage || 0).slice(-120), [history]);
+  const memHistory = useMemo(() => (history || []).map(m => {
     const used = m.gpu?.memoryUsed || 0;
     const total = m.gpu?.memoryTotal || 1;
     return (used / total) * 100;
@@ -603,11 +603,11 @@ export function PerformanceView({ metrics, metricsHistory }: PerformanceViewProp
   const [selectedResource, setSelectedResource] = useState<ResourceType>('cpu');
   
   // Prepare history data for sidebar mini-graphs
-  const cpuHistory = useMemo(() => metricsHistory.map(m => m.cpu?.usage || 0).slice(-30), [metricsHistory]);
-  const memHistory = useMemo(() => metricsHistory.map(m => ((m.memory?.used || 0) / (m.memory?.total || 1)) * 100).slice(-30), [metricsHistory]);
-  const diskHistory = useMemo(() => metricsHistory.map(m => (m.disk?.readSpeed || 0) + (m.disk?.writeSpeed || 0)).slice(-30), [metricsHistory]);
-  const netHistory = useMemo(() => metricsHistory.map(m => (m.network?.downloadSpeed || 0) + (m.network?.uploadSpeed || 0)).slice(-30), [metricsHistory]);
-  const gpuHistory = useMemo(() => metricsHistory.map(m => m.gpu?.usage || 0).slice(-30), [metricsHistory]);
+  const cpuHistory = useMemo(() => (metricsHistory || []).map(m => m.cpu?.usage || 0).slice(-30), [metricsHistory]);
+  const memHistory = useMemo(() => (metricsHistory || []).map(m => ((m.memory?.used || 0) / (m.memory?.total || 1)) * 100).slice(-30), [metricsHistory]);
+  const diskHistory = useMemo(() => (metricsHistory || []).map(m => (m.disk?.readSpeed || 0) + (m.disk?.writeSpeed || 0)).slice(-30), [metricsHistory]);
+  const netHistory = useMemo(() => (metricsHistory || []).map(m => (m.network?.downloadSpeed || 0) + (m.network?.uploadSpeed || 0)).slice(-30), [metricsHistory]);
+  const gpuHistory = useMemo(() => (metricsHistory || []).map(m => m.gpu?.usage || 0).slice(-30), [metricsHistory]);
   
   const maxDiskIO = Math.max(...diskHistory, 1024 * 1024);
   const maxNetIO = Math.max(...netHistory, 1024 * 1024);
