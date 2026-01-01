@@ -1,5 +1,5 @@
 {
-  "version": "1.67.2",
+  "version": "1.67.3",
   "releaseDate": "2026-01-01",
   "changelog": "- PowerShell installer now auto-elevates to admin\n- Installer pauses on error so users can see what went wrong\n- Fixed installer not working when right-clicking Run with PowerShell",
   "platforms": [
