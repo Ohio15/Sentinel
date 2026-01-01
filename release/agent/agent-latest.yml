@@ -1,9 +1,9 @@
-version: 1.67.0
+version: 1.67.1
 files:
   - url: sentinel-agent.exe
-    sha512: dvKGjcph6rJf9Xrz+aqjELRgklnW5uAfsH9BoDaJdERyyDG0tiNBH00fZ2foJ6JMlPzRHx3CbM/NUhtNW1mh6w==
+    sha512: aCGcc33EaSFJtPLO6yoiE2s1R4DxjxLldpDqZWzAG4kgS40IPXUY4edWD1ZNen5mCFHqmA1PVNEKWKp6vU+dyQ==
     size: 20975616
   - url: sentinel-watchdog.exe
-    sha512: 3KAnQNntWctdsRX8xsqTWGAIie29IQ0jTNevRgEThSq86jwuB36dNFg+PuC6kjQmpBOpvQ3/va3ZQ6Zqp7CjcA==
+    sha512: HBdFJLeXM5PLyuExg7/3AyAmPcKwWBtWh3SYNe9iKm94LVbxUkh0bVNYYVVHyhA568Oq+vtG8KqJ6tiV8Yyckg==
     size: 2964480
-releaseDate: '2026-01-01T19:00:00.000Z'
+releaseDate: '2026-01-01T20:00:00.000Z'
