@@ -7,12 +7,6 @@ export function Header() {
   const { alerts } = useAlertStore();
   const openAlerts = alerts.filter(a => a.status === 'open').length;
 
-  useEffect(() => {
-    loadServerInfo();
-    const interval = setInterval(loadServerInfo, 30000);
-    return () => clearInterval(interval);
-  }, []);
-
   const loadServerInfo = async () => {
     try {
       const info = await window.api.server.getInfo();
@@ -21,6 +15,26 @@ export function Header() {
       console.error('Failed to load server info:', error);
     }
   };
+
+  useEffect(() => {
+    loadServerInfo();
+    // Poll every 10 seconds as backup
+    const interval = setInterval(loadServerInfo, 10000);
+
+    // Subscribe to device online/offline events for real-time updates
+    const unsubOnline = window.api.on('devices:online', () => {
+      loadServerInfo();
+    });
+    const unsubOffline = window.api.on('devices:offline', () => {
+      loadServerInfo();
+    });
+
+    return () => {
+      clearInterval(interval);
+      unsubOnline();
+      unsubOffline();
+    };
+  }, []);
 
   return (
     <header className="h-16 bg-surface border-b border-border flex items-center justify-between px-6">
