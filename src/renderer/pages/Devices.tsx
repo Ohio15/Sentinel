@@ -30,6 +30,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
   const [downloadingPlatform, setDownloadingPlatform] = useState<string | null>(null);
   const [downloadResult, setDownloadResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [psRunning, setPsRunning] = useState(false);
+  // Pre-configured installers are always used
 
   useEffect(() => {
     loadServerInfo();
@@ -97,6 +98,38 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
     } finally {
       setDownloadingPlatform(null);
       setTimeout(() => setDownloadResult(null), 5000);
+    }
+  };
+
+  
+  const handleDownloadConfigured = async (platform: string) => {
+    setDownloadingPlatform(platform);
+    setDownloadResult(null);
+
+    try {
+      const result = await window.api.agent.downloadConfigured(platform);
+
+      if (result.canceled) {
+        setDownloadResult(null);
+      } else if (result.success) {
+        const sizeMB = result.size ? (result.size / 1024 / 1024).toFixed(1) : '?';
+        setDownloadResult({
+          type: 'success',
+          message: `Pre-configured installer saved (${sizeMB} KB). ${result.note || ''}`
+        });
+      } else {
+        setDownloadResult({
+          type: 'error',
+          message: result.error || 'Failed to generate installer'
+        });
+      }
+    } catch (error: any) {
+      setDownloadResult({
+        type: 'error',
+        message: error.message || 'Failed to generate installer'
+      });
+    } finally {
+      setDownloadingPlatform(null);
     }
   };
 
@@ -415,7 +448,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
           <div className="card p-6">
             <h2 className="text-lg font-semibold text-text-primary mb-4">Download Agent Installer</h2>
             <p className="text-sm text-text-secondary mb-4">
-              Download the platform-specific installer. Installation is automatic - just run the downloaded file.
+              Download a pre-configured installer with server URL and enrollment token embedded. Just run it!
             </p>
 
             {/* Download Result Toast */}
@@ -446,7 +479,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <button
-                onClick={() => handleDownload('windows')}
+                onClick={() => handleDownloadConfigured('windows')}
                 disabled={downloadingPlatform !== null}
                 className="flex items-center gap-3 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors border border-border disabled:opacity-50 disabled:cursor-not-allowed text-left"
               >
@@ -454,13 +487,13 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                 <div className="flex-1">
                   <p className="font-medium text-text-primary">Windows</p>
                   <p className="text-xs text-text-secondary">
-                    {downloadingPlatform === 'windows' ? 'Saving...' : 'sentinel-agent.msi'}
+                    {downloadingPlatform === 'windows' ? 'Saving...' : 'sentinel-install.ps1'}
                   </p>
                 </div>
                 {downloadingPlatform === 'windows' ? <SpinnerIcon /> : <DownloadIcon />}
               </button>
               <button
-                onClick={() => handleDownload('macos')}
+                onClick={() => handleDownloadConfigured('macos')}
                 disabled={downloadingPlatform !== null}
                 className="flex items-center gap-3 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors border border-border disabled:opacity-50 disabled:cursor-not-allowed text-left"
               >
@@ -468,13 +501,13 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                 <div className="flex-1">
                   <p className="font-medium text-text-primary">macOS</p>
                   <p className="text-xs text-text-secondary">
-                    {downloadingPlatform === 'macos' ? 'Saving...' : 'sentinel-agent.pkg'}
+                    {downloadingPlatform === 'macos' ? 'Saving...' : 'sentinel-install.sh'}
                   </p>
                 </div>
                 {downloadingPlatform === 'macos' ? <SpinnerIcon /> : <DownloadIcon />}
               </button>
               <button
-                onClick={() => handleDownload('linux')}
+                onClick={() => handleDownloadConfigured('linux')}
                 disabled={downloadingPlatform !== null}
                 className="flex items-center gap-3 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors border border-border disabled:opacity-50 disabled:cursor-not-allowed text-left"
               >
@@ -482,7 +515,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                 <div className="flex-1">
                   <p className="font-medium text-text-primary">Linux</p>
                   <p className="text-xs text-text-secondary">
-                    {downloadingPlatform === 'linux' ? 'Saving...' : 'sentinel-agent.deb'}
+                    {downloadingPlatform === 'linux' ? 'Saving...' : 'sentinel-install.sh'}
                   </p>
                 </div>
                 {downloadingPlatform === 'linux' ? <SpinnerIcon /> : <DownloadIcon />}
@@ -514,7 +547,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                 {psRunning ? <SpinnerIcon /> : <PlayIcon className="w-5 h-5 text-blue-600 dark:text-blue-400" />}
               </button>
 
-              <div className="p-4 bg-gray-50 rounded-lg border border-border">
+              <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-border">
                 <div className="flex items-center gap-2 mb-2">
                   <InfoIcon className="w-5 h-5 text-gray-500 dark:text-gray-400" />
                   <span className="font-medium text-text-primary">What happens</span>
