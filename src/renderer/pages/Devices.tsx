@@ -362,14 +362,20 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                         ) : (
                           <div className="relative">
                             <button
-                              onClick={() => setActionMenu(actionMenu === device.id ? null : device.id)}
-                              className="text-text-secondary hover:text-text-primary transition-colors p-1 rounded hover:bg-gray-100"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActionMenu(actionMenu === device.id ? null : device.id);
+                              }}
+                              className="text-text-secondary hover:text-text-primary transition-colors p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
                               title="Device actions"
                             >
                               <MoreIcon className="w-4 h-4" />
                             </button>
                             {actionMenu === device.id && (
-                              <div className="absolute right-0 top-full mt-1 bg-surface border border-border rounded-lg shadow-lg z-50 min-w-[160px]">
+                              <div 
+                                onClick={(e) => e.stopPropagation()}
+                                className="absolute right-0 top-full mt-1 bg-surface border border-border rounded-lg shadow-lg z-50 min-w-[160px]"
+                              >
                                 {device.status === 'disabled' ? (
                                   <button
                                     onClick={() => handleEnable(device.id)}
