@@ -11,8 +11,24 @@ param(
     [switch]$Verify
 )
 
-$ErrorActionPreference = "Stop"
+# Do not auto-exit on errors - we want to show them to the user
+$ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
+
+# Helper to pause before exit so user can see output
+function Wait-BeforeExit {
+    param([int]$ExitCode = 0)
+    if (-not $Silent) {
+        Write-Host ""
+        Write-Host "Press any key to close this window..." -ForegroundColor Gray
+        try {
+            $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        } catch {
+            Read-Host "Press Enter to close"
+        }
+    }
+    exit $ExitCode
+}
 
 # ASCII Banner
 function Show-Banner {
@@ -76,7 +92,7 @@ function Install-SentinelAgent {
         Write-Host "Please run this script as Administrator:" -ForegroundColor Yellow
         Write-Host "  Right-click PowerShell -> Run as Administrator" -ForegroundColor Gray
         Write-Host ""
-        exit 1
+        Wait-BeforeExit 1
     }
 
     # Validate parameters
@@ -93,7 +109,7 @@ function Install-SentinelAgent {
             Write-Host "Or set environment variable:" -ForegroundColor Yellow
             Write-Host "  `$env:SENTINEL_SERVER = 'http://your-server:8080'" -ForegroundColor Gray
             Write-Host ""
-            exit 1
+            Wait-BeforeExit 1
         }
     }
 
@@ -107,7 +123,7 @@ function Install-SentinelAgent {
             Write-Host "Get your token from the Sentinel dashboard:" -ForegroundColor Yellow
             Write-Host "  Settings -> Enrollment -> Generate Token" -ForegroundColor Gray
             Write-Host ""
-            exit 1
+            Wait-BeforeExit 1
         }
     }
 
@@ -123,7 +139,7 @@ function Install-SentinelAgent {
         Write-Host "  -Repair  : Repair the installation" -ForegroundColor Gray
         Write-Host "  -Verify  : Verify installation integrity" -ForegroundColor Gray
         Write-Host ""
-        exit 0
+        Wait-BeforeExit 0
     }
 
     $bootstrapperUrl = "$Server/api/bootstrap/download?platform=windows&arch=amd64"
@@ -149,7 +165,7 @@ function Install-SentinelAgent {
                     $statusCode = [int]$response.StatusCode
                     if ($statusCode -eq 401 -or $statusCode -eq 403) {
                         Write-Error "Invalid or expired enrollment token"
-                        exit 1
+                        Wait-BeforeExit 1
                     }
                 }
             }
@@ -199,7 +215,7 @@ function Install-SentinelAgent {
 
     } catch {
         Write-Error "Installation failed: $_"
-        exit 1
+        Wait-BeforeExit 1
     } finally {
         # Cleanup
         if (Test-Path $bootstrapperPath) {
