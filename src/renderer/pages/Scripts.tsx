@@ -1,4 +1,4 @@
-import { Device } from '../stores/deviceStore';
+import { Device, useDeviceStore } from '../stores/deviceStore';
 import React, { useState, useEffect } from 'react';
 
 interface Script {
@@ -179,18 +179,12 @@ function LanguageBadge({ language }: { language: string }) {
 }
 
 function ExecuteScriptForm({ scriptId }: { scriptId: string }) {
-  const [devices, setDevices] = useState<any[]>([]);
+  const { devices: allDevices } = useDeviceStore();
   const [selectedDevices, setSelectedDevices] = useState<string[]>([]);
   const [executing, setExecuting] = useState(false);
 
-  useEffect(() => {
-    loadDevices();
-  }, []);
-
-  const loadDevices = async () => {
-    const data = await window.api.devices.list();
-    setDevices(data.filter((d: Device) => d.status === 'online'));
-  };
+  // Derive online devices from device store - single source of truth
+  const devices = allDevices.filter(d => d.status === 'online');
 
   const handleExecute = async () => {
     if (selectedDevices.length === 0) {

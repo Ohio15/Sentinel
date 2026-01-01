@@ -1,39 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import { useAlertStore } from '../../stores/alertStore';
+import { useDeviceStore } from '../../stores/deviceStore';
 import { ClientSelector } from '../ClientSelector';
 
 export function Header() {
-  const [serverInfo, setServerInfo] = useState<{ port: number; agentCount: number } | null>(null);
+  const [port, setPort] = useState<number | null>(null);
   const { alerts } = useAlertStore();
+  const { devices } = useDeviceStore();
   const openAlerts = alerts.filter(a => a.status === 'open').length;
-
-  const loadServerInfo = async () => {
-    try {
-      const info = await window.api.server.getInfo();
-      setServerInfo(info);
-    } catch (error) {
-      console.error('Failed to load server info:', error);
-    }
-  };
+  
+  // Derive online count from device store - single source of truth
+  const onlineCount = devices.filter(d => d.status === 'online').length;
 
   useEffect(() => {
-    loadServerInfo();
-    // Poll every 10 seconds as backup
-    const interval = setInterval(loadServerInfo, 10000);
-
-    // Subscribe to device online/offline events for real-time updates
-    const unsubOnline = window.api.on('devices:online', () => {
-      loadServerInfo();
-    });
-    const unsubOffline = window.api.on('devices:offline', () => {
-      loadServerInfo();
-    });
-
-    return () => {
-      clearInterval(interval);
-      unsubOnline();
-      unsubOffline();
+    // Fetch port once on mount - it rarely changes
+    const loadPort = async () => {
+      try {
+        const info = await window.api.server.getInfo();
+        setPort(info.port);
+      } catch (error) {
+        console.error('Failed to load server port:', error);
+      }
     };
+    loadPort();
   }, []);
 
   return (
@@ -45,12 +34,12 @@ export function Header() {
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 bg-success rounded-full animate-pulse" />
           <span className="text-sm text-text-secondary">
-            Port {serverInfo?.port || '...'}
+            Port {port || '...'}
           </span>
         </div>
         <div className="h-4 w-px bg-border" />
         <span className="text-sm text-text-secondary">
-          {serverInfo?.agentCount || 0} agent{serverInfo?.agentCount !== 1 ? 's' : ''} connected
+          {onlineCount} agent{onlineCount !== 1 ? 's' : ''} connected
         </span>
       </div>
 
