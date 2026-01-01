@@ -65,6 +65,608 @@ function embedConfigInInstaller(installerData: Buffer, serverUrl: string, token:
   return Buffer.from(content, 'latin1');
 }
 
+// Helper function to get or create a default enrollment token from the backend
+async function getDefaultEnrollmentToken(relay: BackendRelay): Promise<string | null> {
+  try {
+    // First, try to get existing tokens
+    const tokens = await relay.getEnrollmentTokens();
+    if (tokens && tokens.length > 0) {
+      // Find an active, non-expired token
+      const validToken = tokens.find((t: any) => {
+        if (!t.isActive) return false;
+        if (t.expiresAt && new Date(t.expiresAt) < new Date()) return false;
+        if (t.maxUses && t.useCount >= t.maxUses) return false;
+        return true;
+      });
+      if (validToken) {
+        return validToken.token;
+      }
+    }
+
+    // No valid token found, create a new one
+    const newToken = await relay.createEnrollmentToken({
+      name: 'Default Installer Token',
+      description: 'Auto-generated token for pre-configured installers',
+      maxUses: null,
+      expiresAt: null,
+    });
+
+    if (newToken && newToken.token) {
+      return newToken.token;
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Failed to get enrollment token:', error);
+    return null;
+  }
+}
+
+// Generate a Windows PowerShell installer script with embedded configuration
+function generateWindowsInstallerScript(serverUrl: string, token: string): string {
+  // Use the existing install.ps1 template and embed the server/token
+  const template = `# Sentinel Agent Installation Script for Windows
+# Usage: irm https://your-server/install.ps1 | iex
+# Or with parameters: .\\install.ps1 -Server "http://server:8080" -Token "your-token"
+
+param(
+    [string]$Server = "",
+    [string]$Token = "",
+    [switch]$Silent,
+    [switch]$Force,
+    [switch]$Repair,
+    [switch]$Verify
+)
+
+$ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
+
+# ASCII Banner
+function Show-Banner {
+    Write-Host ""
+    Write-Host "  ____             _   _            _ " -ForegroundColor Cyan
+    Write-Host " / ___|  ___ _ __ | |_(_)_ __   ___| |" -ForegroundColor Cyan
+    Write-Host " \\___ \\ / _ \\ '_ \\| __| | '_ \\ / _ \\ |" -ForegroundColor Cyan
+    Write-Host "  ___) |  __/ | | | |_| | | | |  __/ |" -ForegroundColor Cyan
+    Write-Host " |____/ \\___|_| |_|\\__|_|_| |_|\\___|_|" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "       Remote Monitoring & Management" -ForegroundColor DarkCyan
+    Write-Host ""
+}
+
+function Write-Step {
+    param([string]$Message)
+    Write-Host "[*] " -NoNewline -ForegroundColor Yellow
+    Write-Host $Message
+}
+
+function Write-Success {
+    param([string]$Message)
+    Write-Host "[+] " -NoNewline -ForegroundColor Green
+    Write-Host $Message
+}
+
+function Write-Error {
+    param([string]$Message)
+    Write-Host "[!] " -NoNewline -ForegroundColor Red
+    Write-Host $Message
+}
+
+function Test-Administrator {
+    $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($currentUser)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Get-BootstrapperPath {
+    return Join-Path $env:TEMP "sentinel-bootstrap.exe"
+}
+
+function Get-InstalledAgentPath {
+    $agentPath = Join-Path \${env:ProgramFiles} "Sentinel Agent\\sentinel-agent.exe"
+    if (Test-Path $agentPath) {
+        return $agentPath
+    }
+    return $null
+}
+
+# Main installation function
+function Install-SentinelAgent {
+    if (-not $Silent) {
+        Show-Banner
+    }
+
+    # Check for administrator privileges
+    if (-not (Test-Administrator)) {
+        Write-Error "Administrator privileges required!"
+        Write-Host ""
+        Write-Host "Please run this script as Administrator:" -ForegroundColor Yellow
+        Write-Host "  Right-click PowerShell -> Run as Administrator" -ForegroundColor Gray
+        Write-Host ""
+        exit 1
+    }
+
+    # Validate parameters
+    if ([string]::IsNullOrEmpty($Server)) {
+        # Check environment variable
+        if ($env:SENTINEL_SERVER) {
+            $Server = $env:SENTINEL_SERVER
+        } else {
+            Write-Error "Server URL is required!"
+            Write-Host ""
+            Write-Host "Usage:" -ForegroundColor Yellow
+            Write-Host "  .\\install.ps1 -Server 'http://your-server:8080' -Token 'your-token'" -ForegroundColor Gray
+            Write-Host ""
+            Write-Host "Or set environment variable:" -ForegroundColor Yellow
+            Write-Host "  \`$env:SENTINEL_SERVER = 'http://your-server:8080'" -ForegroundColor Gray
+            Write-Host ""
+            exit 1
+        }
+    }
+
+    if ([string]::IsNullOrEmpty($Token) -and -not $Repair -and -not $Verify) {
+        # Check environment variable
+        if ($env:SENTINEL_TOKEN) {
+            $Token = $env:SENTINEL_TOKEN
+        } else {
+            Write-Error "Enrollment token is required!"
+            Write-Host ""
+            Write-Host "Get your token from the Sentinel dashboard:" -ForegroundColor Yellow
+            Write-Host "  Settings -> Enrollment -> Generate Token" -ForegroundColor Gray
+            Write-Host ""
+            exit 1
+        }
+    }
+
+    # Check for existing installation
+    $existingAgent = Get-InstalledAgentPath
+    if ($existingAgent -and -not $Force -and -not $Repair -and -not $Verify) {
+        Write-Host ""
+        Write-Host "Sentinel Agent is already installed at:" -ForegroundColor Yellow
+        Write-Host "  $existingAgent" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "Options:" -ForegroundColor Yellow
+        Write-Host "  -Force   : Reinstall the agent" -ForegroundColor Gray
+        Write-Host "  -Repair  : Repair the installation" -ForegroundColor Gray
+        Write-Host "  -Verify  : Verify installation integrity" -ForegroundColor Gray
+        Write-Host ""
+        exit 0
+    }
+
+    $bootstrapperUrl = "$Server/api/bootstrap/download?platform=windows&arch=amd64"
+    if (-not [string]::IsNullOrEmpty($Token)) {
+        $bootstrapperUrl += "&token=$Token"
+    }
+
+    $bootstrapperPath = Get-BootstrapperPath
+
+    try {
+        # Download bootstrapper
+        Write-Step "Downloading Sentinel bootstrapper..."
+
+        $webClient = New-Object System.Net.WebClient
+        $webClient.Headers.Add("User-Agent", "Sentinel-Installer/1.0")
+
+        try {
+            $webClient.DownloadFile($bootstrapperUrl, $bootstrapperPath)
+        } catch {
+            if ($_.Exception.InnerException -is [System.Net.WebException]) {
+                $response = $_.Exception.InnerException.Response
+                if ($response) {
+                    $statusCode = [int]$response.StatusCode
+                    if ($statusCode -eq 401 -or $statusCode -eq 403) {
+                        Write-Error "Invalid or expired enrollment token"
+                        exit 1
+                    }
+                }
+            }
+            throw
+        }
+
+        if (-not (Test-Path $bootstrapperPath)) {
+            throw "Download failed - file not found"
+        }
+
+        $fileSize = (Get-Item $bootstrapperPath).Length
+        Write-Success "Downloaded bootstrapper ($([math]::Round($fileSize/1KB, 0)) KB)"
+
+        # Prepare arguments
+        $args = @("--server=$Server")
+
+        if (-not [string]::IsNullOrEmpty($Token)) {
+            $args += "--token=$Token"
+        }
+
+        if ($Silent) {
+            $args += "--silent"
+        }
+
+        if ($Force) {
+            $args += "--force"
+        }
+
+        if ($Repair) {
+            $args += "--repair"
+        }
+
+        if ($Verify) {
+            $args += "--verify"
+        }
+
+        # Run bootstrapper
+        Write-Step "Running bootstrapper..."
+
+        $process = Start-Process -FilePath $bootstrapperPath -ArgumentList $args -Wait -PassThru -NoNewWindow
+
+        if ($process.ExitCode -ne 0) {
+            throw "Bootstrapper exited with code $($process.ExitCode)"
+        }
+
+        Write-Success "Installation completed successfully!"
+
+    } catch {
+        Write-Error "Installation failed: $_"
+        exit 1
+    } finally {
+        # Cleanup
+        if (Test-Path $bootstrapperPath) {
+            Remove-Item $bootstrapperPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    Write-Host ""
+    Write-Host "The Sentinel Agent is now running and will start automatically" -ForegroundColor Green
+    Write-Host "when Windows boots." -ForegroundColor Green
+    Write-Host ""
+}
+
+# Run the installation
+Install-SentinelAgent
+`;
+
+  // Replace the default empty values with the actual configuration
+  return template
+    .replace(/\[string\]\$Server = ""/, `[string]$Server = "${serverUrl}"`)
+    .replace(/\[string\]\$Token = ""/, `[string]$Token = "${token}"`)
+    .replace('# Usage: irm https://your-server/install.ps1 | iex', `# Pre-configured for: ${serverUrl}\n# Generated: ${new Date().toISOString()}`);
+}
+
+// Generate a macOS/Linux shell installer script with embedded configuration
+function generateUnixInstallerScript(serverUrl: string, token: string, platform: 'macos' | 'linux'): string {
+  // Use the existing install.sh template and embed the server/token
+  const template = `#!/bin/bash
+# Sentinel Agent Installation Script for Linux/macOS
+# Usage: curl -sSL https://your-server/install.sh | bash -s -- --server=URL --token=TOKEN
+# Or: ./install.sh --server=http://server:8080 --token=your-token
+
+set -e
+
+# Colors
+RED='\\033[0;31m'
+GREEN='\\033[0;32m'
+YELLOW='\\033[1;33m'
+CYAN='\\033[0;36m'
+NC='\\033[0m' # No Color
+
+# Default values
+SERVER=""
+TOKEN=""
+SILENT=false
+FORCE=false
+REPAIR=false
+VERIFY=false
+
+# Platform detection
+detect_platform() {
+    OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+    ARCH=$(uname -m)
+
+    case "$ARCH" in
+        x86_64|amd64)
+            ARCH="amd64"
+            ;;
+        aarch64|arm64)
+            ARCH="arm64"
+            ;;
+        armv7l|armhf)
+            ARCH="arm"
+            ;;
+        *)
+            echo -e "\${RED}Unsupported architecture: $ARCH\${NC}"
+            exit 1
+            ;;
+    esac
+
+    case "$OS" in
+        linux)
+            PLATFORM="linux"
+            ;;
+        darwin)
+            PLATFORM="darwin"
+            ;;
+        *)
+            echo -e "\${RED}Unsupported operating system: $OS\${NC}"
+            exit 1
+            ;;
+    esac
+}
+
+# Banner
+show_banner() {
+    echo ""
+    echo -e "\${CYAN}  ____             _   _            _ \${NC}"
+    echo -e "\${CYAN} / ___|  ___ _ __ | |_(_)_ __   ___| |\${NC}"
+    echo -e "\${CYAN} \\\\___ \\\\ / _ \\\\ '_ \\\\| __| | '_ \\\\ / _ \\\\ |\${NC}"
+    echo -e "\${CYAN}  ___) |  __/ | | | |_| | | | |  __/ |\${NC}"
+    echo -e "\${CYAN} |____/ \\\\___|_| |_|\\\\__|_|_| |_|\\\\___|_|\${NC}"
+    echo ""
+    echo -e "       Remote Monitoring & Management"
+    echo ""
+}
+
+# Logging functions
+log_step() {
+    echo -e "\${YELLOW}[*]\${NC} $1"
+}
+
+log_success() {
+    echo -e "\${GREEN}[+]\${NC} $1"
+}
+
+log_error() {
+    echo -e "\${RED}[!]\${NC} $1"
+}
+
+# Check for root privileges
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        log_error "Root privileges required!"
+        echo ""
+        echo -e "\${YELLOW}Please run with sudo:\${NC}"
+        echo "  sudo $0 $*"
+        echo ""
+        exit 1
+    fi
+}
+
+# Parse command line arguments
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --server=*)
+                SERVER="\${1#*=}"
+                shift
+                ;;
+            --token=*)
+                TOKEN="\${1#*=}"
+                shift
+                ;;
+            --silent)
+                SILENT=true
+                shift
+                ;;
+            --force)
+                FORCE=true
+                shift
+                ;;
+            --repair)
+                REPAIR=true
+                shift
+                ;;
+            --verify)
+                VERIFY=true
+                shift
+                ;;
+            --help|-h)
+                show_help
+                exit 0
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                show_help
+                exit 1
+                ;;
+        esac
+    done
+}
+
+show_help() {
+    echo "Sentinel Agent Installation Script"
+    echo ""
+    echo "Usage: $0 --server=URL --token=TOKEN [options]"
+    echo ""
+    echo "Required:"
+    echo "  --server=URL     Sentinel server URL (e.g., http://server:8080)"
+    echo "  --token=TOKEN    Enrollment token from Sentinel dashboard"
+    echo ""
+    echo "Options:"
+    echo "  --silent         Silent installation (no output)"
+    echo "  --force          Force reinstall if agent exists"
+    echo "  --repair         Repair existing installation"
+    echo "  --verify         Verify installation integrity"
+    echo "  --help, -h       Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  # Basic installation"
+    echo "  sudo $0 --server=http://sentinel.example.com:8080 --token=abc123"
+    echo ""
+    echo "  # One-liner installation"
+    echo "  curl -sSL http://server/install.sh | sudo bash -s -- --server=URL --token=TOKEN"
+}
+
+# Check for existing installation
+check_existing() {
+    INSTALL_PATH=""
+    if [ -f "/opt/sentinel/sentinel-agent" ]; then
+        INSTALL_PATH="/opt/sentinel/sentinel-agent"
+    elif [ -f "/usr/local/sentinel/sentinel-agent" ]; then
+        INSTALL_PATH="/usr/local/sentinel/sentinel-agent"
+    fi
+
+    if [ -n "$INSTALL_PATH" ] && [ "$FORCE" = false ] && [ "$REPAIR" = false ] && [ "$VERIFY" = false ]; then
+        echo ""
+        echo -e "\${YELLOW}Sentinel Agent is already installed at:\${NC}"
+        echo "  $INSTALL_PATH"
+        echo ""
+        echo -e "\${YELLOW}Options:\${NC}"
+        echo "  --force   : Reinstall the agent"
+        echo "  --repair  : Repair the installation"
+        echo "  --verify  : Verify installation integrity"
+        echo ""
+        exit 0
+    fi
+}
+
+# Download with retry
+download_file() {
+    local url=$1
+    local dest=$2
+    local max_retries=3
+    local retry=0
+
+    while [ $retry -lt $max_retries ]; do
+        if command -v curl &> /dev/null; then
+            if curl -sSL --fail -o "$dest" "$url" 2>/dev/null; then
+                return 0
+            fi
+        elif command -v wget &> /dev/null; then
+            if wget -q -O "$dest" "$url" 2>/dev/null; then
+                return 0
+            fi
+        else
+            log_error "Neither curl nor wget found. Please install one of them."
+            exit 1
+        fi
+
+        retry=$((retry + 1))
+        if [ $retry -lt $max_retries ]; then
+            log_step "Download failed, retrying ($retry/$max_retries)..."
+            sleep 2
+        fi
+    done
+
+    return 1
+}
+
+# Main installation function
+install_agent() {
+    if [ "$SILENT" = false ]; then
+        show_banner
+    fi
+
+    check_root "$@"
+    detect_platform
+
+    # Check for required tools
+    if ! command -v curl &> /dev/null && ! command -v wget &> /dev/null; then
+        log_error "curl or wget is required for installation"
+        exit 1
+    fi
+
+    # Validate parameters
+    if [ -z "$SERVER" ]; then
+        # Check environment variable
+        if [ -n "$SENTINEL_SERVER" ]; then
+            SERVER="$SENTINEL_SERVER"
+        else
+            log_error "Server URL is required!"
+            echo ""
+            echo -e "\${YELLOW}Usage:\${NC}"
+            echo "  $0 --server='http://your-server:8080' --token='your-token'"
+            echo ""
+            exit 1
+        fi
+    fi
+
+    if [ -z "$TOKEN" ] && [ "$REPAIR" = false ] && [ "$VERIFY" = false ]; then
+        # Check environment variable
+        if [ -n "$SENTINEL_TOKEN" ]; then
+            TOKEN="$SENTINEL_TOKEN"
+        else
+            log_error "Enrollment token is required!"
+            echo ""
+            echo -e "\${YELLOW}Get your token from the Sentinel dashboard:\${NC}"
+            echo "  Settings -> Enrollment -> Generate Token"
+            echo ""
+            exit 1
+        fi
+    fi
+
+    check_existing
+
+    # Create temp directory
+    TEMP_DIR=$(mktemp -d)
+    trap "rm -rf $TEMP_DIR" EXIT
+
+    BOOTSTRAP_PATH="$TEMP_DIR/sentinel-bootstrap"
+
+    # Build download URL
+    BOOTSTRAP_URL="\${SERVER}/api/bootstrap/download?platform=\${PLATFORM}&arch=\${ARCH}"
+    if [ -n "$TOKEN" ]; then
+        BOOTSTRAP_URL="\${BOOTSTRAP_URL}&token=\${TOKEN}"
+    fi
+
+    # Download bootstrapper
+    log_step "Downloading Sentinel bootstrapper..."
+    if ! download_file "$BOOTSTRAP_URL" "$BOOTSTRAP_PATH"; then
+        log_error "Failed to download bootstrapper"
+        exit 1
+    fi
+
+    chmod +x "$BOOTSTRAP_PATH"
+    FILE_SIZE=$(stat -f%z "$BOOTSTRAP_PATH" 2>/dev/null || stat -c%s "$BOOTSTRAP_PATH" 2>/dev/null)
+    log_success "Downloaded bootstrapper ($((FILE_SIZE / 1024)) KB)"
+
+    # Prepare arguments
+    ARGS="--server=$SERVER"
+
+    if [ -n "$TOKEN" ]; then
+        ARGS="$ARGS --token=$TOKEN"
+    fi
+
+    if [ "$SILENT" = true ]; then
+        ARGS="$ARGS --silent"
+    fi
+
+    if [ "$FORCE" = true ]; then
+        ARGS="$ARGS --force"
+    fi
+
+    if [ "$REPAIR" = true ]; then
+        ARGS="$ARGS --repair"
+    fi
+
+    if [ "$VERIFY" = true ]; then
+        ARGS="$ARGS --verify"
+    fi
+
+    # Run bootstrapper
+    log_step "Running bootstrapper..."
+    if ! "$BOOTSTRAP_PATH" $ARGS; then
+        log_error "Installation failed"
+        exit 1
+    fi
+
+    log_success "Installation completed successfully!"
+
+    echo ""
+    echo -e "\${GREEN}The Sentinel Agent is now running and will start automatically\${NC}"
+    echo -e "\${GREEN}when the system boots.\${NC}"
+    echo ""
+}
+
+# Parse arguments and run
+parse_args "$@"
+install_agent
+`;
+
+  // Replace the default empty values with the actual configuration
+  return template
+    .replace(/SERVER=""/, `SERVER="${serverUrl}"`)
+    .replace(/TOKEN=""/, `TOKEN="${token}"`)
+    .replace('# Usage: curl -sSL https://your-server/install.sh | bash -s -- --server=URL --token=TOKEN', `# Pre-configured for: ${serverUrl}\n# Generated: ${new Date().toISOString()}`);
+}
+
 function getLocalIpAddress(): string {
   const interfaces = os.networkInterfaces();
   for (const name of Object.keys(interfaces)) {
@@ -1607,3 +2209,88 @@ process.on('uncaughtException', (error) => {
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
+
+
+  // Download pre-configured installer with embedded server URL and enrollment token
+  ipcMain.handle('agent:downloadConfigured', async (_, platform: string) => {
+    const serverUrl = backendRelay.getBackendUrl();
+    if (!serverUrl) {
+      return { success: false, error: 'Backend server not configured. Go to Settings to configure the server URL.' };
+    }
+
+    console.log('[Installer] Generating pre-configured installer for platform:', platform);
+
+    // Get enrollment token from backend
+    const token = await getDefaultEnrollmentToken(backendRelay);
+    if (!token) {
+      return {
+        success: false,
+        error: 'Could not retrieve enrollment token. Make sure you are logged in to the backend server.'
+      };
+    }
+
+    console.log('[Installer] Got enrollment token, generating installer script...');
+
+    // Generate platform-specific installer
+    let installerContent: string;
+    let filename: string;
+    let fileFilter: { name: string; extensions: string[] };
+
+    switch (platform.toLowerCase()) {
+      case 'windows':
+        installerContent = generateWindowsInstallerScript(serverUrl, token);
+        filename = 'sentinel-install.ps1';
+        fileFilter = { name: 'PowerShell Script', extensions: ['ps1'] };
+        break;
+      case 'macos':
+        installerContent = generateUnixInstallerScript(serverUrl, token, 'macos');
+        filename = 'sentinel-install.sh';
+        fileFilter = { name: 'Shell Script', extensions: ['sh'] };
+        break;
+      case 'linux':
+        installerContent = generateUnixInstallerScript(serverUrl, token, 'linux');
+        filename = 'sentinel-install.sh';
+        fileFilter = { name: 'Shell Script', extensions: ['sh'] };
+        break;
+      default:
+        return { success: false, error: 'Unsupported platform' };
+    }
+
+    // Show save dialog
+    const result = await dialog.showSaveDialog(mainWindow!, {
+      title: 'Save Pre-Configured Installer',
+      defaultPath: filename,
+      filters: [fileFilter, { name: 'All Files', extensions: ['*'] }],
+    });
+
+    if (result.canceled || !result.filePath) {
+      return { success: false, canceled: true };
+    }
+
+    try {
+      await fs.promises.writeFile(result.filePath, installerContent, 'utf8');
+
+      // Platform-specific run instructions
+      const instructions: Record<string, string> = {
+        windows: 'Right-click the file and select "Run with PowerShell", or run: powershell -ExecutionPolicy Bypass -File "' + result.filePath + '"',
+        macos: 'chmod +x "' + result.filePath + '" && sudo "' + result.filePath + '"',
+        linux: 'chmod +x "' + result.filePath + '" && sudo "' + result.filePath + '"',
+      };
+
+      console.log('[Installer] Pre-configured installer saved to:', result.filePath);
+
+      return {
+        success: true,
+        filePath: result.filePath,
+        size: Buffer.byteLength(installerContent, 'utf8'),
+        instructions: instructions[platform.toLowerCase()],
+        note: 'This installer has the server URL and enrollment token pre-configured. Just run it!',
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: `Failed to save installer: ${error.message}`,
+      };
+    }
+  });
+

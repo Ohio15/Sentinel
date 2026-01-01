@@ -305,6 +305,7 @@ contextBridge.exposeInMainWorld('api', {
   // Agent
   agent: {
     download: (platform: string) => ipcRenderer.invoke('agent:download', platform),
+    downloadConfigured: (platform: string) => ipcRenderer.invoke('agent:downloadConfigured', platform),
     downloadMsi: () => ipcRenderer.invoke('agent:downloadMsi'),
     getMsiCommand: () => ipcRenderer.invoke('agent:getMsiCommand'),
     runPowerShellInstall: () => ipcRenderer.invoke('agent:runPowerShellInstall'),

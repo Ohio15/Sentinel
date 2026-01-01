@@ -137,7 +137,11 @@ interface ElectronAPI {
   };
   // Agent download API
   agent?: {
-    download: (platform: string) => Promise<string>;
+    download: (platform: string) => Promise<any>;
+    downloadConfigured: (platform: string) => Promise<any>;
+    downloadMsi: () => Promise<any>;
+    getMsiCommand: () => Promise<any>;
+    runPowerShellInstall: () => Promise<any>;
   };
   // Knowledge base alias
   kb?: {

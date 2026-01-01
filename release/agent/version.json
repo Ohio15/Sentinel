@@ -1,7 +1,7 @@
 {
-  "version": "1.66.9",
-  "releaseDate": "2025-12-31",
-  "changelog": "- Fixed device status incorrectly showing offline (increased timeout to 90s)\\n- Fixed ellipsis dropdown menu visibility being clipped in device list",
+  "version": "1.67.0",
+  "releaseDate": "2026-01-01",
+  "changelog": "- Added pre-configured installer generation with embedded server URL and enrollment token\n- Fixed Dark Mode on Quick Install info box\n- Improved agent distribution with one-click installer scripts",
   "platforms": [
     "windows",
     "linux",
