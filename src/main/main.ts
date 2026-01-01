@@ -2246,7 +2246,8 @@ process.on('unhandledRejection', (reason, promise) => {
       };
     }
 
-    console.log('[Installer] Got enrollment token, generating installer script...');
+    console.log('[Installer] Server URL:', serverUrl);
+    console.log('[Installer] Token (first 10 chars):', token.substring(0, 10) + '...');
 
     // Generate platform-specific installer
     let installerContent: string;
@@ -2256,6 +2257,15 @@ process.on('unhandledRejection', (reason, promise) => {
     switch (platform.toLowerCase()) {
       case 'windows':
         installerContent = generateWindowsInstallerScript(serverUrl, token);
+        // Debug: Verify replacements worked
+        const hasServer = installerContent.includes('$Server = "' + serverUrl + '"');
+        const hasToken = installerContent.includes('$Token = "' + token + '"');
+        console.log('[Installer] Server URL embedded:', hasServer);
+        console.log('[Installer] Token embedded:', hasToken);
+        if (!hasServer || !hasToken) {
+          console.log('[Installer] WARNING: Replacement may have failed!');
+          console.log('[Installer] Script param section:', installerContent.substring(0, 500));
+        }
         filename = 'sentinel-install.ps1';
         fileFilter = { name: 'PowerShell Script', extensions: ['ps1'] };
         break;
