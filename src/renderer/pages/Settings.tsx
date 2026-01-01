@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useThemeStore } from '../stores/themeStore';
+import { useDeviceStore } from '../stores/deviceStore';
 
 interface Settings {
   serverPort: number;
@@ -79,6 +80,8 @@ export function Settings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const { theme, setTheme } = useThemeStore();
+  const { devices } = useDeviceStore();
+  const onlineCount = devices.filter(d => d.status === 'online').length;
   // External backend state
   const [backendUrl, setBackendUrl] = useState('');
   const [backendEmail, setBackendEmail] = useState('');
@@ -414,7 +417,7 @@ export function Settings() {
               </div>
               <div className="p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
                 <p className="text-sm text-text-secondary">Connected Agents</p>
-                <p className="text-lg font-semibold text-text-primary">{serverInfo.agentCount}</p>
+                <p className="text-lg font-semibold text-text-primary">{onlineCount}</p>
               </div>
             </div>
           </div>

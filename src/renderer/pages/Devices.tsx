@@ -8,7 +8,7 @@ interface DevicesProps {
 
 interface ServerInfo {
   port: number;
-  agentCount: number;
+  // agentCount derived from device store
   enrollmentToken: string;
 }
 
