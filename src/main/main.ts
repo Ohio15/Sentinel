@@ -342,9 +342,10 @@ Install-SentinelAgent
 `;
 
   // Replace the default empty values with the actual configuration
+  // Note: Regex captures leading whitespace since template has indented params
   return template
-    .replace(/\[string\]\$Server = ""/, `[string]$Server = "${serverUrl}"`)
-    .replace(/\[string\]\$Token = ""/, `[string]$Token = "${token}"`)
+    .replace(/(\s*)\[string\]\$Server = ""/, `$1[string]$Server = "${serverUrl}"`)
+    .replace(/(\s*)\[string\]\$Token = ""/, `$1[string]$Token = "${token}"`)
     .replace('# Usage: irm https://your-server/install.ps1 | iex', `# Pre-configured for: ${serverUrl}\n# Generated: ${new Date().toISOString()}`);
 }
 
@@ -678,6 +679,7 @@ install_agent
 `;
 
   // Replace the default empty values with the actual configuration
+  // Note: Regex captures leading whitespace since template has indented params
   return template
     .replace(/SERVER=""/, `SERVER="${serverUrl}"`)
     .replace(/TOKEN=""/, `TOKEN="${token}"`)
