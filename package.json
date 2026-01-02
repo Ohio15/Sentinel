@@ -1,6 +1,6 @@
 {
   "name": "sentinel",
-  "version": "1.67.8",
+  "version": "1.67.9",
   "description": "Sentinel - Remote Monitoring and Management",
   "main": "dist/main/main.js",
   "author": "Sentinel",
@@ -135,6 +135,13 @@
         "to": "portal/",
         "filter": [
           "**/*"
+        ]
+      },
+      {
+        "from": "installers/",
+        "to": "installers/",
+        "filter": [
+          "sentinel-installer-template.exe"
         ]
       }
     ],
