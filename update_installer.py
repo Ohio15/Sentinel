@@ -1,4 +1,7 @@
-# Sentinel Agent Installation Script for Windows
+#!/usr/bin/env python3
+"""Update the install.ps1 script with progress bar and finish button."""
+
+new_content = r'''# Sentinel Agent Installation Script for Windows
 # Usage: irm https://your-server/install.ps1 | iex
 # Or with parameters: .\install.ps1 -Server "http://server:8080" -Token "your-token"
 
@@ -414,3 +417,9 @@ function Install-SentinelAgent {
 
 # Run the installation
 Install-SentinelAgent
+'''
+
+with open('D:/Projects/Sentinel/installers/install.ps1', 'w', encoding='utf-8', newline='\r\n') as f:
+    f.write(new_content)
+
+print("Successfully updated install.ps1 with progress bar and finish button!")
