@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -19,6 +20,26 @@ import (
 
 	"golang.org/x/sys/windows"
 )
+
+var logFile *os.File
+
+func initLog() {
+	logPath := filepath.Join(os.TempDir(), "sentinel-installer.log")
+	var err error
+	logFile, err = os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err == nil {
+		log.SetOutput(io.MultiWriter(os.Stdout, logFile))
+		log.SetFlags(log.Ldate | log.Ltime)
+	}
+}
+
+func logMsg(format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	fmt.Println(msg)
+	if logFile != nil {
+		log.Println(msg)
+	}
+}
 
 // Version is set at build time
 var Version = "1.0.0"
@@ -43,19 +64,40 @@ type AgentInfo struct {
 }
 
 func main() {
+	// Initialize logging first
+	initLog()
+	logMsg("=== Sentinel Installer Started ===")
+	logMsg("Version: %s", Version)
+	logMsg("Log file: %s", filepath.Join(os.TempDir(), "sentinel-installer.log"))
+
 	// Set console title
 	setConsoleTitle("Sentinel Agent Installer")
 
 	// Print banner
 	printBanner()
 
+	// Debug: Print raw embedded values
+	logMsg("[DEBUG] Raw EmbeddedServer length: %d", len(EmbeddedServer))
+	logMsg("[DEBUG] Raw EmbeddedToken length: %d", len(EmbeddedToken))
+	if len(EmbeddedServer) > 50 {
+		logMsg("[DEBUG] EmbeddedServer first 50 chars: %s", EmbeddedServer[:50])
+	}
+
 	// Extract embedded config
 	serverURL := extractConfig(EmbeddedServer, "SENTINEL_CONFIG_SERVER:")
 	token := extractConfig(EmbeddedToken, "SENTINEL_CONFIG_TOKEN:")
 
+	logMsg("[DEBUG] Extracted serverURL: '%s' (len=%d)", serverURL, len(serverURL))
+	if len(token) > 10 {
+		logMsg("[DEBUG] Extracted token: '%s...' (len=%d)", token[:10], len(token))
+	} else {
+		logMsg("[DEBUG] Extracted token: '%s' (len=%d)", token, len(token))
+	}
+
 	if serverURL == "" {
 		printError("This installer was not configured properly.")
 		printError("Server URL is missing from embedded configuration.")
+		printError("Check log at: %s", filepath.Join(os.TempDir(), "sentinel-installer.log"))
 		waitForKey()
 		os.Exit(1)
 	}
@@ -63,6 +105,7 @@ func main() {
 	if token == "" {
 		printError("This installer was not configured properly.")
 		printError("Enrollment token is missing from embedded configuration.")
+		printError("Check log at: %s", filepath.Join(os.TempDir(), "sentinel-installer.log"))
 		waitForKey()
 		os.Exit(1)
 	}
@@ -158,14 +201,23 @@ func main() {
 
 	// Run agent install command
 	printInfo("Configuring service...")
+	logMsg("[DEBUG] Running: %s --install --server=%s --token=%s...", agentExe, serverURL, token[:min(10, len(token))])
 	cmd := exec.Command(agentExe, "--install", "--server="+serverURL, "--token="+token)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+
+	// Capture output for logging
+	var stdout, stderr strings.Builder
+	cmd.Stdout = io.MultiWriter(os.Stdout, &stdout)
+	cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
+
 	if err := cmd.Run(); err != nil {
+		logMsg("[DEBUG] Agent install stdout: %s", stdout.String())
+		logMsg("[DEBUG] Agent install stderr: %s", stderr.String())
 		printError("Service installation failed: %v", err)
 		waitForKey()
 		os.Exit(1)
 	}
+	logMsg("[DEBUG] Agent install completed successfully")
+	logMsg("[DEBUG] stdout: %s", stdout.String())
 	printSuccess("Agent installed and service configured")
 
 	// Verify installation
@@ -225,28 +277,44 @@ func printStep(current, total int, message string) {
 	bar := strings.Repeat("=", current*40/total) + strings.Repeat("-", 40-current*40/total)
 	fmt.Printf("\n  [%s] %d%%\n", bar, pct)
 	fmt.Printf("  Step %d/%d: %s\n", current, total, message)
+	logMsg("[STEP %d/%d] %s", current, total, message)
 }
 
 func printSuccess(format string, args ...interface{}) {
-	fmt.Printf("  [OK] "+format+"\n", args...)
+	msg := fmt.Sprintf(format, args...)
+	fmt.Printf("  [OK] %s\n", msg)
+	logMsg("[OK] %s", msg)
 }
 
 func printInfo(format string, args ...interface{}) {
-	fmt.Printf("  [..] "+format+"\n", args...)
+	msg := fmt.Sprintf(format, args...)
+	fmt.Printf("  [..] %s\n", msg)
+	logMsg("[INFO] %s", msg)
 }
 
 func printWarning(format string, args ...interface{}) {
-	fmt.Printf("  [!!] "+format+"\n", args...)
+	msg := fmt.Sprintf(format, args...)
+	fmt.Printf("  [!!] %s\n", msg)
+	logMsg("[WARN] %s", msg)
 }
 
 func printError(format string, args ...interface{}) {
-	fmt.Printf("  [ERROR] "+format+"\n", args...)
+	msg := fmt.Sprintf(format, args...)
+	fmt.Printf("  [ERROR] %s\n", msg)
+	logMsg("[ERROR] %s", msg)
 }
 
 func waitForKey() {
 	fmt.Println()
 	fmt.Println("  Press ENTER to close this window...")
 	bufio.NewReader(os.Stdin).ReadBytes('\n')
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func extractConfig(embedded, prefix string) string {
