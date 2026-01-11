@@ -83,13 +83,6 @@ export function Login() {
               )}
             </button>
           </form>
-
-          <div className="mt-6 pt-6 border-t border-gray-700">
-            <p className="text-sm text-gray-400 text-center">
-              Default credentials: <code className="bg-gray-800 px-1.5 py-0.5 rounded text-gray-300">admin@sentinel.local</code> /{' '}
-              <code className="bg-gray-800 px-1.5 py-0.5 rounded text-gray-300">admin</code>
-            </p>
-          </div>
         </div>
       </div>
     </div>
