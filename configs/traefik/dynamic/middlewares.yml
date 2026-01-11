@@ -1,0 +1,64 @@
+# Traefik Dynamic Configuration - Middlewares
+
+http:
+  middlewares:
+    # Security headers for all responses
+    securityHeaders:
+      headers:
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        forceSTSHeader: true
+        contentTypeNosniff: true
+        frameDeny: true
+        browserXssFilter: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        permissionsPolicy: "geolocation=(), microphone=(), camera=()"
+        customResponseHeaders:
+          X-Robots-Tag: "noindex, nofollow"
+          X-Download-Options: "noopen"
+          X-Permitted-Cross-Domain-Policies: "none"
+
+    # Rate limiting - general API requests
+    rateLimit:
+      rateLimit:
+        average: 100
+        burst: 50
+        period: 1m
+        sourceCriterion:
+          ipStrategy:
+            depth: 1
+
+    # Stricter rate limiting for authentication
+    authRateLimit:
+      rateLimit:
+        average: 10
+        burst: 5
+        period: 1m
+        sourceCriterion:
+          ipStrategy:
+            depth: 1
+
+    # Agent rate limiting (higher limits for metrics/heartbeats)
+    agentRateLimit:
+      rateLimit:
+        average: 300
+        burst: 100
+        period: 1m
+        sourceCriterion:
+          ipStrategy:
+            depth: 1
+
+    # Request size limits
+    requestSizeLimit:
+      buffering:
+        maxRequestBodyBytes: 10485760  # 10MB max request body
+        memRequestBodyBytes: 2097152   # 2MB in memory
+        maxResponseBodyBytes: 52428800 # 50MB max response
+        memResponseBodyBytes: 2097152  # 2MB in memory
+
+    # Compress responses
+    compress:
+      compress:
+        excludedContentTypes:
+          - text/event-stream

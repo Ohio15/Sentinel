@@ -1,0 +1,94 @@
+# Traefik Dynamic Configuration - Routers and Services
+# File-based routing for Sentinel RMM (Windows-compatible)
+
+http:
+  routers:
+    # =========================================================================
+    # HTTPS Routes (port 443)
+    # =========================================================================
+
+    # API routes
+    api:
+      rule: "Host(`sentinelrmm.us`) && PathPrefix(`/api`)"
+      entryPoints:
+        - websecure
+      service: backend
+      tls:
+        certResolver: letsencrypt
+      middlewares:
+        - securityHeaders
+        - rateLimit
+      priority: 10
+
+    # WebSocket routes for dashboard
+    ws-dashboard:
+      rule: "Host(`sentinelrmm.us`) && PathPrefix(`/ws/dashboard`)"
+      entryPoints:
+        - websecure
+      service: backend
+      tls:
+        certResolver: letsencrypt
+      priority: 10
+
+    # Health check routes
+    health:
+      rule: "Host(`sentinelrmm.us`) && PathPrefix(`/health`)"
+      entryPoints:
+        - websecure
+      service: backend
+      tls:
+        certResolver: letsencrypt
+      priority: 5
+
+    # Frontend (catch-all for web UI)
+    frontend:
+      rule: "Host(`sentinelrmm.us`)"
+      entryPoints:
+        - websecure
+      service: frontend
+      tls:
+        certResolver: letsencrypt
+      middlewares:
+        - securityHeaders
+      priority: 1
+
+    # =========================================================================
+    # mTLS Routes (port 8443) - Agent connections
+    # =========================================================================
+
+    # Agent WebSocket routes
+    ws-agent:
+      rule: "PathPrefix(`/ws/agent`) || PathPrefix(`/ws`)"
+      entryPoints:
+        - agents
+      service: backend
+      tls:
+        options: mtls
+      middlewares:
+        - agentRateLimit
+      priority: 10
+
+    # Agent API routes
+    agent-api:
+      rule: "PathPrefix(`/api/agent`)"
+      entryPoints:
+        - agents
+      service: backend
+      tls:
+        options: mtls
+      middlewares:
+        - agentRateLimit
+      priority: 10
+
+  services:
+    # Backend service (Go API server)
+    backend:
+      loadBalancer:
+        servers:
+          - url: "http://sentinel-backend:8080"
+
+    # Frontend service (nginx serving static files)
+    frontend:
+      loadBalancer:
+        servers:
+          - url: "http://sentinel-frontend:80"

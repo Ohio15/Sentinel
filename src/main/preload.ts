@@ -230,6 +230,8 @@ contextBridge.exposeInMainWorld('api', {
   backend: {
     getConfig: () => ipcRenderer.invoke('backend:getConfig'),
     setUrl: (url: string) => ipcRenderer.invoke('backend:setUrl', url),
+    setApiKey: (apiKey: string) => ipcRenderer.invoke('backend:setApiKey', apiKey),
+    testConnection: () => ipcRenderer.invoke('backend:testConnection'),
     authenticate: (email: string, password: string) => ipcRenderer.invoke('backend:authenticate', email, password),
     disconnect: () => ipcRenderer.invoke('backend:disconnect'),
   },

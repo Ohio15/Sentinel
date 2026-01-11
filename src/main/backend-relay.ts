@@ -14,6 +14,7 @@ interface BackendConfig {
   url: string;
   username?: string;
   password?: string;
+  apiKey?: string;
 }
 
 interface AuthTokens {
@@ -176,7 +177,8 @@ export class BackendRelay {
         console.log('[BackendRelay] No URL configured, using default:', DEFAULT_BACKEND_URL);
       }
 
-      this.config = { url: backendUrl };
+      const apiKey = await this.database.getSetting('backendApiKey');
+      this.config = { url: backendUrl, apiKey: apiKey || undefined };
       console.log('[BackendRelay] Initialized with URL:', backendUrl);
 
       // Load saved credentials and auto-authenticate
@@ -219,6 +221,9 @@ export class BackendRelay {
   }
 
   isAuthenticated(): boolean {
+    if (this.config?.apiKey) {
+      return true;
+    }
     return !!this.tokens && Date.now() < this.tokens.expiresAt;
   }
 
@@ -349,17 +354,25 @@ export class BackendRelay {
       throw new Error('Backend URL not configured');
     }
 
-    await this.ensureAuthenticated();
+    // API key auth doesn't need token refresh
+    if (!this.config?.apiKey) {
+      await this.ensureAuthenticated();
+    }
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${this.tokens!.accessToken}`,
     };
 
-    // Add CSRF token for state-changing requests (POST, PUT, DELETE, PATCH)
-    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method.toUpperCase()) && this.tokens?.csrfToken) {
-      headers['X-CSRF-Token'] = this.tokens.csrfToken;
-      headers['Cookie'] = `csrf_token=${this.tokens.csrfToken}`;
+    // Use API key if available, otherwise use JWT
+    if (this.config?.apiKey) {
+      headers['X-API-Key'] = this.config.apiKey;
+    } else if (this.tokens?.accessToken) {
+      headers['Authorization'] = `Bearer ${this.tokens.accessToken}`;
+      // Add CSRF token for state-changing requests (POST, PUT, DELETE, PATCH)
+      if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method.toUpperCase()) && this.tokens?.csrfToken) {
+        headers['X-CSRF-Token'] = this.tokens.csrfToken;
+        headers['Cookie'] = `csrf_token=${this.tokens.csrfToken}`;
+      }
     }
 
     const options: any = {
