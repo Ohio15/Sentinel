@@ -16,8 +16,10 @@ func (r *Router) listClients(c *gin.Context) {
 	ctx := context.Background()
 
 	rows, err := r.db.Pool().Query(ctx, `
-		SELECT id, name, description, color, logo_url, logo_width, logo_height, created_at, updated_at
-		FROM clients ORDER BY name
+		SELECT c.id, c.name, c.description, c.color, c.logo_url, c.logo_width, c.logo_height,
+		       c.created_at, c.updated_at,
+		       COALESCE((SELECT COUNT(*) FROM devices d WHERE d.client_id = c.id), 0) as device_count
+		FROM clients c ORDER BY c.name
 	`)
 	if err != nil {
 		log.Printf("Error listing clients: %v", err)
@@ -38,9 +40,10 @@ func (r *Router) listClients(c *gin.Context) {
 			LogoHeight  *int
 			CreatedAt   time.Time
 			UpdatedAt   time.Time
+			DeviceCount int
 		}
 		if err := rows.Scan(&client.ID, &client.Name, &client.Description, &client.Color,
-			&client.LogoURL, &client.LogoWidth, &client.LogoHeight, &client.CreatedAt, &client.UpdatedAt); err != nil {
+			&client.LogoURL, &client.LogoWidth, &client.LogoHeight, &client.CreatedAt, &client.UpdatedAt, &client.DeviceCount); err != nil {
 			log.Printf("Error scanning client row: %v", err)
 			continue
 		}
@@ -54,6 +57,7 @@ func (r *Router) listClients(c *gin.Context) {
 			"logoHeight":  client.LogoHeight,
 			"createdAt":   client.CreatedAt,
 			"updatedAt":   client.UpdatedAt,
+			"deviceCount": client.DeviceCount,
 		})
 	}
 

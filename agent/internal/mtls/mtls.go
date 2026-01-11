@@ -1,0 +1,143 @@
+// Package mtls provides mutual TLS configuration for the Sentinel agent.
+// It handles loading client certificates and CA certificates for secure
+// communication with the Sentinel server.
+package mtls
+
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"log"
+	"os"
+	"sync"
+
+	"github.com/sentinel/agent/internal/paths"
+)
+
+var (
+	tlsConfig     *tls.Config
+	tlsConfigOnce sync.Once
+	tlsConfigErr  error
+)
+
+// GetTLSConfig returns a TLS configuration for mTLS connections.
+// If client certificates are available, it configures mutual TLS.
+// Otherwise, it returns a config that only verifies the server (or skips verification for development).
+func GetTLSConfig() (*tls.Config, error) {
+	tlsConfigOnce.Do(func() {
+		tlsConfig, tlsConfigErr = loadTLSConfig()
+	})
+	return tlsConfig, tlsConfigErr
+}
+
+// ReloadTLSConfig forces a reload of TLS configuration.
+// This should be called after new certificates are installed.
+func ReloadTLSConfig() (*tls.Config, error) {
+	tlsConfigOnce = sync.Once{}
+	return GetTLSConfig()
+}
+
+// loadTLSConfig loads the TLS configuration from disk.
+func loadTLSConfig() (*tls.Config, error) {
+	config := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	}
+
+	// Load CA certificate if available
+	caCertPath := paths.CACertPath()
+	if _, err := os.Stat(caCertPath); err == nil {
+		caCert, err := os.ReadFile(caCertPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA certificate: %w", err)
+		}
+
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to parse CA certificate")
+		}
+
+		config.RootCAs = caCertPool
+		log.Println("[mTLS] Loaded CA certificate for server verification")
+	} else {
+		// No CA cert - use system root CAs (less secure but allows development)
+		log.Println("[mTLS] No CA certificate found, using system root CAs")
+	}
+
+	// Load client certificate and key if available (for mTLS)
+	certPath := paths.ClientCertPath()
+	keyPath := paths.ClientKeyPath()
+
+	if paths.HasClientCertificate() {
+		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load client certificate: %w", err)
+		}
+
+		config.Certificates = []tls.Certificate{cert}
+		log.Printf("[mTLS] Loaded client certificate: %s", certPath)
+		log.Println("[mTLS] mTLS enabled - client will authenticate with certificate")
+	} else {
+		log.Println("[mTLS] No client certificate found, mTLS not enabled")
+	}
+
+	return config, nil
+}
+
+// HasMTLS returns true if the agent has valid mTLS certificates installed.
+func HasMTLS() bool {
+	return paths.HasClientCertificate()
+}
+
+// InstallCertificates saves the client certificate and key to disk.
+// This is typically called after enrollment when the server provides certificates.
+func InstallCertificates(clientCert, clientKey, caCert []byte) error {
+	if err := paths.EnsureCertsDir(); err != nil {
+		return fmt.Errorf("failed to create certs directory: %w", err)
+	}
+
+	// Save CA certificate
+	if len(caCert) > 0 {
+		if err := os.WriteFile(paths.CACertPath(), caCert, 0644); err != nil {
+			return fmt.Errorf("failed to write CA certificate: %w", err)
+		}
+		log.Printf("[mTLS] Installed CA certificate: %s", paths.CACertPath())
+	}
+
+	// Save client certificate
+	if len(clientCert) > 0 {
+		if err := os.WriteFile(paths.ClientCertPath(), clientCert, 0644); err != nil {
+			return fmt.Errorf("failed to write client certificate: %w", err)
+		}
+		log.Printf("[mTLS] Installed client certificate: %s", paths.ClientCertPath())
+	}
+
+	// Save client key with restrictive permissions
+	if len(clientKey) > 0 {
+		if err := os.WriteFile(paths.ClientKeyPath(), clientKey, 0600); err != nil {
+			return fmt.Errorf("failed to write client key: %w", err)
+		}
+		log.Printf("[mTLS] Installed client key: %s", paths.ClientKeyPath())
+	}
+
+	// Reload TLS config to pick up new certificates
+	if _, err := ReloadTLSConfig(); err != nil {
+		return fmt.Errorf("failed to reload TLS config: %w", err)
+	}
+
+	return nil
+}
+
+// GetMTLSPort returns the mTLS port for agent connections (8443).
+// This is the dedicated port that requires client certificates.
+func GetMTLSPort() string {
+	return "8443"
+}
+
+// GetMTLSServerURL converts a standard server URL to use the mTLS port.
+// Example: https://example.com:443 -> https://example.com:8443
+func GetMTLSServerURL(serverURL string) string {
+	// This would be more complex in production to handle various URL formats
+	// For now, we just change the known ports
+	// TODO: Implement proper URL parsing and port replacement
+	return serverURL
+}

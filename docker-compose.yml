@@ -1,36 +1,27 @@
 version: '3.8'
 
 services:
-  # Reverse Proxy - handles SSL, routing
+  # Reverse Proxy - handles SSL, routing, mTLS for agents
   traefik:
     image: traefik:v3.0
     container_name: sentinel-traefik
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
+      - "80:80"       # HTTP (redirects to HTTPS)
+      - "443:443"     # HTTPS for web clients
+      - "8443:8443"   # mTLS for agent connections
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./configs/traefik:/etc/traefik
+      - ./configs/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./configs/traefik/dynamic:/etc/traefik/dynamic:ro
+      - ./certs:/certs:ro
       - traefik-certs:/letsencrypt
+      - traefik-logs:/var/log/traefik
     networks:
       - sentinel-network
-    labels:
-      - "traefik.enable=true"
+    environment:
+      - ACME_EMAIL=${ACME_EMAIL}
     security_opt:
       - no-new-privileges:true
-    command:
-      - "--api.dashboard=false"
-      - "--api.insecure=false"
-      - "--providers.docker=true"
-      - "--providers.docker.exposedbydefault=false"
-      - "--entrypoints.web.address=:80"
-      - "--entrypoints.websecure.address=:443"
-      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
-      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
-      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
-      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
-      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
     deploy:
       resources:
         limits:
@@ -46,6 +37,7 @@ services:
       context: ./server
       dockerfile: Dockerfile
     container_name: sentinel-backend
+    # Port 8090 for local development only - in production, only Traefik exposes ports
     ports:
       - "8090:8080"
     restart: unless-stopped
@@ -59,10 +51,16 @@ services:
       - RATE_LIMIT_REQUESTS=${RATE_LIMIT_REQUESTS:-100}
       - RATE_LIMIT_WINDOW=${RATE_LIMIT_WINDOW:-60}
       - SERVER_URL=${SERVER_URL:-http://localhost:8090}
+      - API_KEY=${API_KEY}
+      # mTLS configuration
+      - MTLS_ENABLED=${MTLS_ENABLED:-false}
+      - CA_CERT_PATH=/certs/ca.crt
     volumes:
       - ./installers:/app/installers:ro
       - ./agent/version.json:/app/agent/version.json:ro
       - ./release/agent:/app/release/agent:ro
+      - ./certs:/certs:ro
+      - agent-certs:/app/agent-certs
     depends_on:
       postgres:
         condition: service_healthy
@@ -75,18 +73,6 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    labels:
-      - "traefik.enable=true"
-      # API routes
-      - "traefik.http.routers.api.rule=Host(`${DOMAIN}`) && PathPrefix(`/api`)"
-      - "traefik.http.routers.api.entrypoints=websecure"
-      - "traefik.http.routers.api.tls.certresolver=letsencrypt"
-      - "traefik.http.services.api.loadbalancer.server.port=8080"
-      # WebSocket routes
-      - "traefik.http.routers.ws.rule=Host(`${DOMAIN}`) && PathPrefix(`/ws`)"
-      - "traefik.http.routers.ws.entrypoints=websecure"
-      - "traefik.http.routers.ws.tls.certresolver=letsencrypt"
-      - "traefik.http.services.ws.loadbalancer.server.port=8080"
     deploy:
       resources:
         limits:
@@ -121,16 +107,6 @@ services:
       - /var/cache/nginx:uid=101,gid=101
       - /var/run:uid=101,gid=101
       - /tmp:uid=101,gid=101
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.frontend.rule=Host(`${DOMAIN}`)"
-      - "traefik.http.routers.frontend.entrypoints=websecure"
-      - "traefik.http.routers.frontend.tls.certresolver=letsencrypt"
-      - "traefik.http.services.frontend.loadbalancer.server.port=80"
-      # Lower priority so API routes take precedence
-      - "traefik.http.routers.frontend.priority=1"
-      - "traefik.http.routers.api.priority=2"
-      - "traefik.http.routers.ws.priority=2"
     deploy:
       resources:
         limits:
@@ -151,7 +127,6 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-sentinel}
       - POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256
     # Port NOT exposed to host - only accessible within docker network
-    # For local development, use: docker exec -it sentinel-postgres psql
     expose:
       - "5432"
     volumes:
@@ -209,3 +184,5 @@ volumes:
   postgres-data:
   redis-data:
   traefik-certs:
+  traefik-logs:
+  agent-certs:

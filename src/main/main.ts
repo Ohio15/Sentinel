@@ -1032,6 +1032,26 @@ function setupIpcHandlers(): void {
     }
   });
 
+  ipcMain.handle('backend:setApiKey', async (_, apiKey: string) => {
+    try {
+      await database.updateSettings({ backendApiKey: apiKey });
+      await backendRelay.initialize();
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: (error as Error).message };
+    }
+  });
+
+  ipcMain.handle('backend:testConnection', async () => {
+    try {
+      const devices = await backendRelay.getDevices();
+      return { success: true, deviceCount: devices?.length || 0 };
+    } catch (error) {
+      return { success: false, error: (error as Error).message };
+    }
+  });
+
+
   // Helper function to ensure backend is connected
   function ensureBackendConnected(): void {
     if (!backendRelay.isConfigured()) {

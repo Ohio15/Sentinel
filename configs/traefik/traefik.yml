@@ -1,0 +1,55 @@
+# Traefik Static Configuration
+# Production-ready configuration for Sentinel RMM
+
+api:
+  dashboard: false
+  insecure: false
+
+log:
+  level: INFO
+  format: json
+
+accessLog:
+  format: json
+  filePath: /var/log/traefik/access.log
+  bufferingSize: 100
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+
+  websecure:
+    address: ":443"
+    http:
+      tls:
+        certResolver: letsencrypt
+      middlewares:
+        - securityHeaders@file
+        - rateLimit@file
+
+  # Dedicated entrypoint for agent mTLS connections
+  agents:
+    address: ":8443"
+    http:
+      tls:
+        options: mtls@file
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: "REDACTED_EMAIL"
+      storage: /letsencrypt/acme.json
+      tlsChallenge: {}
+      # Use staging for testing, comment out for production
+      # caServer: https://acme-staging-v02.api.letsencrypt.org/directory

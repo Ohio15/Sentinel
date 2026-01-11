@@ -29,6 +29,13 @@ const (
 	UpdateDirName   = "update"
 )
 
+// Certificate file names
+const (
+	CACertFileName     = "ca-cert.pem"
+	ClientCertFileName = "client.crt"
+	ClientKeyFileName  = "client.key"
+)
+
 // DataDir returns the platform-specific data directory for Sentinel.
 // Windows: C:\ProgramData\Sentinel
 // macOS: /Library/Application Support/Sentinel
@@ -129,10 +136,18 @@ func Join(elem ...string) string {
 }
 
 // CACertPath returns the full path to the CA certificate file.
-const CACertFileName = "ca-cert.pem"
-
 var CACertPath = func() string {
 	return filepath.Join(CertsDir(), CACertFileName)
+}
+
+// ClientCertPath returns the full path to the client certificate file.
+var ClientCertPath = func() string {
+	return filepath.Join(CertsDir(), ClientCertFileName)
+}
+
+// ClientKeyPath returns the full path to the client key file.
+var ClientKeyPath = func() string {
+	return filepath.Join(CertsDir(), ClientKeyFileName)
 }
 
 // GetCACertHash reads the CA certificate and returns its SHA-256 hash.
@@ -145,4 +160,25 @@ func GetCACertHash() string {
 	}
 	hash := sha256.Sum256(data)
 	return hex.EncodeToString(hash[:])
+}
+
+// GetClientCertHash reads the client certificate and returns its SHA-256 hash.
+// Returns empty string if certificate doesn't exist or can't be read.
+func GetClientCertHash() string {
+	certPath := ClientCertPath()
+	data, err := os.ReadFile(certPath)
+	if err != nil {
+		return ""
+	}
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:])
+}
+
+// HasClientCertificate checks if the agent has a client certificate installed.
+func HasClientCertificate() bool {
+	certPath := ClientCertPath()
+	keyPath := ClientKeyPath()
+	_, certErr := os.Stat(certPath)
+	_, keyErr := os.Stat(keyPath)
+	return certErr == nil && keyErr == nil
 }

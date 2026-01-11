@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/sentinel/agent/internal/config"
 	"github.com/sentinel/agent/internal/offline"
+	"github.com/sentinel/agent/internal/mtls"
 	"github.com/sentinel/agent/internal/paths"
 )
 
@@ -150,6 +151,33 @@ func New(cfg *config.Config, version string) *Client {
 			Timeout: 2 * time.Second,
 		},
 	}
+}
+
+
+// initHTTPClient initializes the HTTP client with mTLS configuration if available
+func (c *Client) initHTTPClient() {
+	if c.httpClient != nil {
+		return
+	}
+
+	// Get mTLS configuration
+	tlsConfig, err := mtls.GetTLSConfig()
+	if err != nil {
+		log.Printf("[mTLS] Warning: Failed to load TLS config, using default: %v", err)
+		c.httpClient = &http.Client{
+			Timeout: 2 * time.Second,
+		}
+		return
+	}
+
+	// Create HTTP client with mTLS
+	c.httpClient = &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: tlsConfig,
+		},
+	}
+	log.Println("[mTLS] HTTP client initialized with TLS configuration")
 }
 
 // SetDeviceInfo sets the device information for auto-enrollment

@@ -84,6 +84,8 @@ export function Settings() {
   const onlineCount = devices.filter(d => d.status === 'online').length;
   // External backend state
   const [backendUrl, setBackendUrl] = useState('');
+  const [backendApiKey, setBackendApiKey] = useState('');
+  const [backendAuthMode, setBackendAuthMode] = useState<'apikey' | 'credentials'>('apikey');
   const [backendEmail, setBackendEmail] = useState('');
   const [backendPassword, setBackendPassword] = useState('');
   const [backendConnecting, setBackendConnecting] = useState(false);
@@ -126,6 +128,10 @@ export function Settings() {
       if (backendConfig.url) {
         setBackendUrl(backendConfig.url);
         setBackendConnected(backendConfig.isAuthenticated || false);
+      }
+      if (backendConfig.apiKey) {
+        setBackendApiKey(backendConfig.apiKey);
+        setBackendAuthMode('apikey');
       }
     } catch (error) {
       console.error('Failed to load settings:', error);
@@ -206,9 +212,17 @@ export function Settings() {
       setBackendError('Please enter a backend URL');
       return;
     }
-    if (!backendEmail || !backendPassword) {
-      setBackendError('Please enter credentials');
-      return;
+
+    if (backendAuthMode === 'apikey') {
+      if (!backendApiKey) {
+        setBackendError('Please enter an API key');
+        return;
+      }
+    } else {
+      if (!backendEmail || !backendPassword) {
+        setBackendError('Please enter credentials');
+        return;
+      }
     }
 
     setBackendConnecting(true);
@@ -218,16 +232,28 @@ export function Settings() {
       // Set the URL first
       await window.api.backend.setUrl(backendUrl);
 
-      // Then authenticate
-      const result = await window.api.backend.authenticate(backendEmail, backendPassword);
-
-      if (result.success) {
-        setBackendConnected(true);
-        setBackendPassword(''); // Clear password after successful connection
-        alert('Successfully connected to external backend');
+      if (backendAuthMode === 'apikey') {
+        // Save API key and test connection
+        await window.api.backend.setApiKey(backendApiKey);
+        const result = await window.api.backend.testConnection();
+        if (result.success) {
+          setBackendConnected(true);
+          alert('Successfully connected with API key');
+        } else {
+          setBackendError(result.error || 'Connection failed - invalid API key');
+          setBackendConnected(false);
+        }
       } else {
-        setBackendError(result.error || 'Authentication failed');
-        setBackendConnected(false);
+        // Use credential authentication
+        const result = await window.api.backend.authenticate(backendEmail, backendPassword);
+        if (result.success) {
+          setBackendConnected(true);
+          setBackendPassword('');
+          alert('Successfully connected to external backend');
+        } else {
+          setBackendError(result.error || 'Authentication failed');
+          setBackendConnected(false);
+        }
       }
     } catch (error) {
       setBackendError(error instanceof Error ? error.message : 'Unknown error');
@@ -437,32 +463,80 @@ export function Settings() {
                   value={backendUrl}
                   onChange={e => setBackendUrl(e.target.value)}
                   className="input"
-                  placeholder="http://localhost:8090"
+                  placeholder="http://192.168.1.2:8090"
                 />
                 <p className="text-xs text-text-secondary mt-1">
                   The URL of your Docker or standalone Sentinel server
                 </p>
               </div>
-              <div>
-                <label className="label">Email</label>
-                <input
-                  type="email"
-                  value={backendEmail}
-                  onChange={e => setBackendEmail(e.target.value)}
-                  className="input"
-                  placeholder="admin@sentinel.local"
-                />
+
+              {/* Auth Mode Toggle */}
+              <div className="md:col-span-2">
+                <label className="label">Authentication Method</label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setBackendAuthMode('apikey')}
+                    className={`px-4 py-2 rounded-lg border transition-colors ${
+                      backendAuthMode === 'apikey'
+                        ? 'bg-primary text-white border-primary'
+                        : 'bg-surface border-border text-text-secondary hover:border-primary'
+                    }`}
+                  >
+                    API Key (Recommended)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBackendAuthMode('credentials')}
+                    className={`px-4 py-2 rounded-lg border transition-colors ${
+                      backendAuthMode === 'credentials'
+                        ? 'bg-primary text-white border-primary'
+                        : 'bg-surface border-border text-text-secondary hover:border-primary'
+                    }`}
+                  >
+                    Email/Password
+                  </button>
+                </div>
               </div>
-              <div>
-                <label className="label">Password</label>
-                <input
-                  type="password"
-                  value={backendPassword}
-                  onChange={e => setBackendPassword(e.target.value)}
-                  className="input"
-                  placeholder="Enter password"
-                />
-              </div>
+
+              {backendAuthMode === 'apikey' ? (
+                <div className="md:col-span-2">
+                  <label className="label">API Key</label>
+                  <input
+                    type="password"
+                    value={backendApiKey}
+                    onChange={e => setBackendApiKey(e.target.value)}
+                    className="input font-mono"
+                    placeholder="Enter your API key"
+                  />
+                  <p className="text-xs text-text-secondary mt-1">
+                    Generate an API key from your backend server's .env file (API_KEY setting)
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="label">Email</label>
+                    <input
+                      type="email"
+                      value={backendEmail}
+                      onChange={e => setBackendEmail(e.target.value)}
+                      className="input"
+                      placeholder="admin@sentinel.local"
+                    />
+                  </div>
+                  <div>
+                    <label className="label">Password</label>
+                    <input
+                      type="password"
+                      value={backendPassword}
+                      onChange={e => setBackendPassword(e.target.value)}
+                      className="input"
+                      placeholder="Enter password"
+                    />
+                  </div>
+                </>
+              )}
             </div>
             {backendError && (
               <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
