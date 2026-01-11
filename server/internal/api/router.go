@@ -235,9 +235,20 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			bootstrap.GET("/agent", downloadBootstrapAgentHandler(services))
 		}
 
+		// Enrollment Tokens (public - no auth required for self-hosted setups)
+		enrollmentTokens := api.Group("/enrollment-tokens")
+		{
+			enrollmentTokens.GET("", listEnrollmentTokensHandler(services))
+			enrollmentTokens.POST("", createEnrollmentTokenHandler(services))
+			enrollmentTokens.GET("/:id", getEnrollmentTokenHandler(services))
+			enrollmentTokens.PUT("/:id", updateEnrollmentTokenHandler(services))
+			enrollmentTokens.DELETE("/:id", deleteEnrollmentTokenHandler(services))
+			enrollmentTokens.POST("/:id/regenerate", regenerateEnrollmentTokenHandler(services))
+		}
+
 		// Protected routes (require JWT)
 		protected := api.Group("")
-		protected.Use(middleware.AuthMiddleware(services.Config.JWTSecret))
+		protected.Use(middleware.AuthOrAPIKeyMiddleware(services.Config.JWTSecret, services.Config.APIKey))
 		protected.Use(middleware.CSRFMiddleware(middleware.DefaultCSRFConfig()))
 		{
 			// Auth
@@ -308,14 +319,6 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			protected.POST("/users", middleware.RequireRole("admin"), createUserHandler(services))
 			protected.PUT("/users/:id", middleware.RequireRole("admin"), updateUserHandler(services))
 			protected.DELETE("/users/:id", middleware.RequireRole("admin"), deleteUserHandler(services))
-
-			// Enrollment Tokens (admin only)
-			protected.GET("/enrollment-tokens", middleware.RequireRole("admin"), listEnrollmentTokensHandler(services))
-			protected.POST("/enrollment-tokens", middleware.RequireRole("admin"), createEnrollmentTokenHandler(services))
-			protected.GET("/enrollment-tokens/:id", middleware.RequireRole("admin"), getEnrollmentTokenHandler(services))
-			protected.PUT("/enrollment-tokens/:id", middleware.RequireRole("admin"), updateEnrollmentTokenHandler(services))
-			protected.DELETE("/enrollment-tokens/:id", middleware.RequireRole("admin"), deleteEnrollmentTokenHandler(services))
-			protected.POST("/enrollment-tokens/:id/regenerate", middleware.RequireRole("admin"), regenerateEnrollmentTokenHandler(services))
 
 			// Agent Installers (authenticated users can view)
 			protected.GET("/agents/installers", listAgentInstallersHandler(services))
@@ -537,7 +540,7 @@ func corsMiddleware(cfg *config.Config) gin.HandlerFunc {
 		}
 
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization, X-Enrollment-Token, X-Agent-Token, X-CSRF-Token")
+		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization, X-Enrollment-Token, X-Agent-Token, X-CSRF-Token, X-API-Key")
 		c.Header("Access-Control-Max-Age", "86400")
 
 		if c.Request.Method == "OPTIONS" {

@@ -41,6 +41,8 @@ entryPoints:
         options: mtls@file
 
 providers:
+  # Docker provider disabled - doesn't work on Windows
+  # Using file-based routing instead
   file:
     directory: /etc/traefik/dynamic
     watch: true

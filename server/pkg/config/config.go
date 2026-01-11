@@ -26,6 +26,7 @@ type Config struct {
 	// Security
 	JWTSecret       string
 	EnrollmentToken string
+	APIKey          string
 	AllowedOrigins  []string
 
 	// Rate Limiting
@@ -70,6 +71,7 @@ func Load() (*Config, error) {
 		// Security
 		JWTSecret:       getEnv("JWT_SECRET", ""),
 		EnrollmentToken: getEnv("ENROLLMENT_TOKEN", ""),
+		APIKey:          getEnv("API_KEY", ""),
 		AllowedOrigins:  getEnvSlice("ALLOWED_ORIGINS", []string{}),
 
 		// Rate Limiting
