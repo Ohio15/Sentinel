@@ -2,6 +2,7 @@ version: '3.8'
 
 services:
   # Reverse Proxy - handles SSL, routing, mTLS for agents
+  # NOTE: Using file-based config instead of Docker provider for Windows compatibility
   traefik:
     image: traefik:v3.0
     container_name: sentinel-traefik

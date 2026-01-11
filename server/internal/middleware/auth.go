@@ -97,6 +97,67 @@ func AgentAuthMiddleware(enrollmentToken string) gin.HandlerFunc {
 	}
 }
 
+func AuthOrAPIKeyMiddleware(jwtSecret, apiKey string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Check for API key first
+		if key := c.GetHeader("X-API-Key"); key != "" && apiKey != "" {
+			if subtle.ConstantTimeCompare([]byte(key), []byte(apiKey)) == 1 {
+				c.Set("userId", uuid.Nil)
+				c.Set("email", "api-key")
+				c.Set("role", "admin")
+				c.Next()
+				return
+			}
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
+			c.Abort()
+			return
+		}
+
+		// Fall back to JWT auth
+		var tokenString string
+		authHeader := c.GetHeader("Authorization")
+		if authHeader != "" {
+			parts := strings.Split(authHeader, " ")
+			if len(parts) == 2 && parts[0] == "Bearer" {
+				tokenString = parts[1]
+			}
+		}
+
+		if tokenString == "" {
+			tokenString = c.Query("token")
+		}
+
+		if tokenString == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization required"})
+			c.Abort()
+			return
+		}
+
+		token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, ErrInvalidSigningMethod
+			}
+			return []byte(jwtSecret), nil
+		})
+
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+			c.Abort()
+			return
+		}
+
+		if claims, ok := token.Claims.(*Claims); ok && token.Valid {
+			c.Set("userId", claims.UserID)
+			c.Set("email", claims.Email)
+			c.Set("role", claims.Role)
+			c.Next()
+		} else {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token claims"})
+			c.Abort()
+		}
+	}
+}
+
 func RequireRole(roles ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userRole, exists := c.Get("role")

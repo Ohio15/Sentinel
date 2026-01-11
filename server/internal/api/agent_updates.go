@@ -240,8 +240,8 @@ func (r *Router) downloadAgentUpdate(c *gin.Context) {
 // logAgentUpdate records an update download in the database
 func (r *Router) logAgentUpdate(ctx context.Context, agentID, platform, arch, ipAddress string) {
 	r.db.Pool().Exec(ctx, `
-		INSERT INTO agent_updates (id, agent_id, from_version, to_version, platform, architecture, ip_address, status, created_at)
-		VALUES ($1, $2, '', $3, $4, $5, $6, 'downloading', NOW())
+		INSERT INTO agent_updates (id, device_id, from_version, to_version, platform, architecture, ip_address, status, created_at)
+		VALUES ($1, (SELECT id FROM devices WHERE agent_id = $2), '', $3, $4, $5, $6, 'downloading', NOW())
 	`, uuid.New(), agentID, getCurrentAgentVersion(), platform, arch, ipAddress)
 
 	r.db.Pool().Exec(ctx, `
@@ -315,7 +315,7 @@ func (r *Router) getDeviceVersionHistory(c *gin.Context) {
 	rows, err := r.db.Pool().Query(c.Request.Context(), `
 		SELECT au.id, au.from_version, au.to_version, au.status, au.error_message, au.created_at, au.completed_at
 		FROM agent_updates au
-		JOIN devices d ON d.agent_id = au.agent_id
+		JOIN devices d ON d.id = au.device_id
 		WHERE d.id = $1
 		ORDER BY au.created_at DESC
 		LIMIT 50
@@ -377,7 +377,7 @@ func (r *Router) reportUpdateStatus(c *gin.Context) {
 	result, err := r.db.Pool().Exec(c.Request.Context(), `
 		UPDATE agent_updates
 		SET status = $1::text, error_message = $2, completed_at = CASE WHEN $1::text IN ('completed', 'failed') THEN NOW() ELSE NULL END
-		WHERE agent_id = $3 AND to_version = $4 AND status = 'downloading'
+		WHERE device_id = (SELECT id FROM devices WHERE agent_id = $3) AND to_version = $4 AND status = 'downloading'
 	`, req.Status, req.Error, req.AgentID, req.ToVersion)
 
 	if err != nil {
@@ -388,8 +388,8 @@ func (r *Router) reportUpdateStatus(c *gin.Context) {
 	// If no rows were updated, insert a new record
 	if err == nil && result.RowsAffected() == 0 {
 		r.db.Pool().Exec(c.Request.Context(), `
-			INSERT INTO agent_updates (id, agent_id, from_version, to_version, platform, architecture, ip_address, status, error_message, created_at, completed_at)
-			VALUES ($1, $2, $3, $4, '', '', $5, $6::text, $7, NOW(), CASE WHEN $6::text IN ('completed', 'failed') THEN NOW() ELSE NULL END)
+			INSERT INTO agent_updates (id, device_id, from_version, to_version, platform, architecture, ip_address, status, error_message, created_at, completed_at)
+			VALUES ($1, (SELECT id FROM devices WHERE agent_id = $2), $3, $4, '', '', $5, $6::text, $7, NOW(), CASE WHEN $6::text IN ('completed', 'failed') THEN NOW() ELSE NULL END)
 			ON CONFLICT DO NOTHING
 		`, uuid.New(), req.AgentID, req.FromVersion, req.ToVersion, c.ClientIP(), req.Status, req.Error)
 	}
