@@ -221,6 +221,9 @@ if (isWeb && typeof (window as any).api === 'undefined') {
       dismiss: async (id: string) => {
         return api!.resolveAlert(id);
       },
+      onNew: (callback: (alert: any) => void) => {
+        return registerHandler('alerts:new', callback);
+      },
     },
 
     // Settings API
