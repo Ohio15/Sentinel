@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { devices as devicesService, events, isElectron } from '../services';
 
 export interface GPUInfo {
   name: string;
@@ -141,7 +142,7 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       // Pass undefined instead of null to get all devices
-      const devices = await window.api.devices.list(clientId || undefined);
+      const devices = await devicesService.list(clientId || undefined);
       set({ devices, loading: false });
     } catch (error: unknown) {
       set({ error: error instanceof Error ? error.message : 'Unknown error', loading: false });
@@ -152,7 +153,7 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
     console.log('[DeviceStore] fetchDevice called with id:', id);
     set({ loading: true, error: null });
     try {
-      const device = await window.api.devices.get(id);
+      const device = await devicesService.get(id);
       console.log('[DeviceStore] fetchDevice result:', device);
       set({ selectedDevice: device, loading: false });
     } catch (error: unknown) {
@@ -164,7 +165,7 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
   fetchMetrics: async (deviceId: string, hours: number = 24) => {
     console.log('[DeviceStore] fetchMetrics called for device:', deviceId, 'hours:', hours);
     try {
-      const metrics = await window.api.devices.getMetrics(deviceId, hours);
+      const metrics = await devicesService.getMetrics(deviceId, hours);
       console.log('[DeviceStore] fetchMetrics returned', metrics.length, 'metrics');
       set({ metrics });
     } catch (error: unknown) {
@@ -174,7 +175,7 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
 
   deleteDevice: async (id: string) => {
     try {
-      await window.api.devices.delete(id);
+      await devicesService.delete(id);
       const { devices } = get();
       set({ devices: devices.filter(d => d.id !== id) });
     } catch (error: unknown) {
@@ -184,7 +185,7 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
 
   disableDevice: async (id: string) => {
     try {
-      await window.api.devices.disable(id);
+      await devicesService.disable(id);
       const { devices, selectedDevice } = get();
       const updated = devices.map(d =>
         d.id === id ? { ...d, status: 'disabled' as const, isDisabled: true, disabledAt: new Date().toISOString() } : d
@@ -203,7 +204,7 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
 
   enableDevice: async (id: string) => {
     try {
-      await window.api.devices.enable(id);
+      await devicesService.enable(id);
       const { devices, selectedDevice } = get();
       const updated = devices.map(d =>
         d.id === id ? { ...d, status: 'offline' as const, isDisabled: false, disabledAt: undefined } : d
@@ -222,7 +223,7 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
 
   uninstallDevice: async (id: string) => {
     try {
-      await window.api.devices.uninstall(id);
+      await devicesService.uninstall(id);
       const { devices, selectedDevice } = get();
       const updated = devices.map(d =>
         d.id === id ? { ...d, status: 'uninstalling' as const } : d
@@ -252,7 +253,7 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
     };
     window.addEventListener('focus', handleFocus);
 
-    const unsubOnline = window.api.on('devices:online', async (data) => {
+    const unsubOnline = events.on('devices:online', async (data) => {
       const { devices } = get();
       const existingDevice = devices.find(d => d.agentId === data.agentId);
 
@@ -266,7 +267,7 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
         // New device - fetch it and add to store
         console.log('[DeviceStore] New device online, fetching:', data.deviceId);
         try {
-          const newDevice = await window.api.devices.get(data.deviceId);
+          const newDevice = await devicesService.get(data.deviceId);
           if (newDevice) {
             set({ devices: [...devices, { ...newDevice, status: 'online' as const }] });
             console.log('[DeviceStore] Added new device to store:', newDevice.hostname);
@@ -277,7 +278,7 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
       }
     });
 
-    const unsubOffline = window.api.on('devices:offline', (data) => {
+    const unsubOffline = events.on('devices:offline', (data) => {
       const { devices } = get();
       const updated = devices.map(d =>
         d.agentId === data.agentId ? { ...d, status: 'offline' as const } : d
@@ -285,14 +286,14 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
       set({ devices: updated });
     });
 
-    const unsubUpdated = window.api.on('devices:updated', (data) => {
+    const unsubUpdated = events.on('devices:updated', (data) => {
       console.log('[DeviceStore] devices:updated received', data);
       // Refetch devices to get the latest list
       get().fetchDevices();
     });
 
     let metricsReceivedCount = 0;
-    const unsubMetrics = window.api.on('metrics:updated', (data) => {
+    const unsubMetrics = events.on('metrics:updated', (data) => {
       metricsReceivedCount++;
       const { selectedDevice, metrics } = get();
 
