@@ -46,11 +46,11 @@ export function Header({ title, subtitle }: HeaderProps) {
 
           {/* Connection status */}
           <div
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium ${
-              isConnected
-                ? 'bg-green-100 text-green-700'
-                : 'bg-red-100 text-red-700'
-            }`}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium"
+            style={{
+              backgroundColor: isConnected ? 'var(--status-success-bg)' : 'var(--status-danger-bg)',
+              color: isConnected ? 'var(--status-success-text)' : 'var(--status-danger-text)',
+            }}
           >
             {isConnected ? (
               <>

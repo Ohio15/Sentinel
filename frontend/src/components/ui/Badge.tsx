@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { ReactNode, CSSProperties } from 'react';
 
 interface BadgeProps {
   children: ReactNode;
@@ -8,12 +8,27 @@ interface BadgeProps {
 }
 
 export function Badge({ children, variant = 'default', size = 'sm', className = '' }: BadgeProps) {
-  const variants = {
-    default: 'bg-gray-100 text-gray-700',
-    success: 'bg-green-100 text-green-700',
-    warning: 'bg-yellow-100 text-yellow-700',
-    danger: 'bg-red-100 text-red-700',
-    info: 'bg-blue-100 text-blue-700',
+  const variantStyles: Record<string, CSSProperties> = {
+    default: {
+      backgroundColor: 'var(--hover-bg)',
+      color: 'var(--text-secondary)',
+    },
+    success: {
+      backgroundColor: 'var(--status-success-bg)',
+      color: 'var(--status-success-text)',
+    },
+    warning: {
+      backgroundColor: 'var(--status-warning-bg)',
+      color: 'var(--status-warning-text)',
+    },
+    danger: {
+      backgroundColor: 'var(--status-danger-bg)',
+      color: 'var(--status-danger-text)',
+    },
+    info: {
+      backgroundColor: 'var(--primary-light)',
+      color: 'var(--primary-color)',
+    },
   };
 
   const sizes = {
@@ -23,7 +38,8 @@ export function Badge({ children, variant = 'default', size = 'sm', className = 
 
   return (
     <span
-      className={`inline-flex items-center font-medium rounded-full ${variants[variant]} ${sizes[size]} ${className}`}
+      className={`inline-flex items-center font-medium rounded-full ${sizes[size]} ${className}`}
+      style={variantStyles[variant]}
     >
       {children}
     </span>
