@@ -271,6 +271,19 @@ if (isWeb && typeof (window as any).api === 'undefined') {
       install: async () => {},
     },
 
+    // Updater (stub for web - auto-updates not available in web mode)
+    updater: {
+      getVersion: async () => '1.67.10-web',
+      checkForUpdates: async () => ({ updateAvailable: false }),
+      downloadUpdate: async () => {},
+      installUpdate: () => {},
+      onUpdateAvailable: () => () => {},
+      onUpdateNotAvailable: () => () => {},
+      onDownloadProgress: () => () => {},
+      onUpdateDownloaded: () => () => {},
+      onError: () => () => {},
+    },
+
     // Settings (stub for web)
     settings: {
       get: async () => ({}),
