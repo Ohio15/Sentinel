@@ -357,6 +357,7 @@ if (isWeb && typeof (window as any).api === 'undefined') {
       getDevices: async (subdomain: string) => [],
       getDevice: async (subdomain: string, deviceId: string) => null,
       getSettings: async () => ({}),
+      getInfo: async () => ({ version: '1.67.10-web', port: 443, environment: 'production' }),
       updateSettings: async (settings: any) => null,
       getClientTenants: async () => [],
       createClientTenant: async (clientId: string, tenantId: string) => null,
@@ -395,6 +396,7 @@ if (isWeb && typeof (window as any).api === 'undefined') {
     server: {
       getEnrollmentLink: async () => window.location.origin + '/enroll',
       getSettings: async () => ({}),
+      getInfo: async () => ({ version: '1.67.10-web', port: 443, environment: 'production' }),
     },
 
     // Agent API
