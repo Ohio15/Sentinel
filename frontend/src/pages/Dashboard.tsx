@@ -32,12 +32,12 @@ export function Dashboard() {
   // Only enable queries when we have a valid token
   const queryEnabled = isAuthenticated && !!token;
 
-  // Fetch dashboard stats - temporarily disabled until endpoint exists
+  // Fetch dashboard stats
   const { data: stats } = useQuery<DashboardStats>({
     queryKey: ['dashboard-stats'],
     queryFn: () => api.getDashboardStats(),
     refetchInterval: 30000,
-    enabled: false, // Disabled - endpoint doesn't exist yet
+    enabled: queryEnabled,
   });
 
   // Fetch devices
