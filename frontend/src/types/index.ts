@@ -1,9 +1,10 @@
 export interface User {
   id: string;
+  username: string;
   email: string;
   firstName: string;
   lastName: string;
-  role: 'admin' | 'user' | 'readonly';
+  role: 'admin' | 'operator' | 'viewer';
   createdAt: string;
   lastLogin?: string;
 }
@@ -13,7 +14,7 @@ export interface AuthState {
   token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (identifier: string, password: string) => Promise<void>;
   logout: () => void;
   checkAuth: () => Promise<void>;
 }

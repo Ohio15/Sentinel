@@ -48,8 +48,8 @@ class ApiService {
   }
 
   // Auth endpoints
-  async login(email: string, password: string) {
-    const response = await this.client.post('/auth/login', { email, password });
+  async login(identifier: string, password: string) {
+    const response = await this.client.post('/auth/login', { identifier, password });
     return response.data;
   }
 
@@ -65,6 +65,39 @@ class ApiService {
   async getCurrentUser() {
     const response = await this.client.get('/auth/me');
     return response.data;
+  }
+
+  // Invitation/Registration endpoints (public)
+  async validateInvitation(token: string) {
+    const response = await this.client.get('/auth/invitations/validate', { params: { token } });
+    return response.data;
+  }
+
+  async register(data: {
+    token: string;
+    username: string;
+    email: string;
+    password: string;
+    firstName?: string;
+    lastName?: string;
+  }) {
+    const response = await this.client.post('/auth/register', data);
+    return response.data;
+  }
+
+  // Invitation management (admin)
+  async getInvitations() {
+    const response = await this.client.get('/invitations');
+    return response.data;
+  }
+
+  async createInvitation(data: { email?: string; role: string }) {
+    const response = await this.client.post('/invitations', data);
+    return response.data;
+  }
+
+  async deleteInvitation(id: string) {
+    await this.client.delete(`/invitations/${id}`);
   }
 
   // Device endpoints

@@ -28,6 +28,32 @@ func meHandler(services *Services) gin.HandlerFunc {
 	return router.me
 }
 
+// Invitation handlers
+func validateInvitationHandler(services *Services) gin.HandlerFunc {
+	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub}
+	return router.validateInvitation
+}
+
+func registerHandler(services *Services) gin.HandlerFunc {
+	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub}
+	return router.register
+}
+
+func listInvitationsHandler(services *Services) gin.HandlerFunc {
+	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub}
+	return router.listInvitations
+}
+
+func createInvitationHandler(services *Services) gin.HandlerFunc {
+	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub}
+	return router.createInvitation
+}
+
+func deleteInvitationHandler(services *Services) gin.HandlerFunc {
+	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub}
+	return router.deleteInvitation
+}
+
 // Agent handlers
 func enrollAgentHandler(services *Services) gin.HandlerFunc {
 	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub}

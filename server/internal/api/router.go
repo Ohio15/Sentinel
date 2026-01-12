@@ -58,6 +58,8 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 		{
 			auth.POST("/login", router.login)
 			auth.POST("/refresh", router.refreshToken)
+			auth.GET("/invitations/validate", router.validateInvitation)
+			auth.POST("/register", router.register)
 		}
 
 		// Agent routes (uses enrollment token)
@@ -142,6 +144,11 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 			protected.PUT("/users/:id", middleware.RequireRole("admin"), router.updateUser)
 			protected.DELETE("/users/:id", middleware.RequireRole("admin"), router.deleteUser)
 
+			// Invitations (admin only)
+			protected.GET("/invitations", middleware.RequireRole("admin"), router.listInvitations)
+			protected.POST("/invitations", middleware.RequireRole("admin"), router.createInvitation)
+			protected.DELETE("/invitations/:id", middleware.RequireRole("admin"), router.deleteInvitation)
+
 			// Enrollment Tokens (admin only)
 			protected.GET("/enrollment-tokens", middleware.RequireRole("admin"), router.listEnrollmentTokens)
 			protected.POST("/enrollment-tokens", middleware.RequireRole("admin"), router.createEnrollmentToken)
@@ -203,6 +210,8 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 		{
 			auth.POST("/login", loginHandler(services))
 			auth.POST("/refresh", refreshTokenHandler(services))
+			auth.GET("/invitations/validate", validateInvitationHandler(services))
+			auth.POST("/register", registerHandler(services))
 		}
 
 		// Agent routes (uses enrollment token)
@@ -319,6 +328,11 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			protected.POST("/users", middleware.RequireRole("admin"), createUserHandler(services))
 			protected.PUT("/users/:id", middleware.RequireRole("admin"), updateUserHandler(services))
 			protected.DELETE("/users/:id", middleware.RequireRole("admin"), deleteUserHandler(services))
+
+			// Invitations (admin only)
+			protected.GET("/invitations", middleware.RequireRole("admin"), listInvitationsHandler(services))
+			protected.POST("/invitations", middleware.RequireRole("admin"), createInvitationHandler(services))
+			protected.DELETE("/invitations/:id", middleware.RequireRole("admin"), deleteInvitationHandler(services))
 
 			// Agent Installers (authenticated users can view)
 			protected.GET("/agents/installers", listAgentInstallersHandler(services))
