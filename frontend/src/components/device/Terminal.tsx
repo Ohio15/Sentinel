@@ -28,6 +28,15 @@ export function Terminal({ deviceId, agentId, onClose }: TerminalProps) {
     }
   }, []);
 
+  const handleError = useCallback((data: unknown) => {
+    const payload = data as { sessionId?: string; error?: string; originalType?: string };
+    // Only handle errors for our session or terminal-related errors
+    if ((payload.sessionId === sessionIdRef.current || payload.originalType === 'start_terminal') && xtermRef.current) {
+      xtermRef.current.write(`\x1b[1;31mError: ${payload.error || 'Unknown error'}\x1b[0m\r\n`);
+      setIsConnected(false);
+    }
+  }, []);
+
   const startTerminalSession = useCallback(() => {
     sessionIdRef.current = `term-${deviceId}-${Date.now()}`;
 
@@ -131,8 +140,9 @@ export function Terminal({ deviceId, agentId, onClose }: TerminalProps) {
 
     window.addEventListener('resize', handleResize);
 
-    // Subscribe to terminal output
-    const unsubscribe = wsService.on('terminal_output', handleTerminalOutput);
+    // Subscribe to terminal output and errors
+    const unsubscribeOutput = wsService.on('terminal_output', handleTerminalOutput);
+    const unsubscribeError = wsService.on('error', handleError);
 
     // Start terminal session
     if (wsService.isConnected) {
@@ -149,11 +159,12 @@ export function Terminal({ deviceId, agentId, onClose }: TerminalProps) {
 
     return () => {
       window.removeEventListener('resize', handleResize);
-      unsubscribe();
+      unsubscribeOutput();
+      unsubscribeError();
       closeTerminalSession();
       xterm.dispose();
     };
-  }, [deviceId, agentId, handleTerminalOutput, startTerminalSession, closeTerminalSession, isConnected]);
+  }, [deviceId, agentId, handleTerminalOutput, handleError, startTerminalSession, closeTerminalSession, isConnected]);
 
   // Re-fit terminal when fullscreen changes
   useEffect(() => {

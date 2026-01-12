@@ -278,10 +278,13 @@ export function DeviceDetail() {
 
   const isOnline = device.status === 'online';
 
+  // Use live metrics for storage usage when available, fall back to enrollment data
   const primaryDisk = device.storage?.[0];
-  const storageUsedPercent = primaryDisk?.percent || 0;
-  const storageTotal = primaryDisk ? formatBytes(primaryDisk.total) : 'N/A';
-  const storageUsed = primaryDisk ? formatBytes(primaryDisk.used) : 'N/A';
+  const storageUsedPercent = latestMetrics?.diskPercent ?? primaryDisk?.percent ?? 0;
+  const storageTotalBytes = latestMetrics?.diskTotalBytes ?? primaryDisk?.total ?? 0;
+  const storageUsedBytes = latestMetrics?.diskUsedBytes ?? primaryDisk?.used ?? 0;
+  const storageTotal = storageTotalBytes > 0 ? formatBytes(storageTotalBytes) : 'N/A';
+  const storageUsed = storageUsedBytes > 0 ? formatBytes(storageUsedBytes) : 'N/A';
   const primaryGPU = device.gpu?.[0];
 
   return (

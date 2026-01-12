@@ -79,8 +79,10 @@ export interface DeviceMetrics {
   cpuPercent: number;
   memoryPercent: number;
   memoryUsedBytes: number;
+  memoryTotalBytes?: number;
   diskPercent: number;
   diskUsedBytes: number;
+  diskTotalBytes?: number;
   networkRxBytes: number;
   networkTxBytes: number;
   processCount: number;

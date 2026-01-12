@@ -25,8 +25,17 @@ export function RemoteDesktop({ deviceId, agentId, onClose }: RemoteDesktopProps
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fps, setFps] = useState(0);
   const [resolution, setResolution] = useState({ width: 0, height: 0 });
+  const [error, setError] = useState<string | null>(null);
   const frameCountRef = useRef(0);
   const lastFpsUpdateRef = useRef(Date.now());
+
+  const handleError = useCallback((data: unknown) => {
+    const errData = data as { sessionId?: string; error?: string; originalType?: string };
+    if (errData.sessionId === sessionIdRef.current || errData.originalType === 'start_remote') {
+      setError(errData.error || 'Connection error');
+      setIsConnected(false);
+    }
+  }, []);
 
   const handleRemoteFrame = useCallback((data: unknown) => {
     const frame = data as RemoteFrame;
@@ -199,8 +208,9 @@ export function RemoteDesktop({ deviceId, agentId, onClose }: RemoteDesktopProps
   }, [deviceId, agentId, isConnected]);
 
   useEffect(() => {
-    // Subscribe to remote frames
-    const unsubscribe = wsService.on('remote_frame', handleRemoteFrame);
+    // Subscribe to remote frames and errors
+    const unsubscribeFrame = wsService.on('remote_frame', handleRemoteFrame);
+    const unsubscribeError = wsService.on('error', handleError);
 
     // Start remote session
     if (wsService.isConnected) {
@@ -218,12 +228,13 @@ export function RemoteDesktop({ deviceId, agentId, onClose }: RemoteDesktopProps
     window.addEventListener('keyup', handleKeyUp);
 
     return () => {
-      unsubscribe();
+      unsubscribeFrame();
+      unsubscribeError();
       stopRemoteSession();
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [handleRemoteFrame, startRemoteSession, stopRemoteSession, handleKeyDown, handleKeyUp]);
+  }, [handleRemoteFrame, handleError, startRemoteSession, stopRemoteSession, handleKeyDown, handleKeyUp]);
 
   const handleClose = () => {
     stopRemoteSession();
@@ -296,8 +307,17 @@ export function RemoteDesktop({ deviceId, agentId, onClose }: RemoteDesktopProps
         {!isConnected ? (
           <div className="flex flex-col items-center gap-4 text-gray-400">
             <Monitor className="w-12 h-12" />
-            <p>Connecting to remote desktop...</p>
-            <Button onClick={startRemoteSession}>Reconnect</Button>
+            {error ? (
+              <>
+                <p className="text-red-400">{error}</p>
+                <Button onClick={() => { setError(null); startRemoteSession(); }}>Try Again</Button>
+              </>
+            ) : (
+              <>
+                <p>Connecting to remote desktop...</p>
+                <Button onClick={startRemoteSession}>Reconnect</Button>
+              </>
+            )}
           </div>
         ) : (
           <canvas
