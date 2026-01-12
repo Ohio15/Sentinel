@@ -92,8 +92,8 @@ services:
   # Frontend (built static files served by nginx)
   frontend:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: Dockerfile.web
       args:
         - VITE_API_URL=https://${DOMAIN}/api
         - VITE_WS_URL=wss://${DOMAIN}/ws

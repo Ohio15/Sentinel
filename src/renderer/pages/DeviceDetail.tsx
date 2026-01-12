@@ -280,9 +280,11 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
   // Extract data for summary cards - use real device fields
   const latestMetrics = metrics.length > 0 ? metrics[0] : null;
 
-  // Calculate total storage from storage array
-  const totalStorage = selectedDevice.storage?.reduce((sum, s) => sum + (s.total || 0), 0) || 0;
-  const usedStorage = selectedDevice.storage?.reduce((sum, s) => sum + (s.used || 0), 0) || 0;
+  // Use live metrics for storage when available, fall back to enrollment data
+  const enrollmentStorage = selectedDevice.storage?.reduce((sum, s) => sum + (s.total || 0), 0) || 0;
+  const enrollmentUsed = selectedDevice.storage?.reduce((sum, s) => sum + (s.used || 0), 0) || 0;
+  const totalStorage = latestMetrics?.diskTotalBytes || enrollmentStorage;
+  const usedStorage = latestMetrics?.diskUsedBytes || enrollmentUsed;
 
   // Get GPU info from device
   const gpuName = selectedDevice.gpu?.[0]?.name || 'Unknown GPU';

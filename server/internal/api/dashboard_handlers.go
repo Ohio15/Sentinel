@@ -29,6 +29,20 @@ func (r *Router) handleDashboardMessage(userID uuid.UUID, message []byte) {
 	}
 	json.Unmarshal(msg.Payload, &payload)
 
+	// Helper to send error response back to dashboard
+	sendError := func(errorMsg string) {
+		errResponse, _ := json.Marshal(map[string]interface{}{
+			"type":      "error",
+			"requestId": msg.RequestID,
+			"sessionId": payload.SessionID,
+			"deviceId":  payload.DeviceID,
+			"agentId":   payload.AgentID,
+			"error":     errorMsg,
+			"originalType": msg.Type,
+		})
+		r.hub.BroadcastToDashboards(errResponse)
+	}
+
 	// Get agent ID from device ID if needed
 	agentID := payload.AgentID
 	if agentID == "" && payload.DeviceID != "" {
@@ -40,11 +54,13 @@ func (r *Router) handleDashboardMessage(userID uuid.UUID, message []byte) {
 	}
 
 	if agentID == "" {
+		sendError("Device not found or agent ID unavailable")
 		return
 	}
 
 	// Check if agent is online
 	if !r.hub.IsAgentOnline(agentID) {
+		sendError("Agent is not connected. Please check the agent service on the device.")
 		return
 	}
 

@@ -89,21 +89,42 @@ type Message struct {
 // MessageHandler is a function that handles incoming messages
 type MessageHandler func(msg *Message) error
 
+// StorageInfo contains disk/partition information for auto-enrollment
+type StorageInfo struct {
+	Device     string  `json:"device"`
+	Mountpoint string  `json:"mountpoint"`
+	FSType     string  `json:"fstype"`
+	Total      uint64  `json:"total"`
+	Used       uint64  `json:"used"`
+	Free       uint64  `json:"free"`
+	Percent    float64 `json:"percent"`
+}
+
+// GPUInfo contains graphics card information for auto-enrollment
+type GPUInfo struct {
+	Name          string `json:"name"`
+	Vendor        string `json:"vendor"`
+	Memory        uint64 `json:"memory"`
+	DriverVersion string `json:"driver_version"`
+}
+
 // DeviceInfo contains device information for auto-enrollment
 type DeviceInfo struct {
-	Hostname     string `json:"hostname"`
-	Platform     string `json:"platform"`
-	OSType       string `json:"osType"`
-	OSVersion    string `json:"osVersion"`
-	Architecture string `json:"architecture"`
-	CPUModel     string `json:"cpuModel"`
-	CPUCores     int    `json:"cpuCores"`
-	TotalMemory  uint64 `json:"totalMemory"`
-	SerialNumber string `json:"serialNumber"`
-	Manufacturer string `json:"manufacturer"`
-	Model        string `json:"model"`
-	IPAddress    string `json:"ipAddress"`
-	MACAddress   string `json:"macAddress"`
+	Hostname     string        `json:"hostname"`
+	Platform     string        `json:"platform"`
+	OSType       string        `json:"osType"`
+	OSVersion    string        `json:"osVersion"`
+	Architecture string        `json:"architecture"`
+	CPUModel     string        `json:"cpuModel"`
+	CPUCores     int           `json:"cpuCores"`
+	TotalMemory  uint64        `json:"totalMemory"`
+	SerialNumber string        `json:"serialNumber"`
+	Manufacturer string        `json:"manufacturer"`
+	Model        string        `json:"model"`
+	IPAddress    string        `json:"ipAddress"`
+	MACAddress   string        `json:"macAddress"`
+	Storage      []StorageInfo `json:"storage,omitempty"`
+	GPU          []GPUInfo     `json:"gpu,omitempty"`
 }
 
 // Client manages the WebSocket connection to the server

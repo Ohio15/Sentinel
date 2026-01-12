@@ -152,6 +152,21 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 			Model        string `json:"model"`
 			IPAddress    string `json:"ipAddress"`
 			MACAddress   string `json:"macAddress"`
+			GPU          []struct {
+				Name          string `json:"name"`
+				Vendor        string `json:"vendor"`
+				Memory        uint64 `json:"memory"`
+				DriverVersion string `json:"driver_version"`
+			} `json:"gpu,omitempty"`
+			Storage []struct {
+				Device     string  `json:"device"`
+				Mountpoint string  `json:"mountpoint"`
+				FSType     string  `json:"fstype"`
+				Total      uint64  `json:"total"`
+				Used       uint64  `json:"used"`
+				Free       uint64  `json:"free"`
+				Percent    float64 `json:"percent"`
+			} `json:"storage,omitempty"`
 		} `json:"deviceInfo,omitempty"`
 	}
 	if err := json.Unmarshal(authMsg.Payload, &authPayload); err != nil {
@@ -181,19 +196,25 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 			// Use device info from agent for proper auto-enrollment
 			log.Printf("Auto-enrolling with device info: hostname=%s, platform=%s",
 				authPayload.DeviceInfo.Hostname, authPayload.DeviceInfo.Platform)
+
+			// Convert GPU and Storage to JSON for database storage
+			gpuJSON, _ := json.Marshal(authPayload.DeviceInfo.GPU)
+			storageJSON, _ := json.Marshal(authPayload.DeviceInfo.Storage)
+
 			_, insertErr = r.db.Pool().Exec(ctx, `
 				INSERT INTO devices (id, agent_id, hostname, platform, os_type, os_version,
 					architecture, cpu_model, cpu_cores, total_memory, serial_number,
-					manufacturer, model, ip_address, mac_address, status, created_at, last_seen,
+					manufacturer, model, ip_address, mac_address, gpu, storage, status, created_at, last_seen,
 					ca_cert_hash, ca_cert_updated_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'online', NOW(), NOW(),
-					NULLIF($16, ''), CASE WHEN $16 != '' THEN NOW() ELSE NULL END)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'online', NOW(), NOW(),
+					NULLIF($18, ''), CASE WHEN $18 != '' THEN NOW() ELSE NULL END)
 			`, deviceID, authPayload.AgentID, authPayload.DeviceInfo.Hostname,
 				authPayload.DeviceInfo.Platform, authPayload.DeviceInfo.OSType, authPayload.DeviceInfo.OSVersion,
 				authPayload.DeviceInfo.Architecture, authPayload.DeviceInfo.CPUModel, authPayload.DeviceInfo.CPUCores,
 				authPayload.DeviceInfo.TotalMemory, authPayload.DeviceInfo.SerialNumber,
 				authPayload.DeviceInfo.Manufacturer, authPayload.DeviceInfo.Model,
-				authPayload.DeviceInfo.IPAddress, authPayload.DeviceInfo.MACAddress, authPayload.CACertHash)
+				authPayload.DeviceInfo.IPAddress, authPayload.DeviceInfo.MACAddress,
+				gpuJSON, storageJSON, authPayload.CACertHash)
 		} else {
 			// Fallback to minimal enrollment
 			_, insertErr = r.db.Pool().Exec(ctx, `
@@ -225,8 +246,28 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	// Register client
 	client := r.hub.RegisterAgent(conn, authPayload.AgentID, deviceID)
 
-	// Update device status and certificate hash
-	if authPayload.CACertHash != "" {
+	// Update device status, certificate hash, and hardware info (GPU/Storage) if provided
+	// This ensures devices that enrolled before GPU/Storage support get updated
+	if authPayload.DeviceInfo != nil && (len(authPayload.DeviceInfo.GPU) > 0 || len(authPayload.DeviceInfo.Storage) > 0) {
+		gpuJSON, _ := json.Marshal(authPayload.DeviceInfo.GPU)
+		storageJSON, _ := json.Marshal(authPayload.DeviceInfo.Storage)
+		if authPayload.CACertHash != "" {
+			if _, err := r.db.Pool().Exec(ctx, `
+				UPDATE devices SET status = 'online', last_seen = NOW(),
+				ca_cert_hash = $2, ca_cert_updated_at = NOW(),
+				gpu = COALESCE($3, gpu), storage = COALESCE($4, storage)
+				WHERE id = $1`, deviceID, authPayload.CACertHash, gpuJSON, storageJSON); err != nil {
+				log.Printf("Error updating device %s status to online: %v", deviceID, err)
+			}
+		} else {
+			if _, err := r.db.Pool().Exec(ctx, `
+				UPDATE devices SET status = 'online', last_seen = NOW(),
+				gpu = COALESCE($2, gpu), storage = COALESCE($3, storage)
+				WHERE id = $1`, deviceID, gpuJSON, storageJSON); err != nil {
+				log.Printf("Error updating device %s status to online: %v", deviceID, err)
+			}
+		}
+	} else if authPayload.CACertHash != "" {
 		if _, err := r.db.Pool().Exec(ctx, "UPDATE devices SET status = 'online', last_seen = NOW(), ca_cert_hash = $2, ca_cert_updated_at = NOW() WHERE id = $1", deviceID, authPayload.CACertHash); err != nil {
 			log.Printf("Error updating device %s status to online: %v", deviceID, err)
 		}

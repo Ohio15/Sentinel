@@ -368,6 +368,32 @@ func (a *Agent) Start() error {
 
 	// Collect and set device info for auto-enrollment of orphaned agents
 	if sysInfo, err := a.collector.GetSystemInfo(); err == nil {
+		// Convert collector.GPUInfo to client.GPUInfo (static hardware specs)
+		var gpuInfo []client.GPUInfo
+		for _, g := range sysInfo.GPU {
+			gpuInfo = append(gpuInfo, client.GPUInfo{
+				Name:          g.Name,
+				Vendor:        g.Vendor,
+				Memory:        g.Memory,
+				DriverVersion: g.DriverVersion,
+			})
+		}
+
+		// Convert collector.StorageInfo to client.StorageInfo (static: device/mount/total capacity)
+		var storageInfo []client.StorageInfo
+		for _, s := range sysInfo.Storage {
+			storageInfo = append(storageInfo, client.StorageInfo{
+				Device:     s.Device,
+				Mountpoint: s.Mountpoint,
+				FSType:     s.FSType,
+				Total:      s.Total,
+				// Note: Used/Free/Percent are dynamic and come via metrics, but included as initial snapshot
+				Used:    s.Used,
+				Free:    s.Free,
+				Percent: s.Percent,
+			})
+		}
+
 		a.client.SetDeviceInfo(&client.DeviceInfo{
 			Hostname:     sysInfo.Hostname,
 			Platform:     sysInfo.Platform,
@@ -382,6 +408,8 @@ func (a *Agent) Start() error {
 			Model:        sysInfo.Model,
 			IPAddress:    sysInfo.IPAddress,
 			MACAddress:   sysInfo.MACAddress,
+			GPU:          gpuInfo,
+			Storage:      storageInfo,
 		})
 	}
 

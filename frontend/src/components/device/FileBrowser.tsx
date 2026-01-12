@@ -74,7 +74,22 @@ export function FileBrowser({ deviceId, agentId, onClose }: FileBrowserProps) {
       }
     };
 
-    const unsubscribe = wsService.on('response', handleResponse);
+    const handleError = (data: unknown) => {
+      const errData = data as {
+        requestId?: string;
+        deviceId?: string;
+        error?: string;
+        originalType?: string;
+      };
+      // Handle errors for this request or for list_files operations on this device
+      if (errData.requestId === reqId || (errData.deviceId === deviceId && errData.originalType === 'list_files')) {
+        setLoading(false);
+        setError(errData.error || 'Agent connection error');
+      }
+    };
+
+    const unsubscribeResponse = wsService.on('response', handleResponse);
+    const unsubscribeError = wsService.on('error', handleError);
 
     wsService.send('list_files', {
       deviceId,
@@ -85,14 +100,18 @@ export function FileBrowser({ deviceId, agentId, onClose }: FileBrowserProps) {
 
     // Cleanup after timeout
     setTimeout(() => {
-      unsubscribe();
+      unsubscribeResponse();
+      unsubscribeError();
       if (loading) {
         setLoading(false);
         setError('Request timed out');
       }
     }, 30000);
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeResponse();
+      unsubscribeError();
+    };
   }, [deviceId, agentId, requestId, loading]);
 
   useEffect(() => {
