@@ -225,7 +225,7 @@ export function Users() {
               </div>
             ) : filteredUsers.length > 0 ? (
               <table className="w-full">
-                <thead className="bg-gray-50 border-b border-border">
+                <thead className="bg-[var(--hover-bg)] border-b border-border">
                   <tr>
                     <th className="text-left px-6 py-3 text-xs font-medium text-text-secondary uppercase tracking-wider">User</th>
                     <th className="text-left px-6 py-3 text-xs font-medium text-text-secondary uppercase tracking-wider">Email</th>
@@ -236,7 +236,7 @@ export function Users() {
                 </thead>
                 <tbody className="divide-y divide-border">
                   {filteredUsers.map((user: User) => (
-                    <tr key={user.id} className="hover:bg-gray-50">
+                    <tr key={user.id} className="hover:bg-[var(--hover-bg)]">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 rounded-full bg-primary-light flex items-center justify-center">
@@ -296,7 +296,7 @@ export function Users() {
                   </div>
                 ) : invitations.length > 0 ? (
                   <table className="w-full">
-                    <thead className="bg-gray-50 border-b border-border">
+                    <thead className="bg-[var(--hover-bg)] border-b border-border">
                       <tr>
                         <th className="text-left px-6 py-3 text-xs font-medium text-text-secondary uppercase tracking-wider">Email</th>
                         <th className="text-left px-6 py-3 text-xs font-medium text-text-secondary uppercase tracking-wider">Role</th>
@@ -307,7 +307,7 @@ export function Users() {
                     </thead>
                     <tbody className="divide-y divide-border">
                       {invitations.map((invitation: Invitation) => (
-                        <tr key={invitation.id} className="hover:bg-gray-50">
+                        <tr key={invitation.id} className="hover:bg-[var(--hover-bg)]">
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-text-primary">
                             {invitation.email || <span className="text-text-secondary italic">Any email</span>}
                           </td>

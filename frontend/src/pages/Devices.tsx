@@ -136,13 +136,13 @@ export function Devices() {
                 <CardContent>
                   <div className="animate-pulse space-y-4">
                     <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-gray-200 rounded-lg" />
+                      <div className="w-10 h-10 bg-[var(--border-color)] rounded-lg" />
                       <div className="flex-1">
-                        <div className="h-4 bg-gray-200 rounded w-3/4" />
-                        <div className="h-3 bg-gray-200 rounded w-1/2 mt-2" />
+                        <div className="h-4 bg-[var(--border-color)] rounded w-3/4" />
+                        <div className="h-3 bg-[var(--border-color)] rounded w-1/2 mt-2" />
                       </div>
                     </div>
-                    <div className="h-4 bg-gray-200 rounded" />
+                    <div className="h-4 bg-[var(--border-color)] rounded" />
                   </div>
                 </CardContent>
               </Card>
@@ -200,7 +200,7 @@ export function Devices() {
                               e.stopPropagation();
                               navigate(`/devices/${device.id}`);
                             }}
-                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-primary hover:bg-gray-50"
+                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-primary hover:bg-[var(--hover-bg)]"
                           >
                             <Edit className="w-4 h-4" />
                             View Details
@@ -210,7 +210,7 @@ export function Devices() {
                               e.stopPropagation();
                               // Open terminal
                             }}
-                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-primary hover:bg-gray-50"
+                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-primary hover:bg-[var(--hover-bg)]"
                           >
                             <Terminal className="w-4 h-4" />
                             Remote Terminal
@@ -220,7 +220,7 @@ export function Devices() {
                               e.stopPropagation();
                               setShowDeleteModal(true);
                             }}
-                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50"
+                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-[var(--status-danger-bg)]"
                           >
                             <Trash2 className="w-4 h-4" />
                             Delete
