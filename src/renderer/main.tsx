@@ -1,3 +1,6 @@
+// Initialize web API shim before anything else (must be first import)
+import './services/webApiShim';
+
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
