@@ -248,12 +248,14 @@ func (c *Client) getHealthURL() string {
 		}
 	}
 
-	// Remove any path suffix and add /health
+	// Remove any path suffix and add /api/agent/version
+	// Note: Using /api/agent/version instead of /health because port 8443
+	// (mTLS agent port) only routes /api/agent and /ws/agent paths
 	if idx := strings.Index(serverURL[8:], "/"); idx > 0 {
 		serverURL = serverURL[:8+idx]
 	}
 
-	return serverURL + "/health"
+	return serverURL + "/api/agent/version"
 }
 
 // checkServerHealth performs an HTTP health check to see if server is available

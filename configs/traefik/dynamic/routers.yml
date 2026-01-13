@@ -4,7 +4,7 @@
 http:
   routers:
     # =========================================================================
-    # HTTPS Routes (port 443)
+    # HTTPS Routes (port 443) - Production domain
     # =========================================================================
 
     # API routes
@@ -53,6 +53,51 @@ http:
       priority: 1
 
     # =========================================================================
+    # HTTPS Routes (port 443) - Localhost (self-signed cert)
+    # =========================================================================
+
+    # Localhost API routes
+    api-local:
+      rule: "Host(`localhost`) && PathPrefix(`/api`)"
+      entryPoints:
+        - websecure
+      service: backend
+      tls: {}
+      middlewares:
+        - securityHeaders
+        - rateLimit
+      priority: 10
+
+    # Localhost WebSocket routes for dashboard
+    ws-dashboard-local:
+      rule: "Host(`localhost`) && PathPrefix(`/ws/dashboard`)"
+      entryPoints:
+        - websecure
+      service: backend
+      tls: {}
+      priority: 10
+
+    # Localhost Health check routes
+    health-local:
+      rule: "Host(`localhost`) && PathPrefix(`/health`)"
+      entryPoints:
+        - websecure
+      service: backend
+      tls: {}
+      priority: 5
+
+    # Localhost Frontend (catch-all for web UI)
+    frontend-local:
+      rule: "Host(`localhost`)"
+      entryPoints:
+        - websecure
+      service: frontend
+      tls: {}
+      middlewares:
+        - securityHeaders
+      priority: 1
+
+    # =========================================================================
     # mTLS Routes (port 8443) - Agent connections
     # =========================================================================
 
@@ -79,6 +124,16 @@ http:
       middlewares:
         - agentRateLimit
       priority: 10
+
+    # Agent Health check (for agent connection verification)
+    agent-health:
+      rule: "PathPrefix(`/health`)"
+      entryPoints:
+        - agents
+      service: backend
+      tls:
+        options: mtls
+      priority: 5
 
   services:
     # Backend service (Go API server)
