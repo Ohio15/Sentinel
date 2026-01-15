@@ -96,6 +96,20 @@ type AgentInfo struct {
 }
 
 func main() {
+	// Global panic recovery for unexpected errors
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "\n  [FATAL ERROR] The installer encountered an unexpected error: %v\n", r)
+			fmt.Println("\n  This may be caused by security software. Try:")
+			fmt.Println("  1. Right-click the installer and select 'Run as administrator'")
+			fmt.Println("  2. Temporarily disable antivirus software")
+			fmt.Println("  3. Download the installer again")
+			fmt.Println("\n  Press ENTER to close this window...")
+			bufio.NewReader(os.Stdin).ReadBytes('\n')
+			os.Exit(1)
+		}
+	}()
+
 	// Remove Zone.Identifier (download warning) from self immediately
 	removeSelfZoneIdentifier()
 
@@ -550,9 +564,20 @@ func extractConfig(embedded, prefix string) string {
 }
 
 func setConsoleTitle(title string) {
+	defer func() {
+		if r := recover(); r != nil {
+			// Silently ignore console title errors - not critical
+		}
+	}()
 	kernel32 := syscall.NewLazyDLL("kernel32.dll")
 	setConsoleTitleW := kernel32.NewProc("SetConsoleTitleW")
-	titlePtr, _ := syscall.UTF16PtrFromString(title)
+	if err := setConsoleTitleW.Find(); err != nil {
+		return // Proc not available
+	}
+	titlePtr, err := syscall.UTF16PtrFromString(title)
+	if err != nil {
+		return
+	}
 	setConsoleTitleW.Call(uintptr(unsafe.Pointer(titlePtr)))
 }
 
