@@ -21,6 +21,7 @@ import (
 type AgentInstallationLink struct {
 	ID                  uuid.UUID          `json:"id"`
 	DownloadToken       string             `json:"downloadToken,omitempty"`
+	InstallationCode    *string            `json:"installationCode,omitempty"`
 	DeviceName          string             `json:"deviceName"`
 	UserEmail           *string            `json:"userEmail,omitempty"`
 	UserName            *string            `json:"userName,omitempty"`
@@ -180,15 +181,28 @@ func createAgentLinkHandler(services *Services) gin.HandlerFunc {
 			return
 		}
 
+		// Generate installation code
+		var installCode string
+		for attempts := 0; attempts < 10; attempts++ {
+			installCode = generateInstallationCode()
+			var exists bool
+			err := services.DB.Pool().QueryRow(c.Request.Context(),
+				`SELECT EXISTS(SELECT 1 FROM agent_installation_links WHERE installation_code = $1)`,
+				installCode).Scan(&exists)
+			if err == nil && !exists {
+				break
+			}
+		}
+
 		// Create the installation link
 		var linkID uuid.UUID
 		err = services.DB.Pool().QueryRow(c.Request.Context(), `
 			INSERT INTO agent_installation_links (
-				download_token, device_name, user_email, user_name,
+				download_token, installation_code, device_name, user_email, user_name,
 				enrollment_token_id, created_by, expires_at, notes, status
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')
 			RETURNING id
-		`, downloadToken, req.DeviceName, req.UserEmail, req.UserName,
+		`, downloadToken, installCode, req.DeviceName, req.UserEmail, req.UserName,
 			enrollmentTokenID, createdBy, expiresAt, req.Notes).Scan(&linkID)
 		if err != nil {
 			log.Printf("Failed to create installation link: %v", err)
@@ -327,7 +341,7 @@ func listAgentLinksHandler(services *Services) gin.HandlerFunc {
 
 		// Get paginated results
 		selectQuery := fmt.Sprintf(`
-			SELECT l.id, l.download_token, l.device_name, l.user_email, l.user_name,
+			SELECT l.id, l.download_token, l.installation_code, l.device_name, l.user_email, l.user_name,
 			       l.created_at, l.created_by, u.first_name || ' ' || u.last_name as created_by_name,
 			       l.expires_at, l.downloaded_at, l.download_count,
 			       l.agent_connected_at, l.device_id, l.status,
@@ -351,7 +365,7 @@ func listAgentLinksHandler(services *Services) gin.HandlerFunc {
 			var link AgentInstallationLink
 			var createdByName sql.NullString
 			err := rows.Scan(
-				&link.ID, &link.DownloadToken, &link.DeviceName, &link.UserEmail, &link.UserName,
+				&link.ID, &link.DownloadToken, &link.InstallationCode, &link.DeviceName, &link.UserEmail, &link.UserName,
 				&link.CreatedAt, &link.CreatedBy, &createdByName,
 				&link.ExpiresAt, &link.DownloadedAt, &link.DownloadCount,
 				&link.AgentConnectedAt, &link.DeviceID, &link.Status,
@@ -394,7 +408,7 @@ func getAgentLinkHandler(services *Services) gin.HandlerFunc {
 		var link AgentInstallationLink
 		var createdByName sql.NullString
 		err = services.DB.Pool().QueryRow(c.Request.Context(), `
-			SELECT l.id, l.download_token, l.device_name, l.user_email, l.user_name,
+			SELECT l.id, l.download_token, l.installation_code, l.device_name, l.user_email, l.user_name,
 			       l.enrollment_token_id, l.created_at, l.created_by,
 			       u.first_name || ' ' || u.last_name as created_by_name,
 			       l.expires_at, l.downloaded_at, l.download_ip, l.download_user_agent,
@@ -405,7 +419,7 @@ func getAgentLinkHandler(services *Services) gin.HandlerFunc {
 				LEFT JOIN users u ON l.created_by = u.id
 				WHERE l.id = $1 AND l.deleted_at IS NULL AND l.organization_id = $2
 		`, linkID, constants.CurrentOrganizationID).Scan(
-			&link.ID, &link.DownloadToken, &link.DeviceName, &link.UserEmail, &link.UserName,
+			&link.ID, &link.DownloadToken, &link.InstallationCode, &link.DeviceName, &link.UserEmail, &link.UserName,
 			&link.EnrollmentTokenID, &link.CreatedAt, &link.CreatedBy, &createdByName,
 			&link.ExpiresAt, &link.DownloadedAt, &link.DownloadIP, &link.DownloadUserAgent,
 			&link.DownloadCount, &link.AgentConnectedAt, &link.DeviceID, &link.Status,
