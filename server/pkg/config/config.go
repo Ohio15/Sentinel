@@ -12,6 +12,7 @@ type Config struct {
 	Environment string
 	Port        int
 	ServerURL   string
+	PublicURL   string
 	ServerID    string // Unique identifier for this server instance
 
 	// Database
@@ -57,6 +58,7 @@ func Load() (*Config, error) {
 		Environment: getEnv("SERVER_ENV", "development"),
 		Port:        getEnvInt("PORT", 8080),
 		ServerURL:   getEnv("SERVER_URL", "http://localhost:8080"),
+		PublicURL:   getEnv("PUBLIC_URL", ""),
 		ServerID:    getEnv("SERVER_ID", generateServerID()),
 
 		// Database
