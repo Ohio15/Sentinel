@@ -16,6 +16,11 @@ class ApiService {
     this.baseUrl = getApiBaseUrl();
   }
 
+  private getCsrfToken(): string | null {
+    const match = document.cookie.match(/csrf_token=([^;]+)/);
+    return match ? match[1] : null;
+  }
+
   private async request<T>(
     method: string,
     endpoint: string,
@@ -30,6 +35,14 @@ class ApiService {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
+    // Add CSRF token for state-changing requests
+    if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+      const csrfToken = this.getCsrfToken();
+      if (csrfToken) {
+        headers['X-CSRF-Token'] = csrfToken;
+      }
+    }
+
     let url = `${this.baseUrl}${endpoint}`;
     if (params) {
       const searchParams = new URLSearchParams(params);
@@ -39,14 +52,15 @@ class ApiService {
     const response = await fetch(url, {
       method,
       headers,
+      credentials: 'include',
       body: data ? JSON.stringify(data) : undefined,
     });
 
     if (!response.ok) {
       if (response.status === 401) {
-        const isLoginRequest = endpoint.includes('/auth/login');
+        const isAuthValidation = endpoint.includes('/auth/me') || endpoint.includes('/auth/login');
         const isOnLoginPage = window.location.pathname === '/login';
-        if (!isLoginRequest && !isOnLoginPage) {
+        if (!isAuthValidation && !isOnLoginPage) {
           localStorage.removeItem('token');
           localStorage.removeItem('user');
           localStorage.removeItem('auth-storage');
@@ -80,7 +94,7 @@ class ApiService {
 
   // Auth endpoints
   async login(identifier: string, password: string) {
-    return this.post<{ token: string; user: unknown }>('/auth/login', { identifier, password });
+    return this.post<{ accessToken: string; refreshToken: string; expiresIn: number; user: unknown }>('/auth/login', { identifier, password });
   }
 
   async logout() {
@@ -344,6 +358,99 @@ class ApiService {
   getAgentDownloadUrl(platform: string, arch: string, token: string) {
     const baseUrl = getApiBaseUrl().replace('/api', '') || window.location.origin;
     return `${baseUrl}/api/agents/download/${platform}/${arch}?token=${encodeURIComponent(token)}`;
+  }
+
+  // Client management
+  async getClients() {
+    return this.get<unknown[]>('/clients');
+  }
+
+  async getClient(id: string) {
+    return this.get<unknown>(`/clients/${id}`);
+  }
+
+  async createClient(data: { name: string; description?: string; contactEmail?: string }) {
+    return this.post('/clients', data);
+  }
+
+  async updateClient(id: string, data: Partial<{ name: string; description: string; contactEmail: string }>) {
+    return this.put(`/clients/${id}`, data);
+  }
+
+  async deleteClient(id: string) {
+    return this.delete(`/clients/${id}`);
+  }
+  // Agent Installation Links (Admin)
+  async getAgentLinks(params?: { status?: string; search?: string; page?: number; pageSize?: number }) {
+    const stringParams: Record<string, string> = {};
+    if (params?.status) stringParams.status = params.status;
+    if (params?.search) stringParams.search = params.search;
+    if (params?.page) stringParams.page = String(params.page);
+    if (params?.pageSize) stringParams.pageSize = String(params.pageSize);
+    return this.get<{ links: unknown[]; total: number; page: number; pageSize: number; totalPages: number }>('/admin/agent-links', Object.keys(stringParams).length ? stringParams : undefined);
+  }
+
+  async getAgentLink(linkId: string) {
+    return this.get<unknown>(`/admin/agent-links/${linkId}`);
+  }
+
+  async createAgentLink(data: {
+    deviceName: string;
+    userEmail: string;
+    userName?: string;
+    expiresInHours?: number;
+    sendEmail?: boolean;
+    notes?: string;
+  }) {
+    return this.post<unknown>('/admin/agent-links', data);
+  }
+
+  async resendAgentLinkEmail(linkId: string) {
+    return this.post<unknown>(`/admin/agent-links/${linkId}/resend`);
+  }
+
+  async revokeAgentLink(linkId: string) {
+    return this.post<unknown>(`/admin/agent-links/${linkId}/revoke`);
+  }
+
+  async deleteAgentLink(linkId: string) {
+    return this.delete<unknown>(`/admin/agent-links/${linkId}`);
+  }
+
+  async getAgentLinkStats() {
+    return this.get<unknown>('/admin/agent-links/stats');
+  }
+
+  // Installation Codes (code-based installation without email)
+  async createInstallationCode(data: {
+    deviceName: string;
+    userName?: string;
+    notes?: string;
+    expirationDays?: number;
+  }) {
+    return this.post<{
+      success: boolean;
+      code: string;
+      deviceName: string;
+      downloadUrl: string;
+      expiresAt: string;
+      instructions: string;
+    }>('/admin/installation-codes', data);
+  }
+
+  async getInstallationCodes() {
+    return this.get<{
+      codes: Array<{
+        id: string;
+        code: string;
+        deviceName: string;
+        status: string;
+        createdAt: string;
+        expiresAt: string;
+        usedAt?: string;
+        createdByName?: string;
+      }>;
+    }>('/admin/installation-codes');
   }
 }
 
