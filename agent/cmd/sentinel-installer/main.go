@@ -96,6 +96,9 @@ type AgentInfo struct {
 }
 
 func main() {
+	// Remove Zone.Identifier (download warning) from self immediately
+	removeSelfZoneIdentifier()
+
 	// Parse command-line flags first
 	flag.Parse()
 
@@ -396,6 +399,9 @@ func proceedWithInstall(config *InstallConfig) {
 		}
 		os.Exit(1)
 	}
+
+	// Remove Zone.Identifier from installed agent to prevent security warnings
+	removeZoneIdentifier(agentExe)
 
 	// Run agent install command
 	printInfo("Configuring service...")
