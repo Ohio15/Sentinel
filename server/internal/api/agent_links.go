@@ -22,7 +22,7 @@ type AgentInstallationLink struct {
 	ID                  uuid.UUID          `json:"id"`
 	DownloadToken       string             `json:"downloadToken,omitempty"`
 	DeviceName          string             `json:"deviceName"`
-	UserEmail           string             `json:"userEmail"`
+	UserEmail           *string            `json:"userEmail,omitempty"`
 	UserName            *string            `json:"userName,omitempty"`
 	EnrollmentTokenID   *uuid.UUID         `json:"enrollmentTokenId,omitempty"`
 	CreatedAt           time.Time          `json:"createdAt"`
