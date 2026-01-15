@@ -16,6 +16,7 @@ interface ServerInfo {
 interface AgentLink {
   id: string;
   downloadToken: string;
+  installationCode?: string;
   deviceName: string;
   userEmail: string;
   userName?: string;
@@ -908,6 +909,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                     {selectedLink.createdByName && <div><dt className="text-text-secondary">Created By</dt><dd className="text-text-primary">{selectedLink.createdByName}</dd></div>}
                     <div><dt className="text-text-secondary">Expires</dt><dd className="text-text-primary">{format(new Date(selectedLink.expiresAt), 'MMM d, yyyy HH:mm')}</dd></div>
                     <div><dt className="text-text-secondary">Download Count</dt><dd className="text-text-primary">{selectedLink.downloadCount}</dd></div>
+                    {selectedLink.installationCode && <div><dt className="text-text-secondary">Installation Code</dt><dd><code className="font-mono text-lg font-bold text-indigo-600 bg-indigo-50 dark:bg-indigo-900/30 dark:text-indigo-300 px-3 py-1 rounded">{selectedLink.installationCode}</code></dd></div>}
                   </dl>
                 </div>
               </div>
