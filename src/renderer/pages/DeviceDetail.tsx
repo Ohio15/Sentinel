@@ -1,11 +1,13 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useDeviceStore } from '../stores/deviceStore';
+import { shallow } from 'zustand/shallow';
 import { useClientStore } from '../stores/clientStore';
 import { Terminal } from '../components/Terminal';
 import { FileExplorer } from '../components/FileExplorer';
 import { RemoteDesktop } from '../components/RemoteDesktop';
 import { PerformanceView } from '../components/PerformanceView';
 import { WindowsUpdateStatus } from '../components/WindowsUpdateStatus';
+import { OverviewMetrics } from '../components/OverviewMetrics';
 
 interface DeviceDetailProps {
   deviceId: string;
@@ -102,7 +104,17 @@ function SpecRow({ label, value }: { label: string; value: string | undefined })
 }
 
 export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
-  const { selectedDevice, metrics, loading, error, fetchDevice, fetchMetrics, subscribeToUpdates } = useDeviceStore();
+  // Use shallow comparison to only re-render when these specific values change
+  const { selectedDevice, loading, error } = useDeviceStore(
+    (state) => ({ 
+      selectedDevice: state.selectedDevice, 
+      loading: state.loading, 
+      error: state.error 
+    }),
+    shallow
+  );
+  const fetchDevice = useDeviceStore((state) => state.fetchDevice);
+  const fetchMetrics = useDeviceStore((state) => state.fetchMetrics);
   const { clients, fetchClients } = useClientStore();
   const [activeTab, setActiveTab] = useState<Tab>('overview');
   const [command, setCommand] = useState('');
@@ -116,11 +128,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
   const [editedName, setEditedName] = useState('');
   const [isAssigningClient, setIsAssigningClient] = useState(false);
 
-  // Subscribe to real-time metric updates
-  useEffect(() => {
-    const unsubscribe = subscribeToUpdates();
-    return unsubscribe;
-  }, []);
+  // Real-time metrics subscription moved to individual components (OverviewMetrics, PerformanceView)
 
   useEffect(() => {
     fetchDevice(deviceId);
@@ -277,25 +285,6 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
     { id: 'history', label: 'History', icon: HistoryIcon },
   ];
 
-  // Extract data for summary cards - use real device fields
-  const latestMetrics = metrics.length > 0 ? metrics[0] : null;
-
-  // Use live metrics for storage when available, fall back to enrollment data
-  const enrollmentStorage = selectedDevice.storage?.reduce((sum, s) => sum + (s.total || 0), 0) || 0;
-  const enrollmentUsed = selectedDevice.storage?.reduce((sum, s) => sum + (s.used || 0), 0) || 0;
-  const totalStorage = latestMetrics?.diskTotalBytes || enrollmentStorage;
-  const usedStorage = latestMetrics?.diskUsedBytes || enrollmentUsed;
-
-  // Get GPU info from device
-  const gpuName = selectedDevice.gpu?.[0]?.name || 'Unknown GPU';
-  const gpuMemory = selectedDevice.gpu?.[0]?.memory;
-
-  // Get memory from device
-  const totalMemory = selectedDevice.totalMemory || 0;
-  const memoryUsed = latestMetrics?.memoryUsedBytes || 0;
-
-  // CPU info
-  const cpuModel = selectedDevice.cpuModel || 'Unknown CPU';
 
   return (
     <div className="space-y-6">
@@ -354,84 +343,13 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
       <div className="min-h-[500px]">
         {activeTab === 'overview' && (
           <div className="space-y-6">
-            {/* Summary Cards - Gradient Style */}
-            <div className="grid grid-cols-5 gap-4">
-              {/* Storage Card */}
-              <div className="bg-gradient-to-br from-blue-500 to-blue-700 rounded-xl p-4 text-white shadow-lg">
-                <div className="flex items-center gap-3 mb-3">
-                  <HardDriveIcon className="w-8 h-8" />
-                  <span className="text-lg font-medium">Storage</span>
-                </div>
-                <div className="text-2xl font-bold">
-                  {totalStorage ? `${formatBytes(usedStorage)} / ${formatBytes(totalStorage)}` : 'N/A'}
-                </div>
-                <div className="text-sm opacity-80 mt-1">
-                  {totalStorage && latestMetrics?.diskPercent != null
-                    ? `${(100 - latestMetrics.diskPercent).toFixed(0)}% free`
-                    : ''}
-                </div>
-              </div>
-
-              {/* GPU Card */}
-              <div className="bg-gradient-to-br from-purple-500 to-purple-700 rounded-xl p-4 text-white shadow-lg">
-                <div className="flex items-center gap-3 mb-3">
-                  <GpuIcon className="w-8 h-8" />
-                  <span className="text-lg font-medium">Graphics</span>
-                </div>
-                <div className="text-lg font-bold truncate" title={gpuName}>
-                  {gpuName}
-                </div>
-                <div className="text-sm opacity-80 mt-1">
-                  {gpuMemory ? formatBytes(gpuMemory) : ''}
-                </div>
-              </div>
-
-              {/* RAM Card */}
-              <div className="bg-gradient-to-br from-teal-500 to-teal-700 rounded-xl p-4 text-white shadow-lg">
-                <div className="flex items-center gap-3 mb-3">
-                  <MemoryIcon className="w-8 h-8" />
-                  <span className="text-lg font-medium">RAM</span>
-                </div>
-                <div className="text-2xl font-bold">
-                  {totalMemory ? formatBytes(totalMemory) : 'N/A'}
-                </div>
-                <div className="text-sm opacity-80 mt-1">
-                  {latestMetrics?.memoryPercent != null
-                    ? `${latestMetrics.memoryPercent.toFixed(0)}% in use`
-                    : ''}
-                </div>
-              </div>
-
-              {/* CPU Card */}
-              <div className="bg-gradient-to-br from-orange-500 to-orange-700 rounded-xl p-4 text-white shadow-lg">
-                <div className="flex items-center gap-3 mb-3">
-                  <CpuIcon className="w-8 h-8" />
-                  <span className="text-lg font-medium">Processor</span>
-                </div>
-                <div className="text-lg font-bold truncate" title={cpuModel}>
-                  {cpuModel}
-                </div>
-                <div className="text-sm opacity-80 mt-1">
-                  {latestMetrics?.cpuPercent != null
-                    ? `${latestMetrics.cpuPercent.toFixed(0)}% utilization`
-                    : ''}
-                </div>
-              </div>
-
-              {/* Uptime Card */}
-              <div className="bg-gradient-to-br from-green-500 to-green-700 rounded-xl p-4 text-white shadow-lg">
-                <div className="flex items-center gap-3 mb-3">
-                  <ClockIcon className="w-8 h-8" />
-                  <span className="text-lg font-medium">Uptime</span>
-                </div>
-                <div className="text-2xl font-bold">
-                  {latestMetrics?.uptime ? formatUptime(latestMetrics.uptime) : 'N/A'}
-                </div>
-                <div className="text-sm opacity-80 mt-1">
-                  Since last boot
-                </div>
-              </div>
-            </div>
+            {/* Summary Cards - metrics subscription handled by component */}
+            <OverviewMetrics
+              deviceId={deviceId}
+              totalMemory={selectedDevice.totalMemory}
+              gpu={selectedDevice.gpu}
+              storage={selectedDevice.storage}
+            />
 
             {/* Device Header with PC Icon - Light Theme */}
             <div className="bg-surface border border-border rounded-xl p-6">
@@ -554,7 +472,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                 <SpecRow label="Device name" value={selectedDevice.displayName || selectedDevice.hostname} />
                 <SpecRow label="Processor" value={selectedDevice.cpuModel} />
                 <SpecRow label="CPU Cores" value={selectedDevice.cpuCores ? `${selectedDevice.cpuCores} cores (${selectedDevice.cpuThreads || selectedDevice.cpuCores} threads)` : undefined} />
-                <SpecRow label="Installed RAM" value={totalMemory ? formatBytes(totalMemory) : undefined} />
+                <SpecRow label="Installed RAM" value={selectedDevice.totalMemory ? formatBytes(selectedDevice.totalMemory) : undefined} />
                 <SpecRow label="Device ID" value={selectedDevice.id} />
                 <SpecRow label="System type" value={selectedDevice.architecture} />
                 <SpecRow label="Manufacturer" value={selectedDevice.manufacturer} />
@@ -601,7 +519,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                 {activeTab === 'performance' && (
           <div className="card overflow-hidden" style={{ height: 'calc(100vh - 250px)' }}>
             <PerformanceView
-              metrics={metrics}
+              deviceId={deviceId}
               systemInfo={{
                 cpuModel: selectedDevice.cpuModel,
                 cpuCores: selectedDevice.cpuCores,
@@ -616,23 +534,26 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
           </div>
         )}
 
-        {activeTab === 'terminal' && (
+        {/* Terminal always mounted to preserve session across tab switches */}
+        <div className={activeTab === 'terminal' ? '' : 'hidden'}>
           <div className="card overflow-hidden">
             <Terminal deviceId={deviceId} isOnline={selectedDevice.status === 'online'} />
           </div>
-        )}
+        </div>
 
-        {activeTab === 'files' && (
+        {/* FileExplorer always mounted to preserve state across tab switches */}
+        <div className={activeTab === 'files' ? '' : 'hidden'}>
           <div className="card overflow-hidden">
-            <FileExplorer deviceId={deviceId} isOnline={selectedDevice.status === 'online'} />
+            <FileExplorer deviceId={deviceId} isOnline={selectedDevice.status === 'online'} isActive={activeTab === 'files'} />
           </div>
-        )}
+        </div>
 
-        {activeTab === 'remote' && (
+        {/* RemoteDesktop always mounted to preserve state across tab switches */}
+        <div className={activeTab === 'remote' ? '' : 'hidden'}>
           <div className="card overflow-hidden">
-            <RemoteDesktop deviceId={deviceId} isOnline={selectedDevice.status === 'online'} />
+            <RemoteDesktop deviceId={deviceId} isOnline={selectedDevice.status === 'online'} isActive={activeTab === 'remote'} />
           </div>
-        )}
+        </div>
 
         {activeTab === 'commands' && (
           <div className="space-y-4">

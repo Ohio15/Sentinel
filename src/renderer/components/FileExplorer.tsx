@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, memo, useRef } from 'react';
 
 interface FileEntry {
   name: string;
@@ -24,11 +24,13 @@ interface DriveInfo {
 interface FileExplorerProps {
   deviceId: string;
   isOnline: boolean;
+  isActive?: boolean;
 }
 
 type ViewMode = 'drives' | 'files';
 
-export function FileExplorer({ deviceId, isOnline }: FileExplorerProps) {
+// Memoized to prevent re-renders from parent state changes (metrics updates)
+export const FileExplorer = memo(function FileExplorer({ deviceId, isOnline, isActive = true }: FileExplorerProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('drives');
   const [currentPath, setCurrentPath] = useState('');
   const [files, setFiles] = useState<FileEntry[]>([]);
@@ -39,7 +41,7 @@ export function FileExplorer({ deviceId, isOnline }: FileExplorerProps) {
   const [transferProgress, setTransferProgress] = useState<{ filename: string; percentage: number } | null>(null);
 
   useEffect(() => {
-    if (isOnline) {
+    if (isOnline && isActive && drives.length === 0) {
       loadDrives();
     }
 
@@ -56,7 +58,7 @@ export function FileExplorer({ deviceId, isOnline }: FileExplorerProps) {
     });
 
     return () => unsub();
-  }, [deviceId, isOnline]);
+  }, [deviceId, isOnline, isActive]);
 
   const loadDrives = async () => {
     setLoading(true);
@@ -404,7 +406,7 @@ export function FileExplorer({ deviceId, isOnline }: FileExplorerProps) {
       </div>
     </div>
   );
-}
+});
 
 // Icons
 function UpIcon({ className }: { className?: string }) {

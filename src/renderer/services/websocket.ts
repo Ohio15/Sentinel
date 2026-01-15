@@ -58,8 +58,13 @@ class WebSocketService {
 
       this.ws.onmessage = (event) => {
         try {
-          const message: WebSocketMessage = JSON.parse(event.data);
-          this.emit(message.type, message.payload);
+          const message = JSON.parse(event.data);
+          // If message has payload field, use it; otherwise pass the whole message (minus type)
+          const data = message.payload !== undefined ? message.payload : (() => {
+            const { type, ...rest } = message;
+            return rest;
+          })();
+          this.emit(message.type, data);
         } catch (err) {
           console.error('[WebSocket] Failed to parse message:', err);
         }
@@ -96,7 +101,18 @@ class WebSocketService {
 
   send(type: string, payload?: unknown) {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type, payload }));
+      // Extract requestId to root level for server compatibility
+      const message: Record<string, unknown> = { type };
+      if (payload && typeof payload === 'object') {
+        const p = payload as Record<string, unknown>;
+        if (p.requestId) {
+          message.requestId = p.requestId;
+        }
+        message.payload = payload;
+      } else {
+        message.payload = payload;
+      }
+      this.ws.send(JSON.stringify(message));
     } else {
       console.warn('[WebSocket] Not connected, cannot send message');
     }
