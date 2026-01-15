@@ -40,6 +40,7 @@
     "@grpc/proto-loader": "^0.8.0",
     "@types/multer": "^2.0.0",
     "cookie-parser": "^1.4.7",
+    "date-fns": "^4.1.0",
     "dotenv": "^17.2.3",
     "electron-store": "^8.1.0",
     "electron-updater": "^6.6.2",
