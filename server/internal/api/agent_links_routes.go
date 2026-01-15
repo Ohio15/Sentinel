@@ -21,6 +21,7 @@ func RegisterAgentLinkRoutes(api *gin.RouterGroup, protected *gin.RouterGroup, s
 	// Public generic installer download (no auth)
 	api.GET("/download/agent", serveGenericInstallerHandler(services))
 	api.GET("/download/agent/windows", serveGenericInstallerHandler(services))
+	api.GET("/download/agent/test", serveTestInstallerHandler(services))
 
 	// Admin routes for managing installation links (requires JWT + admin/operator role)
 	agentLinks := protected.Group("/admin/agent-links")

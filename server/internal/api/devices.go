@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/sentinel/server/internal/constants"
 	"github.com/sentinel/server/internal/models"
 	"github.com/sentinel/server/internal/websocket"
 )
@@ -43,7 +44,7 @@ func (r *Router) listDevices(c *gin.Context) {
 
 	// Get total count of devices for pagination metadata
 	var total int
-	err := r.db.Pool().QueryRow(ctx, `SELECT COUNT(*) FROM devices`).Scan(&total)
+	err := r.db.Pool().QueryRow(ctx, `SELECT COUNT(*) FROM devices WHERE organization_id = $1`, constants.CurrentOrganizationID).Scan(&total)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count devices"})
 		return
@@ -59,13 +60,14 @@ func (r *Router) listDevices(c *gin.Context) {
 	rows, err := r.db.Pool().Query(ctx, `
 		SELECT id, agent_id, COALESCE(hostname, ''), COALESCE(display_name, ''), COALESCE(os_type, ''), COALESCE(os_version, ''), COALESCE(os_build, ''),
 			   COALESCE(platform, ''), COALESCE(platform_family, ''), COALESCE(architecture, ''), COALESCE(cpu_model, ''), COALESCE(cpu_cores, 0), COALESCE(cpu_threads, 0),
-			   COALESCE(cpu_speed, 0), COALESCE(total_memory, 0), COALESCE(EXTRACT(EPOCH FROM boot_time)::bigint, 0), COALESCE(gpu::jsonb, '[]'::jsonb), COALESCE(storage, '[]'::jsonb), COALESCE(serial_number, ''),
+			   COALESCE(cpu_speed, 0), COALESCE(total_memory, 0), COALESCE(boot_time, 0), COALESCE(gpu::jsonb, '[]'::jsonb), COALESCE(storage, '[]'::jsonb), COALESCE(serial_number, ''),
 			   COALESCE(manufacturer, ''), COALESCE(model, ''), COALESCE(domain, ''), COALESCE(agent_version, ''), last_seen, COALESCE(status, 'offline'),
 			   COALESCE(host(ip_address), '' ) as ip_address, COALESCE(host(public_ip), '' ) as public_ip, COALESCE(mac_address, ''), COALESCE(tags, ARRAY[]::text[]), COALESCE(metadata, '{}'::jsonb), created_at, updated_at
 		FROM devices
+		WHERE organization_id = $1
 		ORDER BY hostname
-		LIMIT $1 OFFSET $2
-	`, pageSize, offset)
+		LIMIT $2 OFFSET $3
+	`, constants.CurrentOrganizationID, pageSize, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch devices"})
 		return
@@ -135,11 +137,11 @@ func (r *Router) getDevice(c *gin.Context) {
 	err = r.db.Pool().QueryRow(ctx, `
 		SELECT id, agent_id, COALESCE(hostname, ''), COALESCE(display_name, ''), COALESCE(os_type, ''), COALESCE(os_version, ''), COALESCE(os_build, ''),
 			   COALESCE(platform, ''), COALESCE(platform_family, ''), COALESCE(architecture, ''), COALESCE(cpu_model, ''), COALESCE(cpu_cores, 0), COALESCE(cpu_threads, 0),
-			   COALESCE(cpu_speed, 0), COALESCE(total_memory, 0), COALESCE(EXTRACT(EPOCH FROM boot_time)::bigint, 0), COALESCE(gpu::jsonb, '[]'::jsonb), COALESCE(storage, '[]'::jsonb), COALESCE(serial_number, ''),
+			   COALESCE(cpu_speed, 0), COALESCE(total_memory, 0), COALESCE(boot_time, 0), COALESCE(gpu::jsonb, '[]'::jsonb), COALESCE(storage, '[]'::jsonb), COALESCE(serial_number, ''),
 			   COALESCE(manufacturer, ''), COALESCE(model, ''), COALESCE(domain, ''), COALESCE(agent_version, ''), last_seen, COALESCE(status, 'offline'),
 			   COALESCE(host(ip_address), '' ) as ip_address, COALESCE(host(public_ip), '' ) as public_ip, COALESCE(mac_address, ''), COALESCE(tags, ARRAY[]::text[]), COALESCE(metadata, '{}'::jsonb), created_at, updated_at
-		FROM devices WHERE id = $1
-	`, id).Scan(&d.ID, &d.AgentID, &d.Hostname, &d.DisplayName, &d.OSType,
+		FROM devices WHERE id = $1 AND organization_id = $2
+	`, id, constants.CurrentOrganizationID).Scan(&d.ID, &d.AgentID, &d.Hostname, &d.DisplayName, &d.OSType,
 		&d.OSVersion, &d.OSBuild, &d.Platform, &d.PlatformFamily, &d.Architecture,
 		&d.CPUModel, &d.CPUCores, &d.CPUThreads, &d.CPUSpeed, &d.TotalMemory,
 		&d.BootTime, &gpuJSON, &storageJSON, &d.SerialNumber, &d.Manufacturer,
@@ -181,7 +183,7 @@ func (r *Router) deleteDevice(c *gin.Context) {
 
 	// Check device status - only allow deletion for uninstalling devices
 	var status string
-	err = r.db.Pool().QueryRow(ctx, "SELECT status FROM devices WHERE id = $1", id).Scan(&status)
+	err = r.db.Pool().QueryRow(ctx, "SELECT status FROM devices WHERE id = $1 AND organization_id = $2", id, constants.CurrentOrganizationID).Scan(&status)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
 		return
@@ -196,7 +198,7 @@ func (r *Router) deleteDevice(c *gin.Context) {
 	}
 
 	// Device is uninstalling - safe to delete
-	result, err := r.db.Pool().Exec(ctx, "DELETE FROM devices WHERE id = $1", id)
+	result, err := r.db.Pool().Exec(ctx, "DELETE FROM devices WHERE id = $1 AND organization_id = $2", id, constants.CurrentOrganizationID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete device"})
 		return
@@ -223,7 +225,7 @@ func (r *Router) disableDevice(c *gin.Context) {
 
 	// Get agent ID to disconnect if online
 	var agentID string
-	err = r.db.Pool().QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1", id).Scan(&agentID)
+	err = r.db.Pool().QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1 AND organization_id = $2", id, constants.CurrentOrganizationID).Scan(&agentID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
 		return
@@ -392,7 +394,7 @@ func (r *Router) executeCommand(c *gin.Context) {
 
 	// Get device agent ID
 	var agentID string
-	err = r.db.Pool().QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1", id).Scan(&agentID)
+	err = r.db.Pool().QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1 AND organization_id = $2", id, constants.CurrentOrganizationID).Scan(&agentID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
 		return
@@ -469,7 +471,7 @@ func (r *Router) enrollAgent(c *gin.Context) {
 
 	// Check if agent already exists
 	var existingID uuid.UUID
-	err := r.db.Pool().QueryRow(ctx, "SELECT id FROM devices WHERE agent_id = $1", enrollment.AgentID).Scan(&existingID)
+	err := r.db.Pool().QueryRow(ctx, "SELECT id FROM devices WHERE agent_id = $1 AND organization_id = $2", enrollment.AgentID, constants.CurrentOrganizationID).Scan(&existingID)
 
 	if err == nil {
 		// Update existing device
@@ -516,7 +518,7 @@ func (r *Router) enrollAgent(c *gin.Context) {
 	_, err = r.db.Pool().Exec(ctx, `
 		INSERT INTO devices (id, agent_id, hostname, display_name, os_type, os_version,
 			os_build, platform, platform_family, architecture, cpu_model, cpu_cores,
-			cpu_threads, COALESCE(cpu_speed, 0), COALESCE(total_memory, 0), COALESCE(EXTRACT(EPOCH FROM boot_time)::bigint, 0), COALESCE(gpu::jsonb, '[]'::jsonb), COALESCE(storage, '[]'::jsonb), COALESCE(serial_number, ''),
+			cpu_threads, COALESCE(cpu_speed, 0), COALESCE(total_memory, 0), COALESCE(boot_time, 0), COALESCE(gpu::jsonb, '[]'::jsonb), COALESCE(storage, '[]'::jsonb), COALESCE(serial_number, ''),
 			manufacturer, model, domain, agent_version, ip_address, mac_address,
 			last_seen, status)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
@@ -684,7 +686,7 @@ func (r *Router) uninstallAgent(c *gin.Context) {
 
 	// Get device agent ID
 	var agentID string
-	err = r.db.Pool().QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1", id).Scan(&agentID)
+	err = r.db.Pool().QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1 AND organization_id = $2", id, constants.CurrentOrganizationID).Scan(&agentID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
 		return
@@ -744,7 +746,7 @@ func (r *Router) pingAgent(c *gin.Context) {
 
 	// Get device agent ID
 	var agentID string
-	err = r.db.Pool().QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1", id).Scan(&agentID)
+	err = r.db.Pool().QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1 AND organization_id = $2", id, constants.CurrentOrganizationID).Scan(&agentID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
 		return

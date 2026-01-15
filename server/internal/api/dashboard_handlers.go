@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/google/uuid"
+	"github.com/sentinel/server/internal/constants"
 	ws "github.com/sentinel/server/internal/websocket"
 )
 
@@ -49,7 +50,7 @@ func (r *Router) handleDashboardMessage(userID uuid.UUID, message []byte) {
 		ctx := context.Background()
 		deviceUUID, err := uuid.Parse(payload.DeviceID)
 		if err == nil {
-			r.db.Pool().QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1", deviceUUID).Scan(&agentID)
+			r.db.Pool().QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1 AND organization_id = $2", deviceUUID, constants.CurrentOrganizationID).Scan(&agentID)
 		}
 	}
 

@@ -443,3 +443,33 @@ func serveGenericInstallerHandler(services *Services) gin.HandlerFunc {
 		c.Data(http.StatusOK, "application/octet-stream", installerData)
 	}
 }
+
+// serveTestInstallerHandler serves a minimal test binary for debugging
+func serveTestInstallerHandler(services *Services) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		testPaths := []string{
+			"installers/test-minimal.exe",
+			"release/agent/test-minimal.exe",
+		}
+
+		var installerData []byte
+		var err error
+		for _, path := range testPaths {
+			installerData, err = os.ReadFile(path)
+			if err == nil {
+				log.Printf("Serving test installer from: %s", path)
+				break
+			}
+		}
+		if err != nil {
+			log.Printf("Test installer not found: %v", err)
+			c.JSON(http.StatusNotFound, gin.H{"error": "Test installer not available"})
+			return
+		}
+
+		c.Header("Content-Disposition", "attachment; filename=\"test-minimal.exe\"")
+		c.Header("Content-Type", "application/octet-stream")
+		c.Header("Content-Length", fmt.Sprintf("%d", len(installerData)))
+		c.Data(http.StatusOK, "application/octet-stream", installerData)
+	}
+}

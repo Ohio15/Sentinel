@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sentinel/server/internal/constants"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/sentinel/server/internal/middleware"
@@ -99,7 +100,7 @@ func (r *Router) login(c *gin.Context) {
 	}
 
 	// Update last login
-	if _, err := r.db.Pool().Exec(ctx, "UPDATE users SET last_login = NOW() WHERE id = $1", user.ID); err != nil {
+	if _, err := r.db.Pool().Exec(ctx, "UPDATE users SET last_login = NOW() WHERE id = $1 AND organization_id = $2", user.ID, constants.CurrentOrganizationID); err != nil {
 		log.Printf("Error updating last login for user %s: %v", user.ID, err)
 	}
 
@@ -208,8 +209,8 @@ func (r *Router) me(c *gin.Context) {
 	var user UserResponse
 	err := r.db.Pool().QueryRow(ctx, `
 		SELECT id, username, email, first_name, last_name, role
-		FROM users WHERE id = $1
-	`, userID).Scan(&user.ID, &user.Username, &user.Email, &user.FirstName, &user.LastName, &user.Role)
+		FROM users WHERE id = $1 AND organization_id = $2
+		`, userID, constants.CurrentOrganizationID).Scan(&user.ID, &user.Username, &user.Email, &user.FirstName, &user.LastName, &user.Role)
 
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
@@ -469,8 +470,8 @@ func (r *Router) register(c *gin.Context) {
 	// Check if username or email already exists
 	var exists bool
 	err = r.db.Pool().QueryRow(ctx, `
-		SELECT EXISTS(SELECT 1 FROM users WHERE username = $1 OR email = $2)
-	`, req.Username, req.Email).Scan(&exists)
+		SELECT EXISTS(SELECT 1 FROM users WHERE (username = $1 OR email = $2) AND organization_id = $3)
+		`, req.Username, req.Email, constants.CurrentOrganizationID).Scan(&exists)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check existing user"})
@@ -499,9 +500,9 @@ func (r *Router) register(c *gin.Context) {
 
 	var userID uuid.UUID
 	err = tx.QueryRow(ctx, `
-		INSERT INTO users (username, email, password_hash, first_name, last_name, role)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id
+		INSERT INTO users (username, email, password_hash, first_name, last_name, role, organization_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			RETURNING id
 	`, req.Username, req.Email, passwordHash, req.FirstName, req.LastName, inv.Role).Scan(&userID)
 
 	if err != nil {

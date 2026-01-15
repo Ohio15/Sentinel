@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"crypto/subtle"
 	"errors"
 	"net/http"
@@ -9,6 +10,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/crypto/bcrypt"
+	"log"
+	"time"
 )
 
 var ErrInvalidSigningMethod = errors.New("invalid signing method")
@@ -178,4 +183,98 @@ func RequireRole(roles ...string) gin.HandlerFunc {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions"})
 		c.Abort()
 	}
+}
+
+// NewAgentAuthMiddleware validates agent tokens against the database
+// CW-003: Supports both legacy (plain text) and bcrypt-hashed tokens
+func NewAgentAuthMiddleware(pool *pgxpool.Pool, fallbackToken string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token := c.GetHeader("X-Enrollment-Token")
+		if token == "" {
+			token = c.GetHeader("X-Agent-Token")
+		}
+
+		if token == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Agent token required"})
+			c.Abort()
+			return
+		}
+
+		// Try database validation first
+		if pool != nil {
+			valid, tokenID := validateDatabaseToken(c.Request.Context(), pool, token)
+			if valid {
+				c.Set("enrollmentTokenID", tokenID)
+				c.Next()
+				return
+			}
+		}
+
+		// Fallback to static token for backwards compatibility
+		if fallbackToken != "" && subtle.ConstantTimeCompare([]byte(token), []byte(fallbackToken)) == 1 {
+			c.Next()
+			return
+		}
+
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid agent token"})
+		c.Abort()
+	}
+}
+
+// validateDatabaseToken checks if a token is valid in the database
+func validateDatabaseToken(ctx context.Context, pool *pgxpool.Pool, token string) (bool, uuid.UUID) {
+	// Query all active tokens and check each one
+	rows, err := pool.Query(ctx, `
+		SELECT id, token, token_hash, is_legacy, expires_at, max_uses, use_count
+		FROM enrollment_tokens
+		WHERE is_active = TRUE
+	`)
+	if err != nil {
+		log.Printf("[AUTH] Failed to query enrollment tokens: %v", err)
+		return false, uuid.Nil
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var tokenID uuid.UUID
+		var plainToken *string
+		var tokenHash *string
+		var isLegacy bool
+		var expiresAt *time.Time
+		var maxUses *int
+		var useCount int
+
+		err := rows.Scan(&tokenID, &plainToken, &tokenHash, &isLegacy, &expiresAt, &maxUses, &useCount)
+		if err != nil {
+			log.Printf("[AUTH] Error scanning token row: %v", err)
+			continue
+		}
+
+		// Check expiration
+		if expiresAt != nil && time.Now().After(*expiresAt) {
+			continue
+		}
+
+		// Check usage limits
+		if maxUses != nil && useCount >= *maxUses {
+			continue
+		}
+
+		// Validate token based on type
+		var valid bool
+		if isLegacy && plainToken != nil {
+			// Legacy token: use constant-time comparison
+			valid = subtle.ConstantTimeCompare([]byte(token), []byte(*plainToken)) == 1
+		} else if tokenHash != nil && *tokenHash != "" {
+			// Hashed token: use bcrypt comparison
+			err := bcrypt.CompareHashAndPassword([]byte(*tokenHash), []byte(token))
+			valid = err == nil
+		}
+
+		if valid {
+			return true, tokenID
+		}
+	}
+
+	return false, uuid.Nil
 }
