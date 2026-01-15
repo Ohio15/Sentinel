@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sentinel/server/internal/constants"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/sentinel/server/internal/middleware"
@@ -186,7 +187,27 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	ctx := context.Background()
 	var deviceID uuid.UUID
 	var isDisabled bool
-	err = r.db.Pool().QueryRow(ctx, "SELECT id, COALESCE(is_disabled, false) FROM devices WHERE agent_id = $1", authPayload.AgentID).Scan(&deviceID, &isDisabled)
+	err = r.db.Pool().QueryRow(ctx, "SELECT id, COALESCE(is_disabled, false) FROM devices WHERE agent_id = $1 AND organization_id = $2", authPayload.AgentID, constants.CurrentOrganizationID).Scan(&deviceID, &isDisabled)
+	if err != nil {
+		// Device not found by agent_id - try MAC address fallback for hardware fingerprint migration
+		if authPayload.DeviceInfo != nil && authPayload.DeviceInfo.MACAddress != "" {
+			macErr := r.db.Pool().QueryRow(ctx,
+				"SELECT id, COALESCE(is_disabled, false) FROM devices WHERE mac_address = $1",
+				authPayload.DeviceInfo.MACAddress).Scan(&deviceID, &isDisabled)
+			if macErr == nil {
+				// Found device by MAC - update agent_id to new hardware fingerprint
+				log.Printf("Migrating device %s from old agent_id to new fingerprint %s (matched by MAC %s)",
+					deviceID, authPayload.AgentID, authPayload.DeviceInfo.MACAddress)
+				_, updateErr := r.db.Pool().Exec(ctx,
+					"UPDATE devices SET agent_id = $1 WHERE id = $2 AND organization_id = $3",
+					authPayload.AgentID, deviceID, constants.CurrentOrganizationID)
+				if updateErr != nil {
+					log.Printf("Warning: failed to update agent_id: %v", updateErr)
+				}
+				err = nil // Clear error - device found
+			}
+		}
+	}
 	if err != nil {
 		// Device not found - auto-enroll as a new device
 		log.Printf("Device not found for agent %s, auto-enrolling...", authPayload.AgentID)
@@ -268,11 +289,11 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 			}
 		}
 	} else if authPayload.CACertHash != "" {
-		if _, err := r.db.Pool().Exec(ctx, "UPDATE devices SET status = 'online', last_seen = NOW(), ca_cert_hash = $2, ca_cert_updated_at = NOW() WHERE id = $1", deviceID, authPayload.CACertHash); err != nil {
+		if _, err := r.db.Pool().Exec(ctx, "UPDATE devices SET status = 'online', last_seen = NOW(), ca_cert_hash = $2, ca_cert_updated_at = NOW() WHERE id = $1 AND organization_id = $3", deviceID, authPayload.CACertHash, constants.CurrentOrganizationID); err != nil {
 			log.Printf("Error updating device %s status to online: %v", deviceID, err)
 		}
 	} else {
-		if _, err := r.db.Pool().Exec(ctx, "UPDATE devices SET status = 'online', last_seen = NOW() WHERE id = $1", deviceID); err != nil {
+		if _, err := r.db.Pool().Exec(ctx, "UPDATE devices SET status = 'online', last_seen = NOW() WHERE id = $1 AND organization_id = $2", deviceID, constants.CurrentOrganizationID); err != nil {
 			log.Printf("Error updating device %s status to online: %v", deviceID, err)
 		}
 	}
@@ -292,7 +313,7 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	})
 
 	// Update device status on disconnect
-	if _, err := r.db.Pool().Exec(context.Background(), "UPDATE devices SET status = 'offline' WHERE id = $1", deviceID); err != nil {
+	if _, err := r.db.Pool().Exec(context.Background(), "UPDATE devices SET status = 'offline' WHERE id = $1 AND organization_id = $2", deviceID, constants.CurrentOrganizationID); err != nil {
 		log.Printf("Error updating device %s status to offline: %v", deviceID, err)
 	}
 
@@ -326,11 +347,11 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 
 		// Update last seen (and agent version if provided)
 		if heartbeat.AgentVersion != "" {
-			if _, err := r.db.Pool().Exec(ctx, "UPDATE devices SET last_seen = NOW(), agent_version = $1 WHERE id = $2", heartbeat.AgentVersion, deviceID); err != nil {
+			if _, err := r.db.Pool().Exec(ctx, "UPDATE devices SET last_seen = NOW(), agent_version = $1 WHERE id = $2 AND organization_id = $3", heartbeat.AgentVersion, deviceID, constants.CurrentOrganizationID); err != nil {
 				log.Printf("Error updating device %s last_seen with version: %v", deviceID, err)
 			}
 		} else {
-			if _, err := r.db.Pool().Exec(ctx, "UPDATE devices SET last_seen = NOW() WHERE id = $1", deviceID); err != nil {
+			if _, err := r.db.Pool().Exec(ctx, "UPDATE devices SET last_seen = NOW() WHERE id = $1 AND organization_id = $2", deviceID, constants.CurrentOrganizationID); err != nil {
 				log.Printf("Error updating device %s last_seen: %v", deviceID, err)
 			}
 		}
@@ -447,12 +468,23 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 		r.hub.BroadcastToDashboards(broadcastMsg)
 
 	case ws.MsgTypeTerminalOutput:
+		// Agent sends sessionId and data at root level, not in payload
+		var termOut struct {
+			SessionID string `json:"sessionId"`
+			Data      string `json:"data"`
+		}
+		if err := json.Unmarshal(message, &termOut); err != nil {
+			log.Printf("[Handler] Failed to parse terminal output: %v", err)
+			return
+		}
+
 		// Forward terminal output to dashboards
 		broadcastMsg, _ := json.Marshal(map[string]interface{}{
-			"type":     ws.MsgTypeTerminalOutput,
-			"deviceId": deviceID,
-			"agentId":  agentID,
-			"payload":  msg.Payload,
+			"type":      ws.MsgTypeTerminalOutput,
+			"deviceId":  deviceID,
+			"agentId":   agentID,
+			"sessionId": termOut.SessionID,
+			"data":      termOut.Data,
 		})
 		r.hub.BroadcastToDashboards(broadcastMsg)
 
@@ -543,7 +575,7 @@ func (r *Router) checkAlertRules(deviceID uuid.UUID, cpu, memory, disk float64) 
 			var count int
 			if err := r.db.Pool().QueryRow(ctx, `
 				SELECT COUNT(*) FROM alerts
-				WHERE device_id = $1 AND rule_id = $2 AND status != 'resolved'
+						WHERE device_id = $1 AND rule_id = $2 AND status != 'resolved' AND organization_id = $3
 				AND created_at > NOW() - INTERVAL '15 minutes'
 			`, deviceID, rule.ID).Scan(&count); err != nil {
 				log.Printf("Error checking alert cooldown for device %s: %v", deviceID, err)
@@ -552,8 +584,8 @@ func (r *Router) checkAlertRules(deviceID uuid.UUID, cpu, memory, disk float64) 
 
 			if count == 0 {
 				if _, err := r.db.Pool().Exec(ctx, `
-					INSERT INTO alerts (device_id, rule_id, severity, title, message)
-					VALUES ($1, $2, $3, $4, $5)
+					INSERT INTO alerts (device_id, rule_id, severity, title, message, organization_id)
+							VALUES ($1, $2, $3, $4, $5, $6)
 				`, deviceID, rule.ID, rule.Severity, rule.Name,
 					rule.Metric+" is "+rule.Operator+" "+fmt.Sprintf("%.2f", rule.Threshold)); err != nil {
 					log.Printf("Error creating alert for device %s: %v", deviceID, err)
@@ -587,7 +619,7 @@ func (r *Router) listScripts(c *gin.Context) {
 
 	rows, err := r.db.Pool().Query(ctx, `
 		SELECT id, name, description, language, content, os_types, created_at, updated_at
-		FROM scripts ORDER BY name
+		FROM scripts WHERE organization_id = $1 ORDER BY name
 	`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch scripts"})
@@ -651,8 +683,8 @@ func (r *Router) createScript(c *gin.Context) {
 
 	var id uuid.UUID
 	err := r.db.Pool().QueryRow(ctx, `
-		INSERT INTO scripts (name, description, language, content, os_types, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
+		INSERT INTO scripts (name, description, language, content, os_types, created_by, organization_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id
 	`, req.Name, req.Description, req.Language, req.Content, req.OSTypes, userID).Scan(&id)
 
 	if err != nil {
@@ -684,8 +716,8 @@ func (r *Router) getScript(c *gin.Context) {
 
 	err = r.db.Pool().QueryRow(ctx, `
 		SELECT id, name, description, language, content, os_types, created_at, updated_at
-		FROM scripts WHERE id = $1
-	`, id).Scan(&s.ID, &s.Name, &s.Description, &s.Language, &s.Content, &s.OSTypes, &s.CreatedAt, &s.UpdatedAt)
+		FROM scripts WHERE id = $1 AND organization_id = $2
+		`, id, constants.CurrentOrganizationID).Scan(&s.ID, &s.Name, &s.Description, &s.Language, &s.Content, &s.OSTypes, &s.CreatedAt, &s.UpdatedAt)
 
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Script not found"})
@@ -745,7 +777,7 @@ func (r *Router) deleteScript(c *gin.Context) {
 	}
 
 	ctx := context.Background()
-	result, err := r.db.Pool().Exec(ctx, "DELETE FROM scripts WHERE id = $1", id)
+	result, err := r.db.Pool().Exec(ctx, "DELETE FROM scripts WHERE id = $1 AND organization_id = $2", id, constants.CurrentOrganizationID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete script"})
 		return
@@ -787,7 +819,7 @@ func (r *Router) executeScript(c *gin.Context) {
 		Content  string
 	}
 
-	err = r.db.Pool().QueryRow(ctx, "SELECT language, content FROM scripts WHERE id = $1", scriptID).Scan(&script.Language, &script.Content)
+	err = r.db.Pool().QueryRow(ctx, "SELECT language, content FROM scripts WHERE id = $1 AND organization_id = $2", scriptID, constants.CurrentOrganizationID).Scan(&script.Language, &script.Content)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Script not found"})
 		return
@@ -796,8 +828,8 @@ func (r *Router) executeScript(c *gin.Context) {
 	userID := c.MustGet("userId").(uuid.UUID)
 	var commandID uuid.UUID
 	err = r.db.Pool().QueryRow(ctx, `
-		INSERT INTO commands (device_id, user_id, command_type, command, status)
-		VALUES ($1, $2, $3, $4, 'pending') RETURNING id
+		INSERT INTO commands (device_id, user_id, command_type, command, status, organization_id)
+			VALUES ($1, $2, $3, $4, 'pending', $5) RETURNING id
 	`, deviceID, userID, script.Language, script.Content).Scan(&commandID)
 
 	if err != nil {
@@ -816,7 +848,7 @@ func (r *Router) executeScript(c *gin.Context) {
 	})
 
 	var agentID string
-	if err := r.db.Pool().QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1", deviceID).Scan(&agentID); err != nil {
+	if err := r.db.Pool().QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1 AND organization_id = $2", deviceID, constants.CurrentOrganizationID).Scan(&agentID); err != nil {
 		log.Printf("Error looking up agent ID for device %s: %v", deviceID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to find device agent"})
 		return
@@ -920,8 +952,8 @@ func (r *Router) getAlert(c *gin.Context) {
 	err = r.db.Pool().QueryRow(ctx, `
 		SELECT a.id, a.device_id, d.hostname, a.rule_id, a.severity, a.title, a.message,
 			   a.status, a.acknowledged_at, a.resolved_at, a.created_at
-		FROM alerts a LEFT JOIN devices d ON a.device_id = d.id WHERE a.id = $1
-	`, id).Scan(&a.ID, &a.DeviceID, &a.DeviceName, &a.RuleID, &a.Severity, &a.Title, &a.Message,
+		FROM alerts a LEFT JOIN devices d ON a.device_id = d.id WHERE a.id = $1 AND a.organization_id = $2
+		`, id, constants.CurrentOrganizationID).Scan(&a.ID, &a.DeviceID, &a.DeviceName, &a.RuleID, &a.Severity, &a.Title, &a.Message,
 		&a.Status, &a.AcknowledgedAt, &a.ResolvedAt, &a.CreatedAt)
 
 	if err != nil {
@@ -944,8 +976,8 @@ func (r *Router) acknowledgeAlert(c *gin.Context) {
 
 	if _, err := r.db.Pool().Exec(ctx, `
 		UPDATE alerts SET status = 'acknowledged', acknowledged_by = $1, acknowledged_at = NOW()
-		WHERE id = $2
-	`, userID, id); err != nil {
+		WHERE id = $2 AND organization_id = $3
+		`, userID, id, constants.CurrentOrganizationID); err != nil {
 		log.Printf("Error acknowledging alert %s: %v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to acknowledge alert"})
 		return
@@ -958,7 +990,7 @@ func (r *Router) resolveAlert(c *gin.Context) {
 	id, _ := uuid.Parse(c.Param("id"))
 	ctx := context.Background()
 
-	if _, err := r.db.Pool().Exec(ctx, "UPDATE alerts SET status = 'resolved', resolved_at = NOW() WHERE id = $1", id); err != nil {
+	if _, err := r.db.Pool().Exec(ctx, "UPDATE alerts SET status = 'resolved', resolved_at = NOW() WHERE id = $1 AND organization_id = $2", id, constants.CurrentOrganizationID); err != nil {
 		log.Printf("Error resolving alert %s: %v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to resolve alert"})
 		return
@@ -1037,8 +1069,8 @@ func (r *Router) createAlertRule(c *gin.Context) {
 	ctx := context.Background()
 	var id uuid.UUID
 	err := r.db.Pool().QueryRow(ctx, `
-		INSERT INTO alert_rules (name, description, metric, operator, threshold, severity, cooldown_minutes)
-		VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id
+		INSERT INTO alert_rules (name, description, metric, operator, threshold, severity, cooldown_minutes, organization_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id
 	`, req.Name, req.Description, req.Metric, req.Operator, req.Threshold, req.Severity, req.CooldownMinutes).Scan(&id)
 
 	if err != nil {
@@ -1140,7 +1172,7 @@ func (r *Router) deleteAlertRule(c *gin.Context) {
 	}
 
 	ctx := context.Background()
-	result, err := r.db.Pool().Exec(ctx, "DELETE FROM alert_rules WHERE id = $1", id)
+	result, err := r.db.Pool().Exec(ctx, "DELETE FROM alert_rules WHERE id = $1 AND organization_id = $2", id, constants.CurrentOrganizationID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete alert rule"})
 		return
@@ -1206,7 +1238,7 @@ func (r *Router) listUsers(c *gin.Context) {
 
 	rows, err := r.db.Pool().Query(ctx, `
 		SELECT id, email, first_name, last_name, role, is_active, last_login, created_at
-		FROM users ORDER BY email
+		FROM users WHERE organization_id = $1 ORDER BY email
 	`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch users"})
@@ -1273,7 +1305,7 @@ func (r *Router) createUser(c *gin.Context) {
 
 	ctx := context.Background()
 	var id uuid.UUID
-	err = r.db.Pool().QueryRow(ctx, `INSERT INTO users (email, password_hash, first_name, last_name, role) VALUES ($1, $2, $3, $4, $5) RETURNING id`, req.Email, hashedPassword, req.FirstName, req.LastName, req.Role).Scan(&id)
+	err = r.db.Pool().QueryRow(ctx, `INSERT INTO users (email, password_hash, first_name, last_name, role, organization_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`, req.Email, hashedPassword, req.FirstName, req.LastName, req.Role).Scan(&id)
 
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "User already exists"})
@@ -1314,7 +1346,7 @@ func (r *Router) updateUser(c *gin.Context) {
 	// DC-001 FIX: Get old role before update to detect privilege changes
 	var oldRole string
 	if req.Role != "" {
-		err = r.db.Pool().QueryRow(ctx, "SELECT role FROM users WHERE id = $1", id).Scan(&oldRole)
+		err = r.db.Pool().QueryRow(ctx, "SELECT role FROM users WHERE id = $1 AND organization_id = $2", id, constants.CurrentOrganizationID).Scan(&oldRole)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 			return
@@ -1396,7 +1428,7 @@ func (r *Router) deleteUser(c *gin.Context) {
 	ctx := context.Background()
 
 	// Soft delete by setting is_active to false
-	_, err = r.db.Pool().Exec(ctx, "UPDATE users SET is_active = false, updated_at = NOW() WHERE id = $1", id)
+	_, err = r.db.Pool().Exec(ctx, "UPDATE users SET is_active = false, updated_at = NOW() WHERE id = $1 AND organization_id = $2", id, constants.CurrentOrganizationID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete user"})
 		return
@@ -1413,7 +1445,7 @@ func (r *Router) getDashboardStats(c *gin.Context) {
 
 	// Total devices
 	var totalDevices int
-	if err := r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM devices").Scan(&totalDevices); err != nil {
+	if err := r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM devices WHERE organization_id = $1", constants.CurrentOrganizationID).Scan(&totalDevices); err != nil {
 		log.Printf("Error getting total devices count: %v", err)
 	}
 	stats["totalDevices"] = totalDevices

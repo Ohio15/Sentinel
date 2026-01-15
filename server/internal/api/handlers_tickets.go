@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sentinel/server/internal/constants"
 	"github.com/google/uuid"
 )
 
@@ -391,7 +392,7 @@ func (r *Router) updateTicket(c *gin.Context) {
 		Status   string
 		Priority string
 	}
-	r.db.Pool().QueryRow(ctx, "SELECT status, priority FROM tickets WHERE id = $1", id).Scan(&current.Status, &current.Priority)
+	r.db.Pool().QueryRow(ctx, "SELECT status, priority FROM tickets WHERE id = $1 AND organization_id = $2", id, constants.CurrentOrganizationID).Scan(&current.Status, &current.Priority)
 
 	// Build update query dynamically
 	updates := "updated_at = NOW()"
@@ -476,7 +477,7 @@ func (r *Router) deleteTicket(c *gin.Context) {
 	}
 
 	ctx := context.Background()
-	result, err := r.db.Pool().Exec(ctx, "DELETE FROM tickets WHERE id = $1", id)
+	result, err := r.db.Pool().Exec(ctx, "DELETE FROM tickets WHERE id = $1 AND organization_id = $2", id, constants.CurrentOrganizationID)
 	if err != nil {
 		log.Printf("Error deleting ticket: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete ticket"})
@@ -656,11 +657,11 @@ func (r *Router) getTicketStats(c *gin.Context) {
 
 	// Count by status
 	var open, inProgress, waiting, resolved, closed int
-	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM tickets WHERE status = 'open'").Scan(&open)
-	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM tickets WHERE status = 'in_progress'").Scan(&inProgress)
-	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM tickets WHERE status = 'waiting'").Scan(&waiting)
-	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM tickets WHERE status = 'resolved'").Scan(&resolved)
-	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM tickets WHERE status = 'closed'").Scan(&closed)
+	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM tickets WHERE status = 'open' AND organization_id = $1", constants.CurrentOrganizationID).Scan(&open)
+	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM tickets WHERE status = 'in_progress' AND organization_id = $1", constants.CurrentOrganizationID).Scan(&inProgress)
+	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM tickets WHERE status = 'waiting' AND organization_id = $1", constants.CurrentOrganizationID).Scan(&waiting)
+	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM tickets WHERE status = 'resolved' AND organization_id = $1", constants.CurrentOrganizationID).Scan(&resolved)
+	r.db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM tickets WHERE status = 'closed' AND organization_id = $1", constants.CurrentOrganizationID).Scan(&closed)
 
 	total := open + inProgress + waiting + resolved + closed
 

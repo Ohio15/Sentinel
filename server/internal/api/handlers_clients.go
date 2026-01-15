@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/sentinel/server/internal/constants"
 )
 
 // Client handlers
@@ -19,8 +20,8 @@ func (r *Router) listClients(c *gin.Context) {
 		SELECT c.id, c.name, c.description, c.color, c.logo_url, c.logo_width, c.logo_height,
 		       c.created_at, c.updated_at,
 		       COALESCE((SELECT COUNT(*) FROM devices d WHERE d.client_id = c.id), 0) as device_count
-		FROM clients c ORDER BY c.name
-	`)
+		FROM clients c WHERE c.organization_id = $1 ORDER BY c.name
+	`, constants.CurrentOrganizationID)
 	if err != nil {
 		log.Printf("Error listing clients: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch clients"})
@@ -86,8 +87,8 @@ func (r *Router) getClient(c *gin.Context) {
 
 	err = r.db.Pool().QueryRow(ctx, `
 		SELECT id, name, description, color, logo_url, logo_width, logo_height, created_at, updated_at
-		FROM clients WHERE id = $1
-	`, id).Scan(&client.ID, &client.Name, &client.Description, &client.Color,
+		FROM clients WHERE id = $1 AND organization_id = $2
+	`, id, constants.CurrentOrganizationID).Scan(&client.ID, &client.Name, &client.Description, &client.Color,
 		&client.LogoURL, &client.LogoWidth, &client.LogoHeight, &client.CreatedAt, &client.UpdatedAt)
 
 	if err != nil {
@@ -126,9 +127,9 @@ func (r *Router) createClient(c *gin.Context) {
 	ctx := context.Background()
 	var id uuid.UUID
 	err := r.db.Pool().QueryRow(ctx, `
-		INSERT INTO clients (name, description, color, logo_url, logo_width, logo_height)
-		VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
-	`, req.Name, req.Description, req.Color, req.LogoURL, req.LogoWidth, req.LogoHeight).Scan(&id)
+		INSERT INTO clients (name, description, color, logo_url, logo_width, logo_height, organization_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id
+	`, req.Name, req.Description, req.Color, req.LogoURL, req.LogoWidth, req.LogoHeight, constants.CurrentOrganizationID).Scan(&id)
 
 	if err != nil {
 		log.Printf("Error creating client: %v", err)
@@ -173,8 +174,8 @@ func (r *Router) updateClient(c *gin.Context) {
 			logo_width = COALESCE($5, logo_width),
 			logo_height = COALESCE($6, logo_height),
 			updated_at = NOW()
-		WHERE id = $7
-	`, req.Name, req.Description, req.Color, req.LogoURL, req.LogoWidth, req.LogoHeight, id)
+		WHERE id = $7 AND organization_id = $8
+	`, req.Name, req.Description, req.Color, req.LogoURL, req.LogoWidth, req.LogoHeight, id, constants.CurrentOrganizationID)
 
 	if err != nil {
 		log.Printf("Error updating client: %v", err)
@@ -193,7 +194,7 @@ func (r *Router) deleteClient(c *gin.Context) {
 	}
 
 	ctx := context.Background()
-	result, err := r.db.Pool().Exec(ctx, "DELETE FROM clients WHERE id = $1", id)
+	result, err := r.db.Pool().Exec(ctx, "DELETE FROM clients WHERE id = $1 AND organization_id = $2", id, constants.CurrentOrganizationID)
 	if err != nil {
 		log.Printf("Error deleting client: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete client"})

@@ -16,6 +16,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
+	"github.com/sentinel/server/internal/constants"
 	"github.com/sentinel/server/internal/models"
 )
 
@@ -36,8 +38,9 @@ func (r *Router) listEnrollmentTokens(c *gin.Context) {
 		SELECT id, token, name, description, created_by, expires_at, max_uses, use_count,
 		       is_active, tags, metadata, created_at, updated_at
 		FROM enrollment_tokens
+		WHERE organization_id = $1
 		ORDER BY created_at DESC
-	`)
+	`, constants.CurrentOrganizationID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch tokens"})
 		return
@@ -90,16 +93,23 @@ func (r *Router) createEnrollmentToken(c *gin.Context) {
 	}
 	token := hex.EncodeToString(tokenBytes)
 
+	// CW-003: Hash the token with bcrypt before storage
+	tokenHash, err := bcrypt.GenerateFromPassword([]byte(token), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash token"})
+		return
+	}
+
 	// Get user ID from context
 	userID, _ := c.Get("userID")
 	uid := userID.(uuid.UUID)
 
 	var tokenID uuid.UUID
-	err := r.db.Pool().QueryRow(c.Request.Context(), `
-		INSERT INTO enrollment_tokens (token, name, description, created_by, expires_at, max_uses, tags, metadata)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	err = r.db.Pool().QueryRow(c.Request.Context(), `
+		INSERT INTO enrollment_tokens (token, token_hash, name, description, created_by, expires_at, max_uses, tags, metadata, is_legacy)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, FALSE)
 		RETURNING id
-	`, token, req.Name, req.Description, uid, req.ExpiresAt, req.MaxUses, req.Tags, req.Metadata).Scan(&tokenID)
+	`, token, string(tokenHash), req.Name, req.Description, uid, req.ExpiresAt, req.MaxUses, req.Tags, req.Metadata).Scan(&tokenID)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create token"})
@@ -126,8 +136,8 @@ func (r *Router) getEnrollmentToken(c *gin.Context) {
 	err = r.db.Pool().QueryRow(c.Request.Context(), `
 		SELECT id, token, name, description, created_by, expires_at, max_uses, use_count,
 		       is_active, tags, metadata, created_at, updated_at
-		FROM enrollment_tokens WHERE id = $1
-	`, tokenID).Scan(
+		FROM enrollment_tokens WHERE id = $1 AND organization_id = $2
+		`, tokenID, constants.CurrentOrganizationID).Scan(
 		&t.ID, &t.Token, &t.Name, &t.Description, &t.CreatedBy, &t.ExpiresAt,
 		&t.MaxUses, &t.UseCount, &t.IsActive, &t.Tags, &t.Metadata,
 		&t.CreatedAt, &t.UpdatedAt,
@@ -194,7 +204,7 @@ func (r *Router) deleteEnrollmentToken(c *gin.Context) {
 		return
 	}
 
-	_, err = r.db.Pool().Exec(c.Request.Context(), `DELETE FROM enrollment_tokens WHERE id = $1`, tokenID)
+	_, err = r.db.Pool().Exec(c.Request.Context(), `DELETE FROM enrollment_tokens WHERE id = $1 AND organization_id = $2`, tokenID, constants.CurrentOrganizationID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete token"})
 		return
@@ -286,8 +296,8 @@ func (r *Router) downloadAgentInstaller(c *gin.Context) {
 
 	err := r.db.Pool().QueryRow(c.Request.Context(), `
 		SELECT id, is_active, expires_at, max_uses, use_count, tags, metadata
-		FROM enrollment_tokens WHERE token = $1
-	`, token).Scan(&tokenID, &isActive, &expiresAt, &maxUses, &useCount, &tags, &metadata)
+		FROM enrollment_tokens WHERE token = $1 AND organization_id = $2
+		`, token, constants.CurrentOrganizationID).Scan(&tokenID, &isActive, &expiresAt, &maxUses, &useCount, &tags, &metadata)
 
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid enrollment token"})

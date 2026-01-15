@@ -64,7 +64,7 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 
 		// Agent routes (uses enrollment token)
 		agent := api.Group("/agent")
-		agent.Use(middleware.AgentAuthMiddleware(cfg.EnrollmentToken))
+		agent.Use(middleware.NewAgentAuthMiddleware(db.Pool(), cfg.EnrollmentToken))
 		{
 			agent.POST("/enroll", router.enrollAgent)
 		}
@@ -87,7 +87,12 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 		// Protected routes (require JWT)
 		protected := api.Group("")
 		protected.Use(middleware.AuthMiddleware(cfg.JWTSecret))
-		protected.Use(middleware.CSRFMiddleware(middleware.DefaultCSRFConfig()))
+		csrfConfig := middleware.DefaultCSRFConfig()
+		if cfg.Environment != "production" {
+			csrfConfig.Secure = false
+			csrfConfig.SameSite = 2 // http.SameSiteLaxMode
+		}
+		protected.Use(middleware.CSRFMiddleware(csrfConfig))
 		{
 			// Auth
 			protected.POST("/auth/logout", router.logout)
@@ -216,7 +221,7 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 
 		// Agent routes (uses enrollment token)
 		agent := api.Group("/agent")
-		agent.Use(middleware.AgentAuthMiddleware(services.Config.EnrollmentToken))
+		agent.Use(middleware.NewAgentAuthMiddleware(services.DB.Pool(), services.Config.EnrollmentToken))
 		{
 			agent.POST("/enroll", enrollAgentHandler(services))
 		}
@@ -242,6 +247,7 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			bootstrap.GET("/agent-info", getBootstrapAgentInfoHandler(services))
 			bootstrap.GET("/download", downloadBootstrapHandler(services))
 			bootstrap.GET("/agent", downloadBootstrapAgentHandler(services))
+
 		}
 
 		// Enrollment Tokens (public - no auth required for self-hosted setups)
@@ -435,6 +441,8 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			mobile.POST("/enroll", enrollMobileDeviceHandler(services))
 			mobile.POST("/push/register", registerPushTokenHandler(services))
 		}
+		// Agent Installation Links routes (public portal + admin management)
+		RegisterAgentLinkRoutes(api, protected, services)
 	}
 
 	// WebSocket routes
