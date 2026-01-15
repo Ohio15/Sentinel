@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useDeviceStore, Device } from '../stores/deviceStore';
 import { useClientStore } from '../stores/clientStore';
+import { api } from '../services/api';
+import { format } from 'date-fns';
 
 interface DevicesProps {
   onDeviceSelect: (deviceId: string) => void;
@@ -8,9 +10,57 @@ interface DevicesProps {
 
 interface ServerInfo {
   port: number;
-  // agentCount derived from device store
   enrollmentToken: string;
 }
+
+interface AgentLink {
+  id: string;
+  downloadToken: string;
+  deviceName: string;
+  userEmail: string;
+  userName?: string;
+  createdAt: string;
+  createdByName?: string;
+  expiresAt: string;
+  downloadedAt?: string;
+  downloadCount: number;
+  agentConnectedAt?: string;
+  deviceId?: number;
+  status: string;
+  emailSentAt?: string;
+  emailDeliveryStatus?: string;
+  notes?: string;
+  downloadUrl?: string;
+}
+
+interface LinkStats {
+  total: number;
+  pending: number;
+  downloaded: number;
+  installed: number;
+  expired: number;
+  revoked: number;
+  last24Hours: number;
+  last7Days: number;
+}
+
+interface CreateLinkForm {
+  deviceName: string;
+  userEmail: string;
+  userName: string;
+  notes: string;
+  expiresInHours: number;
+  sendEmail: boolean;
+}
+
+const linkStatusConfig: Record<string, { label: string; color: string }> = {
+  pending: { label: 'Pending', color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300' },
+  downloaded: { label: 'Downloaded', color: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300' },
+  installing: { label: 'Installing', color: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300' },
+  installed: { label: 'Installed', color: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300' },
+  expired: { label: 'Expired', color: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300' },
+  revoked: { label: 'Revoked', color: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300' },
+};
 
 export function Devices({ onDeviceSelect }: DevicesProps) {
   const { devices, loading, deleteDevice, disableDevice, enableDevice, uninstallDevice } = useDeviceStore();
@@ -25,12 +75,34 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
   const [actionMenu, setActionMenu] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<{ deviceId: string; action: 'disable' | 'uninstall' } | null>(null);
   const [activeTab, setActiveTab] = useState<'devices' | 'installation'>('devices');
+  const [installationSubTab, setInstallationSubTab] = useState<'download' | 'links'>('download');
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null);
-  const [copied, setCopied] = useState(false);
   const [downloadingPlatform, setDownloadingPlatform] = useState<string | null>(null);
   const [downloadResult, setDownloadResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [psRunning, setPsRunning] = useState(false);
-  // Pre-configured installers are always used
+
+  // Installation Links state
+  const [links, setLinks] = useState<AgentLink[]>([]);
+  const [linkStats, setLinkStats] = useState<LinkStats | null>(null);
+  const [linksLoading, setLinksLoading] = useState(false);
+  const [linkFilter, setLinkFilter] = useState('');
+  const [linkSearch, setLinkSearch] = useState('');
+  const [linkPage, setLinkPage] = useState(1);
+  const [linkTotalPages, setLinkTotalPages] = useState(1);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [selectedLink, setSelectedLink] = useState<AgentLink | null>(null);
+  const [linkFormData, setLinkFormData] = useState<CreateLinkForm>({
+    deviceName: '',
+    userEmail: '',
+    userName: '',
+    notes: '',
+    expiresInHours: 24,
+    sendEmail: true,
+  });
+  const [creatingLink, setCreatingLink] = useState(false);
+  const [createLinkResult, setCreateLinkResult] = useState<any>(null);
+  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
 
   useEffect(() => {
     loadServerInfo();
@@ -45,6 +117,14 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
     }
   }, [actionMenu]);
 
+  // Fetch installation links when on links tab
+  useEffect(() => {
+    if (activeTab === 'installation' && installationSubTab === 'links') {
+      fetchLinks();
+      fetchLinkStats();
+    }
+  }, [activeTab, installationSubTab, linkFilter, linkSearch, linkPage]);
+
   const loadServerInfo = async () => {
     try {
       const info = await window.api.server.getInfo();
@@ -54,17 +134,10 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
     }
   };
 
-  const handleRegenerateToken = async () => {
-    if (confirm('Are you sure? Existing agents will need to be re-enrolled.')) {
-      const newToken = await window.api.server.regenerateToken();
-      setServerInfo(prev => prev ? { ...prev, enrollmentToken: newToken } : null);
-    }
-  };
-
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setCopiedUrl(text);
+    setTimeout(() => setCopiedUrl(null), 2000);
   };
 
   const handleDownload = async (platform: string) => {
@@ -151,6 +224,110 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
     } finally {
       setPsRunning(false);
     }
+  };
+
+  // Installation Links functions
+  const fetchLinks = async () => {
+    setLinksLoading(true);
+    try {
+      const response = await api.getAgentLinks({
+        status: linkFilter || undefined,
+        search: linkSearch || undefined,
+        page: linkPage,
+        pageSize: 20,
+      });
+      setLinks(response.links || []);
+      setLinkTotalPages(response.pages || 1);
+    } catch (err) {
+      console.error('Failed to fetch links:', err);
+    } finally {
+      setLinksLoading(false);
+    }
+  };
+
+  const fetchLinkStats = async () => {
+    try {
+      const data = await api.getAgentLinkStats();
+      setLinkStats(data);
+    } catch (err) {
+      console.error('Failed to fetch stats:', err);
+    }
+  };
+
+  const handleCreateLink = async () => {
+    if (!linkFormData.deviceName || !linkFormData.userEmail) return;
+    setCreatingLink(true);
+    try {
+      const result = await api.createAgentLink({
+        deviceName: linkFormData.deviceName,
+        userEmail: linkFormData.userEmail,
+        userName: linkFormData.userName || undefined,
+        notes: linkFormData.notes || undefined,
+        expiresInHours: linkFormData.expiresInHours,
+        sendEmail: linkFormData.sendEmail,
+      });
+      setCreateLinkResult(result);
+      fetchLinks();
+      fetchLinkStats();
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to create link');
+    } finally {
+      setCreatingLink(false);
+    }
+  };
+
+  const handleResendEmail = async (linkId: string) => {
+    try {
+      await api.resendAgentLinkEmail(linkId);
+      alert('Email resent successfully');
+      fetchLinks();
+    } catch (err) {
+      alert('Failed to resend email');
+    }
+  };
+
+  const handleRevokeLink = async (linkId: string) => {
+    if (!confirm('Are you sure you want to revoke this installation link?')) return;
+    try {
+      await api.revokeAgentLink(linkId);
+      fetchLinks();
+      fetchLinkStats();
+    } catch (err) {
+      alert('Failed to revoke link');
+    }
+  };
+
+  const handleDeleteLink = async (linkId: string) => {
+    if (!confirm('Are you sure you want to permanently delete this installation link? This cannot be undone.')) return;
+    try {
+      await api.deleteAgentLink(linkId);
+      fetchLinks();
+      fetchLinkStats();
+    } catch (err) {
+      alert('Failed to delete link');
+    }
+  };
+
+  const handleViewLinkDetails = async (link: AgentLink) => {
+    try {
+      const details = await api.getAgentLink(link.id);
+      setSelectedLink(details);
+      setShowDetailModal(true);
+    } catch (err) {
+      console.error('Failed to fetch link details:', err);
+    }
+  };
+
+  const resetLinkForm = () => {
+    setLinkFormData({
+      deviceName: '',
+      userEmail: '',
+      userName: '',
+      notes: '',
+      expiresInHours: 24,
+      sendEmail: true,
+    });
+    setCreateLinkResult(null);
   };
 
   const filteredDevices = devices.filter(device => {
@@ -425,31 +602,32 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
 
       {activeTab === 'installation' && serverInfo && (
         <div className="space-y-6">
-          {/* Enrollment Token */}
-          <div className="card p-6">
-            <h2 className="text-lg font-semibold text-text-primary mb-4">Enrollment Token</h2>
-            <p className="text-sm text-text-secondary mb-4">
-              Use this token to enroll new agents. Keep it secure!
-            </p>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={serverInfo.enrollmentToken}
-                readOnly
-                className="input flex-1 font-mono text-sm"
-              />
-              <button
-                onClick={() => copyToClipboard(serverInfo.enrollmentToken)}
-                className="btn btn-secondary"
-              >
-                {copied ? 'Copied!' : 'Copy'}
-              </button>
-              <button onClick={handleRegenerateToken} className="btn btn-danger">
-                Regenerate
-              </button>
-            </div>
+          {/* Installation Sub-Tabs */}
+          <div className="flex gap-2">
+            <button
+              onClick={() => setInstallationSubTab('download')}
+              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                installationSubTab === 'download'
+                  ? 'bg-primary text-white'
+                  : 'bg-gray-100 dark:bg-gray-800 text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              Direct Download
+            </button>
+            <button
+              onClick={() => setInstallationSubTab('links')}
+              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                installationSubTab === 'links'
+                  ? 'bg-primary text-white'
+                  : 'bg-gray-100 dark:bg-gray-800 text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              Installation Links
+            </button>
           </div>
 
+          {installationSubTab === 'download' && (
+            <>
           {/* Agent Downloads */}
           <div className="card p-6">
             <h2 className="text-lg font-semibold text-text-primary mb-4">Download Agent Installer</h2>
@@ -579,6 +757,171 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
               <li>Linux/macOS require sudo privileges for installation</li>
             </ul>
           </div>
+            </>
+          )}
+
+          {installationSubTab === 'links' && (
+            <>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-text-primary">Installation Links</h2>
+                  <p className="text-sm text-text-secondary">Send installation links to users via email</p>
+                </div>
+                <button onClick={() => { resetLinkForm(); setShowCreateModal(true); }} className="btn btn-primary flex items-center gap-2">
+                  <PlusIcon className="w-4 h-4" />Create Link
+                </button>
+              </div>
+
+              {linkStats && (
+                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                  <LinkStatCard label="Total Links" value={linkStats.total} />
+                  <LinkStatCard label="Pending" value={linkStats.pending} color="yellow" />
+                  <LinkStatCard label="Downloaded" value={linkStats.downloaded} color="blue" />
+                  <LinkStatCard label="Installed" value={linkStats.installed} color="green" />
+                  <LinkStatCard label="Expired" value={linkStats.expired} color="gray" />
+                  <LinkStatCard label="Last 24h" value={linkStats.last24Hours} color="indigo" />
+                </div>
+              )}
+
+              <div className="flex flex-col sm:flex-row gap-4">
+                <div className="flex-1">
+                  <input type="text" placeholder="Search by device name or email..." value={linkSearch} onChange={(e) => setLinkSearch(e.target.value)} className="input w-full" />
+                </div>
+                <select value={linkFilter} onChange={(e) => setLinkFilter(e.target.value)} className="input w-40">
+                  <option value="">All Status</option>
+                  <option value="pending">Pending</option>
+                  <option value="downloaded">Downloaded</option>
+                  <option value="installed">Installed</option>
+                  <option value="expired">Expired</option>
+                  <option value="revoked">Revoked</option>
+                </select>
+              </div>
+
+              <div className="card overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table>
+                    <thead><tr><th>Device</th><th>User</th><th>Status</th><th>Created</th><th>Downloads</th><th className="text-right">Actions</th></tr></thead>
+                    <tbody>
+                      {linksLoading ? (
+                        <tr><td colSpan={6} className="text-center py-12"><SpinnerIcon /></td></tr>
+                      ) : links.length === 0 ? (
+                        <tr><td colSpan={6} className="text-center py-12 text-text-secondary">No installation links found</td></tr>
+                      ) : (
+                        links.map((link) => (
+                          <tr key={link.id}>
+                            <td><div className="font-medium text-text-primary">{link.deviceName}</div>{link.notes && <div className="text-sm text-text-secondary truncate max-w-xs">{link.notes}</div>}</td>
+                            <td><div className="text-text-primary">{link.userEmail}</div>{link.userName && <div className="text-sm text-text-secondary">{link.userName}</div>}</td>
+                            <td><LinkStatusBadge status={link.status} /></td>
+                            <td className="text-sm text-text-secondary">{format(new Date(link.createdAt), 'MMM d, yyyy HH:mm')}</td>
+                            <td className="text-sm text-text-secondary">{link.downloadCount}</td>
+                            <td>
+                              <div className="flex items-center justify-end gap-2">
+                                <button onClick={() => handleViewLinkDetails(link)} className="text-text-secondary hover:text-text-primary p-1" title="View Details"><EyeIcon className="w-4 h-4" /></button>
+                                {link.status === 'pending' && <button onClick={() => handleResendEmail(link.id)} className="text-text-secondary hover:text-primary p-1" title="Resend Email"><MailIcon className="w-4 h-4" /></button>}
+                                {!['installed', 'revoked', 'expired'].includes(link.status) && <button onClick={() => handleRevokeLink(link.id)} className="text-text-secondary hover:text-danger p-1" title="Revoke Link"><BanIcon className="w-4 h-4" /></button>}
+                                {['revoked', 'expired'].includes(link.status) && <button onClick={() => handleDeleteLink(link.id)} className="text-text-secondary hover:text-danger p-1" title="Delete Link"><TrashIcon className="w-4 h-4" /></button>}
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                {linkTotalPages > 1 && (
+                  <div className="px-6 py-3 border-t border-border flex items-center justify-between">
+                    <button onClick={() => setLinkPage((p) => Math.max(1, p - 1))} disabled={linkPage === 1} className="btn btn-secondary text-sm">Previous</button>
+                    <span className="text-sm text-text-secondary">Page {linkPage} of {linkTotalPages}</span>
+                    <button onClick={() => setLinkPage((p) => Math.min(linkTotalPages, p + 1))} disabled={linkPage === linkTotalPages} className="btn btn-secondary text-sm">Next</button>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Create Link Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto border border-border">
+            <div className="p-6">
+              {!createLinkResult ? (
+                <>
+                  <h2 className="text-xl font-bold text-text-primary mb-4">Create Installation Link</h2>
+                  <div className="space-y-4">
+                    <div><label className="block text-sm font-medium text-text-primary mb-1">Device Name *</label><input type="text" value={linkFormData.deviceName} onChange={(e) => setLinkFormData({ ...linkFormData, deviceName: e.target.value })} placeholder="Johns-Laptop" className="input w-full" /></div>
+                    <div><label className="block text-sm font-medium text-text-primary mb-1">User Email *</label><input type="email" value={linkFormData.userEmail} onChange={(e) => setLinkFormData({ ...linkFormData, userEmail: e.target.value })} placeholder="john@company.com" className="input w-full" /></div>
+                    <div><label className="block text-sm font-medium text-text-primary mb-1">User Name</label><input type="text" value={linkFormData.userName} onChange={(e) => setLinkFormData({ ...linkFormData, userName: e.target.value })} placeholder="John Smith" className="input w-full" /></div>
+                    <div><label className="block text-sm font-medium text-text-primary mb-1">Expiration</label>
+                      <select value={linkFormData.expiresInHours} onChange={(e) => setLinkFormData({ ...linkFormData, expiresInHours: Number(e.target.value) })} className="input w-full">
+                        <option value={12}>12 hours</option><option value={24}>24 hours</option><option value={48}>48 hours</option><option value={168}>7 days</option><option value={720}>30 days</option>
+                      </select>
+                    </div>
+                    <div><label className="block text-sm font-medium text-text-primary mb-1">Notes (internal)</label><textarea value={linkFormData.notes} onChange={(e) => setLinkFormData({ ...linkFormData, notes: e.target.value })} placeholder="New hire - Marketing dept" rows={2} className="input w-full" /></div>
+                    <div className="flex items-center gap-2"><input type="checkbox" id="sendEmail" checked={linkFormData.sendEmail} onChange={(e) => setLinkFormData({ ...linkFormData, sendEmail: e.target.checked })} className="w-4 h-4 text-primary rounded focus:ring-primary" /><label htmlFor="sendEmail" className="text-sm text-text-secondary">Send email notification</label></div>
+                  </div>
+                  <div className="flex justify-end gap-3 mt-6">
+                    <button onClick={() => setShowCreateModal(false)} className="btn btn-secondary">Cancel</button>
+                    <button onClick={handleCreateLink} disabled={creatingLink || !linkFormData.deviceName || !linkFormData.userEmail} className="btn btn-primary">{creatingLink ? 'Creating...' : 'Create Link'}</button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-center mb-6">
+                    <div className="w-12 h-12 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-4"><CheckIcon className="w-6 h-6 text-green-600 dark:text-green-400" /></div>
+                    <h2 className="text-xl font-bold text-text-primary">Installation Link Created</h2>
+                  </div>
+                  <div className="space-y-4">
+                    <div><label className="block text-sm font-medium text-text-secondary mb-1">Email sent to</label><p className="text-text-primary">{linkFormData.userEmail}</p></div>
+                    <div><label className="block text-sm font-medium text-text-secondary mb-1">Link expires</label><p className="text-text-primary">{format(new Date(createLinkResult.expiresAt), 'MMM d, yyyy HH:mm')}</p></div>
+                    <div><label className="block text-sm font-medium text-text-secondary mb-1">Installation URL</label><div className="flex gap-2"><input type="text" value={createLinkResult.downloadUrl} readOnly className="input flex-1 text-sm" /><button onClick={() => copyToClipboard(createLinkResult.downloadUrl)} className="btn btn-secondary">{copiedUrl === createLinkResult.downloadUrl ? 'Copied!' : 'Copy'}</button></div></div>
+                  </div>
+                  <div className="flex justify-end gap-3 mt-6"><button onClick={() => { setShowCreateModal(false); resetLinkForm(); }} className="btn btn-primary">Done</button></div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Link Detail Modal */}
+      {showDetailModal && selectedLink && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-border">
+            <div className="p-6">
+              <div className="flex items-start justify-between mb-6"><h2 className="text-xl font-bold text-text-primary">{selectedLink.deviceName}</h2><button onClick={() => setShowDetailModal(false)} className="text-text-secondary hover:text-text-primary"><CloseIcon className="w-6 h-6" /></button></div>
+              <div className="grid grid-cols-2 gap-6">
+                <div>
+                  <h3 className="font-semibold text-text-primary mb-3">Device Information</h3>
+                  <dl className="space-y-2 text-sm">
+                    <div><dt className="text-text-secondary">Device Name</dt><dd className="text-text-primary">{selectedLink.deviceName}</dd></div>
+                    <div><dt className="text-text-secondary">User Email</dt><dd className="text-text-primary">{selectedLink.userEmail}</dd></div>
+                    {selectedLink.userName && <div><dt className="text-text-secondary">User Name</dt><dd className="text-text-primary">{selectedLink.userName}</dd></div>}
+                    <div><dt className="text-text-secondary">Status</dt><dd><LinkStatusBadge status={selectedLink.status} /></dd></div>
+                  </dl>
+                </div>
+                <div>
+                  <h3 className="font-semibold text-text-primary mb-3">Link Information</h3>
+                  <dl className="space-y-2 text-sm">
+                    <div><dt className="text-text-secondary">Created</dt><dd className="text-text-primary">{format(new Date(selectedLink.createdAt), 'MMM d, yyyy HH:mm')}</dd></div>
+                    {selectedLink.createdByName && <div><dt className="text-text-secondary">Created By</dt><dd className="text-text-primary">{selectedLink.createdByName}</dd></div>}
+                    <div><dt className="text-text-secondary">Expires</dt><dd className="text-text-primary">{format(new Date(selectedLink.expiresAt), 'MMM d, yyyy HH:mm')}</dd></div>
+                    <div><dt className="text-text-secondary">Download Count</dt><dd className="text-text-primary">{selectedLink.downloadCount}</dd></div>
+                  </dl>
+                </div>
+              </div>
+              {selectedLink.downloadUrl && (
+                <div className="mt-6"><h3 className="font-semibold text-text-primary mb-2">Download URL</h3><div className="flex gap-2"><input type="text" value={selectedLink.downloadUrl} readOnly className="input flex-1 text-sm" /><button onClick={() => copyToClipboard(selectedLink.downloadUrl)} className="btn btn-secondary">{copiedUrl === selectedLink.downloadUrl ? 'Copied!' : 'Copy'}</button></div></div>
+              )}
+              {selectedLink.notes && <div className="mt-6"><h3 className="font-semibold text-text-primary mb-2">Notes</h3><p className="text-text-secondary text-sm">{selectedLink.notes}</p></div>}
+              <div className="flex justify-end gap-3 mt-6 pt-6 border-t border-border">
+                {selectedLink.status === 'pending' && <button onClick={() => { handleResendEmail(selectedLink.id); setShowDetailModal(false); }} className="btn btn-secondary">Resend Email</button>}
+                {!['installed', 'revoked', 'expired'].includes(selectedLink.status) && <button onClick={() => { handleRevokeLink(selectedLink.id); setShowDetailModal(false); }} className="btn btn-danger">Revoke Link</button>}
+                <button onClick={() => setShowDetailModal(false)} className="btn btn-secondary">Close</button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -599,6 +942,28 @@ function StatusBadge({ status }: { status: Device['status'] }) {
     <span className={`badge ${styles[status] || styles.offline}`}>
       {status.charAt(0).toUpperCase() + status.slice(1)}
     </span>
+  );
+}
+
+function LinkStatusBadge({ status }: { status: string }) {
+  const config = linkStatusConfig[status] || { label: status, color: 'bg-gray-100 text-gray-800' };
+  return <span className={`px-2 py-1 rounded-full text-xs font-medium ${config.color}`}>{config.label}</span>;
+}
+
+function LinkStatCard({ label, value, color = 'primary' }: { label: string; value: number; color?: string }) {
+  const colors: Record<string, string> = {
+    primary: 'bg-primary-light text-primary',
+    yellow: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300',
+    blue: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
+    green: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
+    gray: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300',
+    indigo: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300',
+  };
+  return (
+    <div className="card p-4">
+      <div className="text-sm text-text-secondary mb-1">{label}</div>
+      <div className={`text-2xl font-bold ${colors[color] || colors.primary} rounded px-2 py-1 inline-block`}>{value}</div>
+    </div>
   );
 }
 
@@ -727,6 +1092,39 @@ function CloseIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+    </svg>
+  );
+}
+
+function PlusIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+    </svg>
+  );
+}
+
+function EyeIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+    </svg>
+  );
+}
+
+function MailIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+    </svg>
+  );
+}
+
+function BanIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
     </svg>
   );
 }

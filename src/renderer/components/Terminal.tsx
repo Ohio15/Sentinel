@@ -1,77 +1,69 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback, memo } from 'react';
+import { useTerminalStore, setupTerminalHandler } from '../stores/terminalStore';
 
 interface TerminalProps {
   deviceId: string;
   isOnline: boolean;
 }
 
-export function Terminal({ deviceId, isOnline }: TerminalProps) {
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [output, setOutput] = useState<string[]>([]);
+export const Terminal = memo(function Terminal({ deviceId, isOnline }: TerminalProps) {
   const [input, setInput] = useState('');
   const [connecting, setConnecting] = useState(false);
-  const [connected, setConnected] = useState(false);
   const outputRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  
+  // Use store for session persistence
+  const session = useTerminalStore((state) => state.sessions.get(deviceId));
+  const createSession = useTerminalStore((state) => state.createSession);
+  const closeSession = useTerminalStore((state) => state.closeSession);
+  const addOutput = useTerminalStore((state) => state.addOutput);
 
+  const connected = session?.connected ?? false;
+  const output = session?.output ?? [];
+  const sessionId = session?.sessionId;
+
+  // Setup global terminal handler once
   useEffect(() => {
-    // Subscribe to terminal data
-    const unsub = window.api.terminal.onData((data: string) => {
-      setOutput(prev => [...prev, data]);
-    });
+    setupTerminalHandler();
+  }, []);
 
-    return () => {
-      unsub();
-      if (sessionId) {
-        window.api.terminal.close(sessionId);
-      }
-    };
-  }, [sessionId]);
-
+  // Auto-scroll output
   useEffect(() => {
     if (outputRef.current) {
       outputRef.current.scrollTop = outputRef.current.scrollHeight;
     }
   }, [output]);
 
-  const handleConnect = async () => {
-    console.log('[Terminal] handleConnect called, deviceId:', deviceId, 'isOnline:', isOnline);
-    if (!isOnline) {
-      console.log('[Terminal] Device is offline, aborting');
-      return;
-    }
+  const handleConnect = useCallback(async () => {
+    if (!isOnline || connecting) return;
 
     setConnecting(true);
     try {
-      console.log('[Terminal] Calling window.api.terminal.start...');
+      console.log('[Terminal] Starting session for device:', deviceId);
       const result = await window.api.terminal.start(deviceId);
-      console.log('[Terminal] terminal.start result:', result);
-      setSessionId(result.sessionId);
-      setConnected(true);
-      setOutput(['Connected to remote terminal.\n']);
+      console.log('[Terminal] Session started:', result.sessionId);
+      createSession(deviceId, result.sessionId);
       inputRef.current?.focus();
     } catch (error: unknown) {
-      console.error('[Terminal] terminal.start error:', error);
-      setOutput([`Failed to connect: ${error instanceof Error ? error.message : 'Unknown error'}\n`]);
+      console.error('[Terminal] Failed to start:', error);
+      const errMsg = error instanceof Error ? error.message : 'Unknown error';
+      addOutput(deviceId, 'Failed to connect: ' + errMsg + '\n');
     } finally {
       setConnecting(false);
     }
-  };
+  }, [deviceId, isOnline, connecting, createSession, addOutput]);
 
-  const handleDisconnect = async () => {
-    if (sessionId) {
-      await window.api.terminal.close(sessionId);
-      setSessionId(null);
-      setConnected(false);
-      setOutput(prev => [...prev, '\nDisconnected.\n']);
+  const handleDisconnect = useCallback(() => {
+    if (session) {
+      closeSession(deviceId);
     }
-  };
+  }, [deviceId, session, closeSession]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!sessionId || !input.trim()) return;
 
-    setOutput(prev => [...prev, `$ ${input}\n`]);
+    addOutput(deviceId, '$ ' + input + '\n');
     await window.api.terminal.send(sessionId, input + '\n');
     setInput('');
   };
@@ -79,7 +71,6 @@ export function Terminal({ deviceId, isOnline }: TerminalProps) {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Tab') {
       e.preventDefault();
-      // Could implement tab completion here
     }
   };
 
@@ -91,12 +82,13 @@ export function Terminal({ deviceId, isOnline }: TerminalProps) {
     );
   }
 
+  const statusClass = 'w-3 h-3 rounded-full ' + (connected ? 'bg-green-500' : 'bg-red-500');
+
   return (
     <div className="flex flex-col h-96">
-      {/* Terminal Header */}
       <div className="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700">
         <div className="flex items-center gap-2">
-          <div className={`w-3 h-3 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
+          <div className={statusClass} />
           <span className="text-sm text-gray-300">
             {connected ? 'Connected' : 'Disconnected'}
           </span>
@@ -119,7 +111,6 @@ export function Terminal({ deviceId, isOnline }: TerminalProps) {
         )}
       </div>
 
-      {/* Terminal Output */}
       <div
         ref={outputRef}
         className="flex-1 overflow-auto p-4 bg-gray-900 font-mono text-sm text-gray-100"
@@ -145,4 +136,4 @@ export function Terminal({ deviceId, isOnline }: TerminalProps) {
       </div>
     </div>
   );
-}
+});

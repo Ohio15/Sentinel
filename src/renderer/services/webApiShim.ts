@@ -15,6 +15,9 @@ if (isWeb && typeof (window as any).api === 'undefined') {
   // Event handlers storage
   const eventHandlers: Map<string, Set<(data: any) => void>> = new Map();
 
+  // Terminal session to device mapping (needed for routing)
+  const terminalSessionDevices: Map<string, string> = new Map();
+
   // Helper to register event handler
   const registerHandler = (event: string, handler: (data: any) => void) => {
     if (!eventHandlers.has(event)) {
@@ -105,21 +108,32 @@ if (isWeb && typeof (window as any).api === 'undefined') {
     terminal: {
       start: async (deviceId: string) => {
         const sessionId = `term-${deviceId}-${Date.now()}`;
+        // Store the deviceId for this session so we can include it in subsequent messages
+        terminalSessionDevices.set(sessionId, deviceId);
         wsService?.send('start_terminal', { deviceId, sessionId, cols: 80, rows: 24 });
         return { sessionId };
       },
       send: async (sessionId: string, data: string) => {
-        wsService?.send('terminal_input', { sessionId, data });
+        const deviceId = terminalSessionDevices.get(sessionId);
+        wsService?.send('terminal_input', { sessionId, deviceId, data });
       },
       resize: async (sessionId: string, cols: number, rows: number) => {
-        wsService?.send('terminal_resize', { sessionId, cols, rows });
+        const deviceId = terminalSessionDevices.get(sessionId);
+        wsService?.send('terminal_resize', { sessionId, deviceId, cols, rows });
       },
       close: async (sessionId: string) => {
-        wsService?.send('close_terminal', { sessionId });
+        const deviceId = terminalSessionDevices.get(sessionId);
+        wsService?.send('close_terminal', { sessionId, deviceId });
+        // Clean up the mapping
+        terminalSessionDevices.delete(sessionId);
       },
-      onData: (callback: (data: string) => void) => {
-        return registerHandler('terminal:data', (payload: any) => {
-          callback(payload.data || payload);
+      onData: (callback: (data: string, sessionId?: string) => void) => {
+        return registerHandler('terminal_output', (payload: any) => {
+          if (payload && typeof payload === 'object' && payload.data) {
+            callback(payload.data, payload.sessionId);
+          } else if (payload && typeof payload === 'string') {
+            callback(payload);
+          }
         });
       },
     },
@@ -127,7 +141,26 @@ if (isWeb && typeof (window as any).api === 'undefined') {
     // Files API
     files: {
       drives: async (deviceId: string) => {
-        return [];
+        return new Promise((resolve, reject) => {
+          const requestId = `drives-${Date.now()}`;
+          const timeout = setTimeout(() => {
+            reject(new Error('Timeout waiting for drives list'));
+          }, 30000);
+
+          const unsub = registerHandler('response', (data: any) => {
+            if (data.requestId === requestId) {
+              clearTimeout(timeout);
+              unsub();
+              if (data.success) {
+                resolve(data.data?.drives || []);
+              } else {
+                reject(new Error(data.error || 'Failed to get drives'));
+              }
+            }
+          });
+
+          wsService?.send('list_drives', { deviceId, requestId });
+        });
       },
       list: async (deviceId: string, path: string) => {
         return new Promise((resolve, reject) => {
@@ -329,10 +362,12 @@ if (isWeb && typeof (window as any).api === 'undefined') {
       checkForUpdates: async () => ({ updateAvailable: false }),
       downloadUpdate: async () => {},
       installUpdate: () => {},
+      getDevice: async (deviceId: string) => api!.getDevice(deviceId),
       onUpdateAvailable: (callback: (info: any) => void) => registerHandler('updates:available', callback),
       onDownloadProgress: (callback: (progress: any) => void) => registerHandler('updates:progress', callback),
       onUpdateDownloaded: (callback: (info: any) => void) => registerHandler('updates:downloaded', callback),
       onError: (callback: (error: any) => void) => registerHandler('updates:error', callback),
+      onStatus: (callback: (status: any) => void) => registerHandler('updates:status', callback),
     },
 
     // Updater API (alias for updates with additional methods)
@@ -386,10 +421,92 @@ if (isWeb && typeof (window as any).api === 'undefined') {
       deleteCategory: async (id: string) => {},
     },
 
-    // Backend connection API
+    // Backend connection API with localStorage persistence
     backend: {
-      connect: async (url: string) => ({ success: true }),
-      getStatus: async () => ({ connected: true }),
+      connect: async (url: string) => {
+        localStorage.setItem('backend_url', url);
+        return { success: true };
+      },
+      getStatus: async () => {
+        const url = localStorage.getItem('backend_url');
+        const apiKey = localStorage.getItem('backend_api_key');
+        return {
+          connected: !!(url && apiKey),
+          url: url || '',
+        };
+      },
+      getConfig: async () => {
+        const url = localStorage.getItem('backend_url') || window.location.origin;
+        const apiKey = localStorage.getItem('backend_api_key') || '';
+        return {
+          url,
+          apiKey,
+          backendUrl: url,
+          wsUrl: url.replace(/^http/, 'ws'),
+          isConfigured: !!url,
+          isAuthenticated: !!apiKey,
+        };
+      },
+      setUrl: async (url: string) => {
+        localStorage.setItem('backend_url', url);
+        // Update the API service base URL
+        if (api) {
+          (api as any).baseUrl = url.endsWith('/api') ? url : `${url}/api`;
+        }
+        return { success: true };
+      },
+      setApiKey: async (apiKey: string) => {
+        localStorage.setItem('backend_api_key', apiKey);
+        return { success: true };
+      },
+      testConnection: async () => {
+        try {
+          const url = localStorage.getItem('backend_url');
+          const apiKey = localStorage.getItem('backend_api_key');
+          if (!url) return { success: false, error: 'No backend URL configured' };
+
+          const response = await fetch(`${url}/health`, {
+            headers: apiKey ? { 'X-API-Key': apiKey } : {},
+          });
+
+          if (response.ok) {
+            return { success: true };
+          }
+          return { success: false, error: `Server returned ${response.status}` };
+        } catch (err) {
+          return { success: false, error: err instanceof Error ? err.message : 'Connection failed' };
+        }
+      },
+      authenticate: async (email: string, password: string) => {
+        try {
+          const url = localStorage.getItem('backend_url');
+          if (!url) return { success: false, error: 'No backend URL configured' };
+
+          const response = await fetch(`${url}/api/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ identifier: email, password }),
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            if (data.accessToken) {
+              localStorage.setItem('backend_api_key', data.accessToken);
+              localStorage.setItem('token', data.accessToken);
+              return { success: true };
+            }
+          }
+          const error = await response.json().catch(() => ({}));
+          return { success: false, error: error.error || 'Authentication failed' };
+        } catch (err) {
+          return { success: false, error: err instanceof Error ? err.message : 'Connection failed' };
+        }
+      },
+      disconnect: async () => {
+        localStorage.removeItem('backend_url');
+        localStorage.removeItem('backend_api_key');
+        return { success: true };
+      },
     },
 
     // Server API

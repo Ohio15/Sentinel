@@ -1,8 +1,8 @@
-import React, { useMemo, useState } from 'react';
-import { DeviceMetrics } from '../stores/deviceStore';
+import React, { useMemo, useState, useEffect } from 'react';
+import { DeviceMetrics, useDeviceStore } from '../stores/deviceStore';
 
 interface PerformanceViewProps {
-  metrics: DeviceMetrics[];
+  deviceId: string;
   systemInfo?: {
     cpuModel?: string;
     cpuCores?: number;
@@ -27,7 +27,16 @@ interface ResourceItem {
   color: string;
 }
 
-export function PerformanceView({ metrics, systemInfo }: PerformanceViewProps) {
+export function PerformanceView({ deviceId, systemInfo }: PerformanceViewProps) {
+  // Subscribe to metrics from store - only this component re-renders when metrics update
+  const metrics = useDeviceStore((state) => state.metrics);
+  const subscribeToUpdates = useDeviceStore((state) => state.subscribeToUpdates);
+
+  // Subscribe to real-time updates when this component mounts
+  useEffect(() => {
+    const unsubscribe = subscribeToUpdates();
+    return unsubscribe;
+  }, [subscribeToUpdates]);
   const [selectedResource, setSelectedResource] = useState<string>('cpu');
 
   // Get the latest metrics

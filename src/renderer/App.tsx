@@ -18,6 +18,7 @@ import { Clients } from './pages/Clients';
 import { Certificates } from './pages/Certificates';
 import { Login } from './pages/Login';
 import { Register } from './pages/Register';
+import InstallationPortal from './pages/InstallationPortal';
 import { useDeviceStore } from './stores/deviceStore';
 import { useAlertStore } from './stores/alertStore';
 import { useClientStore } from './stores/clientStore';
@@ -114,6 +115,7 @@ function WebApp() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+        <Route path="/install/:downloadToken" element={<InstallationPortal />} />
         <Route path="/*" element={<RequireAuth><MainLayout /></RequireAuth>} />
       </Routes>
     </BrowserRouter>

@@ -5,7 +5,6 @@
  * In Web mode: Uses HTTP API for auth, stores token in localStorage
  */
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
 import { isElectron, isWeb } from '../services/env';
 import { auth, connection } from '../services';
 
@@ -30,112 +29,133 @@ interface AuthState {
   clearError: () => void;
 }
 
-export const useAuthStore = create<AuthState>()(
-  persist(
-    (set, get) => ({
+// Clear any stale auth storage on page load in web mode
+if (isWeb) {
+  console.log('[AuthStore] Web mode - clearing stale auth storage');
+  // Check for force clear parameter
+  if (window.location.search.includes('clear')) {
+    console.log('[AuthStore] Force clear requested');
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    localStorage.removeItem('auth-storage');
+    window.history.replaceState({}, '', window.location.pathname);
+  }
+}
+
+export const useAuthStore = create<AuthState>()((set, get) => ({
+  user: null,
+  token: null,
+  isAuthenticated: isElectron, // Electron is always "authenticated" (main process handles it)
+  isLoading: false, // Start as false - checkAuth will set to true if needed
+  error: null,
+
+  login: async (identifier: string, password: string) => {
+    if (isElectron) {
+      return;
+    }
+
+    set({ isLoading: true, error: null });
+    try {
+      console.log('[AuthStore] Logging in...');
+      const response = await auth.login(identifier, password);
+      const { accessToken, user } = response as { accessToken: string; user: User };
+
+      console.log('[AuthStore] Login successful');
+      localStorage.setItem('token', accessToken);
+
+      set({
+        user,
+        token: accessToken,
+        isAuthenticated: true,
+        isLoading: false,
+        error: null,
+      });
+
+      // Connect WebSocket after successful login
+      connection.connect();
+    } catch (err: unknown) {
+      console.error('[AuthStore] Login failed:', err);
+      const error = err as Error;
+      set({
+        user: null,
+        token: null,
+        isAuthenticated: false,
+        isLoading: false,
+        error: error.message || 'Login failed',
+      });
+      throw err;
+    }
+  },
+
+  logout: () => {
+    if (isElectron) {
+      return;
+    }
+
+    auth.logout().catch(() => {});
+
+    // Clear all auth storage
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    localStorage.removeItem('auth-storage');
+
+    set({
       user: null,
       token: null,
-      isAuthenticated: isElectron, // Electron is always "authenticated" (main process handles it)
-      isLoading: !isElectron, // Only loading in web mode
+      isAuthenticated: false,
+      isLoading: false,
       error: null,
+    });
+  },
 
-      login: async (identifier: string, password: string) => {
-        if (isElectron) {
-          // Electron doesn't use web login
-          return;
-        }
+  checkAuth: async () => {
+    console.log('[AuthStore] checkAuth called');
 
-        set({ isLoading: true, error: null });
-        try {
-          const response = await auth.login(identifier, password);
-          const { token, user } = response as { token: string; user: User };
-
-          set({
-            user,
-            token,
-            isAuthenticated: true,
-            isLoading: false,
-            error: null,
-          });
-
-          // Connect WebSocket after successful login
-          connection.connect();
-        } catch (err: unknown) {
-          const error = err as Error;
-          set({
-            user: null,
-            token: null,
-            isAuthenticated: false,
-            isLoading: false,
-            error: error.message || 'Login failed',
-          });
-          throw err;
-        }
-      },
-
-      logout: () => {
-        if (isElectron) {
-          return;
-        }
-
-        auth.logout().catch(() => {
-          // Ignore logout errors
-        });
-
-        set({
-          user: null,
-          token: null,
-          isAuthenticated: false,
-          isLoading: false,
-          error: null,
-        });
-      },
-
-      checkAuth: async () => {
-        if (isElectron) {
-          // Electron handles auth differently
-          set({ isAuthenticated: true, isLoading: false });
-          return;
-        }
-
-        const token = localStorage.getItem('token');
-        if (!token) {
-          set({ isLoading: false, isAuthenticated: false });
-          return;
-        }
-
-        try {
-          const user = await auth.getCurrentUser();
-          set({
-            user: user as User,
-            token,
-            isAuthenticated: true,
-            isLoading: false,
-          });
-
-          // Connect WebSocket if authenticated
-          connection.connect();
-        } catch {
-          localStorage.removeItem('token');
-          set({
-            user: null,
-            token: null,
-            isAuthenticated: false,
-            isLoading: false,
-          });
-        }
-      },
-
-      clearError: () => set({ error: null }),
-    }),
-    {
-      name: 'auth-storage',
-      partialize: (state) => ({
-        token: state.token,
-        user: state.user,
-      }),
-      // Only persist in web mode
-      skipHydration: isElectron,
+    if (isElectron) {
+      set({ isAuthenticated: true, isLoading: false });
+      return;
     }
-  )
-);
+
+    const token = localStorage.getItem('token');
+    console.log('[AuthStore] Token in localStorage:', !!token);
+
+    if (!token) {
+      console.log('[AuthStore] No token, showing login');
+      set({ isLoading: false, isAuthenticated: false });
+      return;
+    }
+
+    set({ isLoading: true });
+
+    try {
+      console.log('[AuthStore] Validating token...');
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+      const user = await auth.getCurrentUser();
+      clearTimeout(timeoutId);
+
+      console.log('[AuthStore] Token valid');
+      set({
+        user: user as User,
+        token,
+        isAuthenticated: true,
+        isLoading: false,
+      });
+
+      connection.connect();
+    } catch (err) {
+      console.log('[AuthStore] Token invalid:', err);
+      localStorage.removeItem('token');
+      localStorage.removeItem('auth-storage');
+      set({
+        user: null,
+        token: null,
+        isAuthenticated: false,
+        isLoading: false,
+      });
+    }
+  },
+
+  clearError: () => set({ error: null }),
+}));

@@ -22,7 +22,7 @@ interface ElectronAPI {
     send: (sessionId: string, data: string) => Promise<any>;
     resize: (sessionId: string, cols: number, rows: number) => Promise<any>;
     close: (sessionId: string) => Promise<any>;
-    onData: (callback: (data: string) => void) => () => void;
+    onData: (callback: (data: string, sessionId?: string) => void) => () => void;
   };
   files: {
     drives: (deviceId: string) => Promise<any>;

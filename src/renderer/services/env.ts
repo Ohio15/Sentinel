@@ -14,7 +14,11 @@ export const getApiBaseUrl = () => {
     // Electron mode - API calls go through IPC, this shouldn't be used
     return '';
   }
-  // Web mode - use environment variable or default to same origin
+  // Web mode - check localStorage for persisted backend URL, then env var, then default
+  const persistedUrl = typeof localStorage !== 'undefined' ? localStorage.getItem('backend_url') : null;
+  if (persistedUrl) {
+    return persistedUrl.endsWith('/api') ? persistedUrl : `${persistedUrl}/api`;
+  }
   return import.meta.env.VITE_API_URL || '/api';
 };
 
@@ -23,10 +27,16 @@ export const getWsBaseUrl = () => {
   if (isElectron) {
     return '';
   }
-  const apiUrl = import.meta.env.VITE_API_URL?.replace('/api', '') || window.location.origin;
-  const url = new URL(apiUrl);
-  const protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${url.host}`;
+  // Check localStorage for persisted backend URL
+  const persistedUrl = typeof localStorage !== 'undefined' ? localStorage.getItem('backend_url') : null;
+  const baseUrl = persistedUrl || import.meta.env.VITE_API_URL?.replace('/api', '') || window.location.origin;
+  try {
+    const url = new URL(baseUrl);
+    const protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${url.host}`;
+  } catch {
+    return window.location.origin.replace(/^http/, 'ws');
+  }
 };
 
 console.log(`[Env] Running in ${isElectron ? 'Electron' : 'Web'} mode`);

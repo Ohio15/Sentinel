@@ -121,7 +121,7 @@ interface DeviceState {
   loading: boolean;
   error: string | null;
 
-  fetchDevices: (clientId?: string | null) => Promise<void>;
+  fetchDevices: (clientId?: string | null, showLoading?: boolean) => Promise<void>;
   fetchDevice: (id: string) => Promise<void>;
   fetchMetrics: (deviceId: string, hours?: number) => Promise<void>;
   deleteDevice: (id: string) => Promise<void>;
@@ -138,12 +138,12 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
   loading: false,
   error: null,
 
-  fetchDevices: async (clientId?: string | null) => {
-    set({ loading: true, error: null });
+  fetchDevices: async (clientId?: string | null, showLoading: boolean = true) => {
+    if (showLoading) set({ loading: true, error: null });
     try {
       // Pass undefined instead of null to get all devices
       const devices = await devicesService.list(clientId || undefined);
-      set({ devices, loading: false });
+      set({ devices, ...(showLoading && { loading: false }) });
     } catch (error: unknown) {
       set({ error: error instanceof Error ? error.message : 'Unknown error', loading: false });
     }
@@ -243,13 +243,13 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
   subscribeToUpdates: () => {
     // Periodic refresh every 10 seconds for faster agent detection
     const refreshInterval = setInterval(() => {
-      get().fetchDevices();
+      get().fetchDevices(undefined, false); // Background refresh, no loading indicator
     }, 10000);
 
     // Refresh on window focus for immediate updates after tab switch
     const handleFocus = () => {
       console.log('[DeviceStore] Window focused, refreshing devices...');
-      get().fetchDevices();
+      get().fetchDevices(undefined, false); // Background refresh, no loading indicator
     };
     window.addEventListener('focus', handleFocus);
 
@@ -288,8 +288,8 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
 
     const unsubUpdated = events.on('devices:updated', (data) => {
       console.log('[DeviceStore] devices:updated received', data);
-      // Refetch devices to get the latest list
-      get().fetchDevices();
+      // Refetch devices to get the latest list (no loading indicator)
+      get().fetchDevices(undefined, false);
     });
 
     let metricsReceivedCount = 0;

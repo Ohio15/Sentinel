@@ -334,14 +334,14 @@ export const remote = {
 
 // Auth Service Adapter (Web-only features, Electron handles auth differently)
 export const auth = {
-  async login(identifier: string, password: string): Promise<{ token: string; user: unknown }> {
+  async login(identifier: string, password: string): Promise<{ accessToken: string; user: unknown }> {
     if (isElectron) {
       // Electron doesn't use this - auth is handled by the main process
       throw new Error('Login not available in Electron mode');
     }
     const result = await api!.login(identifier, password);
-    if (result.token) {
-      localStorage.setItem('token', result.token);
+    if (result.accessToken) {
+      localStorage.setItem('token', result.accessToken);
       localStorage.setItem('user', JSON.stringify(result.user));
     }
     return result;
