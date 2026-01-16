@@ -1,4 +1,3 @@
-import { useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Layout } from '@/components/layout';
 import {
@@ -13,6 +12,8 @@ import {
   Settings,
   Users,
   AgentDownloads,
+  InstallationPortal,
+  AgentInstallations,
 } from '@/pages';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -53,12 +54,6 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
 }
 
 function App() {
-  const { checkAuth } = useAuthStore();
-
-  useEffect(() => {
-    checkAuth();
-  }, [checkAuth]);
-
   return (
     <Routes>
       {/* Public routes */}
@@ -79,6 +74,9 @@ function App() {
         }
       />
 
+      {/* Installation Portal - public, no auth needed */}
+      <Route path="/install/:downloadToken" element={<InstallationPortal />} />
+
       {/* Protected routes */}
       <Route
         path="/"
@@ -97,6 +95,7 @@ function App() {
         <Route path="users" element={<Users />} />
         <Route path="settings" element={<Settings />} />
         <Route path="downloads" element={<AgentDownloads />} />
+        <Route path="agent-installations" element={<AgentInstallations />} />
       </Route>
 
       {/* Catch all */}

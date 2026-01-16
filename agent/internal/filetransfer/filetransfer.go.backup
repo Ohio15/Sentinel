@@ -87,16 +87,7 @@ func getDefaultAllowedBases() []string {
 }
 
 // validatePath validates a path to prevent directory traversal attacks
-// CW-003: Enhanced with Unicode normalization, 8.3 resolution, and TOCTOU mitigation
 func (ft *FileTransfer) validatePath(requestedPath string, operation string) (string, error) {
-	// CW-003: Apply Unicode normalization and security checks first
-	securePath, err := SecurePathValidation(requestedPath)
-	if err != nil {
-		log.Printf("[SECURITY] Path security validation failed for: %s, operation: %s, error: %v", requestedPath, operation, err)
-		return "", fmt.Errorf("path security validation failed: %w", err)
-	}
-	requestedPath = securePath
-
 	// Reject empty paths
 	if requestedPath == "" {
 		log.Printf("[SECURITY] Rejected empty path for operation: %s", operation)

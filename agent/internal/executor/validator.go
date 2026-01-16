@@ -2,6 +2,7 @@ package executor
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -336,13 +337,16 @@ func extractBaseCommand(command string, cmdType string) string {
 	// Get first word
 	parts := strings.Fields(command)
 	if len(parts) > 0 {
-		// Remove path if present
 		baseCmd := parts[0]
-		if idx := strings.LastIndex(baseCmd, "/"); idx >= 0 {
-			baseCmd = baseCmd[idx+1:]
-		}
-		if idx := strings.LastIndex(baseCmd, "\\"); idx >= 0 {
-			baseCmd = baseCmd[idx+1:]
+		// CW-002: Clean path before extracting base to prevent traversal bypass
+		// Paths like /usr/bin/../../evil/rm would resolve to /evil/rm
+		if strings.Contains(baseCmd, "/") || strings.Contains(baseCmd, "\\") {
+			cleanedPath := filepath.Clean(baseCmd)
+			// Reject if path still contains traversal after cleaning
+			if strings.Contains(cleanedPath, "..") {
+				return "" // Invalid path, will fail whitelist check
+			}
+			baseCmd = filepath.Base(cleanedPath)
 		}
 		// Remove file extension if present
 		if idx := strings.LastIndex(baseCmd, "."); idx > 0 {

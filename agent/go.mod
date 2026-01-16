@@ -5,7 +5,6 @@ go 1.21.0
 require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/creack/pty v1.1.21
-	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.1
 	github.com/kardianos/service v1.2.2
 	github.com/kbinani/screenshot v0.0.0-20250624051815-089614a94018
@@ -27,6 +26,7 @@ require (
 	github.com/gen2brain/shm v0.1.0 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
+	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/jezek/xgb v1.1.1 // indirect
 	github.com/lufia/plan9stats v0.0.0-20231016141302-07b5767bb0ed // indirect

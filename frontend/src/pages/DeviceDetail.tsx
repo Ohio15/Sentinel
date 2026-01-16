@@ -7,11 +7,8 @@ import {
   Cpu,
   HardDrive,
   Activity,
-  Terminal as TerminalIcon,
   Play,
   Tag,
-  FolderOpen,
-  MonitorPlay,
   History,
   ChevronDown,
   ChevronUp,
@@ -19,12 +16,11 @@ import {
   Check,
   Edit3,
   MemoryStick,
-  Trash2,
   RefreshCw,
 } from 'lucide-react';
 import { Header } from '@/components/layout';
-import { Terminal, FileBrowser, RemoteDesktop } from '@/components/device';
-import { Card, CardContent, Badge, Button, Modal } from '@/components/ui';
+import { DeviceActionTools } from '@/components/device';
+import { Card, CardContent, Badge, Button } from '@/components/ui';
 import api from '@/services/api';
 import type { Device, DeviceMetrics, Command } from '@/types';
 import toast from 'react-hot-toast';
@@ -138,12 +134,6 @@ export function DeviceDetail() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<'overview' | 'metrics' | 'commands'>('overview');
-  const [showCommandModal, setShowCommandModal] = useState(false);
-  const [commandInput, setCommandInput] = useState('');
-  const [showTerminal, setShowTerminal] = useState(false);
-  const [showFileBrowser, setShowFileBrowser] = useState(false);
-  const [showRemoteDesktop, setShowRemoteDesktop] = useState(false);
-  const [showUninstallModal, setShowUninstallModal] = useState(false);
 
   const { data: device, isLoading } = useQuery<Device>({
     queryKey: ['device', id],
@@ -169,33 +159,6 @@ export function DeviceDetail() {
     queryFn: () => api.getDeviceVersionHistory(id!),
     enabled: !!id,
   });
-
-  const executeCommandMutation = useMutation({
-    mutationFn: (command: string) =>
-      api.executeCommand(id!, command, 'shell'),
-    onSuccess: () => {
-      toast.success('Command sent to device');
-      setShowCommandModal(false);
-      setCommandInput('');
-      queryClient.invalidateQueries({ queryKey: ['device-commands', id] });
-    },
-    onError: () => {
-      toast.error('Failed to execute command');
-    },
-  });
-
-  const uninstallAgentMutation = useMutation({
-    mutationFn: () => api.uninstallAgent(id!),
-    onSuccess: () => {
-      toast.success('Uninstall command sent to agent');
-      setShowUninstallModal(false);
-      queryClient.invalidateQueries({ queryKey: ['device', id] });
-    },
-    onError: (error: any) => {
-      toast.error(error.response?.data?.error || 'Failed to uninstall agent');
-    },
-  });
-
 
   const pingAgentMutation = useMutation({
     mutationFn: () => api.pingAgent(id!),
@@ -442,73 +405,14 @@ export function DeviceDetail() {
               </div>
             </div>
 
-            <div className="flex gap-2">
-              <Button
-                variant="secondary"
-                onClick={() => setShowTerminal(true)}
-                disabled={!isOnline}
-                className="bg-[#2d2d2d] border-none hover:bg-[#3d3d3d]"
-              >
-                <TerminalIcon className="w-4 h-4 mr-2" />
-                Terminal
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => setShowFileBrowser(true)}
-                disabled={!isOnline}
-                className="bg-[#2d2d2d] border-none hover:bg-[#3d3d3d]"
-              >
-                <FolderOpen className="w-4 h-4 mr-2" />
-                Files
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => setShowRemoteDesktop(true)}
-                disabled={!isOnline}
-                className="bg-[#2d2d2d] border-none hover:bg-[#3d3d3d]"
-              >
-                <MonitorPlay className="w-4 h-4 mr-2" />
-                Remote
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => setShowCommandModal(true)}
-                disabled={!isOnline}
-                className="bg-[#2d2d2d] border-none hover:bg-[#3d3d3d]"
-              >
-                <Play className="w-4 h-4 mr-2" />
-                Run Command
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => setShowUninstallModal(true)}
-                disabled={!isOnline}
-                className="bg-red-900/50 border-none hover:bg-red-800/50 text-red-400 hover:text-red-300"
-              >
-                <Trash2 className="w-4 h-4 mr-2" />
-                Uninstall Agent
-              </Button>
-            </div>
-
-            {showTerminal && device.agentId && (
-              <Terminal
+            {/* Action tools - isolated from metrics updates */}
+            {device.agentId && (
+              <DeviceActionTools
                 deviceId={id!}
                 agentId={device.agentId}
-                onClose={() => setShowTerminal(false)}
-              />
-            )}
-            {showFileBrowser && device.agentId && (
-              <FileBrowser
-                deviceId={id!}
-                agentId={device.agentId}
-                onClose={() => setShowFileBrowser(false)}
-              />
-            )}
-            {showRemoteDesktop && device.agentId && (
-              <RemoteDesktop
-                deviceId={id!}
-                agentId={device.agentId}
-                onClose={() => setShowRemoteDesktop(false)}
+                hostname={device.hostname}
+                displayName={device.displayName}
+                isOnline={isOnline}
               />
             )}
 
@@ -754,13 +658,6 @@ export function DeviceDetail() {
           <div className="space-y-6">
             <div className="flex justify-between items-center">
               <h3 className="text-lg font-semibold text-white">Recent Commands</h3>
-              <Button
-                onClick={() => setShowCommandModal(true)}
-                disabled={!isOnline}
-              >
-                <Play className="w-4 h-4 mr-2" />
-                Run Command
-              </Button>
             </div>
 
             <div className="bg-[#2d2d2d] rounded-lg overflow-hidden">
@@ -808,84 +705,7 @@ export function DeviceDetail() {
         )}
       </div>
 
-      <Modal
-        isOpen={showCommandModal}
-        onClose={() => {
-          setShowCommandModal(false);
-          setCommandInput('');
-        }}
-        title="Run Command"
-        size="lg"
-      >
-        <div className="space-y-4">
-          <p className="text-sm text-gray-400">
-            Execute a shell command on{' '}
-            <strong className="text-white">{device.displayName || device.hostname}</strong>
-          </p>
-          <textarea
-            value={commandInput}
-            onChange={(e) => setCommandInput(e.target.value)}
-            placeholder="Enter command..."
-            className="w-full h-32 px-3 py-2 bg-[#3d3d3d] border border-[#4d4d4d] rounded-lg font-mono text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-          />
-          <div className="flex gap-3 justify-end">
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setShowCommandModal(false);
-                setCommandInput('');
-              }}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={() => executeCommandMutation.mutate(commandInput)}
-              disabled={!commandInput.trim() || executeCommandMutation.isPending}
-              isLoading={executeCommandMutation.isPending}
-            >
-              Execute
-            </Button>
-          </div>
-        </div>
-</Modal>
-      <Modal
-        isOpen={showUninstallModal}
-        onClose={() => setShowUninstallModal(false)}
-        title="Uninstall Agent"
-        size="md"
-      >
-        <div className="space-y-4">
-          <div className="bg-red-900/20 border border-red-900/50 rounded-lg p-4">
-            <p className="text-red-400 font-medium mb-2">Warning: This action cannot be undone</p>
-            <p className="text-sm text-gray-400">
-              This will permanently uninstall the Sentinel agent from{' '}
-              <strong className="text-white">{device.displayName || device.hostname}</strong>.
-              The agent service will be stopped and removed from the system.
-            </p>
-          </div>
-          <p className="text-sm text-gray-400">
-            After uninstallation, this device will no longer be monitored and you will need to
-            manually reinstall the agent to reconnect it.
-          </p>
-          <div className="flex gap-3 justify-end">
-            <Button
-              variant="secondary"
-              onClick={() => setShowUninstallModal(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="danger"
-              onClick={() => uninstallAgentMutation.mutate()}
-              disabled={uninstallAgentMutation.isPending}
-              isLoading={uninstallAgentMutation.isPending}
-              className="bg-red-600 hover:bg-red-700"
-            >
-              Uninstall Agent
-            </Button>
-          </div>
-        </div>
-      </Modal>
+
     </div>
   );
 }

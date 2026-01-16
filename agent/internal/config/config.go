@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/google/uuid"
+	"github.com/sentinel/agent/internal/hardware"
 	"github.com/sentinel/agent/internal/crypto"
 )
 
@@ -67,7 +67,7 @@ var (
 // DefaultConfig returns a config with default values
 func DefaultConfig() *Config {
 	return &Config{
-		AgentID:           uuid.New().String(),
+		AgentID:           hardware.FingerprintWithFallback(),
 		HeartbeatInterval: 10,
 		MetricsInterval:   1, // 1 second default - matches Windows Task Manager behavior
 		Enrolled:          false,

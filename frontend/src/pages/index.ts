@@ -9,3 +9,5 @@ export { Scripts } from './Scripts';
 export { Settings } from './Settings';
 export { Users } from './Users';
 export { AgentDownloads } from './AgentDownloads';
+export { default as InstallationPortal } from './InstallationPortal';
+export { default as AgentInstallations } from './AgentInstallations';

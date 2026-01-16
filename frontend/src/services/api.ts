@@ -375,6 +375,48 @@ class ApiService {
     const response = await this.client.get(`/devices/${deviceId}/version-history`);
     return response.data;
   }
+
+  // Agent Installation Links (Admin)
+  async getAgentLinks(params?: { status?: string; search?: string; page?: number; pageSize?: number }) {
+    const response = await this.client.get('/admin/agent-links', { params });
+    return response.data;
+  }
+
+  async getAgentLink(linkId: string) {
+    const response = await this.client.get(`/admin/agent-links/${linkId}`);
+    return response.data;
+  }
+
+  async createAgentLink(data: {
+    deviceName: string;
+    userEmail: string;
+    userName?: string;
+    expiresInHours?: number;
+    sendEmail?: boolean;
+    notes?: string;
+  }) {
+    const response = await this.client.post('/admin/agent-links', data);
+    return response.data;
+  }
+
+  async resendAgentLinkEmail(linkId: string) {
+    const response = await this.client.post(`/admin/agent-links/${linkId}/resend`);
+    return response.data;
+  }
+
+  async revokeAgentLink(linkId: string) {
+    const response = await this.client.post(`/admin/agent-links/${linkId}/revoke`);
+    return response.data;
+  }
+
+  async deleteAgentLink(linkId: string) {
+    await this.client.delete(`/admin/agent-links/${linkId}`);
+  }
+
+  async getAgentLinkStats() {
+    const response = await this.client.get('/admin/agent-links/stats');
+    return response.data;
+  }
 }
 
 export const api = new ApiService();

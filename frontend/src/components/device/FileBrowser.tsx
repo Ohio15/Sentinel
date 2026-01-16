@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, memo, useRef } from 'react';
 import {
   Folder,
   File,
@@ -36,10 +36,12 @@ interface FileBrowserProps {
   onClose: () => void;
 }
 
-export function FileBrowser({ deviceId, agentId, onClose }: FileBrowserProps) {
+// Memoized to prevent re-renders from parent state changes
+export const FileBrowser = memo(function FileBrowser({ deviceId, agentId, onClose }: FileBrowserProps) {
   const [currentPath, setCurrentPath] = useState('~');
   const [files, setFiles] = useState<FileInfo[]>([]);
   const [loading, setLoading] = useState(false);
+  const loadingRef = useRef(false); // Ref for stable timeout check
   const [error, setError] = useState<string | null>(null);
   const [pathHistory, setPathHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
@@ -50,6 +52,7 @@ export function FileBrowser({ deviceId, agentId, onClose }: FileBrowserProps) {
 
   const listDirectory = useCallback((path: string) => {
     setLoading(true);
+    loadingRef.current = true;
     setError(null);
     setSelectedFile(null);
 
@@ -66,6 +69,7 @@ export function FileBrowser({ deviceId, agentId, onClose }: FileBrowserProps) {
       if (response.requestId !== reqId) return;
 
       setLoading(false);
+        loadingRef.current = false;
       if (response.success && response.data?.files) {
         setFiles(response.data.files);
         setCurrentPath(path);
@@ -84,6 +88,7 @@ export function FileBrowser({ deviceId, agentId, onClose }: FileBrowserProps) {
       // Handle errors for this request or for list_files operations on this device
       if (errData.requestId === reqId || (errData.deviceId === deviceId && errData.originalType === 'list_files')) {
         setLoading(false);
+        loadingRef.current = false;
         setError(errData.error || 'Agent connection error');
       }
     };
@@ -102,8 +107,9 @@ export function FileBrowser({ deviceId, agentId, onClose }: FileBrowserProps) {
     setTimeout(() => {
       unsubscribeResponse();
       unsubscribeError();
-      if (loading) {
+      if (loadingRef.current) {
         setLoading(false);
+        loadingRef.current = false;
         setError('Request timed out');
       }
     }, 30000);
@@ -112,7 +118,7 @@ export function FileBrowser({ deviceId, agentId, onClose }: FileBrowserProps) {
       unsubscribeResponse();
       unsubscribeError();
     };
-  }, [deviceId, agentId, requestId, loading]);
+  }, [deviceId, agentId, requestId]);
 
   useEffect(() => {
     if (wsService.isConnected) {
@@ -381,4 +387,4 @@ export function FileBrowser({ deviceId, agentId, onClose }: FileBrowserProps) {
       </div>
     </div>
   );
-}
+});
