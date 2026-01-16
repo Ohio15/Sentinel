@@ -285,7 +285,9 @@ func doInstall(config *InstallConfig) error {
 
 	// Run agent install
 	fmt.Println("[4/4] Configuring service...")
-	cmd := exec.Command(agentExe, "--install", "--server="+config.ServerURL, "--token="+config.EnrollmentToken)
+	agentURL := getAgentURL(config.ServerURL)
+	fmt.Printf("      Agent server: %s\n", agentURL)
+	cmd := exec.Command(agentExe, "--install", "--server="+agentURL, "--token="+config.EnrollmentToken)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -372,6 +374,13 @@ func verifyChecksum(filePath, expected string) error {
 		return fmt.Errorf("mismatch")
 	}
 	return nil
+}
+
+// getAgentURL converts the bootstrap URL (public API) to the agent mTLS URL
+// This is a temporary workaround for router caching issues - can be removed once resolved
+func getAgentURL(bootstrapURL string) string {
+	// Convert port 4443 (public API) to port 8443 (agent mTLS)
+	return strings.Replace(bootstrapURL, ":4443", ":8443", 1)
 }
 
 func copyFile(src, dst string) error {

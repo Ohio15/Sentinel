@@ -42,7 +42,8 @@ type CreateInstallCodeResponse struct {
 // ValidateCodeResponse is the response for code validation (used by installer)
 type ValidateCodeResponse struct {
 	Valid           bool   `json:"valid"`
-	ServerURL       string `json:"serverUrl,omitempty"`
+	ServerURL       string `json:"serverUrl,omitempty"`       // Bootstrap API URL
+	AgentURL        string `json:"agentUrl,omitempty"`        // Agent connection URL (mTLS)
 	EnrollmentToken string `json:"enrollmentToken,omitempty"`
 	DeviceName      string `json:"deviceName,omitempty"`
 	Error           string `json:"error,omitempty"`
@@ -318,22 +319,23 @@ func validateInstallationCodeHandler(services *Services) gin.HandlerFunc {
 		// Log successful validation
 		logCodeValidation(services, code, c.ClientIP(), c.Request.UserAgent(), true, nil)
 
-		// Get server URL
-		serverURL := services.Config.PublicURL
+		// Get bootstrap URL (PUBLIC_URL for installer API calls)
+		bootstrapURL := services.Config.PublicURL
 		if serverURL == "" {
-			serverURL = services.Config.ServerURL
+			bootstrapURL = services.Config.ServerURL
 		}
 		if serverURL == "" {
 			scheme := "https"
 			if c.Request.TLS == nil {
 				scheme = "http"
 			}
-			serverURL = fmt.Sprintf("%s://%s", scheme, c.Request.Host)
+			bootstrapURL = fmt.Sprintf("%s://%s", scheme, c.Request.Host)
 		}
 
 		c.JSON(http.StatusOK, ValidateCodeResponse{
 			Valid:           true,
-			ServerURL:       serverURL,
+			ServerURL:       bootstrapURL,
+			AgentURL:        services.Config.ServerURL,
 			EnrollmentToken: enrollmentToken,
 			DeviceName:      link.DeviceName,
 		})
