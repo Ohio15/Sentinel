@@ -60,7 +60,7 @@ func (r *Router) listDevices(c *gin.Context) {
 	rows, err := r.db.Pool().Query(ctx, `
 		SELECT id, agent_id, COALESCE(hostname, ''), COALESCE(display_name, ''), COALESCE(os_type, ''), COALESCE(os_version, ''), COALESCE(os_build, ''),
 			   COALESCE(platform, ''), COALESCE(platform_family, ''), COALESCE(architecture, ''), COALESCE(cpu_model, ''), COALESCE(cpu_cores, 0), COALESCE(cpu_threads, 0),
-			   COALESCE(cpu_speed, 0), COALESCE(total_memory, 0), COALESCE(boot_time, 0), COALESCE(gpu::jsonb, '[]'::jsonb), COALESCE(storage, '[]'::jsonb), COALESCE(serial_number, ''),
+			   COALESCE(cpu_speed, 0), COALESCE(total_memory, 0), COALESCE(EXTRACT(EPOCH FROM boot_time)::bigint, 0), COALESCE(gpu::jsonb, '[]'::jsonb), COALESCE(storage, '[]'::jsonb), COALESCE(serial_number, ''),
 			   COALESCE(manufacturer, ''), COALESCE(model, ''), COALESCE(domain, ''), COALESCE(agent_version, ''), last_seen, COALESCE(status, 'offline'),
 			   COALESCE(host(ip_address), '' ) as ip_address, COALESCE(host(public_ip), '' ) as public_ip, COALESCE(mac_address, ''), COALESCE(tags, ARRAY[]::text[]), COALESCE(metadata, '{}'::jsonb), created_at, updated_at
 		FROM devices
@@ -137,7 +137,7 @@ func (r *Router) getDevice(c *gin.Context) {
 	err = r.db.Pool().QueryRow(ctx, `
 		SELECT id, agent_id, COALESCE(hostname, ''), COALESCE(display_name, ''), COALESCE(os_type, ''), COALESCE(os_version, ''), COALESCE(os_build, ''),
 			   COALESCE(platform, ''), COALESCE(platform_family, ''), COALESCE(architecture, ''), COALESCE(cpu_model, ''), COALESCE(cpu_cores, 0), COALESCE(cpu_threads, 0),
-			   COALESCE(cpu_speed, 0), COALESCE(total_memory, 0), COALESCE(boot_time, 0), COALESCE(gpu::jsonb, '[]'::jsonb), COALESCE(storage, '[]'::jsonb), COALESCE(serial_number, ''),
+			   COALESCE(cpu_speed, 0), COALESCE(total_memory, 0), COALESCE(EXTRACT(EPOCH FROM boot_time)::bigint, 0), COALESCE(gpu::jsonb, '[]'::jsonb), COALESCE(storage, '[]'::jsonb), COALESCE(serial_number, ''),
 			   COALESCE(manufacturer, ''), COALESCE(model, ''), COALESCE(domain, ''), COALESCE(agent_version, ''), last_seen, COALESCE(status, 'offline'),
 			   COALESCE(host(ip_address), '' ) as ip_address, COALESCE(host(public_ip), '' ) as public_ip, COALESCE(mac_address, ''), COALESCE(tags, ARRAY[]::text[]), COALESCE(metadata, '{}'::jsonb), created_at, updated_at
 		FROM devices WHERE id = $1 AND organization_id = $2
@@ -518,7 +518,7 @@ func (r *Router) enrollAgent(c *gin.Context) {
 	_, err = r.db.Pool().Exec(ctx, `
 		INSERT INTO devices (id, agent_id, hostname, display_name, os_type, os_version,
 			os_build, platform, platform_family, architecture, cpu_model, cpu_cores,
-			cpu_threads, COALESCE(cpu_speed, 0), COALESCE(total_memory, 0), COALESCE(boot_time, 0), COALESCE(gpu::jsonb, '[]'::jsonb), COALESCE(storage, '[]'::jsonb), COALESCE(serial_number, ''),
+			cpu_threads, COALESCE(cpu_speed, 0), COALESCE(total_memory, 0), COALESCE(EXTRACT(EPOCH FROM boot_time)::bigint, 0), COALESCE(gpu::jsonb, '[]'::jsonb), COALESCE(storage, '[]'::jsonb), COALESCE(serial_number, ''),
 			manufacturer, model, domain, agent_version, ip_address, mac_address,
 			last_seen, status)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
