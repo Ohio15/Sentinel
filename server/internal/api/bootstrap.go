@@ -64,20 +64,13 @@ func getBootstrapAgentInfoHandler(services *Services) gin.HandlerFunc {
 			return
 		}
 
-		// Calculate checksum
-		checksum, err := calculateFileChecksum(agentPath)
-		if err != nil {
-			log.Printf("Error calculating checksum: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to calculate checksum"})
-			return
-		}
 
 		// Get version from version.json if available
 		version := getAgentVersion(services)
 
 		info := BootstrapAgentInfo{
 			Version:   version,
-			Checksum:  checksum,
+			Checksum:  "", // Skip - binary modified during download
 			Size:      stat.Size(),
 			Platform:  platform,
 			Arch:      arch,
