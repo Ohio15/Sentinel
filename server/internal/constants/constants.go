@@ -7,7 +7,7 @@ package constants
 // 1. Build tenant middleware to extract organization from subdomain/JWT
 // 2. Replace usages of this constant with context-based tenant ID
 // 3. No database migrations required - data already scoped by organization_id
-const CurrentOrganizationID = 1
+const CurrentOrganizationID = "00000000-0000-0000-0000-000000000001"
 
 // DefaultOrganizationSlug is the slug for the default organization
 const DefaultOrganizationSlug = "default"
