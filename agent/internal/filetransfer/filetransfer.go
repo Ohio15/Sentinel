@@ -1,4 +1,4 @@
-package filetransfer
+﻿package filetransfer
 
 import (
 	"context"
@@ -69,21 +69,48 @@ func getDefaultAllowedBases() []string {
 	// Add temp directory
 	bases = append(bases, os.TempDir())
 
-	// Platform-specific additions
+	// Platform-specific additions - SECURITY FIX: Restricted to safe directories only
 	if runtime.GOOS == "windows" {
-		// Allow all drive roots on Windows
-		for _, drive := range "CDEFGHIJKLMNOPQRSTUVWXYZAB" {
-			drivePath := string(drive) + ":\\"
-			if _, err := os.Stat(drivePath); err == nil {
-				bases = append(bases, drivePath)
-			}
-		}
+		// Only allow Sentinel data directory and common safe locations
+		bases = append(bases, "C:\\ProgramData\\Sentinel")
+		bases = append(bases, "C:\\Program Files\\Sentinel Agent")
 	} else {
-		// On Unix-like systems, allow root
-		bases = append(bases, "/")
+		// On Unix-like systems, only allow specific directories
+		bases = append(bases, "/var/sentinel")
+		bases = append(bases, "/opt/sentinel")
+		bases = append(bases, "/etc/sentinel")
 	}
 
 	return bases
+}
+
+// isSubPath checks if child path is within parent directory (directory-boundary aware)
+// SECURITY FIX: This fixes the prefix-matching vulnerability where "admin-attacker" matched "admin"
+func isSubPath(child, parent string) bool {
+	// Clean both paths
+	child = filepath.Clean(child)
+	parent = filepath.Clean(parent)
+
+	// Case-insensitive comparison on Windows
+	if runtime.GOOS == "windows" {
+		child = strings.ToLower(child)
+		parent = strings.ToLower(parent)
+	}
+
+	// Exact match is allowed
+	if child == parent {
+		return true
+	}
+
+	// Ensure parent ends with separator for proper boundary check
+	// This prevents "admin-attacker" from matching base "admin"
+	parentWithSep := parent
+	if !strings.HasSuffix(parentWithSep, string(filepath.Separator)) {
+		parentWithSep = parentWithSep + string(filepath.Separator)
+	}
+
+	// Child must start with parent + separator to be a true subdirectory
+	return strings.HasPrefix(child, parentWithSep)
 }
 
 // validatePath validates a path to prevent directory traversal attacks
@@ -93,6 +120,16 @@ func (ft *FileTransfer) validatePath(requestedPath string, operation string) (st
 		log.Printf("[SECURITY] Rejected empty path for operation: %s", operation)
 		return "", fmt.Errorf("path cannot be empty")
 	}
+
+	// SECURITY FIX: Apply comprehensive path security validation first
+	// This handles Unicode normalization, 8.3 short names, reserved names, etc.
+	securePath, err := SecurePathValidation(requestedPath)
+	if err != nil {
+		log.Printf("[SECURITY] Path security validation failed: %s, operation: %s, error: %v",
+			requestedPath, operation, err)
+		return "", fmt.Errorf("path validation failed: %w", err)
+	}
+	requestedPath = securePath
 
 	// Check for UNC paths on Windows (e.g., \\server\share)
 	if runtime.GOOS == "windows" {
@@ -155,15 +192,9 @@ func (ft *FileTransfer) validatePath(requestedPath string, operation string) (st
 		// Clean the base path
 		cleanBase := filepath.Clean(resolvedBase)
 
-		// On Windows, compare case-insensitively
-		var hasPrefix bool
-		if runtime.GOOS == "windows" {
-			hasPrefix = strings.HasPrefix(strings.ToLower(cleanPath), strings.ToLower(cleanBase))
-		} else {
-			hasPrefix = strings.HasPrefix(cleanPath, cleanBase)
-		}
-
-		if hasPrefix {
+		// SECURITY FIX: Use isSubPath instead of strings.HasPrefix
+		// This properly validates directory boundaries
+		if isSubPath(cleanPath, cleanBase) {
 			allowed = true
 			break
 		}

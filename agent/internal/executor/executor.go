@@ -23,23 +23,50 @@ type CommandResult struct {
 
 // Executor handles command and script execution
 type Executor struct {
-	maxTimeout time.Duration
+	maxTimeout     time.Duration
+	concurrencySem chan struct{} // CW-002: Limits concurrent command execution
 }
+
 
 // New creates a new command executor
 func New() *Executor {
 	return &Executor{
-		maxTimeout: 30 * time.Minute,
+		maxTimeout:     30 * time.Minute,
+		concurrencySem: make(chan struct{}, 10), // Max 10 concurrent commands
 	}
 }
 
 // Execute runs a shell command and returns the result
 func (e *Executor) Execute(ctx context.Context, command string, cmdType string) (*CommandResult, error) {
+	// CW-002: Rate limit check
+	if err := CheckRateLimit(); err != nil {
+		log.Printf("[SECURITY] Rate limit exceeded for command execution")
+		return nil, fmt.Errorf("rate limit exceeded: %w", err)
+	}
+
+	// CW-002: Acquire concurrency semaphore
+	select {
+	case e.concurrencySem <- struct{}{}:
+		defer func() { <-e.concurrencySem }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+		return nil, fmt.Errorf("too many concurrent commands executing")
+	}
+
 	// Validate command before execution
 	if err := ValidateCommand(command, cmdType); err != nil {
 		log.Printf("[SECURITY] Command validation failed: %v | Command: %s | Type: %s", err, command, cmdType)
 		return nil, fmt.Errorf("command validation failed: %w", err)
 	}
+
+	// CW-002: Apply execution timeout
+	execTimeout := e.maxTimeout
+	if execTimeout == 0 {
+		execTimeout = 5 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(ctx, execTimeout)
+	defer cancel()
 
 	log.Printf("[EXECUTOR] Executing command: %s | Type: %s", command, cmdType)
 	start := time.Now()
@@ -91,7 +118,10 @@ func (e *Executor) Execute(ctx context.Context, command string, cmdType string) 
 	}
 
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		if ctx.Err() == context.DeadlineExceeded {
+			result.ExitCode = -2
+			result.Stderr = fmt.Sprintf("%s\ncommand execution timed out after %v", result.Stderr, execTimeout)
+		} else if exitErr, ok := err.(*exec.ExitError); ok {
 			result.ExitCode = exitErr.ExitCode()
 		} else {
 			result.ExitCode = -1
@@ -104,11 +134,34 @@ func (e *Executor) Execute(ctx context.Context, command string, cmdType string) 
 
 // ExecuteScript runs a script with the specified language
 func (e *Executor) ExecuteScript(ctx context.Context, script string, language string) (*CommandResult, error) {
+	// CW-002: Rate limit check
+	if err := CheckRateLimit(); err != nil {
+		log.Printf("[SECURITY] Rate limit exceeded for script execution")
+		return nil, fmt.Errorf("rate limit exceeded: %w", err)
+	}
+
+	// CW-002: Acquire concurrency semaphore
+	select {
+	case e.concurrencySem <- struct{}{}:
+		defer func() { <-e.concurrencySem }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+		return nil, fmt.Errorf("too many concurrent commands executing")
+	}
 	// Validate script before execution
 	if err := ValidateScript(script, language); err != nil {
 		log.Printf("[SECURITY] Script validation failed: %v | Language: %s | Script length: %d", err, language, len(script))
 		return nil, fmt.Errorf("script validation failed: %w", err)
 	}
+
+	// CW-002: Apply execution timeout
+	execTimeout := e.maxTimeout
+	if execTimeout == 0 {
+		execTimeout = 5 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(ctx, execTimeout)
+	defer cancel()
 
 	log.Printf("[EXECUTOR] Executing script | Language: %s | Script length: %d bytes", language, len(script))
 	start := time.Now()
@@ -183,7 +236,10 @@ func (e *Executor) ExecuteScript(ctx context.Context, script string, language st
 	}
 
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		if ctx.Err() == context.DeadlineExceeded {
+			result.ExitCode = -2
+			result.Stderr = fmt.Sprintf("%s\nscript execution timed out after %v", result.Stderr, execTimeout)
+		} else if exitErr, ok := err.(*exec.ExitError); ok {
 			result.ExitCode = exitErr.ExitCode()
 		} else {
 			result.ExitCode = -1

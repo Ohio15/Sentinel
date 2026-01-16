@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useRef, useCallback, useState, memo } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -13,13 +13,20 @@ interface TerminalProps {
   onClose: () => void;
 }
 
-export function Terminal({ deviceId, agentId, onClose }: TerminalProps) {
+// Memoized to prevent re-renders from parent state changes (e.g., metrics polling)
+export const Terminal = memo(function Terminal({ deviceId, agentId, onClose }: TerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const sessionIdRef = useRef<string>('');
+  const isConnectedRef = useRef(false); // Ref for stable callback access
   const [isConnected, setIsConnected] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    isConnectedRef.current = isConnected;
+  }, [isConnected]);
 
   const handleTerminalOutput = useCallback((data: unknown) => {
     const payload = data as { sessionId?: string; data?: string };
@@ -112,7 +119,7 @@ export function Terminal({ deviceId, agentId, onClose }: TerminalProps) {
 
     // Handle user input
     xterm.onData((data) => {
-      if (sessionIdRef.current && isConnected) {
+      if (sessionIdRef.current && isConnectedRef.current) {
         wsService.send('terminal_input', {
           deviceId,
           agentId,
@@ -164,7 +171,7 @@ export function Terminal({ deviceId, agentId, onClose }: TerminalProps) {
       closeTerminalSession();
       xterm.dispose();
     };
-  }, [deviceId, agentId, handleTerminalOutput, handleError, startTerminalSession, closeTerminalSession, isConnected]);
+  }, [deviceId, agentId]); // Only re-run if device/agent changes
 
   // Re-fit terminal when fullscreen changes
   useEffect(() => {
@@ -227,4 +234,4 @@ export function Terminal({ deviceId, agentId, onClose }: TerminalProps) {
       )}
     </div>
   );
-}
+});

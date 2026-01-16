@@ -9,6 +9,7 @@ import {
   Shield,
   LogOut,
   Download,
+  Link2,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -20,6 +21,7 @@ const navigation = [
   { name: 'Alert Rules', href: '/alert-rules', icon: Shield },
   { name: 'Users', href: '/users', icon: Users },
   { name: 'Downloads', href: '/downloads', icon: Download },
+  { name: 'Agent Installations', href: '/agent-installations', icon: Link2 },
   { name: 'Settings', href: '/settings', icon: Settings },
 ];
 

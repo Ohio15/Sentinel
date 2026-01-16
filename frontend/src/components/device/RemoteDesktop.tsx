@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useRef, useCallback, useState, memo } from 'react';
 import { wsService } from '@/services/websocket';
 import { Button } from '@/components/ui';
 import { X, Maximize2, Minimize2, Monitor, MousePointer, Keyboard } from 'lucide-react';
@@ -17,7 +17,8 @@ interface RemoteFrame {
   timestamp: number;
 }
 
-export function RemoteDesktop({ deviceId, agentId, onClose }: RemoteDesktopProps) {
+// Memoized to prevent re-renders from parent state changes
+export const RemoteDesktop = memo(function RemoteDesktop({ deviceId, agentId, onClose }: RemoteDesktopProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const sessionIdRef = useRef<string>('');
@@ -207,34 +208,69 @@ export function RemoteDesktop({ deviceId, agentId, onClose }: RemoteDesktopProps
     });
   }, [deviceId, agentId, isConnected]);
 
+  // Use refs for callbacks to avoid effect re-runs when isConnected changes
+  const handleRemoteFrameRef = useRef(handleRemoteFrame);
+  const handleErrorRef = useRef(handleError);
+  const handleKeyDownRef = useRef(handleKeyDown);
+  const handleKeyUpRef = useRef(handleKeyUp);
+  
   useEffect(() => {
-    // Subscribe to remote frames and errors
-    const unsubscribeFrame = wsService.on('remote_frame', handleRemoteFrame);
-    const unsubscribeError = wsService.on('error', handleError);
+    handleRemoteFrameRef.current = handleRemoteFrame;
+    handleErrorRef.current = handleError;
+    handleKeyDownRef.current = handleKeyDown;
+    handleKeyUpRef.current = handleKeyUp;
+  });
+
+  useEffect(() => {
+    // Subscribe to remote frames and errors using stable ref wrappers
+    const unsubscribeFrame = wsService.on('remote_frame', (data: unknown) => handleRemoteFrameRef.current(data));
+    const unsubscribeError = wsService.on('error', (data: unknown) => handleErrorRef.current(data));
 
     // Start remote session
+    const sessionId = `remote-${deviceId}-${Date.now()}`;
+    sessionIdRef.current = sessionId;
+
+    const doStart = () => {
+      wsService.send('start_remote', {
+        deviceId,
+        agentId,
+        sessionId: sessionIdRef.current,
+      });
+      setIsConnected(true);
+    };
+
     if (wsService.isConnected) {
-      startRemoteSession();
+      doStart();
     } else {
       wsService.connect();
       const connectUnsub = wsService.on('connected', () => {
-        startRemoteSession();
+        doStart();
         connectUnsub();
       });
     }
 
-    // Add keyboard listeners
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
+    // Add keyboard listeners with stable refs
+    const keyDownHandler = (e: KeyboardEvent) => handleKeyDownRef.current(e);
+    const keyUpHandler = (e: KeyboardEvent) => handleKeyUpRef.current(e);
+    window.addEventListener('keydown', keyDownHandler);
+    window.addEventListener('keyup', keyUpHandler);
 
     return () => {
       unsubscribeFrame();
       unsubscribeError();
-      stopRemoteSession();
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
+      // Stop remote session
+      if (sessionIdRef.current) {
+        wsService.send('stop_remote', {
+          deviceId,
+          agentId,
+          sessionId: sessionIdRef.current,
+        });
+      }
+      setIsConnected(false);
+      window.removeEventListener('keydown', keyDownHandler);
+      window.removeEventListener('keyup', keyUpHandler);
     };
-  }, [handleRemoteFrame, handleError, startRemoteSession, stopRemoteSession, handleKeyDown, handleKeyUp]);
+  }, [deviceId, agentId]); // Only re-run if device/agent changes
 
   const handleClose = () => {
     stopRemoteSession();
@@ -342,4 +378,4 @@ export function RemoteDesktop({ deviceId, agentId, onClose }: RemoteDesktopProps
       </div>
     </div>
   );
-}
+});

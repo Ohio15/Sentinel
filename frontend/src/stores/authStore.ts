@@ -106,7 +106,20 @@ export const useAuthStore = create<AuthState>()(
       partialize: (state) => ({
         token: state.token,
         user: state.user,
+        isAuthenticated: state.isAuthenticated,
       }),
+      onRehydrateStorage: () => (state) => {
+        // After rehydration, validate the session if we think we're authenticated
+        if (state?.isAuthenticated && state?.token) {
+          // Token exists and was authenticated - validate in background
+          state.checkAuth();
+        } else {
+          // No valid session - ensure loading is false
+          if (state) {
+            state.isLoading = false;
+          }
+        }
+      },
     }
   )
 );

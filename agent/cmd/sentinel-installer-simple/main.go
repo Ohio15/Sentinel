@@ -28,7 +28,7 @@ var (
 )
 
 // Default server URL for code validation
-const DefaultServerURL = "https://sentinelrmm.us"
+const DefaultServerURL = "https://sentinelrmm.us:4443"
 
 // Version is set at build time
 var Version = "1.0.0"

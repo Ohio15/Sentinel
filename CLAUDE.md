@@ -196,3 +196,110 @@ Defined in `agent/internal/client/client.go` and `src/main/agents.ts`:
 | `devices:update` | Update device properties |
 | `commands:execute` | Execute command on agent |
 | `commands:getHistory` | Get command history for device |
+
+---
+
+## Agent Binary Patching (Embedded Config)
+
+The agent binary uses **placeholder strings** for server URL and enrollment token that get patched at download time:
+
+### Placeholder Strings (in `agent/internal/config/config.go`)
+```
+SENTINEL_EMBEDDED_SERVER:________________________________________________________________:END  (93 bytes total)
+SENTINEL_EMBEDDED_TOKEN:________________________________________________________________:END   (92 bytes total)
+```
+
+### How Patching Works
+1. Binary is built with placeholder strings (64 underscores as padding)
+2. Server (`server/internal/api/bootstrap.go`) patches binary when downloaded via `/api/bootstrap/agent`
+3. Replacement format: `SENTINEL_EMBEDDED_SERVER:` + padded URL (64 chars) + `:END`
+
+### Manual Binary Patching (PowerShell)
+```powershell
+$sourceBinary = "D:\Projects\Sentinel\installers\sentinel-agent-windows-amd64.exe"
+$outputBinary = "D:\Projects\sentinel-agent.exe"
+$serverURL = "https://sentinelrmm.us:8443"
+$token = "REDACTED_ENROLLMENT_TOKEN"
+
+# Read binary
+$bytes = [System.IO.File]::ReadAllBytes($sourceBinary)
+
+# Find and replace placeholders (byte-level search/replace)
+# Pad values to 64 chars with underscores, then create replacement string
+# Write patched bytes back to output file
+```
+
+See `D:\Projects\patch-agent.ps1` for full implementation.
+
+---
+
+## Remote Agent Deployment (Offline Machine)
+
+When an agent machine has no network connectivity:
+
+### Internet Connection Sharing (ICS)
+1. Enable ICS on server machine to share WiFi over Ethernet
+2. Server machine gets IP `192.168.137.1` on Ethernet adapter
+3. Agent machine set static IP `192.168.137.2` with gateway `192.168.137.1`
+4. Run HTTP server: `python -m http.server 8888` from project directory
+5. On agent machine: `irm http://192.168.137.1:8888/script.ps1 | iex`
+
+### Agent Protection Bypass
+The agent enables file/process protection on startup. To replace the binary:
+
+1. **Disable services first:**
+   ```powershell
+   Stop-Service SentinelAgent -Force
+   Stop-Service SentinelWatchdog -Force
+   Set-Service SentinelAgent -StartupType Disabled
+   ```
+
+2. **Create scheduled task to run at boot (before agent starts):**
+   - Task runs as SYSTEM at startup
+   - Swaps binary while services are disabled
+   - Re-enables and starts services
+
+3. **Reboot machine** - task executes before agent can enable protection
+
+### Key Files for Remote Deployment
+- `D:\Projects\patch-agent.ps1` - Patches binary with embedded config
+- `D:\Projects\final-install.ps1` - Full deployment script for agent machine
+
+---
+
+## Production URLs
+
+| Service | URL |
+|---------|-----|
+| Public Server | `https://sentinelrmm.us:8443` |
+| Local Docker | `http://localhost:8090` |
+| Agent mTLS Port | `8443` (Traefik terminates TLS) |
+
+### Enrollment Token
+Default token: `REDACTED_ENROLLMENT_TOKEN`
+
+---
+
+## Remote Test Machine (DESKTOP-50D189N)
+
+### SSH Connection
+- **Hostname:** DESKTOP-50D189N
+- **IP Address:** 192.168.1.20 (WiFi network)
+- **User:** ohio_
+- **SSH Key:** ED25519 (`~/.ssh/id_ed25519`)
+- **SSH Command:** `ssh REDACTED_SSH_TARGET`
+
+### Agent Info
+- **Agent ID:** `76e78d99-7292-43f0-bdb2-3f6cef00034e`
+- **Agent Version:** 1.67.6
+- **Status:** Connected via WiFi
+
+### SSH Setup Notes
+- SSH server configured to start automatically
+- Firewall rules added for SSH (port 22) and ICMP
+- `administrators_authorized_keys` configured for key-based auth
+- Host key fingerprint updated (2026-01-13) after OS reinstall
+
+### Connectivity History
+- Previously connected via ICS (192.168.137.x) - now disconnected
+- Current connection: WiFi network (192.168.1.x)
