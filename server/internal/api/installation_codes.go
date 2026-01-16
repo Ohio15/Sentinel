@@ -319,9 +319,9 @@ func validateInstallationCodeHandler(services *Services) gin.HandlerFunc {
 		logCodeValidation(services, code, c.ClientIP(), c.Request.UserAgent(), true, nil)
 
 		// Get server URL
-		serverURL := services.Config.ServerURL
+		serverURL := services.Config.PublicURL
 		if serverURL == "" {
-			serverURL = services.Config.PublicURL
+			serverURL = services.Config.ServerURL
 		}
 		if serverURL == "" {
 			scheme := "https"
