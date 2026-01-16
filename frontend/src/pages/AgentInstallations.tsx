@@ -677,17 +677,6 @@ export default function AgentInstallations() {
                     Resend Email
                   </button>
                 )}
-                {!['installed', 'revoked', 'expired'].includes(selectedLink.status) && (
-                  <button
-                    onClick={() => {
-                      handleRevokeLink(selectedLink.id);
-                      setShowDetailModal(false);
-                    }}
-                    className="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg"
-                  >
-                    Revoke Link
-                  </button>
-                )}
                 <button
                   onClick={() => setShowDetailModal(false)}
                   className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg"

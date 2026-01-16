@@ -56,7 +56,7 @@ type InstallCodeListItem struct {
 	Status            string     `json:"status"`
 	CreatedAt         time.Time  `json:"createdAt"`
 	ExpiresAt         time.Time  `json:"expiresAt"`
-	UsedAt            *time.Time `json:"usedAt,omitempty"`
+	UsedAt             *time.Time `json:"usedAt,omitempty"`
 	CreatedByName     *string    `json:"createdByName,omitempty"`
 }
 
@@ -239,18 +239,18 @@ func validateInstallationCodeHandler(services *Services) gin.HandlerFunc {
 			Status            string
 			ExpiresAt         time.Time
 			EnrollmentTokenID uuid.UUID
-			UsedAt            *time.Time
+			AgentConnectedAt  *time.Time
 		}
 		var enrollmentToken string
 
 		err := services.DB.Pool().QueryRow(c.Request.Context(), `
-			SELECT l.id, l.device_name, l.status, l.expires_at, l.enrollment_token_id, l.downloaded_at,
+			SELECT l.id, l.device_name, l.status, l.expires_at, l.enrollment_token_id, l.agent_connected_at,
 			       e.token
 			FROM agent_installation_links l
 			JOIN enrollment_tokens e ON l.enrollment_token_id = e.id
 			WHERE l.installation_code = $1 AND l.deleted_at IS NULL
 		`, code).Scan(
-			&link.ID, &link.DeviceName, &link.Status, &link.ExpiresAt, &link.EnrollmentTokenID, &link.UsedAt,
+			&link.ID, &link.DeviceName, &link.Status, &link.ExpiresAt, &link.EnrollmentTokenID, &link.AgentConnectedAt,
 			&enrollmentToken,
 		)
 
@@ -272,7 +272,7 @@ func validateInstallationCodeHandler(services *Services) gin.HandlerFunc {
 		}
 
 		// Check if already used
-		if link.UsedAt != nil || link.Status == "installed" {
+		if link.AgentConnectedAt != nil || link.Status == "installed" {
 			logCodeValidation(services, code, c.ClientIP(), c.Request.UserAgent(), false, strPtr("Code already used"))
 			c.JSON(http.StatusOK, ValidateCodeResponse{
 				Valid: false,
