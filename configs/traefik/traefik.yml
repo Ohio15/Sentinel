@@ -33,6 +33,15 @@ entryPoints:
         - securityHeaders@file
         - rateLimit@file
 
+  # Alternate HTTPS port (bypasses router cache issues on 443)
+  websecure-alt:
+    address: ":4443"
+    http:
+      tls:
+        certResolver: letsencrypt
+      middlewares:
+        - securityHeaders@file
+
   # Dedicated entrypoint for agent mTLS connections
   agents:
     address: ":8443"
@@ -53,5 +62,3 @@ certificatesResolvers:
       email: "ohio_15@hotmail.com"
       storage: /letsencrypt/acme.json
       tlsChallenge: {}
-      # Use staging for testing, comment out for production
-      # caServer: https://acme-staging-v02.api.letsencrypt.org/directory
