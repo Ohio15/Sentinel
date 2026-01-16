@@ -27,7 +27,7 @@ type AgentInstallationLink struct {
 	UserName            *string            `json:"userName,omitempty"`
 	EnrollmentTokenID   *uuid.UUID         `json:"enrollmentTokenId,omitempty"`
 	CreatedAt           time.Time          `json:"createdAt"`
-	CreatedBy           *int               `json:"createdBy,omitempty"`
+	CreatedBy           *uuid.UUID               `json:"createdBy,omitempty"`
 	CreatedByName       *string            `json:"createdByName,omitempty"`
 	ExpiresAt           time.Time          `json:"expiresAt"`
 	DownloadedAt        *time.Time         `json:"downloadedAt,omitempty"`
@@ -35,10 +35,10 @@ type AgentInstallationLink struct {
 	DownloadUserAgent   *string            `json:"downloadUserAgent,omitempty"`
 	DownloadCount       int                `json:"downloadCount"`
 	AgentConnectedAt    *time.Time         `json:"agentConnectedAt,omitempty"`
-	DeviceID            *int               `json:"deviceId,omitempty"`
+	DeviceID            *uuid.UUID               `json:"deviceId,omitempty"`
 	Status              string             `json:"status"`
 	RevokedAt           *time.Time         `json:"revokedAt,omitempty"`
-	RevokedBy           *int               `json:"revokedBy,omitempty"`
+	RevokedBy           *uuid.UUID               `json:"revokedBy,omitempty"`
 	EmailSentAt         *time.Time         `json:"emailSentAt,omitempty"`
 	EmailDeliveryStatus *string            `json:"emailDeliveryStatus,omitempty"`
 	EmailOpenedAt       *time.Time         `json:"emailOpenedAt,omitempty"`
