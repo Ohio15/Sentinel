@@ -53,10 +53,9 @@ http:
       priority: 1
 
     # =========================================================================
-    # HTTPS Routes (port 443) - Localhost (self-signed cert)
+    # HTTPS Routes (port 443) - Localhost
     # =========================================================================
 
-    # Localhost API routes
     api-local:
       rule: "Host(`localhost`) && PathPrefix(`/api`)"
       entryPoints:
@@ -68,7 +67,6 @@ http:
         - rateLimit
       priority: 10
 
-    # Localhost WebSocket routes for dashboard
     ws-dashboard-local:
       rule: "Host(`localhost`) && PathPrefix(`/ws/dashboard`)"
       entryPoints:
@@ -77,16 +75,6 @@ http:
       tls: {}
       priority: 10
 
-    # Localhost Health check routes
-    health-local:
-      rule: "Host(`localhost`) && PathPrefix(`/health`)"
-      entryPoints:
-        - websecure
-      service: backend
-      tls: {}
-      priority: 5
-
-    # Localhost Frontend (catch-all for web UI)
     frontend-local:
       rule: "Host(`localhost`)"
       entryPoints:
@@ -98,10 +86,45 @@ http:
       priority: 1
 
     # =========================================================================
+    # Alternate HTTPS Routes (port 4443) - Bypasses router cache
+    # =========================================================================
+
+    api-alt:
+      rule: "Host(`sentinelrmm.us`) && PathPrefix(`/api`)"
+      entryPoints:
+        - websecure-alt
+      service: backend
+      tls:
+        certResolver: letsencrypt
+      middlewares:
+        - securityHeaders
+        - rateLimit
+      priority: 10
+
+    ws-dashboard-alt:
+      rule: "Host(`sentinelrmm.us`) && PathPrefix(`/ws/dashboard`)"
+      entryPoints:
+        - websecure-alt
+      service: backend
+      tls:
+        certResolver: letsencrypt
+      priority: 10
+
+    frontend-alt:
+      rule: "Host(`sentinelrmm.us`)"
+      entryPoints:
+        - websecure-alt
+      service: frontend
+      tls:
+        certResolver: letsencrypt
+      middlewares:
+        - securityHeaders
+      priority: 1
+
+    # =========================================================================
     # mTLS Routes (port 8443) - Agent connections
     # =========================================================================
 
-    # Agent WebSocket routes
     ws-agent:
       rule: "PathPrefix(`/ws/agent`) || PathPrefix(`/ws`)"
       entryPoints:
@@ -113,7 +136,6 @@ http:
         - agentRateLimit
       priority: 10
 
-    # Agent API routes
     agent-api:
       rule: "PathPrefix(`/api/agent`)"
       entryPoints:
@@ -125,7 +147,6 @@ http:
         - agentRateLimit
       priority: 10
 
-    # Agent Health check (for agent connection verification)
     agent-health:
       rule: "PathPrefix(`/health`)"
       entryPoints:
@@ -136,13 +157,11 @@ http:
       priority: 5
 
   services:
-    # Backend service (Go API server)
     backend:
       loadBalancer:
         servers:
           - url: "http://sentinel-backend:8080"
 
-    # Frontend service (nginx serving static files)
     frontend:
       loadBalancer:
         servers:
