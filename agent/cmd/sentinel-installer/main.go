@@ -873,133 +873,277 @@ func addDefenderExclusion(path string) {
 }
 
 // prepareInstallDirectory ensures the install directory is ready for installation
-// This aggressively stops services, kills processes, and removes locked files
+// Uses DIRECTORY SWAP strategy to sidestep file locking issues:
+// 1. Install to "Sentinel Agent.new"
+// 2. Stop services (best effort)
+// 3. Rename "Sentinel Agent" → "Sentinel Agent.old"
+// 4. Rename "Sentinel Agent.new" → "Sentinel Agent"
+// 5. Schedule "Sentinel Agent.old" for deletion on reboot
 func prepareInstallDirectory(installPath, agentExe, watchdogExe string) error {
-	logMsg("[DEBUG] Preparing install directory: %s", installPath)
+	logMsg("[DEBUG] Preparing install directory using DIRECTORY SWAP strategy: %s", installPath)
 
-	// Step 0: Use Restart Manager to find and close any processes using our files
-	printInfo("Checking for processes using installation files...")
-	closeProcessesUsingFile(agentExe)
-	closeProcessesUsingFile(watchdogExe)
+	// Define paths for the swap strategy
+	newPath := installPath + ".new"
+	oldPath := installPath + ".old"
 
-	// Step 1: Stop services using SC (more reliable than net stop)
-	printInfo("Stopping existing services...")
-	stopService("SentinelWatchdog")
-	stopService("SentinelAgent")
+	// Step 1: Clean up any leftover .new or .old directories from previous attempts
+	printInfo("Cleaning up previous installation attempts...")
+	cleanupOldDirectories(newPath, oldPath)
 
-	// Step 1.5: Also try to stop by killing the service host process
-	killServiceProcess("SentinelAgent")
-	killServiceProcess("SentinelWatchdog")
-
-	// Step 2: Kill any running processes (multiple attempts)
-	printInfo("Terminating running processes...")
-	for i := 0; i < 5; i++ {
-		killProcess("sentinel-agent.exe")
-		killProcess("sentinel-watchdog.exe")
-		// Also kill any process that has the file path in its command line
-		killProcessByPath(agentExe)
-		killProcessByPath(watchdogExe)
-		time.Sleep(500 * time.Millisecond)
+	// Step 2: Check if this is an upgrade (existing installation present)
+	existingInstall := false
+	if _, err := os.Stat(agentExe); err == nil {
+		existingInstall = true
+		logMsg("[DEBUG] Existing installation detected - will use directory swap")
 	}
 
-	// Step 3: Wait for processes to fully terminate
-	waitForProcessExit("sentinel-agent.exe", 15*time.Second)
-	waitForProcessExit("sentinel-watchdog.exe", 10*time.Second)
+	if existingInstall {
+		// UPGRADE PATH: Use directory swap strategy
+		return prepareUpgradeWithSwap(installPath, newPath, oldPath, agentExe, watchdogExe)
+	}
 
-	// Extra wait for file handles to be released
-	time.Sleep(2 * time.Second)
+	// FRESH INSTALL PATH: Simple directory creation
+	logMsg("[DEBUG] Fresh installation - creating directory directly")
+	printInfo("Creating installation directory...")
 
-	// Step 4: Delete services if they exist (allows clean reinstall)
-	printInfo("Removing existing services...")
-	deleteService("SentinelAgent")
-	deleteService("SentinelWatchdog")
-	time.Sleep(1 * time.Second)
+	// Remove any remnants
+	os.RemoveAll(installPath)
 
-	// Step 5: Create install directory
 	if err := os.MkdirAll(installPath, 0755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	// Step 6: Force remove existing files with multiple strategies
-	printInfo("Removing existing files...")
-	forceRemoveFile(agentExe)
-	forceRemoveFile(watchdogExe)
+	return nil
+}
+
+// prepareUpgradeWithSwap handles upgrade using directory swap to avoid file locking
+func prepareUpgradeWithSwap(installPath, newPath, oldPath, agentExe, watchdogExe string) error {
+	logMsg("[DEBUG] Starting upgrade with directory swap strategy")
+
+	// Step 1: Stop services and kill processes (best effort - don't fail if this doesn't work)
+	printInfo("Stopping existing services...")
+	stopService("SentinelWatchdog")
+	stopService("SentinelAgent")
+
+	// Kill service host processes
+	killServiceProcess("SentinelAgent")
+	killServiceProcess("SentinelWatchdog")
+
+	// Kill any running processes
+	for i := 0; i < 3; i++ {
+		killProcess("sentinel-agent.exe")
+		killProcess("sentinel-watchdog.exe")
+		killProcessByPath(agentExe)
+		killProcessByPath(watchdogExe)
+		time.Sleep(300 * time.Millisecond)
+	}
+
+	// Brief wait for handles to release
+	time.Sleep(1 * time.Second)
+
+	// Step 2: Delete services with proper waiting
+	printInfo("Removing existing services...")
+	deleteServiceAndWait("SentinelAgent")
+	deleteServiceAndWait("SentinelWatchdog")
+
+	// Step 3: Create the new installation directory
+	printInfo("Creating new installation directory...")
+	os.RemoveAll(newPath) // Clean any leftover
+	if err := os.MkdirAll(newPath, 0755); err != nil {
+		return fmt.Errorf("failed to create new directory: %w", err)
+	}
+
+	// Step 4: Try direct cleanup first (may work if services properly stopped)
+	printInfo("Attempting direct file removal...")
+	directCleanupSuccess := tryDirectCleanup(installPath, agentExe, watchdogExe)
+
+	if directCleanupSuccess {
+		// Direct cleanup worked! Remove .new directory and use original path
+		logMsg("[DEBUG] Direct cleanup successful, using original directory")
+		os.RemoveAll(newPath)
+		return nil
+	}
+
+	// Step 5: Direct cleanup failed - use directory swap strategy
+	logMsg("[DEBUG] Direct cleanup failed, proceeding with directory swap")
+	printInfo("Using directory swap strategy for locked files...")
+
+	// Remove any existing .old directory first
+	os.RemoveAll(oldPath)
+
+	// THE KEY SWAP: Rename directories (Windows allows this even with open handles!)
+	// Step 5a: Rename current → old
+	logMsg("[DEBUG] Renaming %s → %s", installPath, oldPath)
+	if err := os.Rename(installPath, oldPath); err != nil {
+		logMsg("[DEBUG] Directory rename failed: %v", err)
+		// If we can't even rename the directory, try one more aggressive cleanup
+		closeProcessesUsingFile(agentExe)
+		closeFileHandles(agentExe)
+		time.Sleep(2 * time.Second)
+
+		// Try rename again
+		if err := os.Rename(installPath, oldPath); err != nil {
+			// Last resort: schedule for reboot and create new directory anyway
+			logMsg("[DEBUG] Directory rename still failed, scheduling for reboot deletion")
+			scheduleDirDeleteOnReboot(installPath)
+			// Create the install directory fresh
+			os.MkdirAll(installPath, 0755)
+			os.RemoveAll(newPath)
+			printWarning("Some files are locked. Old files will be removed on next reboot.")
+			return nil
+		}
+	}
+
+	// Step 5b: Rename new → current
+	logMsg("[DEBUG] Renaming %s → %s", newPath, installPath)
+	if err := os.Rename(newPath, installPath); err != nil {
+		// This shouldn't fail, but if it does, try to recover
+		logMsg("[DEBUG] New directory rename failed: %v - attempting recovery", err)
+		// Try to rename old back
+		os.Rename(oldPath, installPath)
+		return fmt.Errorf("directory swap failed: %w", err)
+	}
+
+	// Step 6: Schedule old directory for deletion on reboot
+	logMsg("[DEBUG] Scheduling old directory for deletion: %s", oldPath)
+	scheduleDirDeleteOnReboot(oldPath)
+
+	// Also try to delete it now (might work for some files)
+	go func() {
+		time.Sleep(2 * time.Second)
+		os.RemoveAll(oldPath)
+	}()
+
+	printSuccess("Directory swap completed successfully")
+	return nil
+}
+
+// tryDirectCleanup attempts to remove files directly, returns true if successful
+func tryDirectCleanup(installPath, agentExe, watchdogExe string) bool {
+	// Try to remove the agent binary
+	if _, err := os.Stat(agentExe); err == nil {
+		// File exists, try to remove it
+		forceRemoveFile(agentExe)
+
+		// Check if it's gone
+		if _, err := os.Stat(agentExe); err == nil {
+			// Still exists - direct cleanup failed
+			return false
+		}
+	}
+
+	// Try to remove watchdog
+	if _, err := os.Stat(watchdogExe); err == nil {
+		forceRemoveFile(watchdogExe)
+		// Don't fail if watchdog can't be removed - it's less critical
+	}
+
+	// Remove other files
 	forceRemoveFile(filepath.Join(installPath, "config.json"))
 	forceRemoveFile(filepath.Join(installPath, "protection.dat"))
 
-	// Step 7: If agent exe still exists, try multiple aggressive strategies
-	if _, err := os.Stat(agentExe); err == nil {
-		logMsg("[DEBUG] Agent binary still exists after cleanup, trying aggressive removal")
+	return true
+}
 
-		// Try Restart Manager again specifically for this file
-		closeProcessesUsingFile(agentExe)
-		time.Sleep(1 * time.Second)
+// cleanupOldDirectories removes leftover .new and .old directories
+func cleanupOldDirectories(newPath, oldPath string) {
+	// Try to remove .new directory
+	if _, err := os.Stat(newPath); err == nil {
+		logMsg("[DEBUG] Removing leftover .new directory")
+		os.RemoveAll(newPath)
+	}
 
-		// Try to close any handles to this file using PowerShell
-		closeFileHandles(agentExe)
+	// Try to remove .old directory
+	if _, err := os.Stat(oldPath); err == nil {
+		logMsg("[DEBUG] Removing leftover .old directory")
+		os.RemoveAll(oldPath)
+		// If removal fails, schedule for reboot
+		if _, err := os.Stat(oldPath); err == nil {
+			scheduleDirDeleteOnReboot(oldPath)
+		}
+	}
+}
+
+// deleteServiceAndWait deletes a service and waits for it to be fully removed
+func deleteServiceAndWait(name string) {
+	logMsg("[DEBUG] Deleting service with wait: %s", name)
+
+	// First check if service exists
+	cmd := exec.Command("sc", "query", name)
+	if err := cmd.Run(); err != nil {
+		logMsg("[DEBUG] Service %s does not exist", name)
+		return
+	}
+
+	// Delete the service
+	exec.Command("sc", "delete", name).Run()
+
+	// Poll until service is gone or marked for deletion (max 15 seconds)
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		cmd := exec.Command("sc", "query", name)
+		output, err := cmd.CombinedOutput()
+		outputStr := string(output)
+
+		// Service no longer exists (error 1060)
+		if err != nil || strings.Contains(outputStr, "1060") || strings.Contains(outputStr, "does not exist") {
+			logMsg("[DEBUG] Service %s fully deleted", name)
+			return
+		}
+
+		// Service is marked for deletion (will complete on reboot or when handles close)
+		if strings.Contains(outputStr, "MARKED") || strings.Contains(outputStr, "DELETE_PENDING") {
+			logMsg("[DEBUG] Service %s marked for deletion", name)
+			return
+		}
+
 		time.Sleep(500 * time.Millisecond)
-
-		// Try delete again after closing handles
-		if err := os.Remove(agentExe); err == nil {
-			logMsg("[DEBUG] Deleted agent binary after closing handles")
-		} else {
-			logMsg("[DEBUG] Still can't delete, trying rename strategy")
-
-			// Generate unique old filename
-			oldName := fmt.Sprintf("%s.old.%d", agentExe, time.Now().UnixNano())
-
-			// Try to rename (Windows often allows rename even when delete is blocked)
-			if err := os.Rename(agentExe, oldName); err == nil {
-				logMsg("[DEBUG] Renamed locked file to: %s", oldName)
-				// Schedule the old file for deletion (will be cleaned up eventually)
-				go func() {
-					time.Sleep(5 * time.Second)
-					os.Remove(oldName)
-				}()
-			} else {
-				logMsg("[DEBUG] Rename failed: %v, trying MoveFileEx", err)
-
-				// Use MoveFileEx to schedule deletion on reboot
-				scheduleDeleteOnReboot(agentExe)
-
-				// Try robocopy trick - copy empty file over it
-				emptyFile := filepath.Join(os.TempDir(), "empty.tmp")
-				os.WriteFile(emptyFile, []byte{}, 0644)
-				exec.Command("robocopy", filepath.Dir(emptyFile), filepath.Dir(agentExe), "empty.tmp", "/IS", "/IT").Run()
-				os.Remove(emptyFile)
-
-				// As absolute last resort, try to move to temp and continue
-				tempOld := filepath.Join(os.TempDir(), fmt.Sprintf("sentinel-old-%d.exe", time.Now().UnixNano()))
-				if err := moveFileWithRetry(agentExe, tempOld); err == nil {
-					logMsg("[DEBUG] Moved locked file to temp: %s", tempOld)
-				} else {
-					// Check if file is STILL there
-					if _, statErr := os.Stat(agentExe); statErr == nil {
-						// Last chance: try to truncate the file to 0 bytes
-						if f, openErr := os.OpenFile(agentExe, os.O_WRONLY|os.O_TRUNC, 0644); openErr == nil {
-							f.Close()
-							logMsg("[DEBUG] Truncated locked file - will overwrite")
-						} else {
-							return fmt.Errorf("could not remove existing agent binary - file is locked. Try rebooting the computer and running installer again")
-						}
-					}
-				}
-			}
-		}
 	}
 
-	// Do the same for watchdog
-	if _, err := os.Stat(watchdogExe); err == nil {
-		oldName := fmt.Sprintf("%s.old.%d", watchdogExe, time.Now().UnixNano())
-		if err := os.Rename(watchdogExe, oldName); err == nil {
-			go func() {
-				time.Sleep(5 * time.Second)
-				os.Remove(oldName)
-			}()
-		}
-	}
+	logMsg("[DEBUG] Timeout waiting for service %s deletion", name)
+}
 
-	return nil
+// scheduleDirDeleteOnReboot schedules a directory and its contents for deletion on reboot
+func scheduleDirDeleteOnReboot(dirPath string) {
+	logMsg("[DEBUG] Scheduling directory for deletion on reboot: %s", dirPath)
+
+	// Use PowerShell to add to PendingFileRenameOperations
+	// This is the proper Windows way to delete locked files/directories
+	script := fmt.Sprintf(`
+$dirPath = '%s'
+
+# First, schedule all files in the directory
+if (Test-Path $dirPath) {
+    Get-ChildItem -Path $dirPath -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
+        $filePath = $_.FullName
+        # Use MoveFileEx to schedule deletion
+        $code = @'
+using System;
+using System.Runtime.InteropServices;
+public class FileOps {
+    [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
+    public static extern bool MoveFileEx(string lpExistingFileName, string lpNewFileName, int dwFlags);
+    public const int MOVEFILE_DELAY_UNTIL_REBOOT = 0x4;
+}
+'@
+        try {
+            Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue
+        } catch {}
+        [FileOps]::MoveFileEx($filePath, $null, [FileOps]::MOVEFILE_DELAY_UNTIL_REBOOT) | Out-Null
+    }
+
+    # Then schedule the directory itself
+    [FileOps]::MoveFileEx($dirPath, $null, [FileOps]::MOVEFILE_DELAY_UNTIL_REBOOT) | Out-Null
+}
+`, strings.ReplaceAll(dirPath, "'", "''"))
+
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", script)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		logMsg("[DEBUG] Error scheduling directory deletion: %v - %s", err, string(output))
+	} else {
+		logMsg("[DEBUG] Directory scheduled for deletion on reboot")
+	}
 }
 
 // closeProcessesUsingFile uses Windows Restart Manager to find and close processes using a file
@@ -1146,19 +1290,30 @@ func killProcessByPath(exePath string) {
 	}
 }
 
-// scheduleDeleteOnReboot uses MoveFileEx to delete file on next reboot
+// scheduleDeleteOnReboot uses MoveFileEx API to delete file on next reboot
+// This is the CORRECT Windows way to delete locked files
 func scheduleDeleteOnReboot(path string) {
-	// Use PowerShell to call MoveFileEx via .NET
-	cmd := exec.Command("powershell", "-Command", fmt.Sprintf(`
-		$signature = @'
-		[DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
-		public static extern bool MoveFileEx(string lpExistingFileName, string lpNewFileName, int dwFlags);
+	logMsg("[DEBUG] Scheduling file for deletion on reboot: %s", path)
+
+	// Use PowerShell to call MoveFileEx via P/Invoke
+	script := fmt.Sprintf(`
+$code = @'
+using System;
+using System.Runtime.InteropServices;
+public class FileOps {
+    [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
+    public static extern bool MoveFileEx(string lpExistingFileName, string lpNewFileName, int dwFlags);
+    public const int MOVEFILE_DELAY_UNTIL_REBOOT = 0x4;
+}
 '@
-		$type = Add-Type -MemberDefinition $signature -Name Win32Utils -Namespace MoveFileEx -PassThru
-		$type::MoveFileEx('%s', $null, 4)
-	`, strings.ReplaceAll(path, "'", "''")))
-	cmd.Run()
-	logMsg("[DEBUG] Scheduled %s for deletion on reboot", path)
+try { Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue } catch {}
+$result = [FileOps]::MoveFileEx('%s', $null, [FileOps]::MOVEFILE_DELAY_UNTIL_REBOOT)
+if ($result) { Write-Host "Scheduled for deletion" } else { Write-Host "Failed: $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())" }
+`, strings.ReplaceAll(path, "'", "''"))
+
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", script)
+	output, _ := cmd.CombinedOutput()
+	logMsg("[DEBUG] MoveFileEx result: %s", strings.TrimSpace(string(output)))
 }
 
 // moveFileWithRetry tries to move a file with retries
