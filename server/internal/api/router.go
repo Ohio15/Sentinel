@@ -247,7 +247,7 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			bootstrap.GET("/agent-info", getBootstrapAgentInfoHandler(services))
 			bootstrap.GET("/download", downloadBootstrapHandler(services))
 			bootstrap.GET("/agent", downloadBootstrapAgentHandler(services))
-
+			bootstrap.GET("/watchdog", downloadBootstrapWatchdogHandler(services))
 		}
 
 		// Enrollment Tokens (public - no auth required for self-hosted setups)

@@ -417,7 +417,18 @@ func proceedWithInstall(config *InstallConfig) {
 		os.Exit(1)
 	}
 	defer os.Remove(tempPath)
-	printSuccess("Downloaded %.2f MB", float64(agentInfo.Size)/1024/1024)
+	printSuccess("Downloaded agent: %.2f MB", float64(agentInfo.Size)/1024/1024)
+
+	// Download watchdog
+	printInfo("Downloading watchdog service...")
+	watchdogTempPath := filepath.Join(os.TempDir(), "sentinel-watchdog-download.exe")
+	if err := downloadWatchdog(serverURL, watchdogTempPath); err != nil {
+		printWarning("Could not download watchdog: %v", err)
+		// Continue without watchdog - it's not critical
+	} else {
+		defer os.Remove(watchdogTempPath)
+		printSuccess("Downloaded watchdog service")
+	}
 
 	// Verify checksum if provided
 	if agentInfo.Checksum != "" {
@@ -443,10 +454,15 @@ func proceedWithInstall(config *InstallConfig) {
 		os.Exit(1)
 	}
 
-	// Try to remove existing file first (ensures file isn't locked)
+	// Try to remove existing files first (ensures files aren't locked)
 	if err := os.Remove(agentExe); err == nil {
 		logMsg("[DEBUG] Removed existing agent binary")
 		time.Sleep(500 * time.Millisecond)
+	}
+
+	watchdogExe := filepath.Join(installPath, "sentinel-watchdog.exe")
+	if err := os.Remove(watchdogExe); err == nil {
+		logMsg("[DEBUG] Removed existing watchdog binary")
 	}
 
 	if err := copyFile(tempPath, agentExe); err != nil {
@@ -456,6 +472,16 @@ func proceedWithInstall(config *InstallConfig) {
 			waitForKey()
 		}
 		os.Exit(1)
+	}
+
+	// Copy watchdog if downloaded
+	if _, err := os.Stat(watchdogTempPath); err == nil {
+		if err := copyFile(watchdogTempPath, watchdogExe); err != nil {
+			printWarning("Failed to install watchdog binary: %v", err)
+		} else {
+			removeZoneIdentifier(watchdogExe)
+			printSuccess("Watchdog service installed")
+		}
 	}
 
 	// Remove Zone.Identifier from installed agent to prevent security warnings
@@ -748,6 +774,39 @@ func downloadAgent(serverURL, token, destPath string, info *AgentInfo) error {
 		fmt.Println()
 	}
 	return nil
+}
+
+func downloadWatchdog(serverURL, destPath string) error {
+	downloadURL := fmt.Sprintf("%s/api/bootstrap/watchdog?platform=%s&arch=%s",
+		serverURL, runtime.GOOS, runtime.GOARCH)
+
+	logMsg("[DEBUG] Downloading watchdog from: %s", downloadURL)
+
+	// Use longer timeout for downloads
+	downloadClient := &http.Client{
+		Timeout: 5 * time.Minute,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+	resp, err := downloadClient.Get(downloadURL)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download returned HTTP %d", resp.StatusCode)
+	}
+
+	out, err := os.Create(destPath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, resp.Body)
+	return err
 }
 
 func verifyChecksum(filePath, expected string) error {
