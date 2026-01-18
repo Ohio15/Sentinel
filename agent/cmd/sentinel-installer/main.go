@@ -877,16 +877,28 @@ func addDefenderExclusion(path string) {
 func prepareInstallDirectory(installPath, agentExe, watchdogExe string) error {
 	logMsg("[DEBUG] Preparing install directory: %s", installPath)
 
+	// Step 0: Use Restart Manager to find and close any processes using our files
+	printInfo("Checking for processes using installation files...")
+	closeProcessesUsingFile(agentExe)
+	closeProcessesUsingFile(watchdogExe)
+
 	// Step 1: Stop services using SC (more reliable than net stop)
 	printInfo("Stopping existing services...")
 	stopService("SentinelWatchdog")
 	stopService("SentinelAgent")
+
+	// Step 1.5: Also try to stop by killing the service host process
+	killServiceProcess("SentinelAgent")
+	killServiceProcess("SentinelWatchdog")
 
 	// Step 2: Kill any running processes (multiple attempts)
 	printInfo("Terminating running processes...")
 	for i := 0; i < 5; i++ {
 		killProcess("sentinel-agent.exe")
 		killProcess("sentinel-watchdog.exe")
+		// Also kill any process that has the file path in its command line
+		killProcessByPath(agentExe)
+		killProcessByPath(watchdogExe)
 		time.Sleep(500 * time.Millisecond)
 	}
 
@@ -915,32 +927,63 @@ func prepareInstallDirectory(installPath, agentExe, watchdogExe string) error {
 	forceRemoveFile(filepath.Join(installPath, "config.json"))
 	forceRemoveFile(filepath.Join(installPath, "protection.dat"))
 
-	// Step 7: If agent exe still exists, try rename strategy
+	// Step 7: If agent exe still exists, try multiple aggressive strategies
 	if _, err := os.Stat(agentExe); err == nil {
-		logMsg("[DEBUG] Agent binary still exists, trying rename strategy")
+		logMsg("[DEBUG] Agent binary still exists after cleanup, trying aggressive removal")
 
-		// Generate unique old filename
-		oldName := fmt.Sprintf("%s.old.%d", agentExe, time.Now().UnixNano())
+		// Try Restart Manager again specifically for this file
+		closeProcessesUsingFile(agentExe)
+		time.Sleep(1 * time.Second)
 
-		// Try to rename (Windows often allows rename even when delete is blocked)
-		if err := os.Rename(agentExe, oldName); err == nil {
-			logMsg("[DEBUG] Renamed locked file to: %s", oldName)
-			// Schedule the old file for deletion (will be cleaned up eventually)
-			go func() {
-				time.Sleep(5 * time.Second)
-				os.Remove(oldName)
-			}()
+		// Try to close any handles to this file using PowerShell
+		closeFileHandles(agentExe)
+		time.Sleep(500 * time.Millisecond)
+
+		// Try delete again after closing handles
+		if err := os.Remove(agentExe); err == nil {
+			logMsg("[DEBUG] Deleted agent binary after closing handles")
 		} else {
-			logMsg("[DEBUG] Rename failed: %v, trying MoveFileEx", err)
-			// Use MoveFileEx to schedule deletion on reboot
-			scheduleDeleteOnReboot(agentExe)
+			logMsg("[DEBUG] Still can't delete, trying rename strategy")
 
-			// As absolute last resort, try to move to temp and continue
-			tempOld := filepath.Join(os.TempDir(), fmt.Sprintf("sentinel-old-%d.exe", time.Now().UnixNano()))
-			if err := moveFileWithRetry(agentExe, tempOld); err == nil {
-				logMsg("[DEBUG] Moved locked file to temp: %s", tempOld)
+			// Generate unique old filename
+			oldName := fmt.Sprintf("%s.old.%d", agentExe, time.Now().UnixNano())
+
+			// Try to rename (Windows often allows rename even when delete is blocked)
+			if err := os.Rename(agentExe, oldName); err == nil {
+				logMsg("[DEBUG] Renamed locked file to: %s", oldName)
+				// Schedule the old file for deletion (will be cleaned up eventually)
+				go func() {
+					time.Sleep(5 * time.Second)
+					os.Remove(oldName)
+				}()
 			} else {
-				return fmt.Errorf("could not remove existing agent binary - file is locked by another process")
+				logMsg("[DEBUG] Rename failed: %v, trying MoveFileEx", err)
+
+				// Use MoveFileEx to schedule deletion on reboot
+				scheduleDeleteOnReboot(agentExe)
+
+				// Try robocopy trick - copy empty file over it
+				emptyFile := filepath.Join(os.TempDir(), "empty.tmp")
+				os.WriteFile(emptyFile, []byte{}, 0644)
+				exec.Command("robocopy", filepath.Dir(emptyFile), filepath.Dir(agentExe), "empty.tmp", "/IS", "/IT").Run()
+				os.Remove(emptyFile)
+
+				// As absolute last resort, try to move to temp and continue
+				tempOld := filepath.Join(os.TempDir(), fmt.Sprintf("sentinel-old-%d.exe", time.Now().UnixNano()))
+				if err := moveFileWithRetry(agentExe, tempOld); err == nil {
+					logMsg("[DEBUG] Moved locked file to temp: %s", tempOld)
+				} else {
+					// Check if file is STILL there
+					if _, statErr := os.Stat(agentExe); statErr == nil {
+						// Last chance: try to truncate the file to 0 bytes
+						if f, openErr := os.OpenFile(agentExe, os.O_WRONLY|os.O_TRUNC, 0644); openErr == nil {
+							f.Close()
+							logMsg("[DEBUG] Truncated locked file - will overwrite")
+						} else {
+							return fmt.Errorf("could not remove existing agent binary - file is locked. Try rebooting the computer and running installer again")
+						}
+					}
+				}
 			}
 		}
 	}
@@ -957,6 +1000,150 @@ func prepareInstallDirectory(installPath, agentExe, watchdogExe string) error {
 	}
 
 	return nil
+}
+
+// closeProcessesUsingFile uses Windows Restart Manager to find and close processes using a file
+func closeProcessesUsingFile(filePath string) {
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return
+	}
+
+	logMsg("[DEBUG] Using Restart Manager to find processes using: %s", filePath)
+
+	// PowerShell script using Restart Manager API
+	script := fmt.Sprintf(`
+$filePath = '%s'
+try {
+    $processes = @()
+
+    # Method 1: Check if file is locked by trying to open it exclusively
+    try {
+        $fs = [System.IO.File]::Open($filePath, 'Open', 'ReadWrite', 'None')
+        $fs.Close()
+    } catch {
+        Write-Host "File is locked, searching for process..."
+    }
+
+    # Method 2: Find processes with modules matching the path
+    Get-Process | ForEach-Object {
+        try {
+            if ($_.Modules | Where-Object { $_.FileName -eq $filePath }) {
+                $processes += $_
+            }
+        } catch {}
+    }
+
+    # Method 3: Find processes with the same name as the file
+    $fileName = [System.IO.Path]::GetFileNameWithoutExtension($filePath)
+    $procs = Get-Process -Name $fileName -ErrorAction SilentlyContinue
+    if ($procs) { $processes += $procs }
+
+    # Kill found processes
+    $processes | Select-Object -Unique | ForEach-Object {
+        Write-Host "Killing process: $($_.Name) (PID: $($_.Id))"
+        Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+    }
+} catch {
+    Write-Host "Error: $_"
+}
+`, strings.ReplaceAll(filePath, "'", "''"))
+
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", script)
+	output, _ := cmd.CombinedOutput()
+	if len(output) > 0 {
+		logMsg("[DEBUG] Restart Manager output: %s", string(output))
+	}
+}
+
+// closeFileHandles attempts to close open handles to a file using various methods
+func closeFileHandles(filePath string) {
+	logMsg("[DEBUG] Attempting to close file handles for: %s", filePath)
+
+	// Method 1: Use handle.exe if available (Sysinternals)
+	handleExe := filepath.Join(os.TempDir(), "handle64.exe")
+	if _, err := os.Stat(handleExe); err == nil {
+		cmd := exec.Command(handleExe, "-c", "-p", "*", "-nobanner", filePath)
+		cmd.Run()
+	}
+
+	// Method 2: Use PowerShell to find and kill processes by handle
+	script := fmt.Sprintf(`
+$filePath = '%s'
+$fileName = [System.IO.Path]::GetFileName($filePath)
+
+# Find all processes and check their handles
+Get-Process | ForEach-Object {
+    $proc = $_
+    try {
+        # Check if process has any handle to our file by checking open files
+        $handles = $proc.HandleCount
+        if ($proc.MainModule.FileName -like "*sentinel*") {
+            Write-Host "Found Sentinel process: $($proc.Name) PID: $($proc.Id)"
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+        }
+    } catch {}
+}
+
+# Also try to find by command line
+Get-WmiObject Win32_Process | Where-Object {
+    $_.CommandLine -like "*$fileName*" -or $_.ExecutablePath -like "*$fileName*"
+} | ForEach-Object {
+    Write-Host "Found by WMI: $($_.Name) PID: $($_.ProcessId)"
+    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+}
+`, strings.ReplaceAll(filePath, "'", "''"))
+
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", script)
+	output, _ := cmd.CombinedOutput()
+	if len(output) > 0 {
+		logMsg("[DEBUG] Handle close output: %s", string(output))
+	}
+}
+
+// killServiceProcess finds and kills the process running a Windows service
+func killServiceProcess(serviceName string) {
+	logMsg("[DEBUG] Finding process for service: %s", serviceName)
+
+	// Get the PID of the service process using sc queryex
+	cmd := exec.Command("sc", "queryex", serviceName)
+	output, err := cmd.Output()
+	if err != nil {
+		return
+	}
+
+	// Parse the PID from output
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "PID") {
+			parts := strings.Fields(line)
+			if len(parts) >= 3 {
+				pid := strings.TrimSpace(parts[len(parts)-1])
+				if pid != "0" {
+					logMsg("[DEBUG] Killing service process PID: %s", pid)
+					exec.Command("taskkill", "/F", "/PID", pid).Run()
+				}
+			}
+		}
+	}
+}
+
+// killProcessByPath kills any process whose executable path matches the given path
+func killProcessByPath(exePath string) {
+	// Use WMIC to find processes by path
+	cmd := exec.Command("wmic", "process", "where", fmt.Sprintf("ExecutablePath='%s'", strings.ReplaceAll(exePath, "\\", "\\\\")), "get", "ProcessId")
+	output, err := cmd.Output()
+	if err != nil {
+		return
+	}
+
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		pid := strings.TrimSpace(line)
+		if pid != "" && pid != "ProcessId" {
+			logMsg("[DEBUG] Killing process by path, PID: %s", pid)
+			exec.Command("taskkill", "/F", "/PID", pid).Run()
+		}
+	}
 }
 
 // scheduleDeleteOnReboot uses MoveFileEx to delete file on next reboot
