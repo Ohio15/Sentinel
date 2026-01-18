@@ -134,6 +134,7 @@ interface ElectronAPI {
   server?: {
     getEnrollmentLink: () => Promise<string>;
     getSettings: () => Promise<any>;
+    getInfo: () => Promise<{ version: string; port: number; environment: string }>;
   };
   // Agent download API
   agent?: {

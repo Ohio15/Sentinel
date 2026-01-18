@@ -76,6 +76,8 @@ export const RemoteDesktop = memo(function RemoteDesktop({ deviceId, isOnline, i
   }, []);
 
   const startRemoteSession = useCallback(() => {
+    if (!wsService) return;
+
     sessionIdRef.current = `remote-${deviceId}-${Date.now()}`;
 
     wsService.send('start_remote', {
@@ -88,7 +90,7 @@ export const RemoteDesktop = memo(function RemoteDesktop({ deviceId, isOnline, i
   }, [deviceId, agentId]);
 
   const stopRemoteSession = useCallback(() => {
-    if (sessionIdRef.current) {
+    if (sessionIdRef.current && wsService) {
       wsService.send('stop_remote', {
         deviceId,
         agentId,
@@ -114,7 +116,7 @@ export const RemoteDesktop = memo(function RemoteDesktop({ deviceId, isOnline, i
   }, []);
 
   const sendMouseEvent = useCallback((type: string, e: React.MouseEvent<HTMLCanvasElement>, button?: number) => {
-    if (!isConnected || !sessionIdRef.current) return;
+    if (!isConnected || !sessionIdRef.current || !wsService) return;
 
     const { x, y } = getCanvasCoordinates(e);
 
@@ -151,7 +153,7 @@ export const RemoteDesktop = memo(function RemoteDesktop({ deviceId, isOnline, i
   }, []);
 
   const handleWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
-    if (!isConnected || !sessionIdRef.current) return;
+    if (!isConnected || !sessionIdRef.current || !wsService) return;
 
     const { x, y } = getCanvasCoordinates(e);
 
@@ -172,7 +174,7 @@ export const RemoteDesktop = memo(function RemoteDesktop({ deviceId, isOnline, i
 
   // Keyboard event handlers
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (!isConnected || !sessionIdRef.current) return;
+    if (!isConnected || !sessionIdRef.current || !wsService) return;
 
     e.preventDefault();
 
@@ -194,7 +196,7 @@ export const RemoteDesktop = memo(function RemoteDesktop({ deviceId, isOnline, i
   }, [deviceId, agentId, isConnected]);
 
   const handleKeyUp = useCallback((e: KeyboardEvent) => {
-    if (!isConnected || !sessionIdRef.current) return;
+    if (!isConnected || !sessionIdRef.current || !wsService) return;
 
     e.preventDefault();
 
@@ -225,6 +227,11 @@ export const RemoteDesktop = memo(function RemoteDesktop({ deviceId, isOnline, i
   });
 
   useEffect(() => {
+    if (!wsService) {
+      setError('WebSocket service not available');
+      return;
+    }
+
     // Subscribe to remote frames and errors using stable ref wrappers
     const unsubscribeFrame = wsService.on('remote_frame', (data: unknown) => handleRemoteFrameRef.current(data));
     const unsubscribeError = wsService.on('error', (data: unknown) => handleErrorRef.current(data));
@@ -234,6 +241,7 @@ export const RemoteDesktop = memo(function RemoteDesktop({ deviceId, isOnline, i
     sessionIdRef.current = sessionId;
 
     const doStart = () => {
+      if (!wsService) return;
       wsService.send('start_remote', {
         deviceId,
         agentId,
@@ -262,7 +270,7 @@ export const RemoteDesktop = memo(function RemoteDesktop({ deviceId, isOnline, i
       unsubscribeFrame();
       unsubscribeError();
       // Stop remote session
-      if (sessionIdRef.current) {
+      if (sessionIdRef.current && wsService) {
         wsService.send('stop_remote', {
           deviceId,
           agentId,
