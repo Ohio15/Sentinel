@@ -3,7 +3,10 @@ package middleware
 import (
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,10 +23,10 @@ const (
 	AuthRateLimitWindow = 15 * time.Minute
 
 	// MaxAuthAttempts is the maximum login attempts per IP within the window
-	MaxAuthAttempts = 5
+	MaxAuthAttempts = 10
 
 	// LockoutThreshold is the number of failed attempts that triggers a lockout
-	LockoutThreshold = 10
+	LockoutThreshold = 20
 
 	// LockoutDuration is how long an IP is locked out after reaching the threshold
 	LockoutDuration = 1 * time.Hour
@@ -31,6 +34,57 @@ const (
 	// CleanupInterval is how often to clean up expired entries
 	CleanupInterval = 5 * time.Minute
 )
+
+// rateLimitWhitelist holds IPs that are exempt from rate limiting
+var rateLimitWhitelist = initWhitelist()
+
+// initWhitelist initializes the whitelist from environment variable
+// RATE_LIMIT_WHITELIST can contain comma-separated IPs or CIDR ranges
+// Default includes localhost addresses
+func initWhitelist() map[string]bool {
+	whitelist := make(map[string]bool)
+
+	// Always whitelist localhost
+	whitelist["127.0.0.1"] = true
+	whitelist["::1"] = true
+	whitelist["localhost"] = true
+
+	// Add IPs from environment variable
+	if envWhitelist := os.Getenv("RATE_LIMIT_WHITELIST"); envWhitelist != "" {
+		for _, ip := range strings.Split(envWhitelist, ",") {
+			ip = strings.TrimSpace(ip)
+			if ip != "" {
+				whitelist[ip] = true
+				log.Printf("[RateLimit] Whitelisted IP: %s", ip)
+			}
+		}
+	}
+
+	return whitelist
+}
+
+// isWhitelisted checks if an IP is exempt from rate limiting
+func isWhitelisted(ip string) bool {
+	// Direct match
+	if rateLimitWhitelist[ip] {
+		return true
+	}
+
+	// Check if it's a private/local IP (for development)
+	parsedIP := net.ParseIP(ip)
+	if parsedIP != nil {
+		// Check for loopback
+		if parsedIP.IsLoopback() {
+			return true
+		}
+		// Check for private networks (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+		if parsedIP.IsPrivate() {
+			return true
+		}
+	}
+
+	return false
+}
 
 // AuthAttempt tracks authentication attempts for an IP
 type AuthAttempt struct {
@@ -214,6 +268,12 @@ var GlobalAuthRateLimiter = NewAuthRateLimiter()
 func AuthRateLimitMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ip := c.ClientIP()
+
+		// Skip rate limiting for whitelisted IPs (localhost, private networks)
+		if isWhitelisted(ip) {
+			c.Next()
+			return
+		}
 
 		allowed, retryAfter, err := GlobalAuthRateLimiter.CheckRateLimit(ip)
 		if !allowed {
