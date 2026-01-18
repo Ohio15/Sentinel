@@ -98,7 +98,6 @@ http:
         certResolver: letsencrypt
       middlewares:
         - securityHeaders
-        - rateLimit
       priority: 10
 
     ws-dashboard-alt:
