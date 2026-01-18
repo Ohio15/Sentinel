@@ -518,7 +518,7 @@ func (r *Router) enrollAgent(c *gin.Context) {
 	_, err = r.db.Pool().Exec(ctx, `
 		INSERT INTO devices (id, agent_id, hostname, display_name, os_type, os_version,
 			os_build, platform, platform_family, architecture, cpu_model, cpu_cores,
-			cpu_threads, COALESCE(cpu_speed, 0), COALESCE(total_memory, 0), COALESCE(EXTRACT(EPOCH FROM boot_time)::bigint, 0), COALESCE(gpu::jsonb, '[]'::jsonb), COALESCE(storage, '[]'::jsonb), COALESCE(serial_number, ''),
+			cpu_threads, cpu_speed, total_memory, boot_time, gpu, storage, serial_number,
 			manufacturer, model, domain, agent_version, ip_address, mac_address,
 			last_seen, status)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
@@ -526,7 +526,7 @@ func (r *Router) enrollAgent(c *gin.Context) {
 	`, deviceID, enrollment.AgentID, enrollment.Hostname, displayName, enrollment.OSType,
 		enrollment.OSVersion, enrollment.OSBuild, enrollment.Platform, enrollment.PlatformFamily,
 		enrollment.Architecture, enrollment.CPUModel, enrollment.CPUCores, enrollment.CPUThreads,
-		enrollment.CPUSpeed, enrollment.TotalMemory, enrollment.BootTime, gpuJSON, storageJSON,
+		enrollment.CPUSpeed, enrollment.TotalMemory, enrollment.BootTime, string(gpuJSON), storageJSON,
 		enrollment.SerialNumber, enrollment.Manufacturer, enrollment.Model, enrollment.Domain,
 		enrollment.AgentVersion, ipAddr, enrollment.MACAddress)
 
