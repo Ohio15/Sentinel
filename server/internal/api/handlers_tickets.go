@@ -34,10 +34,10 @@ func (r *Router) listTickets(c *gin.Context) {
 		LEFT JOIN devices d ON t.device_id = d.id
 		LEFT JOIN clients cl ON t.client_id = cl.id
 		LEFT JOIN ticket_categories tc ON t.category_id = tc.id
-		WHERE 1=1
+		WHERE t.organization_id = $1
 	`
-	args := make([]interface{}, 0)
-	argNum := 1
+	args := []interface{}{constants.CurrentOrganizationID}
+	argNum := 2
 
 	if status != "" {
 		query += " AND t.status = $" + string(rune('0'+argNum))
@@ -318,11 +318,11 @@ func (r *Router) createTicket(c *gin.Context) {
 	var createdAt, updatedAt time.Time
 	err := r.db.Pool().QueryRow(ctx, `
 		INSERT INTO tickets (subject, description, status, priority, type, device_id, client_id,
-			requester_name, requester_email, assigned_to, tags, due_date, category_id, custom_fields)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+			requester_name, requester_email, assigned_to, tags, due_date, category_id, custom_fields, organization_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		RETURNING id, ticket_number, created_at, updated_at
 	`, req.Subject, req.Description, req.Status, req.Priority, req.Type, deviceID, clientID,
-		req.RequesterName, req.RequesterEmail, req.AssignedTo, tagsJSON, req.DueDate, categoryID, customFieldsJSON).Scan(&id, &ticketNumber, &createdAt, &updatedAt)
+		req.RequesterName, req.RequesterEmail, req.AssignedTo, tagsJSON, req.DueDate, categoryID, customFieldsJSON, constants.CurrentOrganizationID).Scan(&id, &ticketNumber, &createdAt, &updatedAt)
 
 	if err != nil {
 		log.Printf("Error creating ticket: %v", err)

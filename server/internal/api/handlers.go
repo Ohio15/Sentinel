@@ -620,7 +620,7 @@ func (r *Router) listScripts(c *gin.Context) {
 	rows, err := r.db.Pool().Query(ctx, `
 		SELECT id, name, description, language, content, os_types, created_at, updated_at
 		FROM scripts WHERE organization_id = $1 ORDER BY name
-	`)
+	`, constants.CurrentOrganizationID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch scripts"})
 		return
@@ -685,7 +685,7 @@ func (r *Router) createScript(c *gin.Context) {
 	err := r.db.Pool().QueryRow(ctx, `
 		INSERT INTO scripts (name, description, language, content, os_types, created_by, organization_id)
 			VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id
-	`, req.Name, req.Description, req.Language, req.Content, req.OSTypes, userID).Scan(&id)
+	`, req.Name, req.Description, req.Language, req.Content, req.OSTypes, userID, constants.CurrentOrganizationID).Scan(&id)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create script"})
@@ -870,11 +870,12 @@ func (r *Router) listAlerts(c *gin.Context) {
 			   a.status, a.acknowledged_at, a.resolved_at, a.created_at
 		FROM alerts a
 		LEFT JOIN devices d ON a.device_id = d.id
+		WHERE a.organization_id = $1
 	`
-	args := make([]interface{}, 0)
+	args := []interface{}{constants.CurrentOrganizationID}
 
 	if status != "" {
-		query += " WHERE a.status = $1"
+		query += " AND a.status = $2"
 		args = append(args, status)
 	}
 	query += " ORDER BY a.created_at DESC LIMIT 100"
@@ -1006,8 +1007,8 @@ func (r *Router) listAlertRules(c *gin.Context) {
 	rows, err := r.db.Pool().Query(ctx, `
 		SELECT id, name, description, enabled, metric, operator, threshold, severity,
 			   cooldown_minutes, created_at
-		FROM alert_rules ORDER BY name
-	`)
+		FROM alert_rules WHERE organization_id = $1 ORDER BY name
+	`, constants.CurrentOrganizationID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch alert rules"})
 		return
@@ -1071,7 +1072,7 @@ func (r *Router) createAlertRule(c *gin.Context) {
 	err := r.db.Pool().QueryRow(ctx, `
 		INSERT INTO alert_rules (name, description, metric, operator, threshold, severity, cooldown_minutes, organization_id)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id
-	`, req.Name, req.Description, req.Metric, req.Operator, req.Threshold, req.Severity, req.CooldownMinutes).Scan(&id)
+	`, req.Name, req.Description, req.Metric, req.Operator, req.Threshold, req.Severity, req.CooldownMinutes, constants.CurrentOrganizationID).Scan(&id)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create alert rule"})
@@ -1104,8 +1105,8 @@ func (r *Router) getAlertRule(c *gin.Context) {
 
 	err = r.db.Pool().QueryRow(ctx, `
 		SELECT id, name, description, enabled, metric, operator, threshold, severity, cooldown_minutes, created_at
-		FROM alert_rules WHERE id = $1
-	`, id).Scan(&rule.ID, &rule.Name, &rule.Description, &rule.Enabled, &rule.Metric,
+		FROM alert_rules WHERE id = $1 AND organization_id = $2
+	`, id, constants.CurrentOrganizationID).Scan(&rule.ID, &rule.Name, &rule.Description, &rule.Enabled, &rule.Metric,
 		&rule.Operator, &rule.Threshold, &rule.Severity, &rule.CooldownMinutes, &rule.CreatedAt)
 
 	if err != nil {
@@ -1146,15 +1147,15 @@ func (r *Router) updateAlertRule(c *gin.Context) {
 
 	ctx := context.Background()
 	_, err = r.db.Pool().Exec(ctx, `
-		UPDATE alert_rules SET 
+		UPDATE alert_rules SET
 			name = COALESCE(NULLIF($1, ''), name),
 			description = COALESCE(NULLIF($2, ''), description),
 			metric = COALESCE(NULLIF($3, ''), metric),
 			operator = COALESCE(NULLIF($4, ''), operator),
 			severity = COALESCE(NULLIF($5, ''), severity),
 			updated_at = NOW()
-		WHERE id = $6
-	`, req.Name, req.Description, req.Metric, req.Operator, req.Severity, id)
+		WHERE id = $6 AND organization_id = $7
+	`, req.Name, req.Description, req.Metric, req.Operator, req.Severity, id, constants.CurrentOrganizationID)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update alert rule"})
@@ -1239,7 +1240,7 @@ func (r *Router) listUsers(c *gin.Context) {
 	rows, err := r.db.Pool().Query(ctx, `
 		SELECT id, email, first_name, last_name, role, is_active, last_login, created_at
 		FROM users WHERE organization_id = $1 ORDER BY email
-	`)
+	`, constants.CurrentOrganizationID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch users"})
 		return
