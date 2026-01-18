@@ -582,7 +582,14 @@ func rateLimitMiddleware(cache *cache.Cache, maxRequests int, windowSeconds int)
 			return
 		}
 
-		key := "ratelimit:" + c.ClientIP()
+		// Skip rate limiting for whitelisted IPs (localhost, private networks)
+		clientIP := c.ClientIP()
+		if middleware.IsWhitelisted(clientIP) {
+			c.Next()
+			return
+		}
+
+		key := "ratelimit:" + clientIP
 
 		count, err := cache.Incr(c.Request.Context(), key)
 		if err != nil {
