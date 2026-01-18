@@ -1,0 +1,110 @@
+# Sentinel RMM - Isolated Test Environment
+# This environment is completely separate from production for safe testing
+#
+# Usage:
+#   docker-compose -f docker-compose.test.yml up -d
+#   ./scripts/validate-critical-paths.sh http://localhost:8091
+#   docker-compose -f docker-compose.test.yml down -v
+#
+# Features:
+#   - Different ports than production (8091 instead of 8090)
+#   - Separate database (sentinel_test)
+#   - tmpfs for fast ephemeral database
+#   - Auto-cleanup on shutdown with -v flag
+
+version: '3.8'
+
+services:
+  # Test PostgreSQL - uses tmpfs for speed, data is ephemeral
+  postgres-test:
+    image: postgres:16-alpine
+    container_name: sentinel-test-postgres
+    environment:
+      POSTGRES_DB: sentinel_test
+      POSTGRES_USER: sentinel_test
+      POSTGRES_PASSWORD: test_password_only_for_testing_123
+    ports:
+      - "5433:5432"  # Different port than production
+    # Use tmpfs for fast ephemeral storage (data lost on restart)
+    tmpfs:
+      - /var/lib/postgresql/data
+    networks:
+      - sentinel-test-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinel_test -d sentinel_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Test Redis - ephemeral, no persistence
+  redis-test:
+    image: redis:7-alpine
+    container_name: sentinel-test-redis
+    ports:
+      - "6380:6379"  # Different port than production
+    networks:
+      - sentinel-test-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Backend for testing
+  backend-test:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: sentinel-test-backend
+    ports:
+      - "8091:8080"  # Different port than production (8090)
+    environment:
+      - DATABASE_URL=postgres://sentinel_test:test_password_only_for_testing_123@postgres-test:5432/sentinel_test?sslmode=disable
+      - REDIS_URL=redis://redis-test:6379
+      - JWT_SECRET=test_jwt_secret_for_testing_only_do_not_use_in_production
+      - ENROLLMENT_TOKEN=test_enrollment_token_123
+      - SERVER_ENV=test
+      - ALLOWED_ORIGINS=http://localhost:3001,http://localhost:8091
+      - RATE_LIMIT_REQUESTS=1000
+      - RATE_LIMIT_WINDOW=60
+      - SERVER_URL=http://localhost:8091
+      - PUBLIC_URL=http://localhost:8091
+      - API_KEY=test_api_key_for_testing_only
+      - MTLS_ENABLED=false
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    networks:
+      - sentinel-test-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Frontend for testing (optional - uncomment if needed)
+  # frontend-test:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.web
+  #     args:
+  #       - VITE_API_URL=http://localhost:8091/api
+  #       - VITE_WS_URL=ws://localhost:8091/ws
+  #   container_name: sentinel-test-frontend
+  #   ports:
+  #     - "3001:80"  # Different port than production
+  #   networks:
+  #     - sentinel-test-network
+  #   depends_on:
+  #     backend-test:
+  #       condition: service_healthy
+
+networks:
+  sentinel-test-network:
+    driver: bridge
+    name: sentinel-test-network
+
+# No persistent volumes - everything is ephemeral for clean testing

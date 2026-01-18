@@ -1,6 +1,9 @@
 package api
 
 import (
+	"log"
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -155,7 +158,17 @@ func getCommandHandler(services *Services) gin.HandlerFunc {
 // Script handlers
 func listScriptsHandler(services *Services) gin.HandlerFunc {
 	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub}
-	return router.listScripts
+	return func(c *gin.Context) {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[PANIC] listScriptsHandler recovered: %v", r)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			}
+		}()
+		log.Printf("[DEBUG] listScriptsHandler entering")
+		router.listScripts(c)
+		log.Printf("[DEBUG] listScriptsHandler completed")
+	}
 }
 
 func createScriptHandler(services *Services) gin.HandlerFunc {
@@ -250,7 +263,17 @@ func updateSettingsHandler(services *Services) gin.HandlerFunc {
 // User handlers
 func listUsersHandler(services *Services) gin.HandlerFunc {
 	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub}
-	return router.listUsers
+	return func(c *gin.Context) {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[PANIC] listUsersHandler recovered: %v", r)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
+			}
+		}()
+		log.Printf("[DEBUG] listUsersHandler entering")
+		router.listUsers(c)
+		log.Printf("[DEBUG] listUsersHandler completed")
+	}
 }
 
 func createUserHandler(services *Services) gin.HandlerFunc {
