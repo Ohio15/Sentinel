@@ -391,3 +391,71 @@ func incrementTokenUseCount(c *gin.Context, services *Services, token string) {
 		log.Printf("Error incrementing token use count: %v", err)
 	}
 }
+
+// downloadBootstrapWatchdogHandler serves the watchdog binary
+func downloadBootstrapWatchdogHandler(services *Services) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		platform := c.Query("platform")
+		arch := c.Query("arch")
+
+		if platform == "" {
+			platform = "windows"
+		}
+		if arch == "" {
+			arch = "amd64"
+		}
+
+		// Normalize
+		platform = strings.ToLower(platform)
+		arch = strings.ToLower(arch)
+
+		// Get watchdog binary path
+		watchdogPath := getWatchdogBinaryPath(services, platform, arch)
+		if watchdogPath == "" {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Watchdog not found for this platform"})
+			return
+		}
+
+		// Read binary
+		binaryData, err := os.ReadFile(watchdogPath)
+		if err != nil {
+			log.Printf("Error reading watchdog: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read watchdog"})
+			return
+		}
+
+		// Set filename
+		ext := ""
+		if platform == "windows" {
+			ext = ".exe"
+		}
+		filename := fmt.Sprintf("sentinel-watchdog-%s-%s%s", platform, arch, ext)
+
+		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+		c.Header("Content-Type", "application/octet-stream")
+		c.Data(http.StatusOK, "application/octet-stream", binaryData)
+	}
+}
+
+func getWatchdogBinaryPath(services *Services, platform, arch string) string {
+	// Check in multiple locations
+	baseName := fmt.Sprintf("sentinel-watchdog-%s-%s", platform, arch)
+	if platform == "windows" {
+		baseName += ".exe"
+	}
+
+	paths := []string{
+		filepath.Join("release", "agent", baseName),
+		filepath.Join("agent", baseName),
+		filepath.Join("installers", baseName),
+		baseName,
+	}
+
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+
+	return ""
+}
