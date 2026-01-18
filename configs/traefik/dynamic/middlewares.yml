@@ -19,21 +19,21 @@ http:
           X-Download-Options: "noopen"
           X-Permitted-Cross-Domain-Policies: "none"
 
-    # Rate limiting - general API requests
+    # Rate limiting - general API requests (generous for development)
     rateLimit:
       rateLimit:
-        average: 100
-        burst: 50
+        average: 1000
+        burst: 500
         period: 1m
         sourceCriterion:
           ipStrategy:
             depth: 1
 
-    # Stricter rate limiting for authentication
+    # Stricter rate limiting for authentication (unused - Go backend handles auth rate limiting)
     authRateLimit:
       rateLimit:
-        average: 10
-        burst: 5
+        average: 100
+        burst: 50
         period: 1m
         sourceCriterion:
           ipStrategy:
