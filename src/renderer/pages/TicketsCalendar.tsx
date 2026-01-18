@@ -13,6 +13,7 @@ type ViewType = 'table' | 'kanban' | 'calendar' | 'analytics';
 
 interface TicketsCalendarProps {
   onTicketSelect?: (ticketId: string) => void;
+  onViewChange?: (view: ViewType) => void;
 }
 
 // Map ticket status to colors

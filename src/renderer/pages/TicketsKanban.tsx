@@ -239,6 +239,7 @@ type ViewType = 'table' | 'kanban' | 'calendar' | 'analytics';
 
 interface TicketsKanbanProps {
   onTicketSelect?: (ticketId: string) => void;
+  onViewChange?: (view: ViewType) => void;
 }
 
 export function TicketsKanban({ onTicketSelect, onViewChange }: TicketsKanbanProps) {

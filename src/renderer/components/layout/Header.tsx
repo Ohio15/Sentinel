@@ -16,8 +16,10 @@ export function Header() {
     // Fetch port once on mount - it rarely changes
     const loadPort = async () => {
       try {
-        const info = await window.api.server.getInfo();
-        setPort(info.port);
+        if (window.api?.server?.getInfo) {
+          const info = await window.api.server.getInfo();
+          setPort(info.port);
+        }
       } catch (error) {
         console.error('Failed to load server port:', error);
       }
