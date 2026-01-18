@@ -617,11 +617,14 @@ func (r *Router) handleDashboardWebSocket(c *gin.Context) {
 func (r *Router) listScripts(c *gin.Context) {
 	ctx := context.Background()
 
+	log.Printf("[DEBUG] listScripts called, organization_id=%v, type=%T", constants.CurrentOrganizationID, constants.CurrentOrganizationID)
+
 	rows, err := r.db.Pool().Query(ctx, `
 		SELECT id, name, description, language, content, os_types, created_at, updated_at
 		FROM scripts WHERE organization_id = $1 ORDER BY name
 	`, constants.CurrentOrganizationID)
 	if err != nil {
+		log.Printf("[ERROR] listScripts query failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch scripts"})
 		return
 	}
@@ -1237,11 +1240,14 @@ func (r *Router) updateSettings(c *gin.Context) {
 func (r *Router) listUsers(c *gin.Context) {
 	ctx := context.Background()
 
+	log.Printf("[DEBUG] listUsers called, organization_id=%v, type=%T", constants.CurrentOrganizationID, constants.CurrentOrganizationID)
+
 	rows, err := r.db.Pool().Query(ctx, `
 		SELECT id, email, first_name, last_name, role, is_active, last_login, created_at
 		FROM users WHERE organization_id = $1 ORDER BY email
 	`, constants.CurrentOrganizationID)
 	if err != nil {
+		log.Printf("[ERROR] listUsers query failed: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch users"})
 		return
 	}
