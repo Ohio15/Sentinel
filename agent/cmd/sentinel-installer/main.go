@@ -375,23 +375,26 @@ func proceedWithInstall(config *InstallConfig) {
 	}
 	printSuccess("Running with administrator privileges")
 
-	// Check for existing installation
-	printStep(2, 6, "Checking for existing installation")
+	// Prepare installation environment
+	printStep(2, 6, "Preparing installation environment")
 	installPath := filepath.Join(os.Getenv("ProgramFiles"), "Sentinel Agent")
 	agentExe := filepath.Join(installPath, "sentinel-agent.exe")
+	watchdogExe := filepath.Join(installPath, "sentinel-watchdog.exe")
 
-	if _, err := os.Stat(agentExe); err == nil {
-		printInfo("Existing installation found - will upgrade")
-		printInfo("Stopping existing services...")
-		exec.Command("net", "stop", "SentinelAgent").Run()
-		exec.Command("net", "stop", "SentinelWatchdog").Run()
-		// Force kill any running processes that didn't stop cleanly
-		exec.Command("taskkill", "/F", "/IM", "sentinel-agent.exe").Run()
-		exec.Command("taskkill", "/F", "/IM", "sentinel-watchdog.exe").Run()
-		time.Sleep(3 * time.Second)
-	} else {
-		printSuccess("No existing installation found")
+	// Add Windows Defender exclusion for install path (prevents interference)
+	printInfo("Configuring security exclusions...")
+	addDefenderExclusion(installPath)
+
+	// Aggressively stop and clean up any existing installation
+	if err := prepareInstallDirectory(installPath, agentExe, watchdogExe); err != nil {
+		printError("Failed to prepare installation directory: %v", err)
+		printError("Please restart your computer and try again.")
+		if !*flagSilent {
+			waitForKey()
+		}
+		os.Exit(1)
 	}
+	printSuccess("Installation environment ready")
 
 	// Fetch agent info from server
 	printStep(3, 6, "Fetching agent information")
@@ -446,41 +449,32 @@ func proceedWithInstall(config *InstallConfig) {
 	// Install agent
 	printStep(5, 6, "Installing Sentinel Agent")
 
-	if err := os.MkdirAll(installPath, 0755); err != nil {
-		printError("Failed to create installation directory: %v", err)
-		if !*flagSilent {
-			waitForKey()
-		}
-		os.Exit(1)
-	}
-
-	// Try to remove existing files first (ensures files aren't locked)
-	if err := os.Remove(agentExe); err == nil {
-		logMsg("[DEBUG] Removed existing agent binary")
-		time.Sleep(500 * time.Millisecond)
-	}
-
-	watchdogExe := filepath.Join(installPath, "sentinel-watchdog.exe")
-	if err := os.Remove(watchdogExe); err == nil {
-		logMsg("[DEBUG] Removed existing watchdog binary")
-	}
-
-	if err := copyFile(tempPath, agentExe); err != nil {
+	// Copy agent binary with retries
+	printInfo("Installing agent binary...")
+	if err := robustFileCopy(tempPath, agentExe); err != nil {
 		printError("Failed to install agent binary: %v", err)
-		printError("The file may still be in use. Try restarting your computer and running the installer again.")
-		if !*flagSilent {
-			waitForKey()
+		printError("Attempting emergency cleanup...")
+		emergencyCleanup(installPath)
+		// Try one more time after emergency cleanup
+		if err := robustFileCopy(tempPath, agentExe); err != nil {
+			printError("Installation failed after emergency cleanup: %v", err)
+			printError("Please restart your computer and try again.")
+			if !*flagSilent {
+				waitForKey()
+			}
+			os.Exit(1)
 		}
-		os.Exit(1)
 	}
+	printSuccess("Agent binary installed")
 
 	// Copy watchdog if downloaded
 	if _, err := os.Stat(watchdogTempPath); err == nil {
-		if err := copyFile(watchdogTempPath, watchdogExe); err != nil {
-			printWarning("Failed to install watchdog binary: %v", err)
+		printInfo("Installing watchdog binary...")
+		if err := robustFileCopy(watchdogTempPath, watchdogExe); err != nil {
+			printWarning("Failed to install watchdog binary: %v (will continue without watchdog)", err)
 		} else {
 			removeZoneIdentifier(watchdogExe)
-			printSuccess("Watchdog service installed")
+			printSuccess("Watchdog binary installed")
 		}
 	}
 
@@ -854,4 +848,258 @@ func isServiceRunning(serviceName string) bool {
 		return false
 	}
 	return strings.Contains(string(output), "RUNNING")
+}
+
+// =============================================================================
+// Robust Installation Functions
+// These functions ensure the installer succeeds regardless of target machine state
+// =============================================================================
+
+// addDefenderExclusion adds Windows Defender exclusion for the install path
+func addDefenderExclusion(path string) {
+	// Add folder exclusion
+	cmd := exec.Command("powershell", "-Command",
+		fmt.Sprintf("Add-MpPreference -ExclusionPath '%s' -ErrorAction SilentlyContinue", path))
+	cmd.Run()
+
+	// Add process exclusions
+	exec.Command("powershell", "-Command",
+		"Add-MpPreference -ExclusionProcess 'sentinel-agent.exe' -ErrorAction SilentlyContinue").Run()
+	exec.Command("powershell", "-Command",
+		"Add-MpPreference -ExclusionProcess 'sentinel-watchdog.exe' -ErrorAction SilentlyContinue").Run()
+
+	logMsg("[DEBUG] Added Windows Defender exclusions")
+}
+
+// prepareInstallDirectory ensures the install directory is ready for installation
+// This aggressively stops services, kills processes, and removes locked files
+func prepareInstallDirectory(installPath, agentExe, watchdogExe string) error {
+	logMsg("[DEBUG] Preparing install directory: %s", installPath)
+
+	// Step 1: Stop services using SC (more reliable than net stop)
+	stopService("SentinelWatchdog")
+	stopService("SentinelAgent")
+
+	// Step 2: Kill any running processes (multiple attempts)
+	for i := 0; i < 3; i++ {
+		killProcess("sentinel-agent.exe")
+		killProcess("sentinel-watchdog.exe")
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	// Step 3: Wait for processes to fully terminate
+	waitForProcessExit("sentinel-agent.exe", 10*time.Second)
+	waitForProcessExit("sentinel-watchdog.exe", 5*time.Second)
+
+	// Step 4: Delete services if they exist (allows clean reinstall)
+	deleteService("SentinelAgent")
+	deleteService("SentinelWatchdog")
+
+	// Step 5: Create install directory
+	if err := os.MkdirAll(installPath, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	// Step 6: Force remove existing files
+	forceRemoveFile(agentExe)
+	forceRemoveFile(watchdogExe)
+	forceRemoveFile(filepath.Join(installPath, "config.json"))
+	forceRemoveFile(filepath.Join(installPath, "protection.dat"))
+
+	// Step 7: Verify files are actually gone
+	if _, err := os.Stat(agentExe); err == nil {
+		return fmt.Errorf("could not remove existing agent binary - file is locked")
+	}
+
+	return nil
+}
+
+// stopService stops a Windows service and waits for it to stop
+func stopService(name string) {
+	logMsg("[DEBUG] Stopping service: %s", name)
+
+	// First try graceful stop
+	exec.Command("sc", "stop", name).Run()
+
+	// Wait up to 10 seconds for service to stop
+	for i := 0; i < 20; i++ {
+		cmd := exec.Command("sc", "query", name)
+		output, err := cmd.Output()
+		if err != nil {
+			return // Service doesn't exist
+		}
+		if strings.Contains(string(output), "STOPPED") {
+			logMsg("[DEBUG] Service %s stopped", name)
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	// Force stop if still running
+	exec.Command("sc", "stop", name).Run()
+	time.Sleep(1 * time.Second)
+}
+
+// deleteService removes a Windows service
+func deleteService(name string) {
+	logMsg("[DEBUG] Deleting service: %s", name)
+	exec.Command("sc", "delete", name).Run()
+	time.Sleep(500 * time.Millisecond)
+}
+
+// killProcess forcefully terminates a process by name
+func killProcess(name string) {
+	logMsg("[DEBUG] Killing process: %s", name)
+
+	// Use taskkill with force flag
+	exec.Command("taskkill", "/F", "/IM", name).Run()
+
+	// Also try WMIC for stubborn processes
+	exec.Command("wmic", "process", "where", fmt.Sprintf("name='%s'", name), "delete").Run()
+}
+
+// waitForProcessExit waits for a process to fully exit
+func waitForProcessExit(name string, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		cmd := exec.Command("tasklist", "/FI", fmt.Sprintf("IMAGENAME eq %s", name), "/NH")
+		output, _ := cmd.Output()
+		if !strings.Contains(strings.ToLower(string(output)), strings.ToLower(name)) {
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	logMsg("[DEBUG] Timeout waiting for %s to exit", name)
+}
+
+// forceRemoveFile aggressively removes a file, handling locks and permissions
+func forceRemoveFile(path string) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return
+	}
+
+	logMsg("[DEBUG] Force removing: %s", path)
+
+	// Try standard remove first
+	if err := os.Remove(path); err == nil {
+		return
+	}
+
+	// Take ownership and reset permissions
+	exec.Command("takeown", "/F", path).Run()
+	exec.Command("icacls", path, "/grant", "administrators:F").Run()
+
+	// Try remove again
+	if err := os.Remove(path); err == nil {
+		return
+	}
+
+	// Use cmd /c del with force
+	exec.Command("cmd", "/c", "del", "/F", "/Q", path).Run()
+
+	// Use PowerShell Remove-Item with force
+	exec.Command("powershell", "-Command",
+		fmt.Sprintf("Remove-Item -Path '%s' -Force -ErrorAction SilentlyContinue", path)).Run()
+
+	// Schedule delete on reboot if still exists (last resort)
+	if _, err := os.Stat(path); err == nil {
+		exec.Command("cmd", "/c", "move", "/Y", path, path+".old").Run()
+		logMsg("[DEBUG] Renamed locked file to .old")
+	}
+}
+
+// robustFileCopy copies a file with retries and error handling
+func robustFileCopy(src, dst string) error {
+	var lastErr error
+
+	for attempt := 1; attempt <= 5; attempt++ {
+		logMsg("[DEBUG] Copy attempt %d: %s -> %s", attempt, src, dst)
+
+		// Ensure destination doesn't exist
+		forceRemoveFile(dst)
+		time.Sleep(100 * time.Millisecond)
+
+		// Try to copy
+		err := copyFileWithSync(src, dst)
+		if err == nil {
+			// Verify the copy
+			srcInfo, _ := os.Stat(src)
+			dstInfo, dstErr := os.Stat(dst)
+			if dstErr == nil && dstInfo.Size() == srcInfo.Size() {
+				logMsg("[DEBUG] Copy successful on attempt %d", attempt)
+				return nil
+			}
+			lastErr = fmt.Errorf("size mismatch after copy")
+		} else {
+			lastErr = err
+		}
+
+		logMsg("[DEBUG] Copy attempt %d failed: %v", attempt, lastErr)
+
+		// Wait before retry (exponential backoff)
+		time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+	}
+
+	return fmt.Errorf("failed after 5 attempts: %w", lastErr)
+}
+
+// copyFileWithSync copies a file and syncs to disk
+func copyFileWithSync(src, dst string) error {
+	source, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open source: %w", err)
+	}
+	defer source.Close()
+
+	dest, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		return fmt.Errorf("create dest: %w", err)
+	}
+
+	_, err = io.Copy(dest, source)
+	if err != nil {
+		dest.Close()
+		os.Remove(dst)
+		return fmt.Errorf("copy data: %w", err)
+	}
+
+	// Sync to disk
+	if err := dest.Sync(); err != nil {
+		dest.Close()
+		return fmt.Errorf("sync: %w", err)
+	}
+
+	return dest.Close()
+}
+
+// emergencyCleanup performs aggressive cleanup when normal methods fail
+func emergencyCleanup(installPath string) {
+	logMsg("[DEBUG] Performing emergency cleanup")
+
+	// Kill ALL sentinel processes
+	exec.Command("taskkill", "/F", "/IM", "sentinel-agent.exe").Run()
+	exec.Command("taskkill", "/F", "/IM", "sentinel-watchdog.exe").Run()
+	exec.Command("taskkill", "/F", "/IM", "sentinel-installer.exe").Run()
+
+	// Stop and delete services
+	exec.Command("sc", "stop", "SentinelAgent").Run()
+	exec.Command("sc", "stop", "SentinelWatchdog").Run()
+	time.Sleep(2 * time.Second)
+	exec.Command("sc", "delete", "SentinelAgent").Run()
+	exec.Command("sc", "delete", "SentinelWatchdog").Run()
+
+	// Wait for processes to die
+	time.Sleep(3 * time.Second)
+
+	// Force remove entire directory using PowerShell
+	exec.Command("powershell", "-Command",
+		fmt.Sprintf("Remove-Item -Path '%s' -Recurse -Force -ErrorAction SilentlyContinue", installPath)).Run()
+
+	// Recreate directory
+	os.MkdirAll(installPath, 0755)
+
+	// Add defender exclusion again
+	addDefenderExclusion(installPath)
+
+	time.Sleep(1 * time.Second)
 }
