@@ -60,15 +60,6 @@ func logMsg(format string, args ...interface{}) {
 // Version is set at build time
 var Version = "1.0.0"
 
-// Embedded configuration - these placeholders are replaced when generating the installer
-// The format uses fixed-width fields that can be binary-patched
-var (
-	// SENTINEL_CONFIG_SERVER:http://_______________________________________________:END
-	EmbeddedServer = "SENTINEL_CONFIG_SERVER:http://_______________________________________________:END"
-	// SENTINEL_CONFIG_TOKEN:__________________________________________________________:END
-	EmbeddedToken = "SENTINEL_CONFIG_TOKEN:__________________________________________________________:END"
-)
-
 // InstallConfig holds the configuration for installation
 type InstallConfig struct {
 	ServerURL       string
@@ -173,8 +164,7 @@ func main() {
 // getConfiguration obtains installation configuration through priority chain:
 // 1. CLI arguments (--server + --token)
 // 2. CLI code argument (--code) -> validates with server
-// 3. Embedded config (binary-patched installer)
-// 4. Interactive prompt for code
+// 3. Interactive prompt for code
 func getConfiguration() *InstallConfig {
 	// Priority 1: Direct CLI arguments
 	if *flagServer != "" && *flagToken != "" {
@@ -196,21 +186,10 @@ func getConfiguration() *InstallConfig {
 		return nil
 	}
 
-	// Priority 3: Embedded config (backward compatibility)
-	embeddedServer := extractConfig(EmbeddedServer, "SENTINEL_CONFIG_SERVER:")
-	embeddedToken := extractConfig(EmbeddedToken, "SENTINEL_CONFIG_TOKEN:")
-	if embeddedServer != "" && embeddedToken != "" {
-		logMsg("[DEBUG] Using embedded configuration")
-		return &InstallConfig{
-			ServerURL:       embeddedServer,
-			EnrollmentToken: embeddedToken,
-		}
-	}
-
-	// Priority 4: Interactive code prompt (only if not silent mode)
+	// Priority 3: Interactive code prompt (only if not silent mode)
 	if *flagSilent {
 		printError("No configuration found and running in silent mode.")
-		printError("Provide --code, --server/--token, or use a pre-configured installer.")
+		printError("Provide --code or --server/--token arguments.")
 		return nil
 	}
 
@@ -348,10 +327,13 @@ func proceedWithInstall(config *InstallConfig) {
 
 	if _, err := os.Stat(agentExe); err == nil {
 		printInfo("Existing installation found - will upgrade")
-		printInfo("Stopping existing service...")
+		printInfo("Stopping existing services...")
 		exec.Command("net", "stop", "SentinelAgent").Run()
 		exec.Command("net", "stop", "SentinelWatchdog").Run()
-		time.Sleep(2 * time.Second)
+		// Force kill any running processes that didn't stop cleanly
+		exec.Command("taskkill", "/F", "/IM", "sentinel-agent.exe").Run()
+		exec.Command("taskkill", "/F", "/IM", "sentinel-watchdog.exe").Run()
+		time.Sleep(3 * time.Second)
 	} else {
 		printSuccess("No existing installation found")
 	}
@@ -406,8 +388,15 @@ func proceedWithInstall(config *InstallConfig) {
 		os.Exit(1)
 	}
 
+	// Try to remove existing file first (ensures file isn't locked)
+	if err := os.Remove(agentExe); err == nil {
+		logMsg("[DEBUG] Removed existing agent binary")
+		time.Sleep(500 * time.Millisecond)
+	}
+
 	if err := copyFile(tempPath, agentExe); err != nil {
 		printError("Failed to install agent binary: %v", err)
+		printError("The file may still be in use. Try restarting your computer and running the installer again.")
 		if !*flagSilent {
 			waitForKey()
 		}
@@ -545,22 +534,6 @@ func min(a, b int) int {
 		return a
 	}
 	return b
-}
-
-func extractConfig(embedded, prefix string) string {
-	if !strings.HasPrefix(embedded, prefix) {
-		return ""
-	}
-	endIdx := strings.LastIndex(embedded, ":END")
-	if endIdx == -1 {
-		return ""
-	}
-	value := embedded[len(prefix):endIdx]
-	value = strings.TrimRight(value, "_")
-	if value == "" || strings.HasPrefix(value, "_") {
-		return ""
-	}
-	return value
 }
 
 func setConsoleTitle(title string) {

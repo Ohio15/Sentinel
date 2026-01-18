@@ -103,75 +103,111 @@ async function getDefaultEnrollmentToken(relay: BackendRelay): Promise<string | 
 }
 
 
-// Generate a Windows EXE installer with embedded configuration
-async function generateWindowsInstallerExe(serverUrl: string, token: string): Promise<Buffer | null> {
+// Generate a Windows installer package (ZIP with EXE + batch launcher)
+async function generateWindowsInstallerPackage(serverUrl: string, token: string): Promise<{ zipBuffer: Buffer; batchContent: string } | null> {
   try {
-    // Path to the installer template
-    const templatePath = app.isPackaged
+    // Path to the installer
+    const installerPath = app.isPackaged
       ? path.join(process.resourcesPath, 'installers', 'sentinel-installer-template.exe')
       : path.join(__dirname, '..', '..', 'installers', 'sentinel-installer-template.exe');
 
-    console.log('[Installer] Template path:', templatePath);
+    console.log('[Installer] Template path:', installerPath);
 
-    if (!fs.existsSync(templatePath)) {
-      console.error('[Installer] Template not found at:', templatePath);
+    if (!fs.existsSync(installerPath)) {
+      console.error('[Installer] Installer not found at:', installerPath);
       return null;
     }
 
-    // Read the template binary
-    const templateBuffer = await fs.promises.readFile(templatePath);
-    console.log('[Installer] Template size:', templateBuffer.length, 'bytes');
+    // Read the installer binary
+    const installerBuffer = await fs.promises.readFile(installerPath);
+    console.log('[Installer] Installer size:', installerBuffer.length, 'bytes');
 
-    // The placeholders in the Go binary (must match exactly what's in the Go code)
-    const serverPlaceholder = 'SENTINEL_CONFIG_SERVER:http://_______________________________________________:END';
-    const tokenPlaceholder = 'SENTINEL_CONFIG_TOKEN:__________________________________________________________:END';
+    // Generate batch file that runs the installer with CLI args
+    const batchContent = `@echo off
+REM Sentinel Agent Installer - Pre-configured
+REM This batch file runs the installer with the server and token pre-configured.
+REM
+REM Server: ${serverUrl}
+REM
+REM Just double-click this file to install!
 
-    // Pad values to match placeholder length (keeping the prefix and :END suffix)
-    const serverPrefix = 'SENTINEL_CONFIG_SERVER:';
-    const tokenPrefix = 'SENTINEL_CONFIG_TOKEN:';
-    const suffix = ':END';
+cd /d "%~dp0"
 
-    // Calculate available space for values
-    const serverValueSpace = serverPlaceholder.length - serverPrefix.length - suffix.length;
-    const tokenValueSpace = tokenPlaceholder.length - tokenPrefix.length - suffix.length;
+REM Check for admin rights
+net session >nul 2>&1
+if %errorLevel% neq 0 (
+    echo Requesting administrator privileges...
+    powershell -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+    exit /b
+)
 
-    // Pad the values with underscores to match the original length
-    const paddedServerUrl = serverUrl.padEnd(serverValueSpace, '_');
-    const paddedToken = token.padEnd(tokenValueSpace, '_');
+echo.
+echo Starting Sentinel Agent Installation...
+echo.
 
-    // Create replacement strings
-    const serverReplacement = serverPrefix + paddedServerUrl + suffix;
-    const tokenReplacement = tokenPrefix + paddedToken + suffix;
+sentinel-installer.exe --server="${serverUrl}" --token="${token}" --silent
 
-    console.log('[Installer] Server placeholder length:', serverPlaceholder.length);
-    console.log('[Installer] Server replacement length:', serverReplacement.length);
-    console.log('[Installer] Token placeholder length:', tokenPlaceholder.length);
-    console.log('[Installer] Token replacement length:', tokenReplacement.length);
+if %errorLevel% neq 0 (
+    echo.
+    echo Installation encountered an error. Please check the output above.
+    pause
+    exit /b 1
+)
 
-    // Convert buffer to string for replacement (using latin1 to preserve binary data)
-    let binaryString = templateBuffer.toString('latin1');
+echo.
+echo Installation complete!
+pause
+`;
 
-    // Check if placeholders exist
-    if (!binaryString.includes(serverPlaceholder)) {
-      console.error('[Installer] Server placeholder not found in template!');
-      return null;
-    }
-    if (!binaryString.includes(tokenPlaceholder)) {
-      console.error('[Installer] Token placeholder not found in template!');
-      return null;
-    }
+    // Create ZIP buffer using archiver
+    const archiver = require('archiver');
+    const { PassThrough } = require('stream');
 
-    // Replace placeholders
-    binaryString = binaryString.replace(serverPlaceholder, serverReplacement);
-    binaryString = binaryString.replace(tokenPlaceholder, tokenReplacement);
+    return new Promise((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      const passthrough = new PassThrough();
 
-    // Convert back to buffer
-    const patchedBuffer = Buffer.from(binaryString, 'latin1');
-    console.log('[Installer] Patched buffer size:', patchedBuffer.length, 'bytes');
+      passthrough.on('data', (chunk: Buffer) => chunks.push(chunk));
+      passthrough.on('end', () => {
+        resolve({
+          zipBuffer: Buffer.concat(chunks),
+          batchContent
+        });
+      });
+      passthrough.on('error', reject);
 
-    return patchedBuffer;
+      const archive = archiver('zip', { zlib: { level: 9 } });
+      archive.on('error', reject);
+      archive.pipe(passthrough);
+
+      // Add installer EXE
+      archive.append(installerBuffer, { name: 'sentinel-installer.exe' });
+
+      // Add batch launcher
+      archive.append(batchContent, { name: 'install.bat' });
+
+      // Add readme
+      const readme = `Sentinel Agent Installer
+========================
+
+This package contains a pre-configured installer for the Sentinel Agent.
+
+To install:
+1. Extract all files to a folder
+2. Right-click "install.bat" and select "Run as administrator"
+3. Follow the on-screen instructions
+
+The installer will automatically connect to:
+Server: ${serverUrl}
+
+If you encounter any issues, contact your IT administrator.
+`;
+      archive.append(readme, { name: 'README.txt' });
+
+      archive.finalize();
+    });
   } catch (error) {
-    console.error('[Installer] Error generating EXE:', error);
+    console.error('[Installer] Error generating package:', error);
     return null;
   }
 }
@@ -2352,35 +2388,35 @@ process.on('unhandledRejection', (reason, promise) => {
 
     switch (platform.toLowerCase()) {
       case 'windows': {
-        // Generate EXE installer (more reliable than PowerShell)
-        const exeBuffer = await generateWindowsInstallerExe(serverUrl, token);
-        if (!exeBuffer) {
-          return { success: false, error: 'Failed to generate Windows installer. Template file may be missing.' };
+        // Generate ZIP package with installer + batch launcher
+        const packageResult = await generateWindowsInstallerPackage(serverUrl, token);
+        if (!packageResult) {
+          return { success: false, error: 'Failed to generate Windows installer package. Template file may be missing.' };
         }
 
-        // Show save dialog for EXE
-        const exeResult = await dialog.showSaveDialog(mainWindow!, {
-          title: 'Save Pre-Configured Installer',
-          defaultPath: 'sentinel-install.exe',
+        // Show save dialog for ZIP
+        const zipResult = await dialog.showSaveDialog(mainWindow!, {
+          title: 'Save Pre-Configured Installer Package',
+          defaultPath: 'sentinel-installer.zip',
           filters: [
-            { name: 'Windows Executable', extensions: ['exe'] },
+            { name: 'ZIP Archive', extensions: ['zip'] },
             { name: 'All Files', extensions: ['*'] }
           ],
         });
 
-        if (exeResult.canceled || !exeResult.filePath) {
+        if (zipResult.canceled || !zipResult.filePath) {
           return { success: false, canceled: true };
         }
 
-        await fs.promises.writeFile(exeResult.filePath, exeBuffer);
-        console.log('[Installer] EXE installer saved to:', exeResult.filePath);
+        await fs.promises.writeFile(zipResult.filePath, packageResult.zipBuffer);
+        console.log('[Installer] ZIP package saved to:', zipResult.filePath);
 
         return {
           success: true,
-          filePath: exeResult.filePath,
-          size: exeBuffer.length,
-          instructions: 'Double-click the installer to run it. If prompted, click "Yes" to allow administrator access.',
-          note: 'This installer has the server URL and enrollment token pre-configured. Just run it!',
+          filePath: zipResult.filePath,
+          size: packageResult.zipBuffer.length,
+          instructions: 'Extract the ZIP file, then right-click "install.bat" and select "Run as administrator".',
+          note: 'This package contains a pre-configured installer. Just extract and run install.bat!',
         };
       }
       case 'macos':
