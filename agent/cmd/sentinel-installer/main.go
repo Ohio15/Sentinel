@@ -878,41 +878,121 @@ func prepareInstallDirectory(installPath, agentExe, watchdogExe string) error {
 	logMsg("[DEBUG] Preparing install directory: %s", installPath)
 
 	// Step 1: Stop services using SC (more reliable than net stop)
+	printInfo("Stopping existing services...")
 	stopService("SentinelWatchdog")
 	stopService("SentinelAgent")
 
 	// Step 2: Kill any running processes (multiple attempts)
-	for i := 0; i < 3; i++ {
+	printInfo("Terminating running processes...")
+	for i := 0; i < 5; i++ {
 		killProcess("sentinel-agent.exe")
 		killProcess("sentinel-watchdog.exe")
 		time.Sleep(500 * time.Millisecond)
 	}
 
 	// Step 3: Wait for processes to fully terminate
-	waitForProcessExit("sentinel-agent.exe", 10*time.Second)
-	waitForProcessExit("sentinel-watchdog.exe", 5*time.Second)
+	waitForProcessExit("sentinel-agent.exe", 15*time.Second)
+	waitForProcessExit("sentinel-watchdog.exe", 10*time.Second)
+
+	// Extra wait for file handles to be released
+	time.Sleep(2 * time.Second)
 
 	// Step 4: Delete services if they exist (allows clean reinstall)
+	printInfo("Removing existing services...")
 	deleteService("SentinelAgent")
 	deleteService("SentinelWatchdog")
+	time.Sleep(1 * time.Second)
 
 	// Step 5: Create install directory
 	if err := os.MkdirAll(installPath, 0755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	// Step 6: Force remove existing files
+	// Step 6: Force remove existing files with multiple strategies
+	printInfo("Removing existing files...")
 	forceRemoveFile(agentExe)
 	forceRemoveFile(watchdogExe)
 	forceRemoveFile(filepath.Join(installPath, "config.json"))
 	forceRemoveFile(filepath.Join(installPath, "protection.dat"))
 
-	// Step 7: Verify files are actually gone
+	// Step 7: If agent exe still exists, try rename strategy
 	if _, err := os.Stat(agentExe); err == nil {
-		return fmt.Errorf("could not remove existing agent binary - file is locked")
+		logMsg("[DEBUG] Agent binary still exists, trying rename strategy")
+
+		// Generate unique old filename
+		oldName := fmt.Sprintf("%s.old.%d", agentExe, time.Now().UnixNano())
+
+		// Try to rename (Windows often allows rename even when delete is blocked)
+		if err := os.Rename(agentExe, oldName); err == nil {
+			logMsg("[DEBUG] Renamed locked file to: %s", oldName)
+			// Schedule the old file for deletion (will be cleaned up eventually)
+			go func() {
+				time.Sleep(5 * time.Second)
+				os.Remove(oldName)
+			}()
+		} else {
+			logMsg("[DEBUG] Rename failed: %v, trying MoveFileEx", err)
+			// Use MoveFileEx to schedule deletion on reboot
+			scheduleDeleteOnReboot(agentExe)
+
+			// As absolute last resort, try to move to temp and continue
+			tempOld := filepath.Join(os.TempDir(), fmt.Sprintf("sentinel-old-%d.exe", time.Now().UnixNano()))
+			if err := moveFileWithRetry(agentExe, tempOld); err == nil {
+				logMsg("[DEBUG] Moved locked file to temp: %s", tempOld)
+			} else {
+				return fmt.Errorf("could not remove existing agent binary - file is locked by another process")
+			}
+		}
+	}
+
+	// Do the same for watchdog
+	if _, err := os.Stat(watchdogExe); err == nil {
+		oldName := fmt.Sprintf("%s.old.%d", watchdogExe, time.Now().UnixNano())
+		if err := os.Rename(watchdogExe, oldName); err == nil {
+			go func() {
+				time.Sleep(5 * time.Second)
+				os.Remove(oldName)
+			}()
+		}
 	}
 
 	return nil
+}
+
+// scheduleDeleteOnReboot uses MoveFileEx to delete file on next reboot
+func scheduleDeleteOnReboot(path string) {
+	// Use PowerShell to call MoveFileEx via .NET
+	cmd := exec.Command("powershell", "-Command", fmt.Sprintf(`
+		$signature = @'
+		[DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
+		public static extern bool MoveFileEx(string lpExistingFileName, string lpNewFileName, int dwFlags);
+'@
+		$type = Add-Type -MemberDefinition $signature -Name Win32Utils -Namespace MoveFileEx -PassThru
+		$type::MoveFileEx('%s', $null, 4)
+	`, strings.ReplaceAll(path, "'", "''")))
+	cmd.Run()
+	logMsg("[DEBUG] Scheduled %s for deletion on reboot", path)
+}
+
+// moveFileWithRetry tries to move a file with retries
+func moveFileWithRetry(src, dst string) error {
+	for i := 0; i < 5; i++ {
+		// Try using cmd /c move
+		cmd := exec.Command("cmd", "/c", "move", "/Y", src, dst)
+		if err := cmd.Run(); err == nil {
+			return nil
+		}
+
+		// Try using PowerShell
+		cmd = exec.Command("powershell", "-Command",
+			fmt.Sprintf("Move-Item -Path '%s' -Destination '%s' -Force", src, dst))
+		if err := cmd.Run(); err == nil {
+			return nil
+		}
+
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("could not move file after 5 attempts")
 }
 
 // stopService stops a Windows service and waits for it to stop
