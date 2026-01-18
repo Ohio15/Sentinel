@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -22,6 +23,14 @@ import (
 
 	"golang.org/x/sys/windows"
 )
+
+// httpClient is a shared HTTP client that skips TLS verification for self-signed certs
+var httpClient = &http.Client{
+	Timeout: 30 * time.Second,
+	Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	},
+}
 
 // Command-line flags
 var (
@@ -250,7 +259,13 @@ func promptForInstallationCode() *InstallConfig {
 
 // discoverServerURL tries multiple ports to find a reachable server
 func discoverServerURL(host string) string {
-	client := &http.Client{Timeout: 5 * time.Second}
+	// Use a shorter timeout for discovery
+	discoverClient := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
 
 	for _, port := range DefaultPorts {
 		var serverURL string
@@ -264,7 +279,7 @@ func discoverServerURL(host string) string {
 		testURL := fmt.Sprintf("%s/api/health", serverURL)
 		logMsg("[DEBUG] Trying server at %s", serverURL)
 
-		resp, err := client.Get(testURL)
+		resp, err := discoverClient.Get(testURL)
 		if err != nil {
 			logMsg("[DEBUG] Port %s: connection failed - %v", port, err)
 			continue
@@ -306,8 +321,7 @@ func validateInstallationCode(code string) *InstallConfig {
 	apiURL := fmt.Sprintf("%s/api/public/install/validate-code?code=%s", serverURL, url.QueryEscape(code))
 	logMsg("[DEBUG] Validating code at: %s", apiURL)
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Get(apiURL)
+	resp, err := httpClient.Get(apiURL)
 	if err != nil {
 		logMsg("[DEBUG] Validation request failed: %v", err)
 		printError("Could not reach server. Please check your network connection.")
@@ -641,8 +655,7 @@ func fetchAgentInfo(serverURL string) (*AgentInfo, error) {
 	apiURL := fmt.Sprintf("%s/api/bootstrap/agent-info?platform=%s&arch=%s",
 		serverURL, runtime.GOOS, runtime.GOARCH)
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Get(apiURL)
+	resp, err := httpClient.Get(apiURL)
 	if err != nil {
 		return nil, err
 	}
@@ -676,8 +689,14 @@ func downloadAgent(serverURL, token, destPath string, info *AgentInfo) error {
 		}
 	}
 
-	client := &http.Client{Timeout: 10 * time.Minute}
-	resp, err := client.Get(downloadURL)
+	// Use longer timeout for downloads
+	downloadClient := &http.Client{
+		Timeout: 10 * time.Minute,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+	resp, err := downloadClient.Get(downloadURL)
 	if err != nil {
 		return err
 	}
