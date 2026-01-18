@@ -89,6 +89,16 @@ http:
     # Alternate HTTPS Routes (port 4443) - Bypasses router cache
     # =========================================================================
 
+    # Agent WebSocket route for port 4443
+    ws-agent-alt:
+      rule: "Host(`sentinelrmm.us`) && (PathPrefix(`/ws/agent`) || PathPrefix(`/ws`))"
+      entryPoints:
+        - websecure-alt
+      service: backend
+      tls:
+        certResolver: letsencrypt
+      priority: 15
+
     api-alt:
       rule: "Host(`sentinelrmm.us`) && PathPrefix(`/api`)"
       entryPoints:
