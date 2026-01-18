@@ -63,8 +63,8 @@ func initWhitelist() map[string]bool {
 	return whitelist
 }
 
-// isWhitelisted checks if an IP is exempt from rate limiting
-func isWhitelisted(ip string) bool {
+// IsWhitelisted checks if an IP is exempt from rate limiting (exported for use by other packages)
+func IsWhitelisted(ip string) bool {
 	// Direct match
 	if rateLimitWhitelist[ip] {
 		return true
@@ -270,7 +270,7 @@ func AuthRateLimitMiddleware() gin.HandlerFunc {
 		ip := c.ClientIP()
 
 		// Skip rate limiting for whitelisted IPs (localhost, private networks)
-		if isWhitelisted(ip) {
+		if IsWhitelisted(ip) {
 			c.Next()
 			return
 		}
