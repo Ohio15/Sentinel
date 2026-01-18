@@ -275,9 +275,24 @@ func doInstall(config *InstallConfig) error {
 	installPath := filepath.Join(os.Getenv("ProgramFiles"), "Sentinel Agent")
 	agentExe := filepath.Join(installPath, "sentinel-agent.exe")
 
+	// Check for existing installation and stop services
+	if _, err := os.Stat(agentExe); err == nil {
+		fmt.Println("      Existing installation found - stopping services...")
+		exec.Command("net", "stop", "SentinelAgent").Run()
+		exec.Command("net", "stop", "SentinelWatchdog").Run()
+		// Also try to kill any running processes
+		exec.Command("taskkill", "/F", "/IM", "sentinel-agent.exe").Run()
+		exec.Command("taskkill", "/F", "/IM", "sentinel-watchdog.exe").Run()
+		time.Sleep(3 * time.Second)
+	}
+
 	if err := os.MkdirAll(installPath, 0755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
+
+	// Try to remove existing file first (in case it's still locked)
+	os.Remove(agentExe)
+	time.Sleep(500 * time.Millisecond)
 
 	if err := copyFile(tempPath, agentExe); err != nil {
 		return fmt.Errorf("failed to copy agent: %w", err)
