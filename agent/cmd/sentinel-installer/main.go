@@ -72,16 +72,6 @@ func logMsg(format string, args ...interface{}) {
 // Version is set at build time
 var Version = "1.0.0"
 
-// Embedded configuration placeholders - these get patched by the server when the installer is downloaded
-// The format must match exactly what the server expects to patch
-var (
-	// EmbeddedServer is patched by the server with the actual server URL
-	// Placeholder: 50 chars padded with underscores
-	EmbeddedServer = "SENTINEL_CONFIG_SERVER:http://_______________________________________________:END"
-	// EmbeddedToken is patched by the server with the enrollment token
-	// Placeholder: 64 chars padded with underscores
-	EmbeddedToken = "SENTINEL_CONFIG_TOKEN:__________________________________________________________:END"
-)
 
 // InstallConfig holds the configuration for installation
 type InstallConfig struct {
@@ -186,9 +176,8 @@ func main() {
 
 // getConfiguration obtains installation configuration through priority chain:
 // 1. CLI arguments (--server + --token)
-// 2. Embedded configuration (patched by server during download)
-// 3. CLI code argument (--code) -> validates with server
-// 4. Interactive prompt for code
+// 2. CLI code argument (--code) -> validates with server
+// 3. Interactive prompt for code
 func getConfiguration() *InstallConfig {
 	// Priority 1: Direct CLI arguments
 	if *flagServer != "" && *flagToken != "" {
@@ -199,14 +188,7 @@ func getConfiguration() *InstallConfig {
 		}
 	}
 
-	// Priority 2: Embedded configuration (patched into binary by server)
-	embeddedConfig := getEmbeddedConfig()
-	if embeddedConfig != nil {
-		logMsg("[DEBUG] Using embedded configuration from installer binary")
-		return embeddedConfig
-	}
-
-	// Priority 3: Code from CLI argument
+	// Priority 2: Code from CLI argument
 	if *flagCode != "" {
 		logMsg("[DEBUG] Validating installation code from CLI: %s", *flagCode)
 		config := validateInstallationCode(*flagCode)
@@ -217,7 +199,7 @@ func getConfiguration() *InstallConfig {
 		return nil
 	}
 
-	// Priority 4: Interactive code prompt (only if not silent mode)
+	// Priority 3: Interactive code prompt (only if not silent mode)
 	if *flagSilent {
 		printError("No configuration found and running in silent mode.")
 		printError("Provide --code or --server/--token arguments.")
@@ -226,44 +208,6 @@ func getConfiguration() *InstallConfig {
 
 	logMsg("[DEBUG] Prompting for installation code")
 	return promptForInstallationCode()
-}
-
-// getEmbeddedConfig extracts configuration embedded in the binary by the server
-func getEmbeddedConfig() *InstallConfig {
-	// Parse server URL from embedded placeholder
-	serverURL := parseEmbeddedValue(EmbeddedServer, "SENTINEL_CONFIG_SERVER:", ":END")
-	if serverURL == "" || strings.HasPrefix(serverURL, "http://_") {
-		return nil // Not patched - still has placeholder
-	}
-
-	// Parse token from embedded placeholder
-	token := parseEmbeddedValue(EmbeddedToken, "SENTINEL_CONFIG_TOKEN:", ":END")
-	if token == "" || strings.HasPrefix(token, "_") {
-		return nil // Not patched - still has placeholder
-	}
-
-	// Remove trailing underscores (padding)
-	serverURL = strings.TrimRight(serverURL, "_")
-	token = strings.TrimRight(token, "_")
-
-	logMsg("[DEBUG] Found embedded config - Server: %s, Token: %s...", serverURL, token[:min(10, len(token))])
-
-	return &InstallConfig{
-		ServerURL:       serverURL,
-		EnrollmentToken: token,
-	}
-}
-
-// parseEmbeddedValue extracts a value from an embedded placeholder string
-func parseEmbeddedValue(embedded, prefix, suffix string) string {
-	if !strings.HasPrefix(embedded, prefix) {
-		return ""
-	}
-	value := strings.TrimPrefix(embedded, prefix)
-	if idx := strings.Index(value, suffix); idx > 0 {
-		value = value[:idx]
-	}
-	return value
 }
 
 // promptForInstallationCode shows a dialog/prompt for the user to enter their code
