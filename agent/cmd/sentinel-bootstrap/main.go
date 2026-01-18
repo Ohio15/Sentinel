@@ -218,7 +218,9 @@ func runBootstrap() error {
 
 	// Check for existing installation
 	agentBinary := filepath.Join(targetPath, getAgentBinaryName())
+	existingInstall := false
 	if _, err := os.Stat(agentBinary); err == nil {
+		existingInstall = true
 		if !*forceMode && !*upgradeMode {
 			return fmt.Errorf("agent already installed at %s. Use --upgrade or --force to reinstall", targetPath)
 		}
@@ -260,11 +262,16 @@ func runBootstrap() error {
 		printSuccess("Checksum verified")
 	}
 
-	// Stop existing service if upgrading
-	if *upgradeMode {
-		printInfo("Stopping existing service...")
+	// Stop existing service if upgrading or reinstalling
+	if existingInstall {
+		printInfo("Stopping existing services...")
 		stopService()
-		time.Sleep(2 * time.Second)
+		// Also try to kill any running processes
+		if runtime.GOOS == "windows" {
+			exec.Command("taskkill", "/F", "/IM", "sentinel-agent.exe").Run()
+			exec.Command("taskkill", "/F", "/IM", "sentinel-watchdog.exe").Run()
+		}
+		time.Sleep(3 * time.Second)
 	}
 
 	// Move binary to installation directory
@@ -448,8 +455,10 @@ func runAgentInstall(agentPath, serverURL, token string) error {
 func stopService() {
 	if runtime.GOOS == "windows" {
 		exec.Command("net", "stop", "SentinelAgent").Run()
+		exec.Command("net", "stop", "SentinelWatchdog").Run()
 	} else {
 		exec.Command("systemctl", "stop", "sentinel-agent").Run()
+		exec.Command("systemctl", "stop", "sentinel-watchdog").Run()
 	}
 }
 
