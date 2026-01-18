@@ -170,6 +170,7 @@ export function TicketLinks({
       document.addEventListener('mousedown', handleClickOutside);
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }
+    return undefined;
   }, [isAddingLink]);
 
   const handleAddLink = async (targetTicketId: string) => {

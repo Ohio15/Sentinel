@@ -1,5 +1,7 @@
 // Global type declarations for Electron IPC API
 
+/// <reference types="vite/client" />
+
 interface ElectronAPI {
   devices: {
     list: (clientId?: string) => Promise<any>;
@@ -50,6 +52,12 @@ interface ElectronAPI {
     list: () => Promise<any>;
     acknowledge: (id: string) => Promise<any>;
     dismiss: (id: string) => Promise<any>;
+    resolve: (id: string) => Promise<any>;
+    getRules: () => Promise<any>;
+    createRule: (rule: any) => Promise<any>;
+    updateRule: (id: string, rule: any) => Promise<any>;
+    deleteRule: (id: string) => Promise<any>;
+    onNew: (callback: (alert: any) => void) => () => void;
   };
   settings: {
     get: () => Promise<any>;
@@ -61,7 +69,7 @@ interface ElectronAPI {
     create: (script: any) => Promise<any>;
     update: (id: string, script: any) => Promise<any>;
     delete: (id: string) => Promise<any>;
-    execute: (deviceId: string, scriptId: string, parameters?: any) => Promise<any>;
+    execute: (scriptId: string, deviceIds: string | string[], parameters?: any) => Promise<any>;
   };
   clients: {
     list: () => Promise<any>;
@@ -84,7 +92,11 @@ interface ElectronAPI {
     create: (ticket: any) => Promise<any>;
     update: (id: string, ticket: any) => Promise<any>;
     delete: (id: string) => Promise<any>;
-    addComment: (ticketId: string, comment: any) => Promise<any>;
+    addComment: (comment: any) => Promise<any>;
+    getComments: (ticketId: string) => Promise<any>;
+    getActivity: (ticketId: string) => Promise<any>;
+    getStats: () => Promise<any>;
+    getTemplates: () => Promise<any>;
   };
   knowledge: {
     list: (filters?: any) => Promise<any>;
@@ -98,10 +110,13 @@ interface ElectronAPI {
     checkForUpdates: () => Promise<any>;
     downloadUpdate: () => Promise<any>;
     installUpdate: () => void;
+    getDevice: (deviceId: string) => Promise<any>;
     onUpdateAvailable: (callback: (info: any) => void) => () => void;
+    onUpdateNotAvailable: (callback: () => void) => () => void;
     onDownloadProgress: (callback: (progress: any) => void) => () => void;
     onUpdateDownloaded: (callback: (info: any) => void) => () => void;
     onError: (callback: (error: any) => void) => () => void;
+    onStatus: (callback: (status: any) => void) => () => void;
   };
   portal?: {
     getPortal: (subdomain: string) => Promise<any>;
@@ -111,8 +126,8 @@ interface ElectronAPI {
     getSettings: () => Promise<any>;
     updateSettings: (settings: any) => Promise<any>;
     getClientTenants: () => Promise<any>;
-    createClientTenant: (clientId: string, tenantId: string) => Promise<any>;
-    deleteClientTenant: (clientId: string, tenantId: string) => Promise<any>;
+    createClientTenant: (tenant: { clientId?: string; tenantId: string; tenantName?: string }) => Promise<any>;
+    deleteClientTenant: (id: string) => Promise<any>;
   };
   installers?: {
     downloadAgent: (platform: string) => Promise<any>;
@@ -124,6 +139,7 @@ interface ElectronAPI {
     installUpdate: () => void;
     getVersion: () => Promise<string>;
     onUpdateAvailable: (callback: (info: any) => void) => () => void;
+    onUpdateNotAvailable: (callback: () => void) => () => void;
     onDownloadProgress: (callback: (progress: any) => void) => () => void;
     onUpdateDownloaded: (callback: (info: any) => void) => () => void;
     onError: (callback: (error: any) => void) => () => void;
@@ -156,11 +172,70 @@ interface ElectronAPI {
     createCategory: (category: any) => Promise<any>;
     updateCategory: (id: string, category: any) => Promise<any>;
     deleteCategory: (id: string) => Promise<any>;
+    // Article sub-API
+    articles: {
+      list: (filters?: any) => Promise<any>;
+      get: (id: string) => Promise<any>;
+      create: (article: any) => Promise<any>;
+      update: (id: string, article: any) => Promise<any>;
+      delete: (id: string) => Promise<any>;
+    };
+    // Categories sub-API
+    categories: {
+      list: () => Promise<any>;
+      get: (id: string) => Promise<any>;
+      create: (category: any) => Promise<any>;
+      update: (id: string, category: any) => Promise<any>;
+      delete: (id: string) => Promise<any>;
+    };
   };
   // Backend connection API
   backend?: {
     connect: (url: string) => Promise<any>;
     getStatus: () => Promise<any>;
+    getConfig: () => Promise<any>;
+    setUrl: (url: string) => Promise<any>;
+    setApiKey: (apiKey: string) => Promise<any>;
+    testConnection: () => Promise<any>;
+    authenticate: () => Promise<any>;
+  };
+  // Certificate management API
+  certs?: {
+    list: () => Promise<any>;
+    getAgentStatus: () => Promise<any>;
+    renew: () => Promise<any>;
+    distribute: () => Promise<any>;
+    onDistributed: (callback: (result: any) => void) => () => void;
+    onAgentConfirmed: (callback: (data: any) => void) => () => void;
+  };
+  // Analytics API
+  analytics?: {
+    tickets: (options: { days: number }) => Promise<any>;
+    devices: (options?: { days?: number }) => Promise<any>;
+  };
+  // Categories API
+  categories?: {
+    list: () => Promise<any>;
+    get: (id: string) => Promise<any>;
+    create: (category: any) => Promise<any>;
+    update: (id: string, category: any) => Promise<any>;
+    delete: (id: string) => Promise<any>;
+  };
+  // Tags API
+  tags?: {
+    list: () => Promise<any>;
+    get: (id: string) => Promise<any>;
+    create: (tag: any) => Promise<any>;
+    update: (id: string, tag: any) => Promise<any>;
+    delete: (id: string) => Promise<any>;
+    assign: (ticketId: string, tagIds: string[]) => Promise<any>;
+    getAssignments: (ticketId: string) => Promise<any>;
+  };
+  // Ticket links API
+  links?: {
+    list: (ticketId: string) => Promise<any>;
+    create: (link: any) => Promise<any>;
+    delete: (linkId: string) => Promise<any>;
   };
   logError?: (error: { message: string; stack?: string; componentStack?: string }) => void;
   getAppVersion: () => Promise<string>;

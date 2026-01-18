@@ -10,7 +10,9 @@ interface DevicesProps {
 
 interface ServerInfo {
   port: number;
-  enrollmentToken: string;
+  version?: string;
+  environment?: string;
+  enrollmentToken?: string;
 }
 
 interface AgentLink {
@@ -116,6 +118,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
       document.addEventListener('click', handleClickOutside);
       return () => document.removeEventListener('click', handleClickOutside);
     }
+    return undefined;
   }, [actionMenu]);
 
   // Fetch installation links when on links tab
@@ -128,6 +131,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
 
   const loadServerInfo = async () => {
     try {
+      if (!window.api.server) return;
       const info = await window.api.server.getInfo();
       setServerInfo(info);
     } catch (error) {
@@ -146,6 +150,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
     setDownloadResult(null);
 
     try {
+      if (!window.api.agent) throw new Error('Agent API not available');
       const result = await window.api.agent.download(platform);
 
       if (result.canceled) {
@@ -181,6 +186,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
     setDownloadResult(null);
 
     try {
+      if (!window.api.agent) throw new Error('Agent API not available');
       const result = await window.api.agent.downloadConfigured(platform);
 
       if (result.canceled) {
@@ -210,6 +216,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
   const handlePowerShellInstall = async () => {
     setPsRunning(true);
     try {
+      if (!window.api.agent) throw new Error('Agent API not available');
       const result = await window.api.agent.runPowerShellInstall();
       if (!result.success) {
         setDownloadResult({
@@ -231,14 +238,15 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
   const fetchLinks = async () => {
     setLinksLoading(true);
     try {
+      if (!api) return;
       const response = await api.getAgentLinks({
         status: linkFilter || undefined,
         search: linkSearch || undefined,
         page: linkPage,
         pageSize: 20,
       });
-      setLinks(response.links || []);
-      setLinkTotalPages(response.pages || 1);
+      setLinks((response.links || []) as AgentLink[]);
+      setLinkTotalPages(response.totalPages || 1);
     } catch (err) {
       console.error('Failed to fetch links:', err);
     } finally {
@@ -248,7 +256,8 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
 
   const fetchLinkStats = async () => {
     try {
-      const data = await api.getAgentLinkStats();
+      if (!api) return;
+      const data = await api.getAgentLinkStats() as LinkStats;
       setLinkStats(data);
     } catch (err) {
       console.error('Failed to fetch stats:', err);
@@ -256,7 +265,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
   };
 
   const handleCreateLink = async () => {
-    if (!linkFormData.deviceName || !linkFormData.userEmail) return;
+    if (!linkFormData.deviceName || !linkFormData.userEmail || !api) return;
     setCreatingLink(true);
     try {
       const result = await api.createAgentLink({
@@ -279,6 +288,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
 
   const handleResendEmail = async (linkId: string) => {
     try {
+      if (!api) return;
       await api.resendAgentLinkEmail(linkId);
       alert('Email resent successfully');
       fetchLinks();
@@ -288,7 +298,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
   };
 
   const handleRevokeLink = async (linkId: string) => {
-    if (!confirm('Are you sure you want to revoke this installation link?')) return;
+    if (!confirm('Are you sure you want to revoke this installation link?') || !api) return;
     try {
       await api.revokeAgentLink(linkId);
       fetchLinks();
@@ -299,7 +309,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
   };
 
   const handleDeleteLink = async (linkId: string) => {
-    if (!confirm('Are you sure you want to permanently delete this installation link? This cannot be undone.')) return;
+    if (!confirm('Are you sure you want to permanently delete this installation link? This cannot be undone.') || !api) return;
     try {
       await api.deleteAgentLink(linkId);
       fetchLinks();
@@ -311,7 +321,8 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
 
   const handleViewLinkDetails = async (link: AgentLink) => {
     try {
-      const details = await api.getAgentLink(link.id);
+      if (!api) return;
+      const details = await api.getAgentLink(link.id) as AgentLink;
       setSelectedLink(details);
       setShowDetailModal(true);
     } catch (err) {
@@ -914,7 +925,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                 </div>
               </div>
               {selectedLink.downloadUrl && (
-                <div className="mt-6"><h3 className="font-semibold text-text-primary mb-2">Download URL</h3><div className="flex gap-2"><input type="text" value={selectedLink.downloadUrl} readOnly className="input flex-1 text-sm" /><button onClick={() => copyToClipboard(selectedLink.downloadUrl)} className="btn btn-secondary">{copiedUrl === selectedLink.downloadUrl ? 'Copied!' : 'Copy'}</button></div></div>
+                <div className="mt-6"><h3 className="font-semibold text-text-primary mb-2">Download URL</h3><div className="flex gap-2"><input type="text" value={selectedLink.downloadUrl} readOnly className="input flex-1 text-sm" /><button onClick={() => copyToClipboard(selectedLink.downloadUrl!)} className="btn btn-secondary">{copiedUrl === selectedLink.downloadUrl ? 'Copied!' : 'Copy'}</button></div></div>
               )}
               {selectedLink.notes && <div className="mt-6"><h3 className="font-semibold text-text-primary mb-2">Notes</h3><p className="text-text-secondary text-sm">{selectedLink.notes}</p></div>}
               <div className="flex justify-end gap-3 mt-6 pt-6 border-t border-border">

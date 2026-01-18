@@ -3,8 +3,8 @@ package api
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/sentinel/server/internal/constants"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -256,7 +257,7 @@ func validateInstallationCodeHandler(services *Services) gin.HandlerFunc {
 		)
 
 		if err != nil {
-			if err == sql.ErrNoRows {
+			if errors.Is(err, pgx.ErrNoRows) {
 				// Generic error to prevent code enumeration
 				c.JSON(http.StatusOK, ValidateCodeResponse{
 					Valid: false,
@@ -321,10 +322,10 @@ func validateInstallationCodeHandler(services *Services) gin.HandlerFunc {
 
 		// Get bootstrap URL (PUBLIC_URL for installer API calls)
 		bootstrapURL := services.Config.PublicURL
-		if serverURL == "" {
+		if bootstrapURL == "" {
 			bootstrapURL = services.Config.ServerURL
 		}
-		if serverURL == "" {
+		if bootstrapURL == "" {
 			scheme := "https"
 			if c.Request.TLS == nil {
 				scheme = "http"

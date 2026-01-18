@@ -85,7 +85,7 @@ export const devices = {
     if (isElectron) {
       return (window as any).api.devices.delete(id);
     }
-    return api!.deleteDevice(id);
+    await api!.deleteDevice(id);
   },
 
   async disable(id: string): Promise<void> {
@@ -176,7 +176,7 @@ export const alerts = {
       return (window as any).api.alerts.onNew(handler);
     }
     // Web mode - subscribe to WebSocket
-    return wsService!.on('alert', handler);
+    return wsService!.on('alert', (data) => handler(data as Alert));
   },
 };
 
@@ -235,7 +235,7 @@ export const terminal = {
       // Electron might not have this
       return () => {};
     }
-    return wsService!.on('error', handler);
+    return wsService!.on('error', (data) => handler(data as { sessionId?: string; error: string }));
   },
 };
 
@@ -321,14 +321,14 @@ export const remote = {
     if (isElectron) {
       return (window as any).api.remote?.onFrame?.(handler) || (() => {});
     }
-    return wsService!.on('remote_frame', handler);
+    return wsService!.on('remote_frame', (data) => handler(data as { sessionId: string; data: string; width: number; height: number }));
   },
 
   onError(handler: (error: { sessionId?: string; error: string }) => void): () => void {
     if (isElectron) {
       return () => {};
     }
-    return wsService!.on('error', handler);
+    return wsService!.on('error', (data) => handler(data as { sessionId?: string; error: string }));
   },
 };
 

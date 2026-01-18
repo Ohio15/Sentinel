@@ -44,6 +44,7 @@ export function Tickets({ onTicketSelect, onViewChange }: TicketsProps) {
 
   const loadCategories = async () => {
     try {
+      if (!window.api.categories) return;
       const cats = await window.api.categories.list();
       setCategories(cats);
     } catch (error) {

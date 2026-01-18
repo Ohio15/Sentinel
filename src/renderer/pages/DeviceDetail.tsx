@@ -139,7 +139,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
   const handleAssignClient = async (clientId: string | null) => {
     if (!selectedDevice) return;
     try {
-      await window.api.clients.assignDevice(selectedDevice.id, clientId);
+      await window.api.clients.assignDevice(selectedDevice.id, clientId || '');
       await fetchDevice(deviceId); // Refresh device data
       setIsAssigningClient(false);
     } catch (error) {

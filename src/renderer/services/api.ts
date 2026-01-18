@@ -73,7 +73,7 @@ class ApiService {
 
     // Handle empty responses
     const text = await response.text();
-    return text ? JSON.parse(text) : null;
+    return (text ? JSON.parse(text) : null) as T;
   }
 
   private get<T>(endpoint: string, params?: Record<string, string>): Promise<T> {

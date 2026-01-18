@@ -87,6 +87,10 @@ export function TicketAnalytics({ onViewChange }: TicketAnalyticsProps) {
   const loadAnalytics = async () => {
     setLoading(true);
     try {
+      if (!window.api.analytics) {
+        console.error('Analytics API not available');
+        return;
+      }
       const data = await window.api.analytics.tickets({
         days: parseInt(dateRange)
       });
