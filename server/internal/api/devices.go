@@ -480,7 +480,7 @@ func (r *Router) enrollAgent(c *gin.Context) {
 				hostname = $2, os_type = $3, os_version = $4, os_build = $5,
 				platform = $6, platform_family = $7, architecture = $8,
 				cpu_model = $9, cpu_cores = $10, cpu_threads = $11, cpu_speed = $12,
-				total_memory = $13, boot_time = $14, gpu = $15, storage = $16,
+				total_memory = $13, boot_time = to_timestamp($14), gpu = $15, storage = $16,
 				serial_number = $17, manufacturer = $18, model = $19, domain = $20,
 				agent_version = $21, ip_address = $22, mac_address = $23,
 				last_seen = NOW(), status = 'online', updated_at = NOW()
@@ -488,7 +488,7 @@ func (r *Router) enrollAgent(c *gin.Context) {
 		`, enrollment.AgentID, enrollment.Hostname, enrollment.OSType, enrollment.OSVersion,
 			enrollment.OSBuild, enrollment.Platform, enrollment.PlatformFamily, enrollment.Architecture,
 			enrollment.CPUModel, enrollment.CPUCores, enrollment.CPUThreads, enrollment.CPUSpeed,
-			enrollment.TotalMemory, enrollment.BootTime, gpuJSON, storageJSON,
+			enrollment.TotalMemory, enrollment.BootTime, string(gpuJSON), storageJSON,
 			enrollment.SerialNumber, enrollment.Manufacturer, enrollment.Model, enrollment.Domain,
 			enrollment.AgentVersion, ipAddr, enrollment.MACAddress)
 
@@ -521,7 +521,7 @@ func (r *Router) enrollAgent(c *gin.Context) {
 			cpu_threads, cpu_speed, total_memory, boot_time, gpu, storage, serial_number,
 			manufacturer, model, domain, agent_version, ip_address, mac_address,
 			last_seen, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, to_timestamp($16),
 			$17, $18, $19, $20, $21, $22, $23, $24, $25, NOW(), 'online')
 	`, deviceID, enrollment.AgentID, enrollment.Hostname, displayName, enrollment.OSType,
 		enrollment.OSVersion, enrollment.OSBuild, enrollment.Platform, enrollment.PlatformFamily,
