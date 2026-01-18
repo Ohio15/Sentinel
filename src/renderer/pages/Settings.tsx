@@ -12,7 +12,9 @@ interface Settings {
 
 interface ServerInfo {
   port: number;
-  agentCount: number;
+  version?: string;
+  environment?: string;
+  agentCount?: number;
 }
 
 interface PortalSettings {
@@ -120,11 +122,11 @@ export function Settings() {
     try {
       const [settingsData, infoData, backendConfig] = await Promise.all([
         window.api.settings.get(),
-        window.api.server.getInfo(),
-        window.api.backend.getConfig().catch(() => ({ url: '', isConfigured: false, isAuthenticated: false })),
+        window.api.server?.getInfo() || Promise.resolve({ port: 0 }),
+        window.api.backend?.getConfig?.().catch(() => ({ url: '', isConfigured: false, isAuthenticated: false })) || Promise.resolve({ url: '', isConfigured: false, isAuthenticated: false }),
       ]);
       setSettings(settingsData);
-      setServerInfo(infoData);
+      setServerInfo(infoData as ServerInfo);
       if (backendConfig.url) {
         setBackendUrl(backendConfig.url);
         setBackendConnected(backendConfig.isAuthenticated || false);
@@ -143,8 +145,8 @@ export function Settings() {
   const loadPortalData = async () => {
     try {
       const [portalData, tenantsData, clientsData] = await Promise.all([
-        window.api.portal.getSettings().catch(() => null),
-        window.api.portal.getClientTenants().catch(() => []),
+        window.api.portal?.getSettings().catch(() => null) || Promise.resolve(null),
+        window.api.portal?.getClientTenants().catch(() => []) || Promise.resolve([]),
         window.api.clients.list().catch(() => []),
       ]);
 
@@ -164,6 +166,7 @@ export function Settings() {
   const handleSavePortalSettings = async () => {
     setSavingPortal(true);
     try {
+      if (!window.api.portal) throw new Error('Portal API not available');
       await window.api.portal.updateSettings(portalSettings);
       alert('Portal settings saved successfully');
     } catch (error: unknown) {
@@ -187,6 +190,7 @@ export function Settings() {
     }
 
     try {
+      if (!window.api.portal) throw new Error('Portal API not available');
       await window.api.portal.createClientTenant(newTenant);
       setNewTenant({ clientId: '', tenantId: '', tenantName: '' });
       setShowAddTenant(false);
@@ -200,6 +204,7 @@ export function Settings() {
     if (!confirm('Are you sure you want to remove this tenant mapping?')) return;
 
     try {
+      if (!window.api.portal) throw new Error('Portal API not available');
       await window.api.portal.deleteClientTenant(id);
       loadPortalData();
     } catch (error: unknown) {
@@ -229,6 +234,7 @@ export function Settings() {
     setBackendError('');
 
     try {
+      if (!window.api.backend) throw new Error('Backend API not available');
       // Set the URL first
       await window.api.backend.setUrl(backendUrl);
 
@@ -245,7 +251,7 @@ export function Settings() {
         }
       } else {
         // Use credential authentication
-        const result = await window.api.backend.authenticate(backendEmail, backendPassword);
+        const result = await window.api.backend.authenticate();
         if (result.success) {
           setBackendConnected(true);
           setBackendPassword('');

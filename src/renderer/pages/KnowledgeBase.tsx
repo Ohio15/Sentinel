@@ -71,6 +71,10 @@ export function KnowledgeBase() {
   const loadData = async () => {
     setLoading(true);
     try {
+      if (!window.api.kb) {
+        console.error('KB API not available');
+        return;
+      }
       const [cats, arts] = await Promise.all([
         window.api.kb.categories.list(),
         window.api.kb.articles.list()
@@ -103,6 +107,7 @@ export function KnowledgeBase() {
 
   const handleCreateArticle = async (data: Partial<KBArticle>) => {
     try {
+      if (!window.api.kb) return;
       await window.api.kb.articles.create(data);
       await loadData();
       setShowArticleModal(false);
@@ -114,6 +119,7 @@ export function KnowledgeBase() {
 
   const handleUpdateArticle = async (id: string, data: Partial<KBArticle>) => {
     try {
+      if (!window.api.kb) return;
       await window.api.kb.articles.update(id, data);
       await loadData();
       setShowArticleModal(false);
@@ -124,7 +130,7 @@ export function KnowledgeBase() {
   };
 
   const handleDeleteArticle = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this article?')) return;
+    if (!confirm('Are you sure you want to delete this article?') || !window.api.kb) return;
     try {
       await window.api.kb.articles.delete(id);
       await loadData();
@@ -135,6 +141,7 @@ export function KnowledgeBase() {
 
   const handleToggleFeatured = async (article: KBArticle) => {
     try {
+      if (!window.api.kb) return;
       await window.api.kb.articles.update(article.id, { isFeatured: !article.isFeatured });
       await loadData();
     } catch (error) {
@@ -144,6 +151,7 @@ export function KnowledgeBase() {
 
   const handleTogglePinned = async (article: KBArticle) => {
     try {
+      if (!window.api.kb) return;
       await window.api.kb.articles.update(article.id, { isPinned: !article.isPinned });
       await loadData();
     } catch (error) {
@@ -153,6 +161,7 @@ export function KnowledgeBase() {
 
   const handlePublishArticle = async (article: KBArticle) => {
     try {
+      if (!window.api.kb) return;
       await window.api.kb.articles.update(article.id, {
         status: 'published',
         publishedAt: new Date().toISOString()
@@ -468,6 +477,7 @@ export function KnowledgeBase() {
           }}
           onSave={async (data) => {
             try {
+              if (!window.api.kb) return;
               if (editingCategory) {
                 await window.api.kb.categories.update(editingCategory.id, data);
               } else {

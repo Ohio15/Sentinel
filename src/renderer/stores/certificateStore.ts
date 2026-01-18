@@ -51,6 +51,10 @@ export const useCertificateStore = create<CertificateState>((set, get) => ({
   fetchCertificates: async () => {
     set({ loading: true, error: null });
     try {
+      if (!window.api.certs) {
+        set({ loading: false });
+        return;
+      }
       const result = await window.api.certs.list();
       // listCertificates returns { certificates, certsDir, caCertHash }
       const certificates = result?.certificates || [];
@@ -67,6 +71,7 @@ export const useCertificateStore = create<CertificateState>((set, get) => ({
 
   fetchAgentStatuses: async () => {
     try {
+      if (!window.api.certs) return;
       const agentStatuses = await window.api.certs.getAgentStatus();
       set({ agentStatuses });
     } catch (error: unknown) {
@@ -77,6 +82,7 @@ export const useCertificateStore = create<CertificateState>((set, get) => ({
   renewCertificates: async () => {
     set({ renewing: true, error: null });
     try {
+      if (!window.api.certs) throw new Error('Certs API not available');
       const result = await window.api.certs.renew();
       if (!result.success) {
         throw new Error(result.error || 'Failed to renew certificates');
@@ -93,6 +99,7 @@ export const useCertificateStore = create<CertificateState>((set, get) => ({
   distributeCertificates: async () => {
     set({ distributing: true, error: null });
     try {
+      if (!window.api.certs) throw new Error('Certs API not available');
       const result = await window.api.certs.distribute();
       // Update will come via event subscription
       set({ distributing: false });
@@ -104,13 +111,14 @@ export const useCertificateStore = create<CertificateState>((set, get) => ({
   },
 
   subscribeToEvents: () => {
-    const unsubDistributed = window.api.certs.onDistributed((result) => {
+    if (!window.api.certs) return () => {};
+    const unsubDistributed = window.api.certs.onDistributed((result: any) => {
       console.log('[Certs] Distribution result:', result);
       // Refresh agent statuses after distribution
       get().fetchAgentStatuses();
     });
 
-    const unsubConfirmed = window.api.certs.onAgentConfirmed((data) => {
+    const unsubConfirmed = window.api.certs.onAgentConfirmed((data: any) => {
       console.log('[Certs] Agent confirmed:', data);
       // Update the specific agent's status
       set((state) => ({

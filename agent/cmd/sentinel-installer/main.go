@@ -32,8 +32,11 @@ var (
 	flagHelp   = flag.Bool("help", false, "Show help message")
 )
 
-// Default server URL for code validation (used when no embedded config)
-const DefaultServerURL = "https://sentinelrmm.us"
+// Default server host for code validation (used when no embedded config)
+const DefaultServerHost = "sentinelrmm.us"
+
+// Ports to try in order of preference (4443 first to bypass router caching)
+var DefaultPorts = []string{"4443", "443", "8443"}
 
 var logFile *os.File
 
@@ -245,6 +248,39 @@ func promptForInstallationCode() *InstallConfig {
 	return nil
 }
 
+// discoverServerURL tries multiple ports to find a reachable server
+func discoverServerURL(host string) string {
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	for _, port := range DefaultPorts {
+		var serverURL string
+		if port == "443" {
+			serverURL = fmt.Sprintf("https://%s", host)
+		} else {
+			serverURL = fmt.Sprintf("https://%s:%s", host, port)
+		}
+
+		// Try a quick health check or just see if we can connect
+		testURL := fmt.Sprintf("%s/api/health", serverURL)
+		logMsg("[DEBUG] Trying server at %s", serverURL)
+
+		resp, err := client.Get(testURL)
+		if err != nil {
+			logMsg("[DEBUG] Port %s: connection failed - %v", port, err)
+			continue
+		}
+		resp.Body.Close()
+
+		// Any response (even 404) means the server is reachable
+		logMsg("[DEBUG] Port %s: server reachable (status %d)", port, resp.StatusCode)
+		return serverURL
+	}
+
+	// Fallback to first port if nothing works
+	logMsg("[DEBUG] No ports responded, using default port %s", DefaultPorts[0])
+	return fmt.Sprintf("https://%s:%s", host, DefaultPorts[0])
+}
+
 // validateInstallationCode validates a code against the server and returns config
 func validateInstallationCode(code string) *InstallConfig {
 	// Normalize code: uppercase, remove spaces
@@ -257,9 +293,13 @@ func validateInstallationCode(code string) *InstallConfig {
 	}
 
 	// Determine server URL for validation
-	serverURL := DefaultServerURL
+	var serverURL string
 	if *flagServer != "" {
 		serverURL = *flagServer
+	} else {
+		// Auto-discover the best port
+		printInfo("Discovering server...")
+		serverURL = discoverServerURL(DefaultServerHost)
 	}
 
 	// Call validation API
@@ -270,6 +310,7 @@ func validateInstallationCode(code string) *InstallConfig {
 	resp, err := client.Get(apiURL)
 	if err != nil {
 		logMsg("[DEBUG] Validation request failed: %v", err)
+		printError("Could not reach server. Please check your network connection.")
 		return nil
 	}
 	defer resp.Body.Close()

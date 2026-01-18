@@ -74,19 +74,19 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
   const loadEnhancements = async () => {
     try {
       // Load categories
-      const cats = await window.api.categories.list();
+      const cats = window.api.categories ? await window.api.categories.list() : [];
       setCategories(cats);
 
       // Load available tags
-      const tags = await window.api.tags.list();
+      const tags = window.api.tags ? await window.api.tags.list() : [];
       setAvailableTags(tags);
 
       // Load ticket's assigned tags
-      const assignments = await window.api.tags.getAssignments(ticketId);
+      const assignments = window.api.tags ? await window.api.tags.getAssignments(ticketId) : [];
       setSelectedTags(assignments);
 
       // Load ticket links
-      const links = await window.api.links.list(ticketId);
+      const links = window.api.links ? await window.api.links.list(ticketId) : [];
       setTicketLinks(links);
     } catch (error) {
       console.error('Failed to load enhancements:', error);
@@ -131,19 +131,23 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
   const handleTagsChange = async (tags: TicketTag[]) => {
     setSelectedTags(tags);
     try {
-      await window.api.tags.assign(ticketId, tags.map((t) => t.id));
+      if (window.api.tags) {
+        await window.api.tags.assign(ticketId, tags.map((t) => t.id));
+      }
     } catch (error) {
       console.error('Failed to update tags:', error);
     }
   };
 
   const handleCreateTag = async (name: string): Promise<TicketTag> => {
+    if (!window.api.tags) throw new Error('Tags API not available');
     const newTag = await window.api.tags.create({ name, color: '#6B7280' });
     setAvailableTags((prev) => [...prev, newTag]);
     return newTag;
   };
 
   const handleAddLink = async (targetTicketId: string, linkType: TicketLink['linkType']) => {
+    if (!window.api.links) return;
     await window.api.links.create({
       sourceTicketId: ticketId,
       targetTicketId,
@@ -156,6 +160,7 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
   };
 
   const handleRemoveLink = async (linkId: string) => {
+    if (!window.api.links) return;
     await window.api.links.delete(linkId);
     setTicketLinks((prev) => prev.filter((l) => l.id !== linkId));
   };

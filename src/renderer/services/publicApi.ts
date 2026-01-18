@@ -54,7 +54,7 @@ class PublicApiService {
     }
 
     const text = await response.text();
-    return text ? JSON.parse(text) : null;
+    return (text ? JSON.parse(text) : null) as T;
   }
 
   /**
