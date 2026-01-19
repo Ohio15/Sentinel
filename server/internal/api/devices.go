@@ -170,8 +170,8 @@ func (r *Router) getDevice(c *gin.Context) {
 	c.JSON(http.StatusOK, d)
 }
 
-// deleteDevice removes a device record - only allowed for devices in 'uninstalling' status
-// This ensures devices can only be deleted after the agent has been properly uninstalled
+// deleteDevice removes a device record - allowed for devices in 'uninstalling' or 'offline' status
+// This ensures active devices cannot be accidentally deleted
 func (r *Router) deleteDevice(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -181,7 +181,7 @@ func (r *Router) deleteDevice(c *gin.Context) {
 
 	ctx := context.Background()
 
-	// Check device status - only allow deletion for uninstalling devices
+	// Check device status - only allow deletion for uninstalling or offline devices
 	var status string
 	err = r.db.Pool().QueryRow(ctx, "SELECT status FROM devices WHERE id = $1 AND organization_id = $2", id, constants.CurrentOrganizationID).Scan(&status)
 	if err != nil {
@@ -189,10 +189,10 @@ func (r *Router) deleteDevice(c *gin.Context) {
 		return
 	}
 
-	if status != "uninstalling" {
+	if status != "uninstalling" && status != "offline" {
 		c.JSON(http.StatusForbidden, gin.H{
-			"error":   "Cannot delete device directly",
-			"message": "Devices can only be removed by uninstalling the agent remotely. Use the 'Uninstall Agent' option to remove this device.",
+			"error":   "Cannot delete active device",
+			"message": "Only offline or uninstalling devices can be deleted. Use 'Uninstall Agent' for online devices.",
 		})
 		return
 	}
