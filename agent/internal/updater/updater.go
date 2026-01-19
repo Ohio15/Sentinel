@@ -446,8 +446,11 @@ func (u *Updater) applyUpdateUnix(currentExe, downloadPath string) error {
 }
 
 func (u *Updater) RunUpdateLoop(ctx context.Context) {
+	// Initial check on startup after a brief delay
+	// This catches updates that happened while agent was offline
+	// Subsequent updates are handled via heartbeat ack notifications
 	initialDelay := 30*time.Second + time.Duration(os.Getpid()%30)*time.Second
-	log.Printf("Starting update loop, first check in %v", initialDelay)
+	log.Printf("Update checker: initial check in %v (subsequent updates via heartbeat)", initialDelay)
 
 	select {
 	case <-ctx.Done():
@@ -457,15 +460,12 @@ func (u *Updater) RunUpdateLoop(ctx context.Context) {
 
 	u.checkAndUpdate(ctx)
 
-	ticker := time.NewTicker(u.checkInterval)
-	defer ticker.Stop()
-
+	// Only handle force checks now - periodic checks removed
+	// Updates are now notified via heartbeat ack from server
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			u.checkAndUpdate(ctx)
 		case <-u.forceCheck:
 			log.Println("Forced update check triggered")
 			u.checkAndUpdate(ctx)
