@@ -82,7 +82,7 @@ export function Scripts() {
             <div className="p-4 border-b border-border">
               <h2 className="font-semibold text-text-primary">Script Library</h2>
             </div>
-            <div className="divide-y divide-border max-h-[600px] overflow-auto">
+            <div className="divide-y divide-border max-h-[calc(100vh-280px)] overflow-auto">
               {loading ? (
                 <p className="p-4 text-text-secondary">Loading scripts...</p>
               ) : scripts.length === 0 ? (
@@ -136,7 +136,7 @@ export function Scripts() {
                   <span>OS: {selectedScript.osTypes.length > 0 ? selectedScript.osTypes.join(', ') : 'All'}</span>
                   <span>Updated: {new Date(selectedScript.updatedAt).toLocaleDateString()}</span>
                 </div>
-                <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg text-sm overflow-auto max-h-[400px] font-mono">
+                <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg text-sm overflow-auto max-h-[calc(100vh-500px)] min-h-[200px] font-mono">
                   {selectedScript.content}
                 </pre>
               </div>
@@ -208,7 +208,7 @@ function ExecuteScriptForm({ scriptId }: { scriptId: string }) {
       <h3 className="font-semibold text-text-primary">Execute Script</h3>
       <div>
         <label className="label">Select Devices</label>
-        <div className="border border-border rounded-lg max-h-40 overflow-auto">
+        <div className="border border-border rounded-lg max-h-[min(200px,30vh)] overflow-auto">
           {devices.length === 0 ? (
             <p className="p-4 text-text-secondary text-sm">No online devices available</p>
           ) : (

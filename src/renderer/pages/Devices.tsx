@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useDeviceStore, Device } from '../stores/deviceStore';
 import { useClientStore } from '../stores/clientStore';
 import { api } from '../services/api';
@@ -66,7 +67,7 @@ const linkStatusConfig: Record<string, { label: string; color: string }> = {
 };
 
 export function Devices({ onDeviceSelect }: DevicesProps) {
-  const { devices, loading, deleteDevice, disableDevice, enableDevice, uninstallDevice } = useDeviceStore();
+  const { devices, loading, deleteDevice, disableDevice, enableDevice, uninstallDevice, forceUpdateDevice } = useDeviceStore();
   const { clients, currentClientId } = useClientStore();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -76,7 +77,10 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
     return clients.find(c => c.id === clientId);
   };
   const [actionMenu, setActionMenu] = useState<string | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const [confirmAction, setConfirmAction] = useState<{ deviceId: string; action: 'disable' | 'uninstall' } | null>(null);
+  const [forceUpdating, setForceUpdating] = useState<string | null>(null);
+  const [actionResult, setActionResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [activeTab, setActiveTab] = useState<'devices' | 'installation'>('devices');
   const [installationSubTab, setInstallationSubTab] = useState<'download' | 'links'>('download');
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null);
@@ -113,7 +117,10 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
 
   // Close action menu when clicking outside
   useEffect(() => {
-    const handleClickOutside = () => setActionMenu(null);
+    const handleClickOutside = () => {
+      setActionMenu(null);
+      setMenuPosition(null);
+    };
     if (actionMenu) {
       document.addEventListener('click', handleClickOutside);
       return () => document.removeEventListener('click', handleClickOutside);
@@ -382,6 +389,22 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
     }
   };
 
+  const handleForceUpdate = async (id: string) => {
+    setForceUpdating(id);
+    setActionMenu(null);
+    setMenuPosition(null);
+    try {
+      await forceUpdateDevice(id);
+      setActionResult({ type: 'success', message: 'Force update command sent. The agent will check for updates shortly.' });
+    } catch (error) {
+      console.error('Failed to trigger force update:', error);
+      setActionResult({ type: 'error', message: 'Failed to send force update command.' });
+    } finally {
+      setForceUpdating(null);
+      setTimeout(() => setActionResult(null), 5000);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -419,6 +442,42 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
 
       {activeTab === 'devices' && (
         <>
+          {/* Action Result Toast */}
+          {actionResult && (
+            <div className={`p-4 rounded-lg flex items-center gap-3 ${
+              actionResult.type === 'success'
+                ? 'bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800'
+                : 'bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800'
+            }`}>
+              {actionResult.type === 'success' ? (
+                <CheckIcon className="w-5 h-5 text-green-600 dark:text-green-400" />
+              ) : (
+                <ErrorIcon className="w-5 h-5 text-red-600 dark:text-red-400" />
+              )}
+              <span className={`text-sm flex-1 ${
+                actionResult.type === 'success' ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'
+              }`}>
+                {actionResult.message}
+              </span>
+              <button
+                onClick={() => setActionResult(null)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              >
+                <CloseIcon className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
+          {/* Force Update Loading Indicator */}
+          {forceUpdating && (
+            <div className="p-4 rounded-lg flex items-center gap-3 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800">
+              <SpinnerIcon />
+              <span className="text-sm text-blue-700 dark:text-blue-300">
+                Sending force update command...
+              </span>
+            </div>
+          )}
+
           {/* Filters */}
           <div className="flex gap-4">
             <div className="flex-1">
@@ -470,9 +529,10 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
               </p>
             </div>
           ) : (
-            <div className="card overflow-x-auto">
+            <div className="card flex flex-col max-h-[calc(100vh-280px)]">
+              <div className="overflow-auto flex-1 relative">
               <table>
-                <thead>
+                <thead className="sticky top-0 bg-surface z-10">
                   <tr>
                     <th>Status</th>
                     <th>Hostname</th>
@@ -532,14 +592,14 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                         {formatLastSeen(device.lastSeen)}
                       </td>
                       <td className="text-sm">{device.agentVersion}</td>
-                      <td onClick={e => e.stopPropagation()} className="relative">
+                      <td onClick={e => e.stopPropagation()} className="relative overflow-visible">
                         {confirmAction?.deviceId === device.id ? (
                           <div className="flex gap-2">
                             <button
                               onClick={() => confirmAction.action === 'disable' ? handleDisable(device.id) : handleUninstall(device.id)}
                               className="btn btn-danger text-xs py-1"
                             >
-                              {confirmAction.action === 'disable' ? 'Disable' : 'Uninstall'}
+                              {confirmAction.action === 'disable' ? 'Confirm' : 'Confirm'}
                             </button>
                             <button
                               onClick={() => setConfirmAction(null)}
@@ -553,22 +613,30 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setActionMenu(actionMenu === device.id ? null : device.id);
+                                if (actionMenu === device.id) {
+                                  setActionMenu(null);
+                                  setMenuPosition(null);
+                                } else {
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  setMenuPosition({ x: rect.right, y: rect.bottom });
+                                  setActionMenu(device.id);
+                                }
                               }}
                               className="text-text-secondary hover:text-text-primary transition-colors p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
                               title="Device actions"
                             >
                               <MoreIcon className="w-4 h-4" />
                             </button>
-                            {actionMenu === device.id && (
-                              <div 
+                            {actionMenu === device.id && menuPosition && createPortal(
+                              <div
                                 onClick={(e) => e.stopPropagation()}
-                                className="absolute right-0 top-full mt-1 bg-surface border border-border rounded-lg shadow-lg z-50 min-w-[160px]"
+                                className="fixed bg-surface border border-border rounded-lg shadow-lg z-[9999] min-w-[160px]"
+                                style={{ top: menuPosition.y + 4, left: menuPosition.x - 160 }}
                               >
                                 {device.status === 'disabled' ? (
                                   <button
                                     onClick={() => handleEnable(device.id)}
-                                    className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 text-success flex items-center gap-2"
+                                    className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 text-success flex items-center gap-2 rounded-t-lg"
                                   >
                                     <EnableIcon className="w-4 h-4" />
                                     Enable Device
@@ -579,26 +647,36 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                                       setConfirmAction({ deviceId: device.id, action: 'disable' });
                                       setActionMenu(null);
                                     }}
-                                    className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 text-warning flex items-center gap-2"
+                                    className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 text-warning flex items-center gap-2 rounded-t-lg"
                                   >
                                     <DisableIcon className="w-4 h-4" />
                                     Disable Device
                                   </button>
                                 )}
+                                <button
+                                  onClick={() => handleForceUpdate(device.id)}
+                                  className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 text-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  disabled={device.status !== 'online'}
+                                  title={device.status !== 'online' ? 'Device must be online to force update' : 'Force the agent to check for updates'}
+                                >
+                                  <UpdateIcon className="w-4 h-4" />
+                                  Force Update
+                                </button>
                                 <div className="border-t border-border"></div>
                                 <button
                                   onClick={() => {
                                     setConfirmAction({ deviceId: device.id, action: 'uninstall' });
                                     setActionMenu(null);
                                   }}
-                                  className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 text-danger flex items-center gap-2"
+                                  className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 text-danger flex items-center gap-2 rounded-b-lg"
                                   disabled={device.status !== 'online'}
                                   title={device.status !== 'online' ? 'Device must be online to uninstall' : 'Uninstall agent from device'}
                                 >
                                   <TrashIcon className="w-4 h-4" />
                                   Uninstall Agent
                                 </button>
-                              </div>
+                              </div>,
+                              document.body
                             )}
                           </div>
                         )}
@@ -607,6 +685,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
           )}
         </>
@@ -809,10 +888,10 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                 </select>
               </div>
 
-              <div className="card overflow-hidden">
-                <div className="overflow-x-auto">
+              <div className="card overflow-hidden flex flex-col max-h-[calc(100vh-400px)]">
+                <div className="overflow-auto flex-1">
                   <table>
-                    <thead><tr><th>Device</th><th>User</th><th>Status</th><th>Created</th><th>Downloads</th><th className="text-right">Actions</th></tr></thead>
+                    <thead className="sticky top-0 bg-surface z-10"><tr><th>Device</th><th>User</th><th>Status</th><th>Created</th><th>Downloads</th><th className="text-right">Actions</th></tr></thead>
                     <tbody>
                       {linksLoading ? (
                         <tr><td colSpan={6} className="text-center py-12"><SpinnerIcon /></td></tr>
@@ -1179,6 +1258,14 @@ function InfoIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  );
+}
+
+function UpdateIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
     </svg>
   );
 }

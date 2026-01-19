@@ -23,31 +23,48 @@ interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   error: string | null;
+  _authChecked: boolean; // Flag to prevent duplicate checkAuth calls
   login: (identifier: string, password: string) => Promise<void>;
   logout: () => void;
   checkAuth: () => Promise<void>;
   clearError: () => void;
 }
 
-// Clear any stale auth storage on page load in web mode
-if (isWeb) {
-  console.log('[AuthStore] Web mode - clearing stale auth storage');
-  // Check for force clear parameter
-  if (window.location.search.includes('clear')) {
-    console.log('[AuthStore] Force clear requested');
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    localStorage.removeItem('auth-storage');
-    window.history.replaceState({}, '', window.location.pathname);
-  }
+// Check for force clear parameter in web mode
+if (isWeb && window.location.search.includes('clear')) {
+  console.log('[AuthStore] Force clear requested');
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
+  localStorage.removeItem('auth-storage');
+  window.history.replaceState({}, '', window.location.pathname);
 }
+
+// Initialize auth state from localStorage synchronously to prevent flash redirect
+function getInitialAuthState(): { token: string | null; isAuthenticated: boolean; isLoading: boolean } {
+  if (isElectron) {
+    return { token: null, isAuthenticated: true, isLoading: false };
+  }
+
+  const token = localStorage.getItem('token');
+  if (token) {
+    // Token exists - mark as loading until validated, but don't redirect yet
+    console.log('[AuthStore] Found token in localStorage, will validate');
+    return { token, isAuthenticated: false, isLoading: true };
+  }
+
+  console.log('[AuthStore] No token in localStorage');
+  return { token: null, isAuthenticated: false, isLoading: false };
+}
+
+const initialState = getInitialAuthState();
 
 export const useAuthStore = create<AuthState>()((set, get) => ({
   user: null,
-  token: null,
-  isAuthenticated: isElectron, // Electron is always "authenticated" (main process handles it)
-  isLoading: false, // Start as false - checkAuth will set to true if needed
+  token: initialState.token,
+  isAuthenticated: initialState.isAuthenticated,
+  isLoading: initialState.isLoading, // True if token exists and needs validation
   error: null,
+  _authChecked: false, // Prevents duplicate checkAuth calls
 
   login: async (identifier: string, password: string) => {
     if (isElectron) {
@@ -109,10 +126,18 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   },
 
   checkAuth: async () => {
+    const state = get();
+
+    // Prevent duplicate calls
+    if (state._authChecked) {
+      console.log('[AuthStore] checkAuth already completed, skipping');
+      return;
+    }
+
     console.log('[AuthStore] checkAuth called');
 
     if (isElectron) {
-      set({ isAuthenticated: true, isLoading: false });
+      set({ isAuthenticated: true, isLoading: false, _authChecked: true });
       return;
     }
 
@@ -121,11 +146,14 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
     if (!token) {
       console.log('[AuthStore] No token, showing login');
-      set({ isLoading: false, isAuthenticated: false });
+      set({ isLoading: false, isAuthenticated: false, _authChecked: true });
       return;
     }
 
-    set({ isLoading: true });
+    // Only set isLoading if not already true (from initial state)
+    if (!state.isLoading) {
+      set({ isLoading: true });
+    }
 
     try {
       console.log('[AuthStore] Validating token...');
@@ -141,6 +169,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         token,
         isAuthenticated: true,
         isLoading: false,
+        _authChecked: true,
       });
 
       connection.connect();
@@ -153,6 +182,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         token: null,
         isAuthenticated: false,
         isLoading: false,
+        _authChecked: true,
       });
     }
   },

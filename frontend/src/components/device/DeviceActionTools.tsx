@@ -185,11 +185,11 @@ export const DeviceActionTools = memo(function DeviceActionTools({
         </div>
       </Modal>
 
-      {/* Uninstall Modal */}
+      {/* Uninstall Confirmation Modal */}
       <Modal
         isOpen={showUninstallModal}
         onClose={() => setShowUninstallModal(false)}
-        title="Uninstall Agent"
+        title="Confirm Uninstall"
         size="md"
       >
         <div className="space-y-4">
@@ -219,7 +219,7 @@ export const DeviceActionTools = memo(function DeviceActionTools({
               isLoading={uninstallAgentMutation.isPending}
               className="bg-red-600 hover:bg-red-700"
             >
-              Uninstall Agent
+              Yes, Uninstall
             </Button>
           </div>
         </div>

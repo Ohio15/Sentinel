@@ -128,6 +128,7 @@ interface DeviceState {
   disableDevice: (id: string) => Promise<void>;
   enableDevice: (id: string) => Promise<void>;
   uninstallDevice: (id: string) => Promise<void>;
+  forceUpdateDevice: (id: string) => Promise<void>;
   subscribeToUpdates: () => () => void;
 }
 
@@ -234,6 +235,15 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
           ? { ...selectedDevice, status: 'uninstalling' as const }
           : selectedDevice
       });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error' });
+      throw error;
+    }
+  },
+
+  forceUpdateDevice: async (id: string) => {
+    try {
+      await devicesService.forceUpdate(id);
     } catch (error: unknown) {
       set({ error: error instanceof Error ? error.message : 'Unknown error' });
       throw error;

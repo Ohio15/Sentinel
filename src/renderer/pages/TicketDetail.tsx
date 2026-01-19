@@ -328,7 +328,8 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
                       No comments yet. Add the first comment below.
                     </p>
                   ) : (
-                    ticketComments.map((comment) => (
+                    <div className="max-h-[calc(100vh-550px)] overflow-auto space-y-4">
+                    {ticketComments.map((comment) => (
                       <div
                         key={comment.id}
                         className={`p-4 rounded-lg ${
@@ -356,7 +357,8 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
                           {comment.content}
                         </div>
                       </div>
-                    ))
+                    ))}
+                    </div>
                   )}
 
                   {/* Add Comment */}
@@ -404,7 +406,7 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
                   </div>
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-3 max-h-[calc(100vh-450px)] overflow-auto">
                   {ticketActivity.length === 0 ? (
                     <p className="text-text-secondary text-center py-4">
                       No activity recorded.

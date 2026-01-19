@@ -206,7 +206,7 @@ export function TagManager({
 
       {/* Dropdown */}
       {isOpen && !disabled && (filteredTags.length > 0 || canCreateNew) && (
-        <div className="absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+        <div className="absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg max-h-[min(250px,40vh)] overflow-y-auto">
           {filteredTags.map((tag, index) => (
             <button
               key={tag.id}

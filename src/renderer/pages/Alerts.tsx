@@ -98,7 +98,7 @@ export function Alerts() {
               <p className="text-text-secondary">No alerts found</p>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-3 max-h-[calc(100vh-280px)] overflow-auto pr-2">
               {filteredAlerts.map(alert => (
                 <AlertCard
                   key={alert.id}
@@ -125,9 +125,10 @@ export function Alerts() {
               <p className="text-text-secondary">No alert rules configured</p>
             </div>
           ) : (
-            <div className="card overflow-hidden">
+            <div className="card overflow-hidden flex flex-col max-h-[calc(100vh-280px)]">
+              <div className="overflow-auto flex-1">
               <table>
-                <thead>
+                <thead className="sticky top-0 bg-surface z-10">
                   <tr>
                     <th>Name</th>
                     <th>Metric</th>
@@ -185,6 +186,7 @@ export function Alerts() {
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
           )}
         </>

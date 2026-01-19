@@ -66,6 +66,7 @@ const (
 	MsgTypeCertUpdateAck     = "cert_update_ack"
 	// System update status
 	MsgTypeUpdateStatus = "update_status"
+	MsgTypeForceUpdate  = "force_update"
 	// Sync protocol messages
 	MsgTypeSyncRequest    = "sync_request"
 	MsgTypeSyncResponse   = "sync_response"

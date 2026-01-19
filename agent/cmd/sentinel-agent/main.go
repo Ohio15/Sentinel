@@ -36,7 +36,7 @@ import (
 	"github.com/sentinel/agent/internal/admin"
 )
 
-var Version = "1.67.3"
+var Version = "1.67.8"
 
 const ServiceName = "SentinelAgent"
 
@@ -522,6 +522,8 @@ func (a *Agent) registerHandlers() {
 	a.client.RegisterHandler(client.MsgTypeSetMetricsInterval, a.handleSetMetricsInterval)
 	// Certificate management handlers
 	a.client.RegisterHandler(client.MsgTypeUpdateCertificate, a.handleUpdateCertificate)
+	// Update handlers
+	a.client.RegisterHandler(client.MsgTypeForceUpdate, a.handleForceUpdate)
 }
 
 func (a *Agent) onConnect() {
@@ -1481,5 +1483,51 @@ func (a *Agent) handleUpdateCertificate(msg *client.Message) error {
 	}
 
 	log.Println("[Certs] Certificate update acknowledged")
+	return nil
+}
+
+// handleForceUpdate triggers an immediate update check
+func (a *Agent) handleForceUpdate(msg *client.Message) error {
+	log.Println("[Update] Received force update request from server")
+
+	// Send acknowledgment immediately
+	if err := a.client.SendResponse(msg.RequestID, true, map[string]interface{}{
+		"status": "checking",
+	}, ""); err != nil {
+		log.Printf("[Update] Failed to send acknowledgment: %v", err)
+	}
+
+	// Trigger update check in background
+	go func() {
+		log.Println("[Update] Starting forced update check...")
+		result, err := a.updater.CheckForUpdate(a.ctx)
+		if err != nil {
+			log.Printf("[Update] Force update check failed: %v", err)
+			return
+		}
+
+		if !result.Available {
+			log.Printf("[Update] No update available (current: v%s)", Version)
+			return
+		}
+
+		log.Printf("[Update] Update available: v%s -> v%s, downloading...", Version, result.LatestVersion)
+
+		// Download and apply the update
+		downloadPath, err := a.updater.DownloadUpdate(a.ctx, result.VersionInfo)
+		if err != nil {
+			log.Printf("[Update] Failed to download update: %v", err)
+			return
+		}
+
+		if err := a.updater.ApplyUpdate(a.ctx, downloadPath, result.VersionInfo); err != nil {
+			log.Printf("[Update] Failed to apply update: %v", err)
+			os.Remove(downloadPath)
+			return
+		}
+
+		log.Println("[Update] Update applied successfully, agent will restart")
+	}()
+
 	return nil
 }

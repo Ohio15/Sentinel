@@ -117,6 +117,13 @@ export const devices = {
     }
     return api!.pingAgent(id) as Promise<{ success: boolean; latency?: number }>;
   },
+
+  async forceUpdate(id: string): Promise<void> {
+    if (isElectron) {
+      return (window as any).api.devices.forceUpdate?.(id);
+    }
+    return api!.forceUpdate(id) as unknown as void;
+  },
 };
 
 // Alerts Service Adapter

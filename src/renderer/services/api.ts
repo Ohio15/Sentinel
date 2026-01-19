@@ -188,6 +188,10 @@ class ApiService {
     return this.post<unknown>(`/devices/${deviceId}/uninstall`);
   }
 
+  async forceUpdate(deviceId: string) {
+    return this.post<unknown>(`/devices/${deviceId}/force-update`);
+  }
+
   // Script endpoints
   async getScripts(params?: { language?: string; search?: string }) {
     const stringParams: Record<string, string> = {};
