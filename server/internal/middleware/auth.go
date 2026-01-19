@@ -104,6 +104,7 @@ func AgentAuthMiddleware(enrollmentToken string) gin.HandlerFunc {
 
 func AuthOrAPIKeyMiddleware(jwtSecret, apiKey string) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		log.Printf("[AUTH] Processing request: %s %s", c.Request.Method, c.Request.URL.Path)
 		// Check for API key first
 		if key := c.GetHeader("X-API-Key"); key != "" && apiKey != "" {
 			if subtle.ConstantTimeCompare([]byte(key), []byte(apiKey)) == 1 {
@@ -146,6 +147,7 @@ func AuthOrAPIKeyMiddleware(jwtSecret, apiKey string) gin.HandlerFunc {
 		})
 
 		if err != nil {
+			log.Printf("[AUTH] JWT parse error: %v", err)
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
 			c.Abort()
 			return
