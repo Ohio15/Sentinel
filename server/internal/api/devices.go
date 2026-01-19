@@ -676,8 +676,11 @@ func (r *Router) getCommand(c *gin.Context) {
 
 // uninstallAgent sends an uninstall command to the agent
 func (r *Router) uninstallAgent(c *gin.Context) {
+	log.Printf("[Uninstall] Received uninstall request for device %s", c.Param("id"))
+
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
+		log.Printf("[Uninstall] Invalid device ID: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid device ID"})
 		return
 	}
@@ -688,15 +691,19 @@ func (r *Router) uninstallAgent(c *gin.Context) {
 	var agentID string
 	err = r.db.Pool().QueryRow(ctx, "SELECT agent_id FROM devices WHERE id = $1 AND organization_id = $2", id, constants.CurrentOrganizationID).Scan(&agentID)
 	if err != nil {
+		log.Printf("[Uninstall] Device not found: %v", err)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
 		return
 	}
+	log.Printf("[Uninstall] Found device with agent_id: %s", agentID)
 
 	// Check if agent is online
 	if !r.hub.IsAgentOnline(agentID) {
+		log.Printf("[Uninstall] Agent %s is offline", agentID)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Device is offline. Cannot uninstall an offline agent."})
 		return
 	}
+	log.Printf("[Uninstall] Agent %s is online, proceeding with uninstall", agentID)
 
 	// Generate an uninstall token for security
 	uninstallToken := uuid.New().String()
@@ -817,5 +824,51 @@ func (r *Router) pingAgent(c *gin.Context) {
 		"status":    "online",
 		"message":   "Agent is connected and responsive",
 		"requestId": requestID,
+	})
+}
+
+// forceUpdate sends a command to the agent to trigger an immediate update check
+func (r *Router) forceUpdate(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid device ID"})
+		return
+	}
+
+	ctx := context.Background()
+
+	// Get device agent ID and current version
+	var agentID, currentVersion string
+	err = r.db.Pool().QueryRow(ctx, "SELECT agent_id, COALESCE(agent_version, '') FROM devices WHERE id = $1 AND organization_id = $2", id, constants.CurrentOrganizationID).Scan(&agentID, &currentVersion)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
+		return
+	}
+
+	// Check if agent is online
+	if !r.hub.IsAgentOnline(agentID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Device is offline. Cannot send update command to offline agent."})
+		return
+	}
+
+	log.Printf("[ForceUpdate] Sending force update command to agent %s (current version: %s)", agentID, currentVersion)
+
+	// Send force update command to agent
+	requestID := uuid.New().String()
+	msg := websocket.Message{
+		Type:      "force_update",
+		RequestID: requestID,
+	}
+
+	msgBytes, _ := json.Marshal(msg)
+	if err := r.hub.SendToAgent(agentID, msgBytes); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send update command to agent"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":        "Update check triggered",
+		"requestId":      requestID,
+		"currentVersion": currentVersion,
 	})
 }

@@ -12,15 +12,25 @@ class ApiService {
       headers: {
         'Content-Type': 'application/json',
       },
+      withCredentials: true, // Send cookies for CSRF
     });
 
-    // Request interceptor to add auth token
+    // Request interceptor to add auth token and CSRF token
     this.client.interceptors.request.use(
       (config) => {
         const token = localStorage.getItem('token');
         if (token) {
           config.headers.Authorization = `Bearer ${token}`;
         }
+
+        // Add CSRF token for state-changing requests
+        if (config.method && !['get', 'head', 'options'].includes(config.method.toLowerCase())) {
+          const csrfToken = localStorage.getItem('csrfToken');
+          if (csrfToken) {
+            config.headers['X-CSRF-Token'] = csrfToken;
+          }
+        }
+
         return config;
       },
       (error) => Promise.reject(error)
@@ -37,6 +47,7 @@ class ApiService {
 
           if (!isLoginRequest && !isOnLoginPage) {
             localStorage.removeItem('token');
+            localStorage.removeItem('csrfToken');
             localStorage.removeItem('user');
             localStorage.removeItem('auth-storage');
             window.location.href = '/login';

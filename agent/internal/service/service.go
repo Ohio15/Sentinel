@@ -264,23 +264,23 @@ func UninstallWithToken(serverURL, deviceID, uninstallToken string) error {
 		}
 	}
 
+	// CRITICAL: Stop the watchdog FIRST before stopping the main agent
+	// Otherwise the watchdog will restart the agent immediately
+	log.Println("Stopping watchdog service first...")
+	stopWatchdog()
+
+	// Brief delay to ensure watchdog is fully stopped
+	time.Sleep(1 * time.Second)
+
 	svc, err := New(nil, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create service: %w", err)
 	}
 
-	// Stop the service first
-	status, err := svc.Status()
-	if err == nil && status == service.StatusRunning {
-		if err := svc.Stop(); err != nil {
-			log.Printf("Warning: failed to stop service: %v", err)
-		}
-	}
-
-	// Also stop the watchdog if running
-	stopWatchdog()
-
-	// Uninstall the service
+	// Uninstall the service directly - this will stop it as part of the uninstall process
+	// Do NOT call svc.Stop() first, as that causes the current process to exit
+	// before Uninstall() can complete when running from within the service
+	log.Println("Uninstalling main agent service...")
 	if err := svc.Uninstall(); err != nil {
 		return fmt.Errorf("failed to uninstall service: %w", err)
 	}

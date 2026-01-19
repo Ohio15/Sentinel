@@ -1,7 +1,7 @@
 {
-  "version": "1.67.6",
-  "releaseDate": "2026-01-13",
-  "changelog": "- Fixed agent health check to use /api/agent/version endpoint (works on port 8443)\n- Agent now connects properly when server only exposes agent routes on mTLS port",
+  "version": "1.67.8",
+  "releaseDate": "2026-01-19",
+  "changelog": "- Fixed uninstall not removing main service (process exited before uninstall completed)",
   "platforms": [
     "windows",
     "linux",

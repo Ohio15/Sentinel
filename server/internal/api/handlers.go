@@ -176,8 +176,46 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 		return
 	}
 
-	// Verify token
-	if authPayload.Token != r.config.EnrollmentToken {
+	// Verify token against database (enrollment_tokens table)
+	// Tokens can be either:
+	// 1. Legacy ENROLLMENT_TOKEN env var (36-char UUID)
+	// 2. Installation link tokens (64-char hex from enrollment_tokens table)
+	tokenValid := false
+
+	// First check against database (primary method for installation links)
+	var tokenID uuid.UUID
+	var isActive bool
+	var expiresAt *time.Time
+
+	err = r.db.Pool().QueryRow(context.Background(), `
+		SELECT id, is_active, expires_at
+		FROM enrollment_tokens WHERE token = $1
+	`, authPayload.Token).Scan(&tokenID, &isActive, &expiresAt)
+
+	if err == nil {
+		// Token found in database - validate it
+		if !isActive {
+			conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Token is disabled"}`)})
+			conn.Close()
+			return
+		}
+		if expiresAt != nil && time.Now().After(*expiresAt) {
+			conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Token has expired"}`)})
+			conn.Close()
+			return
+		}
+		// NOTE: We do NOT check max_uses for WebSocket connections.
+		// max_uses limits how many devices can install using one link.
+		// Once a device is installed, it can reconnect unlimited times.
+		tokenValid = true
+	} else {
+		// Token not found in database - check legacy env var
+		if r.config.EnrollmentToken != "" && authPayload.Token == r.config.EnrollmentToken {
+			tokenValid = true
+		}
+	}
+
+	if !tokenValid {
 		conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Invalid token"}`)})
 		conn.Close()
 		return

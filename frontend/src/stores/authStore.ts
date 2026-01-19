@@ -29,9 +29,12 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true, error: null });
         try {
           const response = await api.login(identifier, password);
-          const { accessToken, user } = response;
+          const { accessToken, csrfToken, user } = response;
 
           localStorage.setItem('token', accessToken);
+          if (csrfToken) {
+            localStorage.setItem('csrfToken', csrfToken);
+          }
           set({
             user,
             token: accessToken,
@@ -60,6 +63,7 @@ export const useAuthStore = create<AuthState>()(
           // Ignore logout errors
         });
         localStorage.removeItem('token');
+        localStorage.removeItem('csrfToken');
         wsService.disconnect();
         set({
           user: null,

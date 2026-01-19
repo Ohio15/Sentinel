@@ -302,7 +302,7 @@ export function CategorySelector({
       </button>
 
       {isOpen && (
-        <div className="absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg max-h-64 overflow-y-auto">
+        <div className="absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg max-h-[min(300px,50vh)] overflow-y-auto">
           {categoryTree.length === 0 ? (
             <div className="px-3 py-4 text-sm text-gray-500 dark:text-gray-400 text-center">
               No categories available

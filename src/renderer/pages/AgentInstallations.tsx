@@ -290,10 +290,10 @@ export default function AgentInstallations() {
       </div>
 
       {viewMode === 'links' && (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-          <div className="overflow-x-auto">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col max-h-[calc(100vh-320px)]">
+          <div className="overflow-auto flex-1">
             <table className="w-full">
-              <thead className="bg-gray-50">
+              <thead className="bg-gray-50 sticky top-0 z-10">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Device</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
@@ -352,6 +352,7 @@ export default function AgentInstallations() {
               </tbody>
             </table>
           </div>
+          </div>
           {totalPages > 1 && (
             <div className="px-6 py-3 border-t border-gray-200 flex items-center justify-between">
               <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}
@@ -365,10 +366,10 @@ export default function AgentInstallations() {
       )}
 
       {viewMode === 'codes' && (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-          <div className="overflow-x-auto">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col max-h-[calc(100vh-320px)]">
+          <div className="overflow-auto flex-1">
             <table className="w-full">
-              <thead className="bg-gray-50">
+              <thead className="bg-gray-50 sticky top-0 z-10">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Code</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Device Name</th>
@@ -404,6 +405,7 @@ export default function AgentInstallations() {
                 ))}
               </tbody>
             </table>
+          </div>
           </div>
         </div>
       )}

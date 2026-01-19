@@ -342,7 +342,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
       {/* Tab Content */}
       <div className="min-h-[500px]">
         {activeTab === 'overview' && (
-          <div className="space-y-6">
+          <div className="space-y-6 max-h-[calc(100vh-280px)] overflow-auto pr-2">
             {/* Summary Cards - metrics subscription handled by component */}
             <OverviewMetrics
               deviceId={deviceId}
@@ -587,7 +587,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                 </button>
               </div>
               {commandOutput && (
-                <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg text-sm overflow-auto max-h-64 font-mono">
+                <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg text-sm overflow-auto max-h-[min(300px,40vh)] font-mono">
                   {commandOutput}
                 </pre>
               )}
@@ -634,9 +634,9 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
             ) : commandHistory.length === 0 ? (
               <p className="text-text-secondary">No commands have been executed on this device yet.</p>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="overflow-auto max-h-[calc(100vh-350px)]">
                 <table className="w-full">
-                  <thead>
+                  <thead className="sticky top-0 bg-surface">
                     <tr className="border-b border-border">
                       <th className="text-left py-2 px-3 text-sm font-medium text-text-secondary">Time</th>
                       <th className="text-left py-2 px-3 text-sm font-medium text-text-secondary">Type</th>
@@ -691,7 +691,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                                 {cmd.output && (
                                   <div>
                                     <div className="text-xs font-semibold text-text-secondary mb-1">Output:</div>
-                                    <pre className="bg-gray-900 text-gray-100 p-3 rounded-lg text-xs overflow-auto max-h-48 font-mono whitespace-pre-wrap">
+                                    <pre className="bg-gray-900 text-gray-100 p-3 rounded-lg text-xs overflow-auto max-h-[min(200px,30vh)] font-mono whitespace-pre-wrap">
                                       {cmd.output}
                                     </pre>
                                   </div>
@@ -699,7 +699,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                                 {cmd.errorMessage && (
                                   <div>
                                     <div className="text-xs font-semibold text-red-600 mb-1">Error:</div>
-                                    <pre className="bg-red-50 text-red-800 p-3 rounded-lg text-xs overflow-auto max-h-48 font-mono whitespace-pre-wrap">
+                                    <pre className="bg-red-50 text-red-800 p-3 rounded-lg text-xs overflow-auto max-h-[min(200px,30vh)] font-mono whitespace-pre-wrap">
                                       {cmd.errorMessage}
                                     </pre>
                                   </div>

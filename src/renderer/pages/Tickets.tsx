@@ -252,7 +252,7 @@ export function Tickets({ onTicketSelect, onViewChange }: TicketsProps) {
       </div>
 
       {/* Tickets Table */}
-      <div className="card overflow-hidden">
+      <div className="card overflow-hidden flex flex-col max-h-[calc(100vh-420px)]">
         {loading ? (
           <div className="p-8 text-center text-text-secondary">Loading tickets...</div>
         ) : filteredTickets.length === 0 ? (
@@ -262,9 +262,10 @@ export function Tickets({ onTicketSelect, onViewChange }: TicketsProps) {
               : 'No tickets match your filters.'}
           </div>
         ) : (
+          <div className="overflow-auto flex-1">
           <table className="w-full">
-            <thead>
-              <tr className="bg-gray-50 dark:bg-slate-800">
+            <thead className="sticky top-0 bg-gray-50 dark:bg-slate-800 z-10">
+              <tr>
                 <th className="text-left">Ticket</th>
                 <th className="text-left">Status</th>
                 <th className="text-left">Priority</th>
@@ -335,6 +336,7 @@ export function Tickets({ onTicketSelect, onViewChange }: TicketsProps) {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 

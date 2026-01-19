@@ -109,6 +109,7 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 			protected.POST("/devices/:id/disable", middleware.RequireRole("admin", "operator"), router.disableDevice)
 			protected.POST("/devices/:id/enable", middleware.RequireRole("admin", "operator"), router.enableDevice)
 			protected.POST("/devices/:id/ping", router.pingAgent)
+			protected.POST("/devices/:id/force-update", middleware.RequireRole("admin"), router.forceUpdate)
 			protected.GET("/devices/:id/commands", router.listDeviceCommands)
 
 			// Commands
@@ -281,6 +282,7 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			protected.POST("/devices/:id/disable", middleware.RequireRole("admin", "operator"), disableDeviceHandler(services))
 			protected.POST("/devices/:id/enable", middleware.RequireRole("admin", "operator"), enableDeviceHandler(services))
 			protected.POST("/devices/:id/ping", pingAgentHandler(services))
+			protected.POST("/devices/:id/force-update", middleware.RequireRole("admin"), forceUpdateHandler(services))
 			protected.GET("/devices/:id/commands", listDeviceCommandsHandler(services))
 
 			// Inventory endpoints (new)

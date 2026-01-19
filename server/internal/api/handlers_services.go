@@ -139,6 +139,11 @@ func pingAgentHandler(services *Services) gin.HandlerFunc {
 	return router.pingAgent
 }
 
+func forceUpdateHandler(services *Services) gin.HandlerFunc {
+	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub}
+	return router.forceUpdate
+}
+
 func listDeviceCommandsHandler(services *Services) gin.HandlerFunc {
 	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub}
 	return router.listDeviceCommands
