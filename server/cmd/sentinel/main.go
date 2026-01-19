@@ -22,6 +22,7 @@ import (
 )
 
 func main() {
+	log.Println("[STARTUP] Code version: auth-debug-v2 - 2026-01-19T23:22")
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
