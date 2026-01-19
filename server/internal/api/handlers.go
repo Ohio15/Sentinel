@@ -394,8 +394,21 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 			}
 		}
 
+		// Build heartbeat ack - include update info if newer version available
+		ackPayload := map[string]interface{}{}
+
+		latestVersion := getCurrentAgentVersion()
+		if heartbeat.AgentVersion != "" && isNewerVersion(latestVersion, heartbeat.AgentVersion) {
+			ackPayload["updateAvailable"] = true
+			ackPayload["latestVersion"] = latestVersion
+			log.Printf("Agent %s has update available: %s -> %s", agentID, heartbeat.AgentVersion, latestVersion)
+		}
+
 		// Send ack back to agent
-		ackMsg, _ := json.Marshal(ws.Message{Type: ws.MsgTypeHeartbeatAck})
+		ackMsg, _ := json.Marshal(map[string]interface{}{
+			"type":    ws.MsgTypeHeartbeatAck,
+			"payload": ackPayload,
+		})
 		r.hub.SendToAgent(agentID, ackMsg)
 
 	case ws.MsgTypeMetrics:

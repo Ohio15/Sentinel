@@ -1,7 +1,7 @@
 {
-  "version": "1.67.8",
+  "version": "1.67.9",
   "releaseDate": "2026-01-19",
-  "changelog": "- Fixed uninstall not removing main service (process exited before uninstall completed)",
+  "changelog": "- Update check now happens on every heartbeat (instant updates instead of hourly)",
   "platforms": [
     "windows",
     "linux",
