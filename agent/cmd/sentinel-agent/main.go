@@ -36,7 +36,7 @@ import (
 	"github.com/sentinel/agent/internal/admin"
 )
 
-var Version = "1.67.8"
+var Version = "1.67.9"
 
 const ServiceName = "SentinelAgent"
 
@@ -822,7 +822,40 @@ func (a *Agent) handlePing(msg *client.Message) error {
 }
 
 func (a *Agent) handleHeartbeatAck(msg *client.Message) error {
-	// Heartbeat acknowledged
+	// Check if server indicated an update is available
+	if msg.Data != nil {
+		if payload, ok := msg.Data.(map[string]interface{}); ok {
+			if updateAvailable, ok := payload["updateAvailable"].(bool); ok && updateAvailable {
+				latestVersion := ""
+				if v, ok := payload["latestVersion"].(string); ok {
+					latestVersion = v
+				}
+				log.Printf("[Update] Server indicated update available: v%s -> v%s", Version, latestVersion)
+				// Trigger update check in background
+				go func() {
+					result, err := a.updater.CheckForUpdate(a.ctx)
+					if err != nil {
+						log.Printf("[Update] Update check failed: %v", err)
+						return
+					}
+					if !result.Available {
+						log.Println("[Update] No update available after check")
+						return
+					}
+					log.Printf("[Update] Downloading update v%s...", result.LatestVersion)
+					downloadPath, err := a.updater.DownloadUpdate(a.ctx, result.VersionInfo)
+					if err != nil {
+						log.Printf("[Update] Failed to download update: %v", err)
+						return
+					}
+					if err := a.updater.ApplyUpdate(a.ctx, downloadPath, result.VersionInfo); err != nil {
+						log.Printf("[Update] Failed to apply update: %v", err)
+						os.Remove(downloadPath)
+					}
+				}()
+			}
+		}
+	}
 	return nil
 }
 
