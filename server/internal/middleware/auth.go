@@ -152,6 +152,7 @@ func AuthOrAPIKeyMiddleware(jwtSecret, apiKey string) gin.HandlerFunc {
 		}
 
 		if claims, ok := token.Claims.(*Claims); ok && token.Valid {
+			log.Printf("[AUTH] JWT claims: userId=%s, email=%s, role=%s", claims.UserID, claims.Email, claims.Role)
 			c.Set("userId", claims.UserID)
 			c.Set("email", claims.Email)
 			c.Set("role", claims.Role)
@@ -167,6 +168,7 @@ func RequireRole(roles ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userRole, exists := c.Get("role")
 		if !exists {
+			log.Printf("[AUTH] RequireRole: role not found in context for %s %s", c.Request.Method, c.Request.URL.Path)
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Role not found"})
 			c.Abort()
 			return
@@ -180,6 +182,7 @@ func RequireRole(roles ...string) gin.HandlerFunc {
 			}
 		}
 
+		log.Printf("[AUTH] RequireRole: user role '%s' not in allowed roles %v for %s %s", role, roles, c.Request.Method, c.Request.URL.Path)
 		c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions"})
 		c.Abort()
 	}
