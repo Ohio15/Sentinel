@@ -1,7 +1,7 @@
 {
-  "version": "1.67.9",
+  "version": "1.67.10",
   "releaseDate": "2026-01-19",
-  "changelog": "- Update check now happens on every heartbeat (instant updates instead of hourly)",
+  "changelog": "- Removed hourly update loop (updates now via heartbeat notifications)",
   "platforms": [
     "windows",
     "linux",
