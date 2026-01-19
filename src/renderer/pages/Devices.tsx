@@ -78,7 +78,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
   };
   const [actionMenu, setActionMenu] = useState<string | null>(null);
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
-  const [confirmAction, setConfirmAction] = useState<{ deviceId: string; action: 'disable' | 'uninstall' } | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{ deviceId: string; action: 'disable' | 'uninstall' | 'delete' } | null>(null);
   const [forceUpdating, setForceUpdating] = useState<string | null>(null);
   const [actionResult, setActionResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [activeTab, setActiveTab] = useState<'devices' | 'installation'>('devices');
@@ -389,6 +389,20 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
     }
   };
 
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteDevice(id);
+      setConfirmAction(null);
+      setActionMenu(null);
+      setActionResult({ type: 'success', message: 'Device removed from list.' });
+      setTimeout(() => setActionResult(null), 3000);
+    } catch (error) {
+      console.error('Failed to delete device:', error);
+      setActionResult({ type: 'error', message: 'Failed to delete device.' });
+      setTimeout(() => setActionResult(null), 5000);
+    }
+  };
+
   const handleForceUpdate = async (id: string) => {
     setForceUpdating(id);
     setActionMenu(null);
@@ -596,10 +610,14 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                         {confirmAction?.deviceId === device.id ? (
                           <div className="flex gap-2">
                             <button
-                              onClick={() => confirmAction.action === 'disable' ? handleDisable(device.id) : handleUninstall(device.id)}
+                              onClick={() => {
+                                if (confirmAction.action === 'disable') handleDisable(device.id);
+                                else if (confirmAction.action === 'uninstall') handleUninstall(device.id);
+                                else if (confirmAction.action === 'delete') handleDelete(device.id);
+                              }}
                               className="btn btn-danger text-xs py-1"
                             >
-                              {confirmAction.action === 'disable' ? 'Confirm' : 'Confirm'}
+                              {confirmAction.action === 'delete' ? 'Delete' : 'Confirm'}
                             </button>
                             <button
                               onClick={() => setConfirmAction(null)}
@@ -668,12 +686,23 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                                     setConfirmAction({ deviceId: device.id, action: 'uninstall' });
                                     setActionMenu(null);
                                   }}
-                                  className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 text-danger flex items-center gap-2 rounded-b-lg"
+                                  className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 text-danger flex items-center gap-2"
                                   disabled={device.status !== 'online'}
                                   title={device.status !== 'online' ? 'Device must be online to uninstall' : 'Uninstall agent from device'}
                                 >
                                   <TrashIcon className="w-4 h-4" />
                                   Uninstall Agent
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setConfirmAction({ deviceId: device.id, action: 'delete' });
+                                    setActionMenu(null);
+                                  }}
+                                  className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 text-danger flex items-center gap-2 rounded-b-lg"
+                                  title="Remove device from list (does not uninstall agent)"
+                                >
+                                  <DeleteIcon className="w-4 h-4" />
+                                  Delete Device
                                 </button>
                               </div>,
                               document.body
@@ -1127,6 +1156,14 @@ function TrashIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+    </svg>
+  );
+}
+
+function DeleteIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
     </svg>
   );
 }
