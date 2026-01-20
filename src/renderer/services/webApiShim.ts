@@ -541,11 +541,15 @@ if (isWeb && typeof (window as any).api === 'undefined') {
     certs: {
       list: async () => {
         try {
-          const result = await api!.getDeviceCertStatuses();
-          return { certs: result || [] };
+          const result = await api!.getCertificateInfo();
+          return {
+            certificates: result?.certificates || [],
+            certsDir: result?.certsDir || '',
+            caCertHash: result?.caCertHash || null,
+          };
         } catch (e) {
-          console.error('[WebApiShim] Failed to get cert statuses:', e);
-          return { certs: [] };
+          console.error('[WebApiShim] Failed to get certificate info:', e);
+          return { certificates: [], certsDir: '', caCertHash: null };
         }
       },
       getAgentStatus: async () => {
