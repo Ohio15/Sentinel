@@ -1587,8 +1587,11 @@ func (r *Router) getCertificateInfo(c *gin.Context) {
 		CACertHash   *string    `json:"caCertHash,omitempty"`
 	}
 
-	// Get certs directory - use relative path from working directory
-	certsDir := "./certs"
+	// Get certs directory - check Docker mount first, then relative path
+	certsDir := "/certs"
+	if _, err := os.Stat(certsDir); os.IsNotExist(err) {
+		certsDir = "./certs" // Fallback for local development
+	}
 
 	certificates := []CertInfo{}
 	var caCertHash *string
