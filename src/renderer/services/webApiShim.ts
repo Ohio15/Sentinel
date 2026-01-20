@@ -324,7 +324,13 @@ if (isWeb && typeof (window as any).api === 'undefined') {
     // Certificates API
     certificates: {
       list: async () => {
-        return [];
+        try {
+          const result = await api!.getDeviceCertStatuses();
+          return result || [];
+        } catch (e) {
+          console.error('[WebApiShim] Failed to get certificates:', e);
+          return [];
+        }
       },
       get: async (id: string) => {
         return null;
@@ -533,8 +539,23 @@ if (isWeb && typeof (window as any).api === 'undefined') {
 
     // Certs API (used by certificateStore)
     certs: {
-      list: async () => ({ certs: [] }),
-      getAgentStatus: async () => [],
+      list: async () => {
+        try {
+          const result = await api!.getDeviceCertStatuses();
+          return { certs: result || [] };
+        } catch (e) {
+          console.error('[WebApiShim] Failed to get cert statuses:', e);
+          return { certs: [] };
+        }
+      },
+      getAgentStatus: async () => {
+        try {
+          const result = await api!.getDeviceCertStatuses();
+          return result || [];
+        } catch (e) {
+          return [];
+        }
+      },
       renew: async () => ({ success: true }),
       distribute: async () => ({ success: true }),
       onDistributed: (callback: (result: any) => void) => registerHandler('certs:distributed', callback),

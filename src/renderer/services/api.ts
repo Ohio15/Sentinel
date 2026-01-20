@@ -192,6 +192,11 @@ class ApiService {
     return this.post<unknown>(`/devices/${deviceId}/force-update`);
   }
 
+  // Certificate endpoints
+  async getDeviceCertStatuses() {
+    return this.get<unknown>('/devices/cert-status');
+  }
+
   // Script endpoints
   async getScripts(params?: { language?: string; search?: string }) {
     const stringParams: Record<string, string> = {};

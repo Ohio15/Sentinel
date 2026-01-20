@@ -134,13 +134,24 @@ export function Tickets({ onTicketSelect, onViewChange }: TicketsProps) {
           {/* Disable routing - app uses state-based navigation */}
           <TicketViewSwitcher useRouting={false} currentView="table" onChange={onViewChange} />
         </div>
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="btn btn-primary flex items-center gap-2"
-        >
-          <PlusIcon className="w-5 h-5" />
-          New Ticket
-        </button>
+        <div className="flex items-center gap-2">
+          <a
+            href="https://sentinelrmm.us:4443/portal"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-secondary flex items-center gap-2"
+          >
+            <GlobeAltIcon className="w-5 h-5" />
+            Support Portal
+          </a>
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="btn btn-primary flex items-center gap-2"
+          >
+            <PlusIcon className="w-5 h-5" />
+            New Ticket
+          </button>
+        </div>
       </div>
 
       {/* Stats Cards */}
@@ -571,6 +582,14 @@ function PlusIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+    </svg>
+  );
+}
+
+function GlobeAltIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
     </svg>
   );
 }
