@@ -197,6 +197,27 @@ class ApiService {
     return this.get<unknown>('/devices/cert-status');
   }
 
+  async getCertificateInfo() {
+    return this.get<{
+      certificates: Array<{
+        name: string;
+        type: string;
+        path: string;
+        exists: boolean;
+        subject?: string;
+        issuer?: string;
+        validFrom?: string;
+        validTo?: string;
+        fingerprint?: string;
+        serialNumber?: string;
+        daysUntilExpiry?: number;
+        status: string;
+      }>;
+      certsDir: string;
+      caCertHash?: string;
+    }>('/certificates/info');
+  }
+
   // Script endpoints
   async getScripts(params?: { language?: string; search?: string }) {
     const stringParams: Record<string, string> = {};

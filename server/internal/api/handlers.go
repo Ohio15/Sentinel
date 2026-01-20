@@ -2,19 +2,23 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 
-	"strings"
-
 	"github.com/gin-gonic/gin"
-	"github.com/sentinel/server/internal/constants"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/sentinel/server/internal/constants"
 	"github.com/sentinel/server/internal/middleware"
 	ws "github.com/sentinel/server/internal/websocket"
 )
@@ -1558,4 +1562,152 @@ func (r *Router) getDashboardStats(c *gin.Context) {
 	stats["totalUsers"] = totalUsers
 
 	c.JSON(http.StatusOK, stats)
+}
+
+// getCertificateInfo returns information about the server's TLS certificates
+func (r *Router) getCertificateInfo(c *gin.Context) {
+	type CertInfo struct {
+		Name            string  `json:"name"`
+		Type            string  `json:"type"`
+		Path            string  `json:"path"`
+		Exists          bool    `json:"exists"`
+		Subject         *string `json:"subject,omitempty"`
+		Issuer          *string `json:"issuer,omitempty"`
+		ValidFrom       *string `json:"validFrom,omitempty"`
+		ValidTo         *string `json:"validTo,omitempty"`
+		Fingerprint     *string `json:"fingerprint,omitempty"`
+		SerialNumber    *string `json:"serialNumber,omitempty"`
+		DaysUntilExpiry *int    `json:"daysUntilExpiry,omitempty"`
+		Status          string  `json:"status"`
+	}
+
+	type CertListResult struct {
+		Certificates []CertInfo `json:"certificates"`
+		CertsDir     string     `json:"certsDir"`
+		CACertHash   *string    `json:"caCertHash,omitempty"`
+	}
+
+	// Get certs directory - use relative path from working directory
+	certsDir := "./certs"
+
+	certificates := []CertInfo{}
+	var caCertHash *string
+
+	// Define certificate files to check
+	certFiles := []struct {
+		name     string
+		certType string
+		filename string
+	}{
+		{"CA Certificate", "ca", "ca-cert.pem"},
+		{"Server Certificate", "server", "server-cert.pem"},
+	}
+
+	for _, cf := range certFiles {
+		certPath := certsDir + "/" + cf.filename
+		cert := CertInfo{
+			Name:   cf.name,
+			Type:   cf.certType,
+			Path:   certPath,
+			Exists: false,
+			Status: "missing",
+		}
+
+		// Try to read and parse the certificate
+		pemData, err := readCertFile(certPath)
+		if err == nil && len(pemData) > 0 {
+			cert.Exists = true
+			info := parseCertInfo(pemData)
+			if info != nil {
+				cert.Subject = info.Subject
+				cert.Issuer = info.Issuer
+				cert.ValidFrom = info.ValidFrom
+				cert.ValidTo = info.ValidTo
+				cert.Fingerprint = info.Fingerprint
+				cert.SerialNumber = info.SerialNumber
+				cert.DaysUntilExpiry = info.DaysUntilExpiry
+
+				// Determine status
+				if info.DaysUntilExpiry != nil {
+					if *info.DaysUntilExpiry <= 0 {
+						cert.Status = "expired"
+					} else if *info.DaysUntilExpiry <= 30 {
+						cert.Status = "expiring_soon"
+					} else {
+						cert.Status = "valid"
+					}
+				}
+
+				// Get CA cert hash for comparison with agents
+				if cf.certType == "ca" && info.Fingerprint != nil {
+					caCertHash = info.Fingerprint
+				}
+			}
+		}
+
+		certificates = append(certificates, cert)
+	}
+
+	c.JSON(http.StatusOK, CertListResult{
+		Certificates: certificates,
+		CertsDir:     certsDir,
+		CACertHash:   caCertHash,
+	})
+}
+
+// Helper struct for parsed certificate info
+type parsedCertInfo struct {
+	Subject         *string
+	Issuer          *string
+	ValidFrom       *string
+	ValidTo         *string
+	Fingerprint     *string
+	SerialNumber    *string
+	DaysUntilExpiry *int
+}
+
+// readCertFile reads a PEM certificate file
+func readCertFile(path string) ([]byte, error) {
+	return os.ReadFile(path)
+}
+
+// parseCertInfo parses PEM data and extracts certificate information
+func parseCertInfo(pemData []byte) *parsedCertInfo {
+	block, _ := pem.Decode(pemData)
+	if block == nil {
+		return nil
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil
+	}
+
+	// Calculate fingerprint (SHA256)
+	hash := sha256.Sum256(cert.Raw)
+	fingerprint := hex.EncodeToString(hash[:])
+
+	// Calculate days until expiry
+	daysUntil := int(time.Until(cert.NotAfter).Hours() / 24)
+
+	// Format dates
+	validFrom := cert.NotBefore.Format(time.RFC3339)
+	validTo := cert.NotAfter.Format(time.RFC3339)
+
+	// Format subject and issuer
+	subject := cert.Subject.String()
+	issuer := cert.Issuer.String()
+
+	// Format serial number
+	serial := cert.SerialNumber.Text(16)
+
+	return &parsedCertInfo{
+		Subject:         &subject,
+		Issuer:          &issuer,
+		ValidFrom:       &validFrom,
+		ValidTo:         &validTo,
+		Fingerprint:     &fingerprint,
+		SerialNumber:    &serial,
+		DaysUntilExpiry: &daysUntil,
+	}
 }

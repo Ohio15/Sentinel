@@ -101,6 +101,7 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 			// Devices
 			protected.GET("/devices", router.listDevices)
 			protected.GET("/devices/cert-status", router.getDeviceCertStatuses)
+			protected.GET("/certificates/info", router.getCertificateInfo)
 			protected.GET("/devices/:id", router.getDevice)
 			protected.DELETE("/devices/:id", middleware.RequireRole("admin", "operator"), router.deleteDevice)
 			protected.GET("/devices/:id/metrics", router.getDeviceMetrics)
