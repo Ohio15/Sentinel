@@ -92,6 +92,8 @@ services:
       start_period: 40s
 
   # Frontend (built static files served by nginx)
+  # NOTE: Uses volume mount for hot updates - just run npm run build:web locally
+  # and copy dist/web to remote, no container rebuild needed
   frontend:
     build:
       context: .
@@ -101,6 +103,9 @@ services:
         - VITE_WS_URL=wss://${DOMAIN}/ws
     container_name: sentinel-frontend
     restart: unless-stopped
+    volumes:
+      # Mount local dist for hot updates without rebuilding container
+      - ./dist/web:/usr/share/nginx/html:ro
     networks:
       - sentinel-network
     security_opt:
