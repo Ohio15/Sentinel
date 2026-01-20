@@ -9,6 +9,7 @@ import path from 'path'
 export default defineConfig({
   plugins: [react()],
   root: './src/renderer',
+  publicDir: 'public',  // Copy public assets (logo, etc.) to dist
   base: '/',
   build: {
     outDir: '../../dist/web',
