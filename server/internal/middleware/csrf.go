@@ -38,7 +38,7 @@ func DefaultCSRFConfig() CSRFConfig {
 		Secure:      true,
 		Path:        "/",
 		SameSite:    http.SameSiteStrictMode,
-		SkipPaths:   []string{"/api/auth/login", "/api/agent/", "/ws/", "/health", "/api/admin/agent-links", "/api/admin/installation-codes", "/api/devices/"},
+		SkipPaths:   []string{"/api/auth/login", "/api/agent/", "/ws/", "/health", "/api/admin/agent-links", "/api/admin/installation-codes", "/api/devices/", "/api/clients/"},
 		SkipMethods: []string{"GET", "HEAD", "OPTIONS"},
 	}
 }
