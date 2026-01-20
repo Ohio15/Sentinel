@@ -345,6 +345,7 @@ if (isWeb && typeof (window as any).api === 'undefined') {
       update: async (id: string, ticket: any) => null,
       delete: async (id: string) => {},
       addComment: async (ticketId: string, comment: any) => null,
+      getStats: async () => ({ open: 0, inProgress: 0, resolved: 0, total: 0 }),
     },
 
     // Knowledge Base API
@@ -409,16 +410,21 @@ if (isWeb && typeof (window as any).api === 'undefined') {
 
     // Knowledge Base alias
     kb: {
-      list: async (filters?: any) => [],
-      get: async (id: string) => null,
-      create: async (article: any) => null,
-      update: async (id: string, article: any) => null,
-      delete: async (id: string) => {},
-      search: async (query: string) => [],
-      getCategories: async () => [],
-      createCategory: async (category: any) => null,
-      updateCategory: async (id: string, category: any) => null,
-      deleteCategory: async (id: string) => {},
+      articles: {
+        list: async (filters?: any) => [],
+        get: async (id: string) => null,
+        create: async (article: any) => null,
+        update: async (id: string, article: any) => null,
+        delete: async (id: string) => {},
+        search: async (query: string) => [],
+      },
+      categories: {
+        list: async () => [],
+        get: async (id: string) => null,
+        create: async (category: any) => null,
+        update: async (id: string, category: any) => null,
+        delete: async (id: string) => {},
+      },
     },
 
     // Backend connection API with localStorage persistence
@@ -532,6 +538,7 @@ if (isWeb && typeof (window as any).api === 'undefined') {
       renew: async () => ({ success: true }),
       distribute: async () => ({ success: true }),
       onDistributed: (callback: (result: any) => void) => registerHandler('certs:distributed', callback),
+      onAgentConfirmed: (callback: (result: any) => void) => registerHandler('certs:agentConfirmed', callback),
     },
 
     // Enrollment tokens API
