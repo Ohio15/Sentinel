@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log"
 
 	"github.com/google/uuid"
 	"github.com/sentinel/server/internal/constants"
@@ -11,22 +12,27 @@ import (
 
 // handleDashboardMessage forwards messages from dashboard to appropriate agents
 func (r *Router) handleDashboardMessage(userID uuid.UUID, message []byte) {
+	log.Printf("[Dashboard] Received message: %s", string(message))
+
 	var msg ws.Message
 	if err := json.Unmarshal(message, &msg); err != nil {
+		log.Printf("[Dashboard] Failed to unmarshal message: %v", err)
 		return
 	}
+	log.Printf("[Dashboard] Message type: %s", msg.Type)
 
 	// Extract target info from payload
 	var payload struct {
-		AgentID    string          `json:"agentId"`
-		DeviceID   string          `json:"deviceId"`
-		SessionID  string          `json:"sessionId"`
-		Data       json.RawMessage `json:"data"`
-		Path       string          `json:"path"`
-		Cols       int             `json:"cols"`
-		Rows       int             `json:"rows"`
-		MaxDepth   int             `json:"maxDepth"`
-		IntervalMs int             `json:"intervalMs"`
+		AgentID    string      `json:"agentId"`
+		DeviceID   string      `json:"deviceId"`
+		SessionID  string      `json:"sessionId"`
+		Data       interface{} `json:"data"` // Generic data field (used for input data, terminal data, etc.)
+		Path       string      `json:"path"`
+		Cols       int         `json:"cols"`
+		Rows       int         `json:"rows"`
+		MaxDepth   int         `json:"maxDepth"`
+		IntervalMs int         `json:"intervalMs"`
+		InputType  string      `json:"inputType"`
 	}
 	json.Unmarshal(msg.Payload, &payload)
 
@@ -173,30 +179,52 @@ func (r *Router) handleDashboardMessage(userID uuid.UUID, message []byte) {
 		// Forward file upload request to agent
 		r.hub.SendToAgent(agentID, message)
 
-	case ws.MsgTypeStartRemote:
-		// Forward remote desktop start request to agent
+	// WebRTC signaling handlers
+	case ws.MsgTypeWebRTCStart:
+		// Forward WebRTC start request with SDP offer to agent
+		var webrtcPayload struct {
+			OfferSDP string `json:"offerSdp"`
+		}
+		json.Unmarshal(msg.Payload, &webrtcPayload)
+		log.Printf("[WebRTC] webrtc_start received: agentId=%s, sessionId=%s, offerSdp length=%d",
+			agentID, payload.SessionID, len(webrtcPayload.OfferSDP))
 		agentMsg, _ := json.Marshal(map[string]interface{}{
-			"type":      ws.MsgTypeStartRemote,
+			"type":      ws.MsgTypeWebRTCStart,
+			"requestId": msg.RequestID,
+			"data": map[string]interface{}{
+				"sessionId": payload.SessionID,
+				"offerSdp":  webrtcPayload.OfferSDP,
+			},
+		})
+		r.hub.SendToAgent(agentID, agentMsg)
+
+	case ws.MsgTypeWebRTCSignal:
+		// Forward WebRTC signaling (ICE candidates, etc.) to agent
+		var signalPayload struct {
+			Signal json.RawMessage `json:"signal"`
+		}
+		json.Unmarshal(msg.Payload, &signalPayload)
+		log.Printf("[WebRTC] webrtc_signal received: agentId=%s, sessionId=%s", agentID, payload.SessionID)
+		agentMsg, _ := json.Marshal(map[string]interface{}{
+			"type":      ws.MsgTypeWebRTCSignal,
+			"requestId": msg.RequestID,
+			"data": map[string]interface{}{
+				"sessionId": payload.SessionID,
+				"signal":    signalPayload.Signal,
+			},
+		})
+		r.hub.SendToAgent(agentID, agentMsg)
+
+	case ws.MsgTypeWebRTCStop:
+		// Forward WebRTC stop request to agent
+		log.Printf("[WebRTC] webrtc_stop received: agentId=%s, sessionId=%s", agentID, payload.SessionID)
+		agentMsg, _ := json.Marshal(map[string]interface{}{
+			"type":      ws.MsgTypeWebRTCStop,
 			"requestId": msg.RequestID,
 			"data": map[string]interface{}{
 				"sessionId": payload.SessionID,
 			},
 		})
 		r.hub.SendToAgent(agentID, agentMsg)
-
-	case ws.MsgTypeStopRemote:
-		// Forward remote desktop stop request to agent
-		agentMsg, _ := json.Marshal(map[string]interface{}{
-			"type":      ws.MsgTypeStopRemote,
-			"requestId": msg.RequestID,
-			"data": map[string]interface{}{
-				"sessionId": payload.SessionID,
-			},
-		})
-		r.hub.SendToAgent(agentID, agentMsg)
-
-	case ws.MsgTypeRemoteInput:
-		// Forward remote desktop input to agent (mouse/keyboard)
-		r.hub.SendToAgent(agentID, message)
 	}
 }

@@ -268,15 +268,31 @@ func (m *Manager) loadOpenH264() error {
 }
 
 // getVideoConstraints returns video constraints based on quality setting
+// Returns: width, height, fps, bitrate
+// Note: width/height are now max limits - actual resolution uses screen dimensions for accurate cursor mapping
 func getVideoConstraints(quality string) (int, int, int, int) {
 	switch quality {
 	case "low":
-		return 1280, 720, 10, 800000 // 720p, 10fps, 800kbps
+		return 1920, 1080, 10, 800000 // 10fps, 800kbps
 	case "high":
-		return 1920, 1080, 30, 3000000 // 1080p, 30fps, 3Mbps
+		return 3840, 2160, 30, 4000000 // 30fps, 4Mbps (supports 4K)
 	default: // medium
-		return 1920, 1080, 15, 1500000 // 1080p, 15fps, 1.5Mbps
+		return 2560, 1440, 20, 2000000 // 20fps, 2Mbps (supports 1440p)
 	}
+}
+
+// getActualScreenDimensions returns the primary display dimensions safely
+func getActualScreenDimensions() (int, int) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[WebRTC] Recovered from panic in getActualScreenDimensions: %v", r)
+		}
+	}()
+	bounds := screenshot.GetDisplayBounds(0)
+	if bounds.Dx() > 0 && bounds.Dy() > 0 {
+		return bounds.Dx(), bounds.Dy()
+	}
+	return 1920, 1080 // Safe fallback
 }
 
 // newH264EncoderWithTimeout creates a new H.264 encoder with a timeout to prevent hanging
@@ -592,15 +608,22 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 		}
 	}
 
-	// Get quality settings for fps and bitrate
-	_, _, fps, bitrate := getVideoConstraints(config.Quality)
+	// Get quality settings for fps and bitrate (resolution limits are fallbacks only)
+	maxWidth, maxHeight, fps, bitrate := getVideoConstraints(config.Quality)
 
-	// Use quality-based dimensions for the encoder
-	// We don't call GetDisplayBounds here because it can cause native crashes
-	// when running as a Windows service. The actual screen bounds are obtained
-	// later in startScreenCapture where we can handle failures more gracefully.
-	screenWidth, screenHeight, _, _ := getVideoConstraints(config.Quality)
-	log.Printf("[WebRTC] Using quality-based dimensions: %dx%d", screenWidth, screenHeight)
+	// Use actual screen dimensions for accurate cursor mapping
+	// This ensures video coordinates match screen coordinates 1:1
+	screenWidth, screenHeight := getActualScreenDimensions()
+
+	// Cap to quality limits to prevent excessive bandwidth on very large screens
+	if screenWidth > maxWidth {
+		screenWidth = maxWidth
+	}
+	if screenHeight > maxHeight {
+		screenHeight = maxHeight
+	}
+
+	log.Printf("[WebRTC] Using actual screen dimensions: %dx%d (max: %dx%d)", screenWidth, screenHeight, maxWidth, maxHeight)
 	log.Printf("[WebRTC] Quality settings: fps=%d, bitrate=%d", fps, bitrate)
 
 	// Create H.264 encoder with actual screen dimensions (alignment happens inside)

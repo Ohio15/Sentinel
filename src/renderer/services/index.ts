@@ -299,46 +299,6 @@ export const files = {
   },
 };
 
-// Remote Desktop Service Adapter
-export const remote = {
-  async start(deviceId: string): Promise<{ sessionId: string }> {
-    if (isElectron) {
-      return (window as any).api.remote?.start?.(deviceId) || { sessionId: '' };
-    }
-    const sessionId = `remote-${deviceId}-${Date.now()}`;
-    wsService!.send('start_remote', { deviceId, sessionId });
-    return { sessionId };
-  },
-
-  async stop(sessionId: string): Promise<void> {
-    if (isElectron) {
-      return (window as any).api.remote?.stop?.(sessionId);
-    }
-    wsService!.send('stop_remote', { sessionId });
-  },
-
-  async sendInput(sessionId: string, inputType: string, data: unknown): Promise<void> {
-    if (isElectron) {
-      return (window as any).api.remote?.sendInput?.(sessionId, inputType, data);
-    }
-    wsService!.send('remote_input', { sessionId, inputType, data });
-  },
-
-  onFrame(handler: (frame: { sessionId: string; data: string; width: number; height: number }) => void): () => void {
-    if (isElectron) {
-      return (window as any).api.remote?.onFrame?.(handler) || (() => {});
-    }
-    return wsService!.on('remote_frame', (data) => handler(data as { sessionId: string; data: string; width: number; height: number }));
-  },
-
-  onError(handler: (error: { sessionId?: string; error: string }) => void): () => void {
-    if (isElectron) {
-      return () => {};
-    }
-    return wsService!.on('error', (data) => handler(data as { sessionId?: string; error: string }));
-  },
-};
-
 // Auth Service Adapter (Web-only features, Electron handles auth differently)
 export const auth = {
   async login(identifier: string, password: string): Promise<{ accessToken: string; user: unknown }> {

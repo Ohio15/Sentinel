@@ -44,16 +44,21 @@ const (
 	MsgTypeScanDirectory     = "scan_directory"
 	MsgTypeScanProgress      = "scan_progress"
 	MsgTypeSetMetricsInterval = "set_metrics_interval"
-	MsgTypeStartRemote       = "start_remote"
-	MsgTypeStopRemote     = "stop_remote"
-	MsgTypeRemoteInput    = "remote_input"
-	MsgTypeRemoteFrame    = "remote_frame"
-	MsgTypeUninstallAgent = "uninstall_agent"
+	MsgTypeUninstallAgent     = "uninstall_agent"
 
 	// Agent update message types
 	MsgTypeCheckUpdate   = "check_update"
 	MsgTypeUpdateAvailable = "update_available"
 	MsgTypeUpdateProgress  = "update_progress"
+
+	// Certificate message types
+	MsgTypeUpdateCertificate = "update_certificate"
+	MsgTypeCertUpdateAck     = "cert_update_ack"
+
+	// WebRTC signaling message types
+	MsgTypeWebRTCStart  = "webrtc_start"
+	MsgTypeWebRTCSignal = "webrtc_signal"
+	MsgTypeWebRTCStop   = "webrtc_stop"
 )
 
 type Message struct {
@@ -252,6 +257,10 @@ func (c *Client) ReadPump(ctx context.Context, handler func([]byte)) {
 				}
 				return
 			}
+			// Debug: log received message type
+			if !c.isAgent {
+				log.Printf("[ReadPump] Dashboard message received (%d bytes): %.200s", len(message), string(message))
+			}
 			handler(message)
 		}
 	}
@@ -284,6 +293,16 @@ func (c *Client) WritePump(ctx context.Context) {
 				return
 			}
 		}
+	}
+}
+
+// Send sends a message to the client's send channel
+func (c *Client) Send(message []byte) error {
+	select {
+	case c.send <- message:
+		return nil
+	default:
+		return ErrSendFailed
 	}
 }
 

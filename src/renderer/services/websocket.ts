@@ -59,8 +59,8 @@ class WebSocketService {
       this.ws.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data);
-          // If message has payload field, use it; otherwise pass the whole message (minus type)
-          const data = message.payload !== undefined ? message.payload : (() => {
+          // If message has payload field (and it's not null), use it; otherwise pass the whole message (minus type)
+          const data = (message.payload !== undefined && message.payload !== null) ? message.payload : (() => {
             const { type, ...rest } = message;
             return rest;
           })();
@@ -112,9 +112,11 @@ class WebSocketService {
       } else {
         message.payload = payload;
       }
-      this.ws.send(JSON.stringify(message));
+      const msgStr = JSON.stringify(message);
+      console.log('[WebSocket] Sending message:', type, msgStr.length, 'bytes');
+      this.ws.send(msgStr);
     } else {
-      console.warn('[WebSocket] Not connected, cannot send message');
+      console.warn('[WebSocket] Not connected, cannot send message. readyState:', this.ws?.readyState);
     }
   }
 
