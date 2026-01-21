@@ -348,6 +348,9 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	})
 	r.hub.BroadcastToDashboards(onlineMsg)
 
+	// Auto-distribute CA certificate if agent doesn't have it or has outdated version
+	go r.autoDistributeCertificate(client, authPayload.AgentID, authPayload.CACertHash)
+
 	// Start read/write pumps
 	go client.WritePump(ctx)
 	client.ReadPump(ctx, func(msg []byte) {
@@ -477,6 +480,7 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 	case ws.MsgTypeResponse:
 		// Agent sends response data at root level, not in payload field
 		// Parse from raw message instead of msg.Payload
+		log.Printf("[Agent] Response received from %s: %s", agentID, string(message))
 		var response struct {
 			Type      string          `json:"type"`
 			RequestID string          `json:"requestId"`
@@ -553,16 +557,6 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 		})
 		r.hub.BroadcastToDashboards(broadcastMsg)
 
-	case ws.MsgTypeRemoteFrame:
-		// Forward remote desktop frame to dashboards
-		broadcastMsg, _ := json.Marshal(map[string]interface{}{
-			"type":     ws.MsgTypeRemoteFrame,
-			"deviceId": deviceID,
-			"agentId":  agentID,
-			"payload":  msg.Payload,
-		})
-		r.hub.BroadcastToDashboards(broadcastMsg)
-
 	case ws.MsgTypeScanProgress:
 		// Forward scan progress to dashboards
 		broadcastMsg, _ := json.Marshal(map[string]interface{}{
@@ -573,6 +567,71 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 			"payload":   msg.Payload,
 		})
 		r.hub.BroadcastToDashboards(broadcastMsg)
+
+	case ws.MsgTypeWebRTCSignal:
+		// Agent sends WebRTC signaling messages (ICE candidates, etc.) - forward to dashboards
+		var signal struct {
+			SessionID string          `json:"sessionId"`
+			Signal    json.RawMessage `json:"signal"`
+		}
+		if err := json.Unmarshal(message, &signal); err != nil {
+			log.Printf("[WebRTC] Failed to parse webrtc_signal from %s: %v", agentID, err)
+			return
+		}
+		log.Printf("[WebRTC] Signal from agent %s for session %s", agentID, signal.SessionID)
+		broadcastMsg, _ := json.Marshal(map[string]interface{}{
+			"type":      ws.MsgTypeWebRTCSignal,
+			"deviceId":  deviceID,
+			"agentId":   agentID,
+			"sessionId": signal.SessionID,
+			"signal":    signal.Signal,
+		})
+		r.hub.BroadcastToDashboards(broadcastMsg)
+
+	case ws.MsgTypeCertUpdateAck:
+		// Agent acknowledged certificate update
+		var ackData struct {
+			CertHash string `json:"certHash"`
+			Success  bool   `json:"success"`
+			Error    string `json:"error"`
+		}
+		if err := json.Unmarshal(message, &ackData); err != nil {
+			log.Printf("[Certs] Failed to parse cert_update_ack from %s: %v", agentID, err)
+			return
+		}
+
+		// Try parsing from data field (standard format)
+		var dataWrapper struct {
+			Data struct {
+				CertHash string `json:"certHash"`
+				Success  bool   `json:"success"`
+				Error    string `json:"error"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(message, &dataWrapper); err == nil && dataWrapper.Data.CertHash != "" {
+			ackData.CertHash = dataWrapper.Data.CertHash
+			ackData.Success = dataWrapper.Data.Success
+			ackData.Error = dataWrapper.Data.Error
+		}
+
+		if ackData.Success {
+			log.Printf("[Certs] Agent %s confirmed certificate update (hash: %s...)", agentID, ackData.CertHash[:8])
+			// Update database to record distribution
+			if _, err := r.db.Pool().Exec(ctx, `
+				UPDATE devices SET
+					ca_cert_hash = $1,
+					ca_cert_distributed_at = NOW(),
+					ca_cert_updated_at = NOW()
+				WHERE agent_id = $2
+			`, ackData.CertHash, agentID); err != nil {
+				log.Printf("[Certs] Failed to update device cert status for %s: %v", agentID, err)
+			}
+		} else {
+			log.Printf("[Certs] Agent %s failed to update certificate: %s", agentID, ackData.Error)
+		}
+
+	default:
+		log.Printf("[Agent] Unhandled message type from %s: %s", agentID, msg.Type)
 	}
 }
 
@@ -651,13 +710,16 @@ func (r *Router) checkAlertRules(deviceID uuid.UUID, cpu, memory, disk float64) 
 }
 
 func (r *Router) handleDashboardWebSocket(c *gin.Context) {
+	log.Printf("[DashboardWS] New connection attempt from %s", c.ClientIP())
 	upgrader := r.getUpgrader()
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
+		log.Printf("[DashboardWS] Upgrade failed: %v", err)
 		return
 	}
 
 	userID := c.MustGet("userId").(uuid.UUID)
+	log.Printf("[DashboardWS] Connection established for user %s", userID)
 	ctx := context.Background()
 
 	client := r.hub.RegisterDashboard(conn, userID)
@@ -666,6 +728,7 @@ func (r *Router) handleDashboardWebSocket(c *gin.Context) {
 	client.ReadPump(ctx, func(msg []byte) {
 		r.handleDashboardMessage(userID, msg)
 	})
+	log.Printf("[DashboardWS] Connection closed for user %s", userID)
 }
 
 // Scripts handlers
@@ -1713,4 +1776,73 @@ func parseCertInfo(pemData []byte) *parsedCertInfo {
 		SerialNumber:    &serial,
 		DaysUntilExpiry: &daysUntil,
 	}
+}
+
+// autoDistributeCertificate sends CA cert to agent if they don't have it or it's outdated
+func (r *Router) autoDistributeCertificate(client *ws.Client, agentID string, agentCertHash string) {
+	// Read current CA certificate
+	certsDir := "/certs"
+	if _, err := os.Stat(certsDir); os.IsNotExist(err) {
+		certsDir = "./certs"
+	}
+
+	caCertPath := certsDir + "/ca-cert.pem"
+	caCertPEM, err := os.ReadFile(caCertPath)
+	if err != nil {
+		log.Printf("[AutoCert] Failed to read CA cert for agent %s: %v", agentID, err)
+		return
+	}
+
+	// Calculate current CA cert hash
+	block, _ := pem.Decode(caCertPEM)
+	if block == nil {
+		log.Printf("[AutoCert] Failed to decode CA cert PEM for agent %s", agentID)
+		return
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		log.Printf("[AutoCert] Failed to parse CA cert for agent %s: %v", agentID, err)
+		return
+	}
+
+	hash := sha256.Sum256(cert.Raw)
+	currentHash := hex.EncodeToString(hash[:])
+
+	// Compare with agent's cert hash
+	if agentCertHash == currentHash {
+		log.Printf("[AutoCert] Agent %s already has current CA cert (hash: %s...)", agentID, currentHash[:8])
+		return
+	}
+
+	// Agent needs the certificate - send it
+	if agentCertHash == "" {
+		log.Printf("[AutoCert] Agent %s has no CA cert, distributing (hash: %s...)", agentID, currentHash[:8])
+	} else {
+		log.Printf("[AutoCert] Agent %s has outdated CA cert (%s...), updating to %s...",
+			agentID, agentCertHash[:8], currentHash[:8])
+	}
+
+	// Send update_certificate message
+	updateMsg := map[string]interface{}{
+		"type": "update_certificate",
+		"data": map[string]interface{}{
+			"certType":    "ca",
+			"certContent": string(caCertPEM),
+			"certHash":    currentHash,
+		},
+	}
+
+	msgBytes, err := json.Marshal(updateMsg)
+	if err != nil {
+		log.Printf("[AutoCert] Failed to marshal cert update message for agent %s: %v", agentID, err)
+		return
+	}
+
+	if err := client.Send(msgBytes); err != nil {
+		log.Printf("[AutoCert] Failed to send cert to agent %s: %v", agentID, err)
+		return
+	}
+
+	log.Printf("[AutoCert] CA certificate sent to agent %s", agentID)
 }

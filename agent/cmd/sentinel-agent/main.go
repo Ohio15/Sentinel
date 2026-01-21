@@ -27,12 +27,10 @@ import (
 	"github.com/sentinel/agent/internal/ipc"
 	agentgrpc "github.com/sentinel/agent/internal/grpc"
 	"github.com/sentinel/agent/internal/protection"
-	"github.com/sentinel/agent/internal/remote"
 	svc "github.com/sentinel/agent/internal/service"
 	"github.com/sentinel/agent/internal/terminal"
 	"github.com/sentinel/agent/internal/updater"
 	"github.com/sentinel/agent/internal/updates"
-	"github.com/sentinel/agent/internal/webrtc"
 	"github.com/sentinel/agent/internal/admin"
 )
 
@@ -57,11 +55,9 @@ type Agent struct {
 	dataPlane         *agentgrpc.DataPlaneClient // gRPC Data Plane connection
 	collector         *collector.Collector
 	executor          *executor.Executor
-	terminalManager   *terminal.Manager
-	fileTransfer      *filetransfer.FileTransfer
-	remoteManager     *remote.Manager
-	webrtcManager     *webrtc.Manager // WebRTC for remote desktop (legacy)
-	desktopManager    *desktop.Manager // Desktop helper manager for WebRTC
+	terminalManager *terminal.Manager
+	fileTransfer    *filetransfer.FileTransfer
+	desktopManager  *desktop.Manager // Desktop helper manager for WebRTC
 	updater           *updater.Updater
 	protectionManager    *protection.Manager
 	diagnosticsCollector *diagnostics.Collector
@@ -290,12 +286,10 @@ func NewAgent(cfg *config.Config) *Agent {
 		client:               client.New(cfg, Version),
 		dataPlane:            dataPlane,
 		collector:            collector.New(),
-		executor:             executor.New(),
-		terminalManager:      terminal.NewManager(),
-		fileTransfer:         ft,
-		remoteManager:        remote.NewManager(),
-		webrtcManager:        webrtc.NewManager(),
-		desktopManager:       desktop.NewManager(""),
+		executor:        executor.New(),
+		terminalManager: terminal.NewManager(),
+		fileTransfer:    ft,
+		desktopManager:  desktop.NewManager(""),
 		updater:              agentUpdater,
 		protectionManager:    protMgr,
 		diagnosticsCollector: diagnostics.New(),
@@ -505,9 +499,6 @@ func (a *Agent) registerHandlers() {
 	a.client.RegisterHandler(client.MsgTypeScanDirectory, a.handleScanDirectory)
 	a.client.RegisterHandler(client.MsgTypeDownloadFile, a.handleDownloadFile)
 	a.client.RegisterHandler(client.MsgTypeUploadFile, a.handleUploadFile)
-	a.client.RegisterHandler(client.MsgTypeStartRemote, a.handleStartRemote)
-	a.client.RegisterHandler(client.MsgTypeStopRemote, a.handleStopRemote)
-	a.client.RegisterHandler(client.MsgTypeRemoteInput, a.handleRemoteInput)
 	a.client.RegisterHandler(client.MsgTypeCollectDiagnostics, a.handleCollectDiagnostics)
 	a.client.RegisterHandler(client.MsgTypeUninstallAgent, a.handleUninstallAgent)
 	a.client.RegisterHandler(client.MsgTypePing, a.handlePing)
@@ -1075,64 +1066,6 @@ func (a *Agent) handleUploadFile(msg *client.Message) error {
 	}
 
 	return a.client.SendResponse(msg.RequestID, true, nil, "")
-}
-
-// Remote Desktop handlers
-
-func (a *Agent) handleStartRemote(msg *client.Message) error {
-	data, ok := msg.Data.(map[string]interface{})
-	if !ok {
-		return a.client.SendResponse(msg.RequestID, false, nil, "Invalid message data")
-	}
-
-	sessionID, _ := data["sessionId"].(string)
-	quality, _ := data["quality"].(string)
-	if quality == "" {
-		quality = "medium"
-	}
-
-	onFrame := func(frameData string, width, height int) {
-		a.client.SendRemoteFrame(sessionID, frameData, width, height)
-	}
-
-	_, err := a.remoteManager.StartSession(sessionID, quality, onFrame)
-	if err != nil {
-		return a.client.SendResponse(msg.RequestID, false, nil, err.Error())
-	}
-
-	return a.client.SendResponse(msg.RequestID, true, map[string]interface{}{
-		"sessionId": sessionID,
-	}, "")
-}
-
-func (a *Agent) handleStopRemote(msg *client.Message) error {
-	data, ok := msg.Data.(map[string]interface{})
-	if !ok {
-		return a.client.SendResponse(msg.RequestID, false, nil, "Invalid message data")
-	}
-
-	sessionID, _ := data["sessionId"].(string)
-	a.remoteManager.StopSession(sessionID)
-
-	return a.client.SendResponse(msg.RequestID, true, nil, "")
-}
-
-func (a *Agent) handleRemoteInput(msg *client.Message) error {
-	data, ok := msg.Data.(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("invalid message data")
-	}
-
-	sessionID, _ := data["sessionId"].(string)
-	inputType, _ := data["type"].(string)
-
-	session, ok := a.remoteManager.GetSession(sessionID)
-	if !ok {
-		return fmt.Errorf("session not found: %s", sessionID)
-	}
-
-	session.HandleInput(inputType, data)
-	return nil
 }
 
 // handleTamperReports processes tamper detection alerts

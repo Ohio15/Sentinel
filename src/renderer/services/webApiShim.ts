@@ -204,24 +204,6 @@ if (isWeb && typeof (window as any).api === 'undefined') {
       },
     },
 
-    // Remote Desktop API
-    remote: {
-      startSession: async (deviceId: string) => {
-        const sessionId = `remote-${deviceId}-${Date.now()}`;
-        wsService?.send('start_remote', { deviceId, sessionId });
-        return { sessionId };
-      },
-      stopSession: async (sessionId: string) => {
-        wsService?.send('stop_remote', { sessionId });
-      },
-      sendInput: async (sessionId: string, input: any) => {
-        wsService?.send('remote_input', { sessionId, ...input });
-      },
-      onFrame: (callback: (frame: any) => void) => {
-        return registerHandler('remote:frame', callback);
-      },
-    },
-
     // WebRTC API
     webrtc: {
       start: async (deviceId: string, offer: { type: string; sdp?: string; quality: string }) => {

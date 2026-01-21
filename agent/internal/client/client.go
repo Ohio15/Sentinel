@@ -42,12 +42,8 @@ const (
 	MsgTypeDownloadFile       = "download_file"
 	MsgTypeUploadFile         = "upload_file"
 	MsgTypeFileData           = "file_data"
-	MsgTypeScanProgress       = "scan_progress"
-	MsgTypeStartRemote        = "start_remote"
-	MsgTypeStopRemote         = "stop_remote"
-	MsgTypeRemoteInput        = "remote_input"
-	MsgTypeRemoteFrame        = "remote_frame"
-	MsgTypeEvent              = "event"
+	MsgTypeScanProgress = "scan_progress"
+	MsgTypeEvent        = "event"
 	MsgTypeError              = "error"
 	MsgTypeCollectDiagnostics = "collect_diagnostics"
 	MsgTypeUninstallAgent     = "uninstall_agent"
@@ -560,18 +556,6 @@ func (c *Client) SendEvent(severity, title, message string) error {
 			"title":    title,
 			"message":  message,
 		},
-	}
-	return c.SendJSON(msg)
-}
-
-// SendRemoteFrame sends a remote desktop frame to the server
-func (c *Client) SendRemoteFrame(sessionID string, data string, width, height int) error {
-	msg := map[string]interface{}{
-		"type":      MsgTypeRemoteFrame,
-		"sessionId": sessionID,
-		"data":      data,
-		"width":     width,
-		"height":    height,
 	}
 	return c.SendJSON(msg)
 }
