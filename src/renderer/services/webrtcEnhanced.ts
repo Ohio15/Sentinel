@@ -300,25 +300,38 @@ export class WebRTCEnhancedService {
     const offer = await this.pc.createOffer();
     await this.pc.setLocalDescription(offer);
 
-    wsService?.send('webrtc_signal', {
-      type: 'offer',
+    // Use webrtc_start message type (matching server expectation)
+    wsService?.send('webrtc_start', {
       agentId: this.agentId,
       sessionId: this.sessionId,
-      sdp: offer.sdp,
+      offerSdp: offer.sdp,
     });
   }
 
   private setupSignalingHandlers() {
-    // Handle SDP answer
+    // Handle SDP answer via response channel (matching server routing)
+    this.unsubscribeResponse = wsService?.on('response', async (data: any) => {
+      // Check if this is our WebRTC answer
+      if (data.data?.answerSdp && data.data?.sessionId === this.sessionId) {
+        console.log('[WebRTC] Received answer, SDP length:', data.data.answerSdp.length);
+        try {
+          await this.pc?.setRemoteDescription({
+            type: 'answer',
+            sdp: data.data.answerSdp,
+          });
+          console.log('[WebRTC] Remote description set successfully');
+        } catch (err) {
+          console.error('[WebRTC] Failed to set remote description:', err);
+          this.emit('error', err);
+        }
+      }
+    });
+
+    // Handle ICE candidates via webrtc_signal channel
     wsService?.on('webrtc_signal', async (data: any) => {
       if (data.sessionId !== this.sessionId) return;
 
-      if (data.type === 'answer' && data.sdp) {
-        await this.pc?.setRemoteDescription({
-          type: 'answer',
-          sdp: data.sdp,
-        });
-      } else if (data.type === 'candidate' && data.candidate) {
+      if (data.type === 'candidate' && data.candidate) {
         try {
           await this.pc?.addIceCandidate(data.candidate);
         } catch (err) {
@@ -341,6 +354,9 @@ export class WebRTCEnhancedService {
       this.emit('session_negotiated', this.session);
     });
   }
+
+  // Unsubscribe handler for cleanup
+  private unsubscribeResponse: (() => void) | undefined;
 
   private sendPreferences() {
     const prefs = this.getClientPreferences();
@@ -506,6 +522,12 @@ export class WebRTCEnhancedService {
   // Disconnect
   disconnect() {
     this.stopStatsPolling();
+
+    // Clean up response listener
+    if (this.unsubscribeResponse) {
+      this.unsubscribeResponse();
+      this.unsubscribeResponse = undefined;
+    }
 
     if (this.dataChannel) {
       this.dataChannel.close();
