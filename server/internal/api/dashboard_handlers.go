@@ -67,9 +67,12 @@ func (r *Router) handleDashboardMessage(userID uuid.UUID, message []byte) {
 
 	// Check if agent is online
 	if !r.hub.IsAgentOnline(agentID) {
+		log.Printf("[Dashboard] Agent %s is not online, cannot forward %s message", agentID, msg.Type)
 		sendError("Agent is not connected. Please check the agent service on the device.")
 		return
 	}
+
+	log.Printf("[Dashboard] Agent %s is online, forwarding %s message", agentID, msg.Type)
 
 	switch msg.Type {
 	case ws.MsgTypeTerminalStart:
@@ -196,7 +199,12 @@ func (r *Router) handleDashboardMessage(userID uuid.UUID, message []byte) {
 				"offerSdp":  webrtcPayload.OfferSDP,
 			},
 		})
-		r.hub.SendToAgent(agentID, agentMsg)
+		if err := r.hub.SendToAgent(agentID, agentMsg); err != nil {
+			log.Printf("[WebRTC] ERROR: Failed to send webrtc_start to agent %s: %v", agentID, err)
+			sendError("Failed to forward WebRTC start to agent: " + err.Error())
+			return
+		}
+		log.Printf("[WebRTC] Successfully forwarded webrtc_start to agent %s", agentID)
 
 	case ws.MsgTypeWebRTCSignal:
 		// Forward WebRTC signaling (ICE candidates, etc.) to agent
