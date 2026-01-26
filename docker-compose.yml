@@ -56,8 +56,10 @@ services:
       - PUBLIC_URL=${PUBLIC_URL:-http://localhost:8090}
       - API_KEY=${API_KEY}
       # mTLS configuration
-      - MTLS_ENABLED=${MTLS_ENABLED:-false}
-      - CA_CERT_PATH=/certs/ca.crt
+      - ENABLE_MTLS=${ENABLE_MTLS:-true}
+      - CA_CERT_PATH=/certs/ca-cert.pem
+      - CA_KEY_PATH=/certs/ca-key.pem
+      - CERT_VALIDITY_YEARS=${CERT_VALIDITY_YEARS:-2}
     volumes:
       - ./installers:/app/installers:ro
       - ./agent/version.json:/app/agent/version.json:ro

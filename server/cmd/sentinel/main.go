@@ -13,6 +13,7 @@ import (
 
 	"github.com/sentinel/server/internal/api"
 	"github.com/sentinel/server/internal/metrics"
+	"github.com/sentinel/server/internal/pki"
 	"github.com/sentinel/server/internal/push"
 	"github.com/sentinel/server/internal/queue"
 	"github.com/sentinel/server/internal/websocket"
@@ -106,6 +107,23 @@ func main() {
 		}
 	}
 
+	// Initialize PKI service for mTLS certificate issuance
+	var pkiService *pki.PKI
+	if cfg.EnableMTLS {
+		log.Println("Initializing PKI service for mTLS...")
+		pkiConfig := pki.Config{
+			CACertPath: cfg.CACertPath,
+			CAKeyPath:  cfg.CAKeyPath,
+		}
+		pkiService, err = pki.New(pkiConfig, db.Pool())
+		if err != nil {
+			log.Printf("Warning: Failed to initialize PKI service: %v", err)
+			log.Println("mTLS certificate issuance will be disabled")
+		} else {
+			log.Println("PKI service initialized - mTLS certificate issuance enabled")
+		}
+	}
+
 	// Create services container for dependency injection
 	services := &api.Services{
 		Config:       cfg,
@@ -115,6 +133,7 @@ func main() {
 		BulkInserter: bulkInserter,
 		CommandQueue: cmdQueue,
 		PushService:  pushService,
+		PKI:          pkiService,
 	}
 
 	// Initialize API router with all services

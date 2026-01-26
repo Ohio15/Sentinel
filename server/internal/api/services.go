@@ -4,6 +4,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/sentinel/server/internal/metrics"
+	"github.com/sentinel/server/internal/pki"
 	"github.com/sentinel/server/internal/push"
 	"github.com/sentinel/server/internal/queue"
 	ws "github.com/sentinel/server/internal/websocket"
@@ -30,4 +31,5 @@ type Services struct {
 	BulkInserter *metrics.BulkInserter
 	CommandQueue *queue.CommandQueue
 	PushService  *push.Service
+	PKI          *pki.PKI
 }

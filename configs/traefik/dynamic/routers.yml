@@ -131,9 +131,22 @@ http:
       priority: 1
 
     # =========================================================================
-    # mTLS Routes (port 8443) - Agent connections
+    # mTLS Routes (port 8443) - Agent connections with client certificates
     # =========================================================================
 
+    # mTLS-authenticated WebSocket endpoint (certificate auth, no token)
+    ws-agent-mtls:
+      rule: "PathPrefix(`/ws/agent/mtls`)"
+      entryPoints:
+        - agents
+      service: backend
+      tls:
+        options: mtls
+      middlewares:
+        - agentRateLimit
+      priority: 15
+
+    # Standard agent WebSocket (also available on mTLS port for migration)
     ws-agent:
       rule: "PathPrefix(`/ws/agent`) || PathPrefix(`/ws`)"
       entryPoints:
@@ -145,6 +158,7 @@ http:
         - agentRateLimit
       priority: 10
 
+    # Agent API endpoints (certificate management, etc.)
     agent-api:
       rule: "PathPrefix(`/api/agent`)"
       entryPoints:
@@ -156,6 +170,7 @@ http:
         - agentRateLimit
       priority: 10
 
+    # Health check endpoint
     agent-health:
       rule: "PathPrefix(`/health`)"
       entryPoints:

@@ -32,9 +32,10 @@ import (
 	"github.com/sentinel/agent/internal/updater"
 	"github.com/sentinel/agent/internal/updates"
 	"github.com/sentinel/agent/internal/admin"
+	"github.com/sentinel/agent/internal/mtls"
 )
 
-var Version = "1.67.10"
+var Version = "1.68.0"
 
 const ServiceName = "SentinelAgent"
 
@@ -443,6 +444,9 @@ func (a *Agent) Start() error {
 	// Start Windows Update status monitoring loop
 	go a.updateStatusLoop()
 
+	// Start certificate renewal check loop (daily)
+	go a.certRenewalLoop()
+
 	return nil
 }
 
@@ -801,6 +805,144 @@ func (a *Agent) checkAndSendUpdateStatus() {
 	}
 }
 
+// certRenewalLoop checks daily if the client certificate needs renewal
+func (a *Agent) certRenewalLoop() {
+	// Initial delay before first check (5 minutes after startup)
+	select {
+	case <-a.ctx.Done():
+		return
+	case <-time.After(5 * time.Minute):
+	}
+
+	// Initial check
+	a.checkCertRenewal()
+
+	// Then check every 24 hours
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-a.ctx.Done():
+			return
+		case <-ticker.C:
+			a.checkCertRenewal()
+		}
+	}
+}
+
+// checkCertRenewal checks if the client certificate needs renewal and requests it
+func (a *Agent) checkCertRenewal() {
+	// Skip if we don't have mTLS certificates
+	if !mtls.HasMTLS() {
+		return
+	}
+
+	// Skip if not connected
+	if !a.client.IsConnected() || !a.client.IsAuthenticated() {
+		return
+	}
+
+	// Check if renewal is needed (expires within 30 days)
+	if !mtls.NeedsRenewal() {
+		expiry, err := mtls.GetCertificateExpiry()
+		if err == nil {
+			log.Printf("[mTLS] Certificate valid until %s", expiry.Format(time.RFC3339))
+		}
+		return
+	}
+
+	log.Println("[mTLS] Certificate expires soon, requesting renewal...")
+
+	// Get current certificate serial for revocation
+	oldSerial, _ := mtls.GetCertificateSerial()
+
+	// Request renewal via HTTP API (uses mTLS for authentication)
+	if err := a.requestCertRenewal(oldSerial); err != nil {
+		log.Printf("[mTLS] Certificate renewal failed: %v", err)
+		return
+	}
+
+	log.Println("[mTLS] Certificate renewed successfully")
+}
+
+// requestCertRenewal sends a certificate renewal request to the server
+func (a *Agent) requestCertRenewal(oldSerial string) error {
+	// Build the renewal endpoint URL
+	serverURL := a.cfg.ServerURL
+	if serverURL == "" {
+		return fmt.Errorf("server URL not configured")
+	}
+
+	// Use mTLS port for the request
+	renewURL := mtls.GetMTLSServerURL(serverURL)
+	if strings.Contains(renewURL, "wss://") {
+		renewURL = strings.Replace(renewURL, "wss://", "https://", 1)
+	} else if strings.Contains(renewURL, "ws://") {
+		renewURL = strings.Replace(renewURL, "ws://", "http://", 1)
+	}
+	// Remove WebSocket path, add API path
+	if idx := strings.Index(renewURL, "/ws"); idx != -1 {
+		renewURL = renewURL[:idx]
+	}
+	renewURL = renewURL + "/api/agent/certs/renew"
+
+	// Get TLS config with client certificate
+	tlsConfig, err := mtls.GetTLSConfig()
+	if err != nil {
+		return fmt.Errorf("failed to get TLS config: %w", err)
+	}
+
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: tlsConfig,
+		},
+	}
+
+	req, err := http.NewRequest("POST", renewURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse response
+	var renewResp struct {
+		ClientCert   string `json:"clientCert"`
+		ClientKey    string `json:"clientKey"`
+		CACert       string `json:"caCert"`
+		CertExpiresAt string `json:"certExpiresAt"`
+		CertSerial   string `json:"certSerial"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&renewResp); err != nil {
+		return fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// Install the new certificates
+	if err := mtls.InstallCertificates(
+		[]byte(renewResp.ClientCert),
+		[]byte(renewResp.ClientKey),
+		[]byte(renewResp.CACert),
+	); err != nil {
+		return fmt.Errorf("failed to install certificates: %w", err)
+	}
+
+	log.Printf("[mTLS] New certificate installed, serial=%s, expires=%s",
+		renewResp.CertSerial, renewResp.CertExpiresAt)
+
+	return nil
+}
+
 // Message handlers
 
 func (a *Agent) handlePing(msg *client.Message) error {
@@ -814,8 +956,13 @@ func (a *Agent) handlePing(msg *client.Message) error {
 
 func (a *Agent) handleHeartbeatAck(msg *client.Message) error {
 	// Check if server indicated an update is available
-	if msg.Data != nil {
-		if payload, ok := msg.Data.(map[string]interface{}); ok {
+	// Server sends update info in 'payload' field, not 'data'
+	payloadData := msg.Payload
+	if payloadData == nil {
+		payloadData = msg.Data // Fallback for backwards compatibility
+	}
+	if payloadData != nil {
+		if payload, ok := payloadData.(map[string]interface{}); ok {
 			if updateAvailable, ok := payload["updateAvailable"].(bool); ok && updateAvailable {
 				latestVersion := ""
 				if v, ok := payload["latestVersion"].(string); ok {

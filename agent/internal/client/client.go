@@ -304,6 +304,9 @@ func (c *Client) Connect(ctx context.Context) error {
 		return fmt.Errorf("server URL not configured")
 	}
 
+	// Check if we have mTLS certificates for certificate-based auth
+	useMTLS := mtls.HasMTLS()
+
 	// Convert http:// to ws:// if needed
 	if len(wsURL) > 7 && wsURL[:7] == "http://" {
 		wsURL = "ws://" + wsURL[7:]
@@ -311,24 +314,54 @@ func (c *Client) Connect(ctx context.Context) error {
 		wsURL = "wss://" + wsURL[8:]
 	}
 
-	// Ensure /ws/agent path for agent connections
-	if len(wsURL) < 9 || wsURL[len(wsURL)-9:] != "/ws/agent" {
-		// Remove trailing /ws if present (wrong path)
-		if len(wsURL) >= 3 && wsURL[len(wsURL)-3:] == "/ws" {
-			wsURL = wsURL[:len(wsURL)-3]
+	// Determine endpoint based on mTLS availability
+	if useMTLS {
+		// Use mTLS endpoint - convert URL to use port 8443 and /ws/agent/mtls path
+		wsURL = mtls.GetMTLSServerURL(wsURL)
+		log.Printf("[mTLS] Using certificate-based authentication")
+	} else {
+		// Use standard endpoint for token auth
+		if !strings.HasSuffix(wsURL, "/ws/agent") {
+			if strings.HasSuffix(wsURL, "/ws") {
+				wsURL = wsURL[:len(wsURL)-3]
+			}
+			wsURL = wsURL + "/ws/agent"
 		}
-		wsURL = wsURL + "/ws/agent"
 	}
 
 	log.Printf("Connecting to %s", wsURL)
 
+	// Configure dialer with TLS if we have certificates
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 5 * time.Second,
+	}
+
+	if useMTLS {
+		tlsConfig, err := mtls.GetTLSConfig()
+		if err != nil {
+			log.Printf("[mTLS] Warning: Failed to load TLS config, falling back to token auth: %v", err)
+			useMTLS = false
+			// Revert to standard URL
+			wsURL = c.config.ServerURL
+			if len(wsURL) > 8 && wsURL[:8] == "https://" {
+				wsURL = "wss://" + wsURL[8:]
+			}
+			if !strings.HasSuffix(wsURL, "/ws/agent") {
+				wsURL = wsURL + "/ws/agent"
+			}
+		} else {
+			dialer.TLSClientConfig = tlsConfig
+		}
 	}
 
 	headers := http.Header{}
 	conn, _, err := dialer.DialContext(ctx, wsURL, headers)
 	if err != nil {
+		// If mTLS failed, try falling back to token auth
+		if useMTLS {
+			log.Printf("[mTLS] Connection failed, falling back to token auth: %v", err)
+			return c.connectWithToken(ctx)
+		}
 		return fmt.Errorf("failed to connect: %w", err)
 	}
 
@@ -349,39 +382,121 @@ func (c *Client) Connect(ctx context.Context) error {
 
 	log.Println("WebSocket connected")
 
-	// Build auth payload with device info for auto-enrollment
+	// For mTLS connections, server sends auth_response immediately without us sending auth
+	// For token connections, we need to send auth message
+	if !useMTLS {
+		// Build auth payload with device info for auto-enrollment
+		c.mu.RLock()
+		deviceInfo := c.deviceInfo
+		c.mu.RUnlock()
+
+		authPayload := map[string]interface{}{
+			"agentId":       c.config.AgentID,
+			"token":         c.config.EnrollmentToken,
+			"caCertHash":    paths.GetCACertHash(),
+			"hasClientCert": false, // Tell server we need a certificate
+		}
+
+		// Include device info if available (for auto-enrollment of orphaned agents)
+		if deviceInfo != nil {
+			authPayload["deviceInfo"] = deviceInfo
+		}
+
+		// Send auth message immediately (server expects auth first)
+		authMsg := map[string]interface{}{
+			"type":    MsgTypeAuth,
+			"payload": authPayload,
+		}
+		authData, err := json.Marshal(authMsg)
+		if err != nil {
+			conn.Close()
+			return fmt.Errorf("failed to marshal auth message: %w", err)
+		}
+		if err := conn.WriteMessage(websocket.TextMessage, authData); err != nil {
+			conn.Close()
+			return fmt.Errorf("failed to send auth message: %w", err)
+		}
+		log.Println("Auth message sent, waiting for response...")
+	} else {
+		log.Println("[mTLS] Certificate authenticated, waiting for server confirmation...")
+	}
+
+	// Start message handlers
+	go c.readLoop(ctx)
+	go c.writeLoop(ctx)
+	go c.pingLoop(ctx)
+
+	if c.onConnect != nil {
+		c.onConnect()
+	}
+
+	return nil
+}
+
+// connectWithToken establishes a connection using token authentication (fallback).
+func (c *Client) connectWithToken(ctx context.Context) error {
+	wsURL := c.config.ServerURL
+	if len(wsURL) > 7 && wsURL[:7] == "http://" {
+		wsURL = "ws://" + wsURL[7:]
+	} else if len(wsURL) > 8 && wsURL[:8] == "https://" {
+		wsURL = "wss://" + wsURL[8:]
+	}
+	if !strings.HasSuffix(wsURL, "/ws/agent") {
+		wsURL = wsURL + "/ws/agent"
+	}
+
+	log.Printf("[Token Auth] Connecting to %s", wsURL)
+
+	// Get TLS config for server verification (but not client auth)
+	tlsConfig, _ := mtls.GetTLSConfig()
+
+	dialer := websocket.Dialer{
+		HandshakeTimeout: 5 * time.Second,
+		TLSClientConfig:  tlsConfig,
+	}
+
+	conn, _, err := dialer.DialContext(ctx, wsURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to connect: %w", err)
+	}
+
+	c.mu.Lock()
+	c.conn = conn
+	c.connected = true
+	c.lastPong = time.Now()
+	c.mu.Unlock()
+
+	conn.SetPongHandler(func(appData string) error {
+		c.mu.Lock()
+		c.lastPong = time.Now()
+		c.mu.Unlock()
+		return nil
+	})
+
 	c.mu.RLock()
 	deviceInfo := c.deviceInfo
 	c.mu.RUnlock()
 
 	authPayload := map[string]interface{}{
-		"agentId":    c.config.AgentID,
-		"token":      c.config.EnrollmentToken,
-		"caCertHash": paths.GetCACertHash(),
+		"agentId":       c.config.AgentID,
+		"token":         c.config.EnrollmentToken,
+		"caCertHash":    paths.GetCACertHash(),
+		"hasClientCert": mtls.HasMTLS(),
 	}
-
-	// Include device info if available (for auto-enrollment of orphaned agents)
 	if deviceInfo != nil {
 		authPayload["deviceInfo"] = deviceInfo
 	}
 
-	// Send auth message immediately (server expects auth first)
 	authMsg := map[string]interface{}{
 		"type":    MsgTypeAuth,
 		"payload": authPayload,
 	}
-	authData, err := json.Marshal(authMsg)
-	if err != nil {
-		conn.Close()
-		return fmt.Errorf("failed to marshal auth message: %w", err)
-	}
+	authData, _ := json.Marshal(authMsg)
 	if err := conn.WriteMessage(websocket.TextMessage, authData); err != nil {
 		conn.Close()
-		return fmt.Errorf("failed to send auth message: %w", err)
+		return fmt.Errorf("failed to send auth: %w", err)
 	}
-	log.Println("Auth message sent, waiting for response...")
 
-	// Start message handlers
 	go c.readLoop(ctx)
 	go c.writeLoop(ctx)
 	go c.pingLoop(ctx)
@@ -620,6 +735,13 @@ func (c *Client) readLoop(ctx context.Context) {
 				Success         bool   `json:"success"`
 				Error           string `json:"error"`
 				NeedsEnrollment bool   `json:"needsEnrollment"`
+				// Certificate fields (sent during enrollment when PKI is enabled)
+				ClientCert    string `json:"clientCert"`
+				ClientKey     string `json:"clientKey"`
+				CACert        string `json:"caCert"`
+				CertExpiresAt string `json:"certExpiresAt"`
+				CertSerial    string `json:"certSerial"`
+				MTLSAuth      bool   `json:"mtlsAuth"` // True if authenticated via mTLS
 			}
 			// Try to parse Payload if present
 			if msg.Payload != nil {
@@ -639,7 +761,29 @@ func (c *Client) readLoop(ctx context.Context) {
 				c.mu.Lock()
 				c.authenticated = true
 				c.mu.Unlock()
-				log.Println("Authentication successful")
+
+				if authResp.MTLSAuth {
+					log.Println("[mTLS] Authentication successful via client certificate")
+				} else {
+					log.Println("Authentication successful")
+				}
+
+				// Install certificates if server provided them
+				if authResp.ClientCert != "" && authResp.ClientKey != "" {
+					log.Printf("[mTLS] Received client certificate from server, serial=%s, expires=%s",
+						authResp.CertSerial, authResp.CertExpiresAt)
+					err := mtls.InstallCertificates(
+						[]byte(authResp.ClientCert),
+						[]byte(authResp.ClientKey),
+						[]byte(authResp.CACert),
+					)
+					if err != nil {
+						log.Printf("[mTLS] Warning: Failed to install certificates: %v", err)
+					} else {
+						log.Println("[mTLS] Client certificate installed successfully")
+						log.Println("[mTLS] Next connection will use certificate-based authentication")
+					}
+				}
 
 				// Check if server says we need to re-enroll
 				if authResp.NeedsEnrollment {
