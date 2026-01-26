@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/sentinel/server/internal/middleware"
+	"github.com/sentinel/server/internal/pki"
 	"github.com/sentinel/server/internal/websocket"
 	"github.com/sentinel/server/pkg/cache"
 	"github.com/sentinel/server/pkg/config"
@@ -19,6 +20,7 @@ type Router struct {
 	db     *database.DB
 	cache  *cache.Cache
 	hub    WebSocketHub
+	pki    *pki.PKI
 }
 
 func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *websocket.Hub) *gin.Engine {
@@ -250,6 +252,8 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			bootstrap.GET("/download", downloadBootstrapHandler(services))
 			bootstrap.GET("/agent", downloadBootstrapAgentHandler(services))
 			bootstrap.GET("/watchdog", downloadBootstrapWatchdogHandler(services))
+			bootstrap.GET("/desktop-helper", downloadBootstrapDesktopHelperHandler(services))
+			bootstrap.GET("/openh264", downloadBootstrapOpenH264Handler(services))
 		}
 
 		// Enrollment Tokens (public - no auth required for self-hosted setups)
@@ -446,13 +450,26 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 		}
 		// Agent Installation Links routes (public portal + admin management)
 		RegisterAgentLinkRoutes(api, protected, services)
+
+		// RDP Remote Desktop routes
+		registerRDPRoutes(api, protected, services)
 	}
 
 	// WebSocket routes
 	ws := r.Group("/ws")
 	{
+		// Standard agent WebSocket (token auth)
 		ws.GET("/agent", handleAgentWebSocketWithServices(services))
+		// mTLS-authenticated agent WebSocket (certificate auth, no token needed)
+		ws.GET("/agent/mtls", handleAgentWebSocketMTLS(services))
+		// Dashboard WebSocket (JWT auth)
 		ws.GET("/dashboard", middleware.AuthMiddleware(services.Config.JWTSecret), handleDashboardWebSocketWithServices(services))
+	}
+
+	// Agent certificate management routes (require mTLS)
+	agentCerts := api.Group("/agent/certs")
+	{
+		agentCerts.POST("/renew", handleCertRenewal(services))
 	}
 
 	// Backwards-compatible WebSocket route

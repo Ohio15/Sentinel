@@ -140,10 +140,11 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	}
 
 	var authPayload struct {
-		AgentID    string `json:"agentId"`
-		Token      string `json:"token"`
-		CACertHash string `json:"caCertHash"`
-		DeviceInfo *struct {
+		AgentID       string `json:"agentId"`
+		Token         string `json:"token"`
+		CACertHash    string `json:"caCertHash"`
+		HasClientCert bool   `json:"hasClientCert"` // Agent indicates if it already has a client certificate
+		DeviceInfo    *struct {
 			Hostname     string `json:"hostname"`
 			Platform     string `json:"platform"`
 			OSType       string `json:"osType"`
@@ -303,8 +304,38 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 		return
 	}
 
-	// Send auth success
-	conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":true}`)})
+	// Build auth response - include certificate if PKI is available and agent doesn't have one
+	authRespPayload := map[string]interface{}{
+		"success": true,
+	}
+
+	// Issue client certificate if PKI is available and agent indicates it needs one
+	if r.pki != nil && !authPayload.HasClientCert {
+		log.Printf("[PKI] Issuing client certificate for agent %s", authPayload.AgentID)
+		bundle, err := r.pki.IssueClientCertificate(
+			ctx,
+			authPayload.AgentID,
+			deviceID,
+			constants.CurrentOrganizationID,
+			r.config.CertValidityYears,
+		)
+		if err != nil {
+			log.Printf("[PKI] Failed to issue certificate for agent %s: %v", authPayload.AgentID, err)
+			// Continue without certificate - agent can still function with token auth
+		} else {
+			authRespPayload["clientCert"] = bundle.ClientCert
+			authRespPayload["clientKey"] = bundle.ClientKey
+			authRespPayload["caCert"] = bundle.CACert
+			authRespPayload["certExpiresAt"] = bundle.ExpiresAt.Format(time.RFC3339)
+			authRespPayload["certSerial"] = bundle.SerialNumber
+			log.Printf("[PKI] Issued certificate for agent %s, serial=%s, expires=%s",
+				authPayload.AgentID, bundle.SerialNumber, bundle.ExpiresAt.Format(time.RFC3339))
+		}
+	}
+
+	// Send auth response
+	authRespJSON, _ := json.Marshal(authRespPayload)
+	conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(authRespJSON)})
 
 	// Register client
 	client := r.hub.RegisterAgent(conn, authPayload.AgentID, deviceID)

@@ -346,8 +346,7 @@ func getDeviceVersionHistoryHandler(services *Services) gin.HandlerFunc {
 
 // WebSocket handlers
 func handleAgentWebSocketWithServices(services *Services) gin.HandlerFunc {
-	
-	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub}
+	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub, pki: services.PKI}
 	return router.handleAgentWebSocket
 }
 

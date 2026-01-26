@@ -50,6 +50,12 @@ type Config struct {
 	APNsSandbox   bool   // Use APNs sandbox environment
 	FCMCredsPath  string // Path to Firebase credentials JSON
 	FCMProjectID  string // Firebase project ID
+
+	// PKI / mTLS
+	CACertPath          string // Path to CA certificate PEM file
+	CAKeyPath           string // Path to CA private key PEM file
+	EnableMTLS          bool   // Enable mTLS certificate issuance
+	CertValidityYears   int    // Certificate validity period in years
 }
 
 func Load() (*Config, error) {
@@ -96,6 +102,12 @@ func Load() (*Config, error) {
 		APNsSandbox:  getEnvBool("APNS_SANDBOX", false),
 		FCMCredsPath: getEnv("FCM_CREDENTIALS_PATH", ""),
 		FCMProjectID: getEnv("FCM_PROJECT_ID", ""),
+
+		// PKI / mTLS
+		CACertPath:        getEnv("CA_CERT_PATH", "/certs/ca-cert.pem"),
+		CAKeyPath:         getEnv("CA_KEY_PATH", "/certs/ca-key.pem"),
+		EnableMTLS:        getEnvBool("ENABLE_MTLS", true),
+		CertValidityYears: getEnvInt("CERT_VALIDITY_YEARS", 2),
 	}
 
 	// Validate required fields

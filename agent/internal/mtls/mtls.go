@@ -6,10 +6,14 @@ package mtls
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/sentinel/agent/internal/paths"
 )
@@ -135,9 +139,92 @@ func GetMTLSPort() string {
 
 // GetMTLSServerURL converts a standard server URL to use the mTLS port.
 // Example: https://example.com:443 -> https://example.com:8443
+// Example: wss://example.com:443/ws/agent -> wss://example.com:8443/ws/agent/mtls
 func GetMTLSServerURL(serverURL string) string {
-	// This would be more complex in production to handle various URL formats
-	// For now, we just change the known ports
-	// TODO: Implement proper URL parsing and port replacement
-	return serverURL
+	parsed, err := url.Parse(serverURL)
+	if err != nil {
+		log.Printf("[mTLS] Failed to parse server URL: %v", err)
+		return serverURL
+	}
+
+	// Get host and current port
+	host := parsed.Hostname()
+	port := parsed.Port()
+
+	// Map standard ports to mTLS port
+	mtlsPort := GetMTLSPort()
+	if port == "" || port == "443" || port == "4443" {
+		parsed.Host = host + ":" + mtlsPort
+	} else if port == "8443" {
+		// Already on mTLS port
+	} else {
+		// For non-standard ports, append mTLS port
+		parsed.Host = host + ":" + mtlsPort
+	}
+
+	// Update path to mTLS endpoint if it's a WebSocket path
+	if strings.Contains(parsed.Path, "/ws/agent") && !strings.HasSuffix(parsed.Path, "/mtls") {
+		parsed.Path = strings.Replace(parsed.Path, "/ws/agent", "/ws/agent/mtls", 1)
+	} else if parsed.Path == "/ws" {
+		parsed.Path = "/ws/agent/mtls"
+	}
+
+	return parsed.String()
+}
+
+// GetCertificateExpiry returns the expiration time of the client certificate.
+// Returns nil if no certificate is installed or it cannot be parsed.
+func GetCertificateExpiry() (*time.Time, error) {
+	certPath := paths.ClientCertPath()
+	certPEM, err := os.ReadFile(certPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read certificate: %w", err)
+	}
+
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM block")
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse certificate: %w", err)
+	}
+
+	return &cert.NotAfter, nil
+}
+
+// NeedsRenewal checks if the client certificate needs renewal.
+// Returns true if the certificate expires within 30 days.
+func NeedsRenewal() bool {
+	expiry, err := GetCertificateExpiry()
+	if err != nil {
+		// If we can't determine expiry, assume renewal is needed
+		return true
+	}
+
+	// Renew if expiring within 30 days
+	renewalWindow := 30 * 24 * time.Hour
+	return time.Until(*expiry) < renewalWindow
+}
+
+// GetCertificateSerial returns the serial number of the client certificate.
+func GetCertificateSerial() (string, error) {
+	certPath := paths.ClientCertPath()
+	certPEM, err := os.ReadFile(certPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read certificate: %w", err)
+	}
+
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return "", fmt.Errorf("failed to decode PEM block")
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse certificate: %w", err)
+	}
+
+	return fmt.Sprintf("%x", cert.SerialNumber), nil
 }
