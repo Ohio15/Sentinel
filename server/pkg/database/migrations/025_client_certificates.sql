@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS client_certificates (
     expires_at TIMESTAMPTZ NOT NULL,
     revoked_at TIMESTAMPTZ,
     revoked_reason VARCHAR(255),
-    organization_id UUID NOT NULL,
+    organization_id INTEGER NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
