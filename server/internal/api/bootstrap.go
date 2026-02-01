@@ -459,3 +459,133 @@ func getWatchdogBinaryPath(services *Services, platform, arch string) string {
 
 	return ""
 }
+
+// downloadBootstrapDesktopHelperHandler serves the desktop helper binary for WebRTC remote desktop
+func downloadBootstrapDesktopHelperHandler(services *Services) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		platform := c.Query("platform")
+		arch := c.Query("arch")
+
+		if platform == "" {
+			platform = "windows"
+		}
+		if arch == "" {
+			arch = "amd64"
+		}
+
+		// Normalize
+		platform = strings.ToLower(platform)
+		arch = strings.ToLower(arch)
+
+		// Only Windows is supported for desktop helper
+		if platform != "windows" {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Desktop helper only available for Windows"})
+			return
+		}
+
+		// Get desktop helper binary path
+		helperPath := getDesktopHelperBinaryPath(services, platform, arch)
+		if helperPath == "" {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Desktop helper not found for this platform"})
+			return
+		}
+
+		// Read binary
+		binaryData, err := os.ReadFile(helperPath)
+		if err != nil {
+			log.Printf("Error reading desktop helper: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read desktop helper"})
+			return
+		}
+
+		filename := fmt.Sprintf("sentinel-desktop-%s-%s.exe", platform, arch)
+
+		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+		c.Header("Content-Type", "application/octet-stream")
+		c.Data(http.StatusOK, "application/octet-stream", binaryData)
+	}
+}
+
+func getDesktopHelperBinaryPath(services *Services, platform, arch string) string {
+	// Check in multiple locations
+	baseName := fmt.Sprintf("sentinel-desktop-%s-%s", platform, arch)
+	if platform == "windows" {
+		baseName += ".exe"
+	}
+
+	paths := []string{
+		filepath.Join("release", "agent", baseName),
+		filepath.Join("agent", baseName),
+		filepath.Join("installers", baseName),
+		baseName,
+	}
+
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+
+	return ""
+}
+
+// downloadBootstrapOpenH264Handler serves the OpenH264 DLL for video encoding
+func downloadBootstrapOpenH264Handler(services *Services) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		platform := c.Query("platform")
+		arch := c.Query("arch")
+
+		if platform == "" {
+			platform = "windows"
+		}
+		if arch == "" {
+			arch = "amd64"
+		}
+
+		// Normalize
+		platform = strings.ToLower(platform)
+		arch = strings.ToLower(arch)
+
+		// Only Windows x64 is supported
+		if platform != "windows" || arch != "amd64" {
+			c.JSON(http.StatusNotFound, gin.H{"error": "OpenH264 only available for Windows amd64"})
+			return
+		}
+
+		// Get OpenH264 DLL path
+		dllPath := getOpenH264Path(services)
+		if dllPath == "" {
+			c.JSON(http.StatusNotFound, gin.H{"error": "OpenH264 DLL not found"})
+			return
+		}
+
+		// Read DLL
+		dllData, err := os.ReadFile(dllPath)
+		if err != nil {
+			log.Printf("Error reading OpenH264 DLL: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read OpenH264 DLL"})
+			return
+		}
+
+		c.Header("Content-Disposition", "attachment; filename=openh264-2.4.1-win64.dll")
+		c.Header("Content-Type", "application/octet-stream")
+		c.Data(http.StatusOK, "application/octet-stream", dllData)
+	}
+}
+
+func getOpenH264Path(services *Services) string {
+	paths := []string{
+		filepath.Join("release", "agent", "openh264-2.4.1-win64.dll"),
+		filepath.Join("agent", "openh264-2.4.1-win64.dll"),
+		filepath.Join("installers", "openh264-2.4.1-win64.dll"),
+		"openh264-2.4.1-win64.dll",
+	}
+
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+
+	return ""
+}
