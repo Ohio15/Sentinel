@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/sentinel/server/internal/constants"
@@ -20,6 +21,30 @@ func (r *Router) handleDashboardMessage(userID uuid.UUID, message []byte) {
 		return
 	}
 	log.Printf("[Dashboard] Message type: %s", msg.Type)
+
+	// Handle ping messages directly - don't forward to agent
+	if msg.Type == ws.MsgTypePing {
+		log.Printf("[Dashboard] Responding to ping from user %s", userID)
+		pongResponse, _ := json.Marshal(map[string]interface{}{
+			"type":      ws.MsgTypePong,
+			"requestId": msg.RequestID,
+			"timestamp": time.Now().UnixMilli(),
+		})
+		r.hub.BroadcastToDashboards(pongResponse)
+		return
+	}
+
+	// Handle heartbeat messages directly as well
+	if msg.Type == ws.MsgTypeHeartbeat {
+		log.Printf("[Dashboard] Responding to heartbeat from user %s", userID)
+		ackResponse, _ := json.Marshal(map[string]interface{}{
+			"type":      ws.MsgTypeHeartbeatAck,
+			"requestId": msg.RequestID,
+			"timestamp": time.Now().UnixMilli(),
+		})
+		r.hub.BroadcastToDashboards(ackResponse)
+		return
+	}
 
 	// Extract target info from payload
 	var payload struct {
