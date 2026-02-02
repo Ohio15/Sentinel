@@ -21,8 +21,9 @@ const (
 	ChunkSize = 64 * 1024 // 64KB chunks
 )
 
-// FileInfo represents information about a file
-type FileInfo struct {
+// LegacyFileInfo represents information about a file (legacy format for backward compat)
+// NOTE: The new FileInfo type is defined in filetransfer_interface.go
+type LegacyFileInfo struct {
 	Name         string    `json:"name"`
 	Path         string    `json:"path"`
 	Size         int64     `json:"size"`
@@ -61,24 +62,19 @@ func New(onProgress func(TransferProgress)) *FileTransfer {
 func getDefaultAllowedBases() []string {
 	bases := make([]string, 0)
 
-	// Add user home directory
-	if home, err := os.UserHomeDir(); err == nil {
-		bases = append(bases, home)
-	}
-
-	// Add temp directory
-	bases = append(bases, os.TempDir())
-
-	// Platform-specific additions - SECURITY FIX: Restricted to safe directories only
+	// For RMM functionality, we need full filesystem access
+	// Security is still enforced via path traversal protection (no .., symlink resolution, etc.)
 	if runtime.GOOS == "windows" {
-		// Only allow Sentinel data directory and common safe locations
-		bases = append(bases, "C:\\ProgramData\\Sentinel")
-		bases = append(bases, "C:\\Program Files\\Sentinel Agent")
+		// Add all available drive letters on Windows
+		for _, drive := range "ABCDEFGHIJKLMNOPQRSTUVWXYZ" {
+			drivePath := string(drive) + ":\\"
+			if _, err := os.Stat(drivePath); err == nil {
+				bases = append(bases, drivePath)
+			}
+		}
 	} else {
-		// On Unix-like systems, only allow specific directories
-		bases = append(bases, "/var/sentinel")
-		bases = append(bases, "/opt/sentinel")
-		bases = append(bases, "/etc/sentinel")
+		// On Unix-like systems, allow root access
+		bases = append(bases, "/")
 	}
 
 	return bases
@@ -246,16 +242,14 @@ func (ft *FileTransfer) ListDirectory(path string) ([]FileInfo, error) {
 		}
 
 		fullPath := filepath.Join(validatedPath, entry.Name())
-		isHidden := entry.Name()[0] == '.'
 
 		files = append(files, FileInfo{
-			Name:         entry.Name(),
-			Path:         fullPath,
-			Size:         info.Size(),
-			IsDir:        entry.IsDir(),
-			Mode:         info.Mode().String(),
-			ModifiedTime: info.ModTime(),
-			IsHidden:     isHidden,
+			Name:        entry.Name(),
+			Path:        fullPath,
+			Size:        info.Size(),
+			IsDir:       entry.IsDir(),
+			ModTime:     info.ModTime(),
+			Permissions: info.Mode().String(),
 		})
 	}
 
@@ -284,13 +278,12 @@ func (ft *FileTransfer) GetFileInfo(path string) (*FileInfo, error) {
 	}
 
 	return &FileInfo{
-		Name:         info.Name(),
-		Path:         validatedPath,
-		Size:         info.Size(),
-		IsDir:        info.IsDir(),
-		Mode:         info.Mode().String(),
-		ModifiedTime: info.ModTime(),
-		IsHidden:     info.Name()[0] == '.',
+		Name:        info.Name(),
+		Path:        validatedPath,
+		Size:        info.Size(),
+		IsDir:       info.IsDir(),
+		ModTime:     info.ModTime(),
+		Permissions: info.Mode().String(),
 	}, nil
 }
 
@@ -681,16 +674,13 @@ func (ft *FileTransfer) scanDir(ctx context.Context, path string, depth, maxDept
 			continue
 		}
 
-		isHidden := len(entry.Name()) > 0 && entry.Name()[0] == '.'
-
 		fileInfo := FileInfo{
-			Name:         entry.Name(),
-			Path:         fullPath,
-			Size:         info.Size(),
-			IsDir:        entry.IsDir(),
-			Mode:         info.Mode().String(),
-			ModifiedTime: info.ModTime(),
-			IsHidden:     isHidden,
+			Name:        entry.Name(),
+			Path:        fullPath,
+			Size:        info.Size(),
+			IsDir:       entry.IsDir(),
+			ModTime:     info.ModTime(),
+			Permissions: info.Mode().String(),
 		}
 
 		*files = append(*files, fileInfo)
