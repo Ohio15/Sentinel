@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/sentinel/agent/internal/ipc"
+	"github.com/sentinel/agent/internal/mtls"
 	"github.com/sentinel/agent/internal/protection"
 )
 
@@ -43,6 +44,25 @@ type VersionInfo struct {
 	ReleaseDate string `json:"releaseDate"`
 	Changelog   string `json:"changelog"`
 	Required    bool   `json:"required"`
+}
+
+// WatchdogVersionInfo contains version information for watchdog updates
+type WatchdogVersionInfo struct {
+	Version     string `json:"version"`
+	Platform    string `json:"platform"`
+	Arch        string `json:"arch"`
+	DownloadURL string `json:"downloadUrl"`
+	Checksum    string `json:"checksum"`
+	Size        int64  `json:"size"`
+}
+
+// WatchdogUpdateResult contains the result of checking for watchdog updates
+type WatchdogUpdateResult struct {
+	Available        bool                 `json:"available"`
+	CurrentVersion   string               `json:"currentVersion"`
+	LatestVersion    string               `json:"latestVersion"`
+	VersionInfo      *WatchdogVersionInfo `json:"versionInfo,omitempty"`
+	Error            string               `json:"error,omitempty"`
 }
 
 type UpdateResult struct {
@@ -83,10 +103,23 @@ type Updater struct {
 }
 
 func New(serverURL, currentVersion string) *Updater {
+	// Create HTTP client with TLS config for CA verification
+	httpClient := &http.Client{Timeout: 5 * time.Minute}
+
+	tlsConfig, err := mtls.GetTLSConfig()
+	if err == nil && tlsConfig != nil {
+		httpClient.Transport = &http.Transport{
+			TLSClientConfig: tlsConfig,
+		}
+		log.Println("[Updater] HTTP client configured with CA certificate")
+	} else {
+		log.Printf("[Updater] Warning: Using default TLS config: %v", err)
+	}
+
 	return &Updater{
 		serverURL:      serverURL,
 		currentVersion: currentVersion,
-		httpClient:     &http.Client{Timeout: 5 * time.Minute},
+		httpClient:     httpClient,
 		checkInterval:  1 * time.Hour,
 		maxRetries:     3,
 		retryDelay:     5 * time.Second,
@@ -581,8 +614,7 @@ func (u *Updater) reportStatus(ctx context.Context) {
 	url := fmt.Sprintf("%s/api/agent/update/status", u.serverURL)
 	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonData))
 	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := u.httpClient.Do(req)
 	if err == nil {
 		resp.Body.Close()
 	}
@@ -639,6 +671,185 @@ func CompareVersions(v1, v2 string) int {
 		}
 	}
 	return 0
+}
+
+// ============================================================================
+// Watchdog Update Functions
+// ============================================================================
+
+// CheckForWatchdogUpdate checks if a watchdog update is available
+func (u *Updater) CheckForWatchdogUpdate(ctx context.Context) (*WatchdogUpdateResult, error) {
+	// First get current watchdog version via IPC
+	watchdogVersion, err := ipc.QueryWatchdogVersion()
+	if err != nil {
+		// Watchdog may be old version without pipe support
+		log.Printf("Could not query watchdog version: %v", err)
+		return nil, fmt.Errorf("watchdog version unavailable: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/api/agent/watchdog/version?platform=%s&arch=%s&current=%s",
+		u.serverURL, runtime.GOOS, runtime.GOARCH, watchdogVersion)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := u.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("watchdog version check failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		// Endpoint not implemented on server, watchdog updates not supported
+		return &WatchdogUpdateResult{
+			Available:      false,
+			CurrentVersion: watchdogVersion,
+		}, nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("watchdog version check returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result WatchdogUpdateResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	result.CurrentVersion = watchdogVersion
+	return &result, nil
+}
+
+// DownloadWatchdogUpdate downloads the watchdog update and returns the staging path
+func (u *Updater) DownloadWatchdogUpdate(ctx context.Context, info *WatchdogVersionInfo) (string, error) {
+	log.Printf("[Updater] Downloading watchdog update v%s from %s", info.Version, info.DownloadURL)
+
+	// Ensure staging directory exists
+	if err := ipc.EnsureDirectories(); err != nil {
+		return "", fmt.Errorf("failed to create staging directory: %w", err)
+	}
+
+	stagingFile := ipc.WatchdogStagingPath(info.Version, info.Platform, info.Arch)
+	tempFile := stagingFile + ".tmp"
+
+	// Download the file
+	req, err := http.NewRequestWithContext(ctx, "GET", info.DownloadURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create download request: %w", err)
+	}
+
+	resp, err := u.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("download failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("download returned status %d", resp.StatusCode)
+	}
+
+	out, err := os.Create(tempFile)
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp file: %w", err)
+	}
+	defer out.Close()
+
+	hasher := sha256.New()
+	writer := io.MultiWriter(out, hasher)
+
+	if _, err := io.Copy(writer, resp.Body); err != nil {
+		os.Remove(tempFile)
+		return "", fmt.Errorf("download failed during transfer: %w", err)
+	}
+
+	// Close the file before renaming (required on Windows)
+	out.Close()
+
+	// Verify checksum if provided
+	checksum := hex.EncodeToString(hasher.Sum(nil))
+	if info.Checksum != "" && checksum != info.Checksum {
+		os.Remove(tempFile)
+		return "", fmt.Errorf("checksum mismatch: expected %s, got %s", info.Checksum, checksum)
+	}
+
+	// Rename from .tmp to final staging path
+	os.Remove(stagingFile) // Remove any existing file
+	if err := os.Rename(tempFile, stagingFile); err != nil {
+		os.Remove(tempFile)
+		return "", fmt.Errorf("failed to rename to staging path: %w", err)
+	}
+
+	log.Printf("[Updater] Watchdog download complete, checksum verified: %s", checksum)
+	return stagingFile, nil
+}
+
+// TriggerWatchdogUpdate initiates a watchdog update
+func (u *Updater) TriggerWatchdogUpdate(ctx context.Context) error {
+	log.Println("[Updater] Checking for watchdog updates...")
+
+	result, err := u.CheckForWatchdogUpdate(ctx)
+	if err != nil {
+		return fmt.Errorf("watchdog update check failed: %w", err)
+	}
+
+	if !result.Available {
+		log.Printf("[Updater] Watchdog is up to date (v%s)", result.CurrentVersion)
+		return nil
+	}
+
+	if result.VersionInfo == nil {
+		return fmt.Errorf("no version info in watchdog update response")
+	}
+
+	log.Printf("[Updater] Watchdog update available: v%s -> v%s",
+		result.CurrentVersion, result.LatestVersion)
+
+	// Download the update
+	stagingPath, err := u.DownloadWatchdogUpdate(ctx, result.VersionInfo)
+	if err != nil {
+		return fmt.Errorf("failed to download watchdog update: %w", err)
+	}
+
+	// Get watchdog executable path (assumes it's in the same directory as agent)
+	agentExe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get agent executable path: %w", err)
+	}
+	watchdogPath := filepath.Join(filepath.Dir(agentExe), "sentinel-watchdog.exe")
+
+	// Create update request for the watchdog
+	request := &ipc.WatchdogUpdateRequest{
+		Version:     result.VersionInfo.Version,
+		StagedPath:  stagingPath,
+		Checksum:    result.VersionInfo.Checksum,
+		RequestedAt: time.Now(),
+		RequestedBy: u.deviceID,
+		TargetPath:  watchdogPath,
+	}
+
+	// Write the update request file
+	if err := ipc.WriteWatchdogUpdateRequest(request); err != nil {
+		os.Remove(stagingPath)
+		return fmt.Errorf("failed to write watchdog update request: %w", err)
+	}
+
+	log.Printf("[Updater] Watchdog update request written for v%s", result.VersionInfo.Version)
+
+	// Signal the watchdog via named pipe
+	client, err := ipc.ConnectPipeWithTimeout(5 * time.Second)
+	if err != nil {
+		log.Printf("[Updater] Could not signal watchdog via pipe (will poll): %v", err)
+	} else {
+		msg := ipc.PipeMessage{Type: ipc.MsgWatchdogUpdateReady}
+		client.Send(msg, false)
+		client.Close()
+		log.Println("[Updater] Watchdog signaled via pipe for self-update")
+	}
+
+	return nil
 }
 
 // CheckAndReportUpdateResult checks for completed update status and reports to server.
@@ -702,8 +913,7 @@ func (u *Updater) reportUpdateResult(ctx context.Context, status *ipc.UpdateStat
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := u.httpClient.Do(req)
 	if err != nil {
 		log.Printf("Failed to report update result: %v", err)
 		return

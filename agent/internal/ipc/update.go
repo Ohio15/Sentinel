@@ -25,9 +25,12 @@ const (
 	PipeName = `\\.\pipe\SentinelUpdate`
 
 	// File names
-	UpdateRequestFile = "update-request.json"
-	UpdateStatusFile  = "update-status.json"
-	AgentInfoFile     = "agent-info.json"
+	UpdateRequestFile         = "update-request.json"
+	UpdateStatusFile          = "update-status.json"
+	AgentInfoFile             = "agent-info.json"
+	WatchdogUpdateRequestFile = "watchdog-update-request.json"
+	WatchdogUpdateStatusFile  = "watchdog-update-status.json"
+	WatchdogInfoFile          = "watchdog-info.json"
 )
 
 // UpdateState represents the current state of an update operation
@@ -83,12 +86,45 @@ type PipeMessage struct {
 
 // Message types for named pipe communication
 const (
-	MsgUpdateReady    = "update_ready"
-	MsgUpdateComplete = "update_complete"
-	MsgVersionQuery   = "version_query"
-	MsgVersionResp    = "version_response"
-	MsgShutdown       = "shutdown"
+	MsgUpdateReady          = "update_ready"
+	MsgUpdateComplete       = "update_complete"
+	MsgVersionQuery         = "version_query"
+	MsgVersionResp          = "version_response"
+	MsgShutdown             = "shutdown"
+	MsgWatchdogUpdateReady  = "watchdog_update_ready"
+	MsgWatchdogVersionQuery = "watchdog_version_query"
 )
+
+// WatchdogUpdateRequest is written when a watchdog update is ready to apply.
+// The watchdog reads this file and uses Task Scheduler to update itself.
+type WatchdogUpdateRequest struct {
+	Version     string    `json:"version"`
+	StagedPath  string    `json:"staged_path"`
+	Checksum    string    `json:"checksum"`
+	RequestedAt time.Time `json:"requested_at"`
+	RequestedBy string    `json:"requested_by"` // agent ID or "server"
+	TargetPath  string    `json:"target_path"`  // path to watchdog executable
+}
+
+// WatchdogUpdateStatus tracks the state of a watchdog self-update operation
+type WatchdogUpdateStatus struct {
+	State         UpdateState `json:"state"`
+	Version       string      `json:"version"`
+	PreviousVer   string      `json:"previous_version,omitempty"`
+	StartedAt     time.Time   `json:"started_at,omitempty"`
+	CompletedAt   time.Time   `json:"completed_at,omitempty"`
+	Error         string      `json:"error,omitempty"`
+	RolledBack    bool        `json:"rolled_back,omitempty"`
+	BackupPath    string      `json:"backup_path,omitempty"`
+	AttemptCount  int         `json:"attempt_count,omitempty"`
+}
+
+// WatchdogInfo is written by the watchdog on startup to report its version and status
+type WatchdogInfo struct {
+	Version   string    `json:"version"`
+	StartedAt time.Time `json:"started_at"`
+	PID       int       `json:"pid"`
+}
 
 // EnsureDirectories creates the necessary directories for update coordination
 func EnsureDirectories() error {
@@ -114,6 +150,21 @@ func UpdateStatusPath() string {
 // AgentInfoPath returns the full path to the agent info file
 func AgentInfoPath() string {
 	return filepath.Join(BaseDir, AgentInfoFile)
+}
+
+// WatchdogUpdateRequestPath returns the full path to the watchdog update request file
+func WatchdogUpdateRequestPath() string {
+	return filepath.Join(UpdateDir, WatchdogUpdateRequestFile)
+}
+
+// WatchdogUpdateStatusPath returns the full path to the watchdog update status file
+func WatchdogUpdateStatusPath() string {
+	return filepath.Join(UpdateDir, WatchdogUpdateStatusFile)
+}
+
+// WatchdogInfoPath returns the full path to the watchdog info file
+func WatchdogInfoPath() string {
+	return filepath.Join(BaseDir, WatchdogInfoFile)
 }
 
 // WriteUpdateRequest writes an update request to disk
@@ -275,4 +326,145 @@ func CleanupStagingDir() error {
 func StagingPath(version, platform, arch string) string {
 	filename := fmt.Sprintf("sentinel-agent-%s-%s-%s.exe", version, platform, arch)
 	return filepath.Join(StagingDir, filename)
+}
+
+// WatchdogStagingPath returns the path where a staged watchdog update should be stored
+func WatchdogStagingPath(version, platform, arch string) string {
+	filename := fmt.Sprintf("sentinel-watchdog-%s-%s-%s.exe", version, platform, arch)
+	return filepath.Join(StagingDir, filename)
+}
+
+// WriteWatchdogUpdateRequest writes a watchdog update request to disk
+func WriteWatchdogUpdateRequest(req *WatchdogUpdateRequest) error {
+	if err := EnsureDirectories(); err != nil {
+		return err
+	}
+
+	data, err := json.MarshalIndent(req, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal watchdog update request: %w", err)
+	}
+
+	path := WatchdogUpdateRequestPath()
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write watchdog update request: %w", err)
+	}
+
+	return nil
+}
+
+// ReadWatchdogUpdateRequest reads a watchdog update request from disk.
+// Returns nil, nil if no request file exists.
+func ReadWatchdogUpdateRequest() (*WatchdogUpdateRequest, error) {
+	path := WatchdogUpdateRequestPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read watchdog update request: %w", err)
+	}
+
+	var req WatchdogUpdateRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal watchdog update request: %w", err)
+	}
+
+	return &req, nil
+}
+
+// DeleteWatchdogUpdateRequest removes the watchdog update request file
+func DeleteWatchdogUpdateRequest() error {
+	path := WatchdogUpdateRequestPath()
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to delete watchdog update request: %w", err)
+	}
+	return nil
+}
+
+// WriteWatchdogUpdateStatus writes a watchdog update status to disk
+func WriteWatchdogUpdateStatus(status *WatchdogUpdateStatus) error {
+	if err := EnsureDirectories(); err != nil {
+		return err
+	}
+
+	data, err := json.MarshalIndent(status, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal watchdog update status: %w", err)
+	}
+
+	path := WatchdogUpdateStatusPath()
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write watchdog update status: %w", err)
+	}
+
+	return nil
+}
+
+// ReadWatchdogUpdateStatus reads a watchdog update status from disk.
+// Returns nil, nil if no status file exists.
+func ReadWatchdogUpdateStatus() (*WatchdogUpdateStatus, error) {
+	path := WatchdogUpdateStatusPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read watchdog update status: %w", err)
+	}
+
+	var status WatchdogUpdateStatus
+	if err := json.Unmarshal(data, &status); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal watchdog update status: %w", err)
+	}
+
+	return &status, nil
+}
+
+// DeleteWatchdogUpdateStatus removes the watchdog update status file
+func DeleteWatchdogUpdateStatus() error {
+	path := WatchdogUpdateStatusPath()
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to delete watchdog update status: %w", err)
+	}
+	return nil
+}
+
+// WriteWatchdogInfo writes watchdog info to disk
+func WriteWatchdogInfo(info *WatchdogInfo) error {
+	if err := EnsureDirectories(); err != nil {
+		return err
+	}
+
+	data, err := json.MarshalIndent(info, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal watchdog info: %w", err)
+	}
+
+	path := WatchdogInfoPath()
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write watchdog info: %w", err)
+	}
+
+	return nil
+}
+
+// ReadWatchdogInfo reads watchdog info from disk.
+// Returns nil, nil if no info file exists.
+func ReadWatchdogInfo() (*WatchdogInfo, error) {
+	path := WatchdogInfoPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read watchdog info: %w", err)
+	}
+
+	var info WatchdogInfo
+	if err := json.Unmarshal(data, &info); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal watchdog info: %w", err)
+	}
+
+	return &info, nil
 }

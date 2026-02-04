@@ -17,6 +17,7 @@ import (
 
 	"github.com/sentinel/agent/internal/ipc"
 	"github.com/sentinel/agent/internal/protection"
+	"github.com/sentinel/agent/internal/selfupdate"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/debug"
@@ -47,7 +48,7 @@ const (
 )
 
 var (
-	Version = "1.67.10"
+	Version = "1.69.0"
 	elog    debug.Log
 	isDebug = false
 )
@@ -64,14 +65,16 @@ type WatchdogConfig struct {
 
 // watchdogService implements svc.Handler
 type watchdogService struct {
-	config         *WatchdogConfig
-	restartCount   int
-	lastRestart    time.Time
-	mu             sync.Mutex
-	stopChan       chan struct{}
-	installPath    string
-	updateInProgress bool
-	pipeServer     *ipc.PipeServer
+	config              *WatchdogConfig
+	restartCount        int
+	lastRestart         time.Time
+	mu                  sync.Mutex
+	stopChan            chan struct{}
+	installPath         string
+	updateInProgress    bool
+	pipeServer          *ipc.PipeServer
+	selfUpdater         *selfupdate.SelfUpdater
+	selfUpdateInProgress bool
 }
 
 func main() {
@@ -166,10 +169,34 @@ func runService(installPath string) {
 
 	elog.Info(1, fmt.Sprintf("Starting %s v%s", serviceName, Version))
 
+	// Create self-updater
+	selfUpdater, err := selfupdate.New(serviceName, Version, installPath)
+	if err != nil {
+		elog.Warning(1, fmt.Sprintf("Failed to create self-updater: %v", err))
+	}
+
 	ws := &watchdogService{
 		config:      loadConfig(installPath),
 		stopChan:    make(chan struct{}),
 		installPath: installPath,
+		selfUpdater: selfUpdater,
+	}
+
+	// Write watchdog info on startup
+	if selfUpdater != nil {
+		if err := selfUpdater.WriteWatchdogInfo(); err != nil {
+			elog.Warning(1, fmt.Sprintf("Failed to write watchdog info: %v", err))
+		}
+
+		// Check result of any previous self-update
+		if status, err := selfUpdater.CheckUpdateResult(); err == nil && status != nil {
+			if status.State == ipc.StateComplete {
+				elog.Info(1, fmt.Sprintf("Previous self-update to v%s successful", status.Version))
+				selfUpdater.CleanupAfterUpdate()
+			} else if status.State == ipc.StateRolledBack {
+				elog.Warning(1, fmt.Sprintf("Previous self-update to v%s was rolled back: %s", status.Version, status.Error))
+			}
+		}
 	}
 
 	err = svc.Run(serviceName, ws)
@@ -184,10 +211,34 @@ func runDebug(installPath string) {
 
 	log.Printf("Starting %s v%s in debug mode", serviceName, Version)
 
+	// Create self-updater
+	selfUpdater, err := selfupdate.New(serviceName, Version, installPath)
+	if err != nil {
+		log.Printf("Warning: Failed to create self-updater: %v", err)
+	}
+
 	ws := &watchdogService{
 		config:      loadConfig(installPath),
 		stopChan:    make(chan struct{}),
 		installPath: installPath,
+		selfUpdater: selfUpdater,
+	}
+
+	// Write watchdog info on startup
+	if selfUpdater != nil {
+		if err := selfUpdater.WriteWatchdogInfo(); err != nil {
+			log.Printf("Warning: Failed to write watchdog info: %v", err)
+		}
+
+		// Check result of any previous self-update
+		if status, err := selfUpdater.CheckUpdateResult(); err == nil && status != nil {
+			if status.State == ipc.StateComplete {
+				log.Printf("Previous self-update to v%s successful", status.Version)
+				selfUpdater.CleanupAfterUpdate()
+			} else if status.State == ipc.StateRolledBack {
+				log.Printf("Previous self-update to v%s was rolled back: %s", status.Version, status.Error)
+			}
+		}
 	}
 
 	// Start pipe server for update coordination
@@ -195,6 +246,9 @@ func runDebug(installPath string) {
 
 	// Check for any pending updates from before restart
 	go ws.checkForPendingUpdate()
+
+	// Start watchdog self-update checker
+	go ws.watchdogUpdateChecker()
 
 	// Run agent monitor in foreground
 	go ws.monitorAgent()
@@ -219,8 +273,11 @@ func (ws *watchdogService) Execute(args []string, r <-chan svc.ChangeRequest, ch
 	// Start the monitoring goroutine
 	go ws.monitorAgent()
 
-	// Start update checker goroutine
+	// Start update checker goroutine (for agent updates)
 	go ws.updateChecker()
+
+	// Start watchdog self-update checker goroutine
+	go ws.watchdogUpdateChecker()
 
 	changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
 
@@ -550,11 +607,22 @@ func (ws *watchdogService) startPipeServer() {
 	handler := func(msg ipc.PipeMessage) *ipc.PipeMessage {
 		switch msg.Type {
 		case ipc.MsgUpdateReady:
-			logMessage("Received update ready signal via pipe")
+			logMessage("Received agent update ready signal via pipe")
 			// The update checker will pick up the request file
 			return nil
 
+		case ipc.MsgWatchdogUpdateReady:
+			logMessage("Received watchdog update ready signal via pipe")
+			// The watchdog update checker will pick up the request file
+			return nil
+
 		case ipc.MsgVersionQuery:
+			return &ipc.PipeMessage{
+				Type:    ipc.MsgVersionResp,
+				Payload: Version,
+			}
+
+		case ipc.MsgWatchdogVersionQuery:
 			return &ipc.PipeMessage{
 				Type:    ipc.MsgVersionResp,
 				Payload: Version,
@@ -682,6 +750,84 @@ func (ws *watchdogService) updateChecker() {
 			go ws.applyUpdate(request)
 		}
 	}
+}
+
+// watchdogUpdateChecker periodically checks for pending watchdog self-update requests
+func (ws *watchdogService) watchdogUpdateChecker() {
+	// Wait a bit before starting to allow system to stabilize
+	time.Sleep(10 * time.Second)
+
+	ticker := time.NewTicker(updateCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ws.stopChan:
+			return
+		case <-ticker.C:
+			ws.mu.Lock()
+			inProgress := ws.selfUpdateInProgress
+			ws.mu.Unlock()
+
+			if inProgress {
+				continue
+			}
+
+			// Check for watchdog update request
+			if ws.selfUpdater == nil {
+				continue
+			}
+
+			request, err := ws.selfUpdater.CheckForPendingUpdate()
+			if err != nil {
+				logMessage(fmt.Sprintf("Error checking for watchdog updates: %v", err))
+				continue
+			}
+
+			if request == nil {
+				continue
+			}
+
+			// Don't update if target version matches current version
+			if request.Version == Version {
+				logMessage(fmt.Sprintf("Watchdog already at version %s, cleaning up request", Version))
+				ipc.DeleteWatchdogUpdateRequest()
+				continue
+			}
+
+			logMessage(fmt.Sprintf("Watchdog update request found for version %s (current: %s)", request.Version, Version))
+
+			ws.mu.Lock()
+			ws.selfUpdateInProgress = true
+			ws.mu.Unlock()
+
+			go ws.applySelfUpdate(request)
+		}
+	}
+}
+
+// applySelfUpdate performs the watchdog self-update via Task Scheduler
+func (ws *watchdogService) applySelfUpdate(request *ipc.WatchdogUpdateRequest) {
+	defer func() {
+		ws.mu.Lock()
+		ws.selfUpdateInProgress = false
+		ws.mu.Unlock()
+	}()
+
+	if ws.selfUpdater == nil {
+		logMessage("Self-updater not initialized")
+		return
+	}
+
+	logMessage(fmt.Sprintf("Starting watchdog self-update to version %s", request.Version))
+
+	if err := ws.selfUpdater.ApplySelfUpdate(request); err != nil {
+		logMessage(fmt.Sprintf("Self-update failed: %v", err))
+		return
+	}
+
+	// The scheduled task will stop this service, so we just wait
+	logMessage("Self-update initiated, watchdog will be restarted by scheduled task")
 }
 
 // applyUpdate performs the actual update operation
