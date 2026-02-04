@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useThemeStore } from '../stores/themeStore';
 import { useDeviceStore } from '../stores/deviceStore';
+import { PasskeyManager } from '../components/PasskeyManager';
 
 interface Settings {
   serverPort: number;
@@ -403,6 +404,9 @@ export function Settings() {
               </div>
             </div>
           </div>
+
+          {/* Passkeys / Security */}
+          <PasskeyManager />
 
           {/* Alert Settings */}
           <div className="card p-6">
