@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"bytes"
@@ -35,7 +35,7 @@ import (
 	"github.com/sentinel/agent/internal/mtls"
 )
 
-var Version = "1.69.0"
+var Version = "1.70.0"
 
 const ServiceName = "SentinelAgent"
 
