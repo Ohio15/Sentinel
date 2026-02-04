@@ -49,6 +49,11 @@ entryPoints:
       tls:
         options: mtls@file
 
+  # gRPC Data Plane for high-throughput agent data streams
+  # TLS passthrough - backend handles TLS termination
+  grpc:
+    address: ":4444"
+
 providers:
   # Docker provider disabled - doesn't work on Windows
   # Using file-based routing instead

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/sentinel/server/internal/api"
+	grpcserver "github.com/sentinel/server/internal/grpc"
 	"github.com/sentinel/server/internal/metrics"
 	"github.com/sentinel/server/internal/pki"
 	"github.com/sentinel/server/internal/push"
@@ -153,20 +154,48 @@ func main() {
 		return handleCommand(distHub, localHub, cmd)
 	})
 
-	// Start server in goroutine
+	// Start HTTP server in goroutine
 	go func() {
-		log.Printf("Sentinel server listening on %s", server.Addr)
+		log.Printf("Sentinel HTTP server listening on %s", server.Addr)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server failed: %v", err)
+			log.Fatalf("HTTP server failed: %v", err)
 		}
 	}()
+
+	// Start gRPC Data Plane server
+	var grpcServer *grpcserver.DataPlaneServer
+	var grpcSrv interface{ GracefulStop() }
+	if cfg.GRPCPort > 0 {
+		log.Printf("Starting gRPC Data Plane server on port %d...", cfg.GRPCPort)
+		grpcServer = grpcserver.NewDataPlaneServer(db, bulkInserter)
+
+		grpcConfig := grpcserver.ServerConfig{
+			Port:        cfg.GRPCPort,
+			TLSCertFile: cfg.TLSCertPath,
+			TLSKeyFile:  cfg.TLSKeyPath,
+			CACertFile:  cfg.CACertPath,
+			UseTLS:      cfg.EnableMTLS,
+		}
+
+		srv, listener, err := grpcserver.StartServer(grpcConfig, grpcServer)
+		if err != nil {
+			log.Printf("Warning: Failed to start gRPC server: %v", err)
+		} else {
+			grpcSrv = srv
+			go func() {
+				if err := srv.Serve(listener); err != nil {
+					log.Printf("gRPC server error: %v", err)
+				}
+			}()
+		}
+	}
 
 	// Wait for interrupt signal
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Println("Shutting down server...")
+	log.Println("Shutting down servers...")
 
 	// Graceful shutdown with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -175,11 +204,18 @@ func main() {
 	// Flush any pending metrics
 	bulkInserter.Flush()
 
-	if err := server.Shutdown(ctx); err != nil {
-		log.Fatalf("Server forced to shutdown: %v", err)
+	// Shutdown gRPC server first
+	if grpcSrv != nil {
+		log.Println("Stopping gRPC server...")
+		grpcSrv.GracefulStop()
 	}
 
-	log.Println("Server stopped")
+	// Shutdown HTTP server
+	if err := server.Shutdown(ctx); err != nil {
+		log.Fatalf("HTTP server forced to shutdown: %v", err)
+	}
+
+	log.Println("Servers stopped")
 }
 
 // handleCommand routes commands to connected agents

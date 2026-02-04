@@ -56,6 +56,11 @@ type Config struct {
 	CAKeyPath           string // Path to CA private key PEM file
 	EnableMTLS          bool   // Enable mTLS certificate issuance
 	CertValidityYears   int    // Certificate validity period in years
+
+	// gRPC Data Plane
+	GRPCPort    int    // gRPC server port (0 to disable)
+	TLSCertPath string // Path to server TLS certificate
+	TLSKeyPath  string // Path to server TLS private key
 }
 
 func Load() (*Config, error) {
@@ -108,6 +113,11 @@ func Load() (*Config, error) {
 		CAKeyPath:         getEnv("CA_KEY_PATH", "/certs/ca-key.pem"),
 		EnableMTLS:        getEnvBool("ENABLE_MTLS", true),
 		CertValidityYears: getEnvInt("CERT_VALIDITY_YEARS", 2),
+
+		// gRPC Data Plane
+		GRPCPort:    getEnvInt("GRPC_PORT", 4444),
+		TLSCertPath: getEnv("TLS_CERT_PATH", "/certs/server-cert.pem"),
+		TLSKeyPath:  getEnv("TLS_KEY_PATH", "/certs/server-key.pem"),
 	}
 
 	// Validate required fields
