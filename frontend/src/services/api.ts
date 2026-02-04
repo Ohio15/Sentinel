@@ -428,6 +428,94 @@ class ApiService {
     const response = await this.client.get('/admin/agent-links/stats');
     return response.data;
   }
+
+  // Passkey / WebAuthn endpoints
+  async beginPasskeyRegistration() {
+    const response = await this.client.post('/webauthn/register/begin');
+    return response.data;
+  }
+
+  async finishPasskeyRegistration(data: {
+    sessionId: string;
+    response: unknown;
+    name?: string;
+  }) {
+    const response = await this.client.post('/webauthn/register/finish', data);
+    return response.data;
+  }
+
+  async beginPasskeyAuthentication() {
+    const response = await this.client.post('/webauthn/authenticate/begin');
+    return response.data;
+  }
+
+  async finishPasskeyAuthentication(data: {
+    sessionId: string;
+    response: unknown;
+  }) {
+    const response = await this.client.post('/webauthn/authenticate/finish', data);
+    return response.data;
+  }
+
+  async getPasskeys() {
+    const response = await this.client.get('/passkeys');
+    return response.data;
+  }
+
+  async deletePasskey(id: string) {
+    await this.client.delete(`/passkeys/${id}`);
+  }
+
+  async renamePasskey(id: string, name: string) {
+    const response = await this.client.put(`/passkeys/${id}`, { name });
+    return response.data;
+  }
+
+  // Client endpoints
+  async getClients() {
+    const response = await this.client.get('/clients');
+    return response.data;
+  }
+
+  async getClient(id: string) {
+    const response = await this.client.get(`/clients/${id}`);
+    return response.data;
+  }
+
+  async createClient(data: {
+    name: string;
+    description?: string;
+    color?: string;
+    logoUrl?: string;
+    logoWidth?: number;
+    logoHeight?: number;
+  }) {
+    const response = await this.client.post('/clients', data);
+    return response.data;
+  }
+
+  async updateClient(id: string, data: Partial<{
+    name: string;
+    description: string;
+    color: string;
+    logoUrl: string;
+    logoWidth: number;
+    logoHeight: number;
+  }>) {
+    const response = await this.client.put(`/clients/${id}`, data);
+    return response.data;
+  }
+
+  async deleteClient(id: string) {
+    await this.client.delete(`/clients/${id}`);
+  }
+
+  async assignDeviceToClient(deviceId: string, clientId: string | null) {
+    const response = await this.client.post(`/devices/${deviceId}/assign-client`, {
+      clientId: clientId || null
+    });
+    return response.data;
+  }
 }
 
 export const api = new ApiService();

@@ -61,6 +61,13 @@ type Config struct {
 	GRPCPort    int    // gRPC server port (0 to disable)
 	TLSCertPath string // Path to server TLS certificate
 	TLSKeyPath  string // Path to server TLS private key
+
+	// WebAuthn / Passkey Authentication
+	WebAuthnRPID             string   // Relying Party ID (domain name)
+	WebAuthnRPName           string   // Relying Party display name
+	WebAuthnRPOrigins        []string // Allowed origins for WebAuthn
+	WebAuthnTimeout          int      // Ceremony timeout in milliseconds
+	WebAuthnUserVerification string   // "preferred", "required", or "discouraged"
 }
 
 func Load() (*Config, error) {
@@ -118,6 +125,13 @@ func Load() (*Config, error) {
 		GRPCPort:    getEnvInt("GRPC_PORT", 4444),
 		TLSCertPath: getEnv("TLS_CERT_PATH", "/certs/server-cert.pem"),
 		TLSKeyPath:  getEnv("TLS_KEY_PATH", "/certs/server-key.pem"),
+
+		// WebAuthn / Passkey Authentication
+		WebAuthnRPID:             getEnv("WEBAUTHN_RP_ID", "localhost"),
+		WebAuthnRPName:           getEnv("WEBAUTHN_RP_NAME", "Sentinel RMM"),
+		WebAuthnRPOrigins:        getEnvSlice("WEBAUTHN_RP_ORIGINS", []string{"http://localhost:5173", "http://localhost:8080"}),
+		WebAuthnTimeout:          getEnvInt("WEBAUTHN_TIMEOUT", 60000),
+		WebAuthnUserVerification: getEnv("WEBAUTHN_USER_VERIFICATION", "preferred"),
 	}
 
 	// Validate required fields
