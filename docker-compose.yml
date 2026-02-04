@@ -67,6 +67,12 @@ services:
       - GRPC_PORT=4444
       - TLS_CERT_PATH=/certs/server-cert.pem
       - TLS_KEY_PATH=/certs/server-key.pem
+      # WebAuthn / Passkey Authentication
+      - WEBAUTHN_RP_ID=${DOMAIN}
+      - WEBAUTHN_RP_NAME=Sentinel RMM
+      - WEBAUTHN_RP_ORIGINS=https://${DOMAIN},https://${DOMAIN}:4443,https://${DOMAIN}:8443
+      - WEBAUTHN_TIMEOUT=60000
+      - WEBAUTHN_USER_VERIFICATION=preferred
     volumes:
       - ./installers:/app/installers:ro
       - ./agent/version.json:/app/agent/version.json:ro

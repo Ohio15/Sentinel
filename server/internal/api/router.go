@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log"
 	"net/http"
 	"runtime"
 	"strconv"
@@ -453,6 +454,11 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 
 		// RDP Remote Desktop routes
 		registerRDPRoutes(api, protected, services)
+
+		// WebAuthn / Passkey Authentication routes
+		if err := RegisterWebAuthnRoutes(api, protected, services); err != nil {
+			log.Printf("[WEBAUTHN] Failed to register routes: %v", err)
+		}
 	}
 
 	// WebSocket routes

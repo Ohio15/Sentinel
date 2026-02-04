@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { Header } from '@/components/layout';
 import { Card, CardContent, Button, Input } from '@/components/ui';
+import { PasskeyManager } from '@/components/PasskeyManager';
 import api from '@/services/api';
 import toast from 'react-hot-toast';
 
@@ -377,6 +378,9 @@ echo "4. Check status: sudo launchctl list | grep sentinel"`;
             </div>
           </CardContent>
         </Card>
+
+        {/* Security / Passkeys */}
+        <PasskeyManager />
 
         {/* Notification Settings */}
         <Card>

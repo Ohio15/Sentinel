@@ -1,15 +1,23 @@
-import { useState, FormEvent } from 'react';
+import { useState, useEffect, FormEvent } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Fingerprint } from 'lucide-react';
+import { browserSupportsWebAuthn } from '@simplewebauthn/browser';
 import { useAuthStore } from '@/stores/authStore';
 import { Input } from '@/components/ui';
 import toast from 'react-hot-toast';
 
 export function Login() {
   const navigate = useNavigate();
-  const { login, isLoading, error, clearError } = useAuthStore();
+  const { login, loginWithPasskey, isLoading, error, clearError } = useAuthStore();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
+  const [passkeySupported, setPasskeySupported] = useState(false);
+  const [isPasskeyLoading, setIsPasskeyLoading] = useState(false);
+
+  useEffect(() => {
+    // Check if browser supports WebAuthn/passkeys
+    setPasskeySupported(browserSupportsWebAuthn());
+  }, []);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -21,6 +29,25 @@ export function Login() {
       navigate('/');
     } catch {
       // Error is handled by the store
+    }
+  };
+
+  const handlePasskeyLogin = async () => {
+    clearError();
+    setIsPasskeyLoading(true);
+
+    try {
+      await loginWithPasskey();
+      toast.success('Welcome back!');
+      navigate('/');
+    } catch (err: unknown) {
+      const error = err as { name?: string };
+      // Don't show error toast for user cancellation
+      if (error.name !== 'NotAllowedError') {
+        toast.error('Passkey authentication failed');
+      }
+    } finally {
+      setIsPasskeyLoading(false);
     }
   };
 
@@ -40,6 +67,39 @@ export function Login() {
         <div className="bg-gray-900 rounded-xl shadow-lg border border-gray-800 p-6">
           <h2 className="text-xl font-semibold text-white mb-6">Sign in to your account</h2>
 
+          {/* Passkey login button - shown first if supported */}
+          {passkeySupported && (
+            <>
+              <button
+                type="button"
+                onClick={handlePasskeyLogin}
+                disabled={isLoading || isPasskeyLoading}
+                className="w-full flex items-center justify-center gap-2 bg-gray-800 text-white py-2.5 rounded-lg font-medium border border-gray-700 hover:bg-gray-700 hover:border-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed mb-4"
+              >
+                {isPasskeyLoading ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Authenticating...
+                  </>
+                ) : (
+                  <>
+                    <Fingerprint className="w-5 h-5" />
+                    Sign in with Passkey
+                  </>
+                )}
+              </button>
+
+              <div className="relative my-6">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-gray-700"></div>
+                </div>
+                <div className="relative flex justify-center text-sm">
+                  <span className="px-2 bg-gray-900 text-gray-500">or continue with password</span>
+                </div>
+              </div>
+            </>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-4">
             <Input
               label="Username or Email"
@@ -49,7 +109,7 @@ export function Login() {
               placeholder="username or email"
               required
               autoComplete="username"
-              autoFocus
+              autoFocus={!passkeySupported}
             />
 
             <Input
@@ -70,7 +130,7 @@ export function Login() {
 
             <button
               type="submit"
-              disabled={isLoading}
+              disabled={isLoading || isPasskeyLoading}
               className="w-full flex items-center justify-center gap-2 bg-primary text-white py-2.5 rounded-lg font-medium hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isLoading ? (

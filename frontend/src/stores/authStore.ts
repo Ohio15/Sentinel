@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { startAuthentication } from '@simplewebauthn/browser';
 import api from '@/services/api';
 import wsService from '@/services/websocket';
 import type { User } from '@/types';
@@ -11,6 +12,7 @@ interface AuthState {
   isLoading: boolean;
   error: string | null;
   login: (identifier: string, password: string) => Promise<void>;
+  loginWithPasskey: () => Promise<void>;
   logout: () => void;
   checkAuth: () => Promise<void>;
   clearError: () => void;
@@ -53,6 +55,61 @@ export const useAuthStore = create<AuthState>()(
             isAuthenticated: false,
             isLoading: false,
             error: error.response?.data?.error || 'Login failed',
+          });
+          throw err;
+        }
+      },
+
+      loginWithPasskey: async () => {
+        set({ isLoading: true, error: null });
+        try {
+          // Step 1: Begin authentication - get challenge from server
+          const beginResponse = await api.beginPasskeyAuthentication();
+          const { sessionId, options } = beginResponse;
+
+          // Step 2: Prompt user for passkey via browser API
+          const authResponse = await startAuthentication(options);
+
+          // Step 3: Send response to server for verification
+          const finishResponse = await api.finishPasskeyAuthentication({
+            sessionId,
+            response: authResponse,
+          });
+
+          const { accessToken, csrfToken, user } = finishResponse;
+
+          localStorage.setItem('token', accessToken);
+          if (csrfToken) {
+            localStorage.setItem('csrfToken', csrfToken);
+          }
+          set({
+            user,
+            token: accessToken,
+            isAuthenticated: true,
+            isLoading: false,
+            error: null,
+          });
+
+          // Connect WebSocket after successful login
+          wsService.connect();
+        } catch (err: unknown) {
+          const error = err as { response?: { data?: { error?: string } }; name?: string; message?: string };
+
+          // Handle user cancellation gracefully
+          if (error.name === 'NotAllowedError') {
+            set({
+              isLoading: false,
+              error: 'Passkey authentication was cancelled',
+            });
+            throw err;
+          }
+
+          set({
+            user: null,
+            token: null,
+            isAuthenticated: false,
+            isLoading: false,
+            error: error.response?.data?.error || error.message || 'Passkey authentication failed',
           });
           throw err;
         }
