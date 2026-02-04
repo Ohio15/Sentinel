@@ -482,6 +482,57 @@ class ApiService {
       }>;
     }>('/admin/installation-codes');
   }
+
+  // Passkey / WebAuthn endpoints
+  async beginPasskeyRegistration() {
+    return this.post<{ sessionId: string; options: unknown }>('/webauthn/register/begin');
+  }
+
+  async finishPasskeyRegistration(data: { sessionId: string; response: unknown; name?: string }) {
+    return this.post('/webauthn/register/finish', data);
+  }
+
+  async beginPasskeyAuthentication() {
+    return this.post<{ sessionId: string; options: unknown }>('/webauthn/authenticate/begin');
+  }
+
+  async finishPasskeyAuthentication(data: { sessionId: string; response: unknown }) {
+    return this.post<{ accessToken: string; refreshToken: string; expiresIn: number; user: unknown }>('/webauthn/authenticate/finish', data);
+  }
+
+  async getPasskeys() {
+    return this.get<Array<{ id: string; name: string; createdAt: string; lastUsedAt?: string }>>('/passkeys');
+  }
+
+  async deletePasskey(id: string) {
+    return this.delete(`/passkeys/${id}`);
+  }
+
+  async renamePasskey(id: string, name: string) {
+    return this.put(`/passkeys/${id}`, { name });
+  }
+
+  // Portal / Client Tenant endpoints
+  async getClientTenants() {
+    return this.get<Array<{
+      id: string;
+      clientId?: string;
+      clientName?: string;
+      tenantId: string;
+      tenantName?: string;
+      enabled: boolean;
+      createdAt: string;
+      updatedAt: string;
+    }>>('/portal/client-tenants');
+  }
+
+  async createClientTenant(data: { clientId?: string; tenantId: string; tenantName?: string }) {
+    return this.post('/portal/client-tenants', data);
+  }
+
+  async deleteClientTenant(id: string) {
+    return this.delete(`/portal/client-tenants/${id}`);
+  }
 }
 
 // Only create instance if in web mode

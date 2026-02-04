@@ -459,6 +459,9 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 		if err := RegisterWebAuthnRoutes(api, protected, services); err != nil {
 			log.Printf("[WEBAUTHN] Failed to register routes: %v", err)
 		}
+
+		// Portal routes (client tenant mapping)
+		RegisterPortalRoutes(api, protected, services)
 	}
 
 	// WebSocket routes

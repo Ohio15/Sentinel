@@ -44,7 +44,13 @@ if (isWeb && typeof (window as any).api === 'undefined') {
   if (wsService) {
     wsService.on('*', (msg: any) => {
       if (msg.type) {
-        emitEvent(msg.type, msg.data);
+        // For 'response' type, pass the full message since requestId is at root level
+        // For other types, pass just the data field for backward compatibility
+        if (msg.type === 'response') {
+          emitEvent(msg.type, msg);
+        } else {
+          emitEvent(msg.type, msg.data);
+        }
       }
     });
   }
@@ -141,25 +147,32 @@ if (isWeb && typeof (window as any).api === 'undefined') {
     // Files API
     files: {
       drives: async (deviceId: string) => {
+        console.log('[WebApiShim] files.drives called for device:', deviceId);
         return new Promise((resolve, reject) => {
           const requestId = `drives-${Date.now()}`;
+          console.log('[WebApiShim] Sending list_drives with requestId:', requestId);
           const timeout = setTimeout(() => {
+            console.log('[WebApiShim] list_drives timeout for requestId:', requestId);
             reject(new Error('Timeout waiting for drives list'));
           }, 30000);
 
           const unsub = registerHandler('response', (data: any) => {
+            console.log('[WebApiShim] Received response:', data);
             if (data.requestId === requestId) {
               clearTimeout(timeout);
               unsub();
               if (data.success) {
+                console.log('[WebApiShim] list_drives success, drives:', data.data?.drives);
                 resolve(data.data?.drives || []);
               } else {
+                console.log('[WebApiShim] list_drives failed:', data.error);
                 reject(new Error(data.error || 'Failed to get drives'));
               }
             }
           });
 
           wsService?.send('list_drives', { deviceId, requestId });
+          console.log('[WebApiShim] list_drives message sent');
         });
       },
       list: async (deviceId: string, path: string) => {
@@ -364,7 +377,7 @@ if (isWeb && typeof (window as any).api === 'undefined') {
       checkForUpdates: async () => ({ updateAvailable: false }),
       downloadUpdate: async () => {},
       installUpdate: () => {},
-      getVersion: async () => '1.67.10-web',
+      getVersion: async () => '1.70.0-web',
       onUpdateAvailable: (callback: (info: any) => void) => registerHandler('updates:available', callback),
       onUpdateNotAvailable: (callback: () => void) => registerHandler('updates:notAvailable', callback),
       onDownloadProgress: (callback: (progress: any) => void) => registerHandler('updates:progress', callback),
@@ -381,11 +394,62 @@ if (isWeb && typeof (window as any).api === 'undefined') {
       getDevices: async (subdomain: string) => [],
       getDevice: async (subdomain: string, deviceId: string) => null,
       getSettings: async () => ({}),
-      getInfo: async () => ({ version: '1.67.10-web', port: 443, environment: 'production' }),
+      getInfo: async () => ({ version: '1.70.0-web', port: 443, environment: 'production' }),
       updateSettings: async (settings: any) => null,
-      getClientTenants: async () => [],
-      createClientTenant: async (clientId: string, tenantId: string) => null,
-      deleteClientTenant: async (clientId: string, tenantId: string) => null,
+      getClientTenants: async () => {
+        try {
+          return await api!.getClientTenants();
+        } catch (err) {
+          console.error('[WebApiShim] Error getting client tenants:', err);
+          return [];
+        }
+      },
+      createClientTenant: async (data: { clientId?: string; tenantId: string; tenantName?: string }) => {
+        try {
+          return await api!.createClientTenant(data);
+        } catch (err) {
+          console.error('[WebApiShim] Error creating client tenant:', err);
+          throw err;
+        }
+      },
+      deleteClientTenant: async (id: string) => {
+        try {
+          return await api!.deleteClientTenant(id);
+        } catch (err) {
+          console.error('[WebApiShim] Error deleting client tenant:', err);
+          throw err;
+        }
+      },
+    },
+
+    // Passkey / WebAuthn API
+    passkeys: {
+      list: async () => {
+        try {
+          return await api!.getPasskeys();
+        } catch (err) {
+          console.error('[WebApiShim] Error listing passkeys:', err);
+          return [];
+        }
+      },
+      beginRegistration: async () => {
+        return await api!.beginPasskeyRegistration();
+      },
+      finishRegistration: async (data: { sessionId: string; response: unknown; name?: string }) => {
+        return await api!.finishPasskeyRegistration(data);
+      },
+      beginAuthentication: async () => {
+        return await api!.beginPasskeyAuthentication();
+      },
+      finishAuthentication: async (data: { sessionId: string; response: unknown }) => {
+        return await api!.finishPasskeyAuthentication(data);
+      },
+      delete: async (id: string) => {
+        return await api!.deletePasskey(id);
+      },
+      rename: async (id: string, name: string) => {
+        return await api!.renamePasskey(id, name);
+      },
     },
 
     // Installers API (optional)
@@ -507,7 +571,7 @@ if (isWeb && typeof (window as any).api === 'undefined') {
     server: {
       getEnrollmentLink: async () => window.location.origin + '/enroll',
       getSettings: async () => ({}),
-      getInfo: async () => ({ version: '1.67.10-web', port: 443, environment: 'production' }),
+      getInfo: async () => ({ version: '1.70.0-web', port: 443, environment: 'production' }),
     },
 
     // Agent API
@@ -566,7 +630,7 @@ if (isWeb && typeof (window as any).api === 'undefined') {
       console.error('[WebApiShim] Error logged:', error);
     },
 
-    getAppVersion: async () => '1.67.10-web',
+    getAppVersion: async () => '1.70.0-web',
 
     onDeviceUpdate: (callback: (device: any) => void) => {
       return registerHandler('devices:updated', callback);

@@ -516,6 +516,25 @@ class ApiService {
     });
     return response.data;
   }
+
+  // Portal / Client Tenant endpoints
+  async getClientTenants() {
+    const response = await this.client.get('/portal/client-tenants');
+    return response.data;
+  }
+
+  async createClientTenant(data: {
+    clientId?: string;
+    tenantId: string;
+    tenantName?: string;
+  }) {
+    const response = await this.client.post('/portal/client-tenants', data);
+    return response.data;
+  }
+
+  async deleteClientTenant(id: string) {
+    await this.client.delete(`/portal/client-tenants/${id}`);
+  }
 }
 
 export const api = new ApiService();
