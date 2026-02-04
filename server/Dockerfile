@@ -42,8 +42,9 @@ RUN chown -R appuser:appgroup /app
 # Switch to non-root user
 USER appuser
 
-# Expose port
+# Expose ports
 EXPOSE 8080
+EXPOSE 4444
 
 # Run the binary
 CMD ["./sentinel"]

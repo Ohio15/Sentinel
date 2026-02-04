@@ -1,6 +1,14 @@
 # Traefik Dynamic Configuration - TLS Options
 
 tls:
+  # Server certificates
+  certificates:
+    # Internal CA-signed certificate for mTLS/gRPC endpoints
+    - certFile: /certs/server-cert.pem
+      keyFile: /certs/server-key.pem
+      stores:
+        - default
+
   options:
     # Standard TLS for web clients
     default:
@@ -30,6 +38,21 @@ tls:
         caFiles:
           - /certs/ca-cert.pem
         clientAuthType: RequireAndVerifyClientCert
+      cipherSuites:
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+      curvePreferences:
+        - X25519
+        - CurveP384
+
+    # gRPC TLS - verifies client cert if provided, but allows connections without
+    grpc:
+      minVersion: VersionTLS12
+      maxVersion: VersionTLS13
+      clientAuth:
+        caFiles:
+          - /certs/ca-cert.pem
+        clientAuthType: VerifyClientCertIfGiven
       cipherSuites:
         - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
         - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384

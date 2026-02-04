@@ -99,6 +99,16 @@ http:
         certResolver: letsencrypt
       priority: 15
 
+    # Agent API route for port 4443
+    api-agent-alt:
+      rule: "Host(`sentinelrmm.us`) && PathPrefix(`/api/agent`)"
+      entryPoints:
+        - websecure-alt
+      service: backend
+      tls:
+        certResolver: letsencrypt
+      priority: 12
+
     api-alt:
       rule: "Host(`sentinelrmm.us`) && PathPrefix(`/api`)"
       entryPoints:
@@ -118,6 +128,16 @@ http:
       tls:
         certResolver: letsencrypt
       priority: 10
+
+    # Health check route for port 4443
+    health-alt:
+      rule: "Host(`sentinelrmm.us`) && PathPrefix(`/health`)"
+      entryPoints:
+        - websecure-alt
+      service: backend
+      tls:
+        certResolver: letsencrypt
+      priority: 5
 
     frontend-alt:
       rule: "Host(`sentinelrmm.us`)"
@@ -190,3 +210,22 @@ http:
       loadBalancer:
         servers:
           - url: "http://sentinel-frontend:80"
+
+# TCP routers for TLS passthrough
+tcp:
+  routers:
+    # gRPC Data Plane - TLS passthrough to backend
+    grpc-dataplane:
+      entryPoints:
+        - grpc
+      rule: "HostSNI(`*`)"
+      service: grpc-backend
+      tls:
+        passthrough: true
+
+  services:
+    # gRPC backend - direct TCP connection
+    grpc-backend:
+      loadBalancer:
+        servers:
+          - address: "sentinel-backend:4444"

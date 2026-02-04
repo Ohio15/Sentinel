@@ -12,6 +12,7 @@ services:
       - "443:443"     # HTTPS for web clients
       - "4443:4443"   # Alternate HTTPS (bypasses router cache)
       - "8443:8443"   # mTLS for agent connections
+      - "4444:4444"   # gRPC Data Plane
     volumes:
       - ./configs/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./configs/traefik/dynamic:/etc/traefik/dynamic:ro
@@ -42,6 +43,8 @@ services:
     # Port 8090 for local development only - in production, only Traefik exposes ports
     ports:
       - "8090:8080"
+    expose:
+      - "4444"   # gRPC Data Plane (exposed via Traefik, not directly to host)
     restart: unless-stopped
     environment:
       - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=${DB_SSL_MODE:-prefer}
@@ -60,6 +63,10 @@ services:
       - CA_CERT_PATH=/certs/ca-cert.pem
       - CA_KEY_PATH=/certs/ca-key.pem
       - CERT_VALIDITY_YEARS=${CERT_VALIDITY_YEARS:-2}
+      # gRPC Data Plane
+      - GRPC_PORT=4444
+      - TLS_CERT_PATH=/certs/server-cert.pem
+      - TLS_KEY_PATH=/certs/server-key.pem
     volumes:
       - ./installers:/app/installers:ro
       - ./agent/version.json:/app/agent/version.json:ro
