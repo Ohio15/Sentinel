@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import { DeviceMetrics, useDeviceStore } from '../stores/deviceStore';
 
 interface PerformanceViewProps {
@@ -28,15 +28,9 @@ interface ResourceItem {
 }
 
 export function PerformanceView({ deviceId, systemInfo }: PerformanceViewProps) {
-  // Subscribe to metrics from store - only this component re-renders when metrics update
+  // Read metrics from store - component re-renders automatically when metrics update
+  // Note: App.tsx handles the subscription to updates, child components just read from store
   const metrics = useDeviceStore((state) => state.metrics);
-  const subscribeToUpdates = useDeviceStore((state) => state.subscribeToUpdates);
-
-  // Subscribe to real-time updates when this component mounts
-  useEffect(() => {
-    const unsubscribe = subscribeToUpdates();
-    return unsubscribe;
-  }, [subscribeToUpdates]);
   const [selectedResource, setSelectedResource] = useState<string>('cpu');
 
   // Get the latest metrics
@@ -145,7 +139,7 @@ export function PerformanceView({ deviceId, systemInfo }: PerformanceViewProps) 
       <div className="flex-1 p-6 overflow-y-auto">
         {/* Debug info - remove after testing */}
         {metrics.length === 0 && (
-          <div className="mb-4 p-3 bg-yellow-100 border border-yellow-300 rounded text-yellow-800 text-sm">
+          <div className="mb-4 p-3 bg-warning/20 border border-warning/50 rounded text-warning text-sm">
             No metrics data received. Make sure the agent is connected and sending heartbeats.
           </div>
         )}
@@ -213,7 +207,7 @@ function ResourceSidebarItem({ resource, isSelected, onClick, metrics }: Resourc
       className={`p-3 cursor-pointer border-l-2 transition-colors ${
         isSelected
           ? 'bg-primary-light border-primary'
-          : 'border-transparent hover:bg-gray-100'
+          : 'border-transparent hover:bg-hover'
       }`}
       onClick={onClick}
     >
@@ -229,7 +223,7 @@ function ResourceSidebarItem({ resource, isSelected, onClick, metrics }: Resourc
         </div>
         <div className="w-16 h-8 ml-2">
           <svg viewBox="0 0 60 30" className="w-full h-full">
-            <rect x="0" y="0" width="60" height="30" fill="#f8fafc" stroke="#e2e8f0" strokeWidth="1" />
+            <rect x="0" y="0" width="60" height="30" fill="var(--surface-alt-color)" stroke="var(--border-color)" strokeWidth="1" />
             {miniGraphPath && (
               <path d={miniGraphPath} fill="none" stroke={resource.color} strokeWidth="1.5" />
             )}
@@ -279,12 +273,12 @@ function CPUDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProps) 
           <div className="text-sm text-text-secondary mb-2">Logical processors</div>
           <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${Math.min(cpuPerCore.length, 8)}, 1fr)` }}>
             {cpuPerCore.map((corePercent, idx) => (
-              <div key={idx} className="relative h-10 bg-gray-100 border border-border rounded overflow-hidden" title={`Core ${idx}: ${corePercent.toFixed(0)}%`}>
+              <div key={idx} className="relative h-10 bg-surface-alt border border-border rounded overflow-hidden" title={`Core ${idx}: ${corePercent.toFixed(0)}%`}>
                 <div
                   className="absolute bottom-0 left-0 right-0 bg-[#0078d4] transition-all duration-300"
                   style={{ height: `${Math.min(corePercent, 100)}%` }}
                 />
-                <div className="absolute inset-0 flex items-center justify-center text-xs font-medium">
+                <div className="absolute inset-0 flex items-center justify-center text-xs font-medium text-text-primary">
                   {corePercent.toFixed(0)}%
                 </div>
               </div>
@@ -311,23 +305,23 @@ function CPUDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProps) 
       {topProcesses.length > 0 && (
         <div className="mt-6">
           <div className="text-sm text-text-secondary mb-2">Top processes by CPU</div>
-          <div className="bg-gray-50 border border-border rounded overflow-hidden">
+          <div className="bg-surface border border-border rounded overflow-hidden">
             <table className="w-full text-sm">
-              <thead className="bg-gray-100 border-b border-border">
+              <thead className="bg-surface-alt border-b border-border">
                 <tr>
-                  <th className="text-left px-3 py-2 font-medium">Name</th>
-                  <th className="text-right px-3 py-2 font-medium w-20">PID</th>
-                  <th className="text-right px-3 py-2 font-medium w-20">CPU</th>
-                  <th className="text-right px-3 py-2 font-medium w-24">Memory</th>
+                  <th className="text-left px-3 py-2 font-medium text-text-primary">Name</th>
+                  <th className="text-right px-3 py-2 font-medium text-text-primary w-20">PID</th>
+                  <th className="text-right px-3 py-2 font-medium text-text-primary w-20">CPU</th>
+                  <th className="text-right px-3 py-2 font-medium text-text-primary w-24">Memory</th>
                 </tr>
               </thead>
               <tbody>
                 {topProcesses.slice(0, 10).map((proc, idx) => (
-                  <tr key={proc.pid} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                    <td className="px-3 py-1.5 truncate max-w-[200px]" title={proc.name}>{proc.name}</td>
+                  <tr key={proc.pid} className={idx % 2 === 0 ? 'bg-surface' : 'bg-surface-alt'}>
+                    <td className="px-3 py-1.5 truncate max-w-[200px] text-text-primary" title={proc.name}>{proc.name}</td>
                     <td className="px-3 py-1.5 text-right text-text-secondary">{proc.pid}</td>
                     <td className="px-3 py-1.5 text-right">
-                      <span className={proc.cpuPercent > 50 ? 'text-orange-600 font-medium' : ''}>
+                      <span className={proc.cpuPercent > 50 ? 'text-warning font-medium' : 'text-text-primary'}>
                         {proc.cpuPercent.toFixed(1)}%
                       </span>
                     </td>
@@ -374,15 +368,15 @@ function MemoryDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProp
       />
 
       {/* Memory composition bar */}
-      <div className="mt-4 h-12 bg-gray-100 border border-border rounded flex overflow-hidden">
+      <div className="mt-4 h-12 bg-surface-alt border border-border rounded flex overflow-hidden">
         <div
-          className="bg-[#8764b8] flex items-center justify-center text-xs"
+          className="bg-[#8764b8] flex items-center justify-center text-xs text-white"
           style={{ width: `${memPercent}%` }}
         >
           In Use
         </div>
         <div
-          className="bg-gray-200 flex items-center justify-center text-xs text-text-secondary"
+          className="bg-hover flex items-center justify-center text-xs text-text-secondary"
           style={{ width: `${100 - memPercent}%` }}
         >
           Available
@@ -463,13 +457,13 @@ function NetworkDetailView({ metrics, latestMetrics }: NetworkDetailViewProps) {
       </div>
 
       <div className="grid grid-cols-2 gap-4 mb-6">
-        <div className="bg-gray-50 border border-border p-4 rounded">
+        <div className="bg-surface-alt border border-border p-4 rounded">
           <div className="text-sm text-text-secondary mb-2">Send</div>
-          <div className="text-2xl font-light">{formatBytesPerSec(latestMetrics?.networkTxBytes ?? 0)}</div>
+          <div className="text-2xl font-light text-text-primary">{formatBytesPerSec(latestMetrics?.networkTxBytes ?? 0)}</div>
         </div>
-        <div className="bg-gray-50 border border-border p-4 rounded">
+        <div className="bg-surface-alt border border-border p-4 rounded">
           <div className="text-sm text-text-secondary mb-2">Receive</div>
-          <div className="text-2xl font-light">{formatBytesPerSec(latestMetrics?.networkRxBytes ?? 0)}</div>
+          <div className="text-2xl font-light text-text-primary">{formatBytesPerSec(latestMetrics?.networkRxBytes ?? 0)}</div>
         </div>
       </div>
 
@@ -510,23 +504,23 @@ function GPUDetailView({ systemInfo, gpuIndex, latestMetrics }: GPUDetailViewPro
       </div>
 
       {!hasUtilization ? (
-        <div className="bg-gray-50 border border-border p-4 rounded mb-6">
+        <div className="bg-surface-alt border border-border p-4 rounded mb-6">
           <div className="text-sm text-text-secondary mb-2">Real-time GPU utilization not available</div>
           <div className="text-xs text-text-secondary">NVIDIA GPUs with nvidia-smi support real-time monitoring</div>
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-4 mb-6">
-          <div className="bg-gray-50 border border-border p-4 rounded">
+          <div className="bg-surface-alt border border-border p-4 rounded">
             <div className="text-sm text-text-secondary mb-2">GPU Memory</div>
-            <div className="text-2xl font-light">
+            <div className="text-2xl font-light text-text-primary">
               {gpuMetric.memoryUsed && gpuMetric.memoryTotal
                 ? `${formatBytes(gpuMetric.memoryUsed)} / ${formatBytes(gpuMetric.memoryTotal)}`
                 : 'N/A'}
             </div>
           </div>
-          <div className="bg-gray-50 border border-border p-4 rounded">
+          <div className="bg-surface-alt border border-border p-4 rounded">
             <div className="text-sm text-text-secondary mb-2">Temperature</div>
-            <div className="text-2xl font-light">
+            <div className="text-2xl font-light text-text-primary">
               {gpuMetric.temperature ? `${gpuMetric.temperature.toFixed(0)}°C` : 'N/A'}
             </div>
           </div>
@@ -604,12 +598,17 @@ function PerformanceGraph({ metrics, dataKey, color, label, maxValue }: Performa
         }
       }
 
+      // Get theme-aware colors from CSS variables
+      const computedStyle = getComputedStyle(document.documentElement);
+      const bgColor = computedStyle.getPropertyValue('--surface-alt-color').trim() || '#f1f5f9';
+      const gridColor = computedStyle.getPropertyValue('--border-color').trim() || '#e2e8f0';
+
       // Clear and draw background
-      ctx.fillStyle = '#f8fafc';
+      ctx.fillStyle = bgColor;
       ctx.fillRect(0, 0, width, height);
 
       // Draw grid lines
-      ctx.strokeStyle = '#e2e8f0';
+      ctx.strokeStyle = gridColor;
       ctx.lineWidth = 1;
       [25, 50, 75].forEach(pct => {
         const y = height - (pct / 100) * (height - padding * 2) - padding;
@@ -665,7 +664,7 @@ function PerformanceGraph({ metrics, dataKey, color, label, maxValue }: Performa
     <div className="relative">
       <div className="absolute top-2 left-2 text-xs text-text-secondary z-10">{label}</div>
       <div className="absolute top-2 right-2 text-xs text-text-secondary z-10">60 seconds</div>
-      <div className="bg-gray-50 border border-border rounded overflow-hidden" style={{ height: '200px' }}>
+      <div className="bg-surface-alt border border-border rounded overflow-hidden" style={{ height: '200px' }}>
         <canvas
           ref={canvasRef}
           width={800}
