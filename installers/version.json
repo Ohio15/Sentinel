@@ -1,11 +1,11 @@
 {
-  "version": "1.69.0",
-  "releaseDate": "2026-02-04",
-  "changelog": "- Add watchdog self-update capability via Task Scheduler\n- Add WatchdogInfo and WatchdogUpdateRequest IPC types\n- Watchdog writes version info on startup for monitoring\n- Agent can trigger watchdog updates via server API",
-  "platforms": [
-    "windows",
-    "linux",
-    "darwin"
-  ],
-  "minAppVersion": "1.50.0"
+    "version":  "1.70.0",
+    "releaseDate":  "2026-02-04",
+    "changelog":  "Fix CA certificate hash mismatch causing reconnection loop",
+    "platforms":  [
+                      "windows",
+                      "linux",
+                      "darwin"
+                  ],
+    "minAppVersion":  "1.50.0"
 }
