@@ -8,6 +8,8 @@
   --primary-light: #dbeafe;
   --background-color: #f8fafc;
   --surface-color: #ffffff;
+  --surface-alt-color: #f1f5f9;
+  --hover-color: #e2e8f0;
   --border-color: #e2e8f0;
   --text-primary: #1e293b;
   --text-secondary: #64748b;
@@ -23,6 +25,8 @@
   --primary-light: #1e3a5f;
   --background-color: #0f172a;
   --surface-color: #1e293b;
+  --surface-alt-color: #0f172a;
+  --hover-color: #334155;
   --border-color: #334155;
   --text-primary: #f1f5f9;
   --text-secondary: #94a3b8;

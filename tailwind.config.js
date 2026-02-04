@@ -13,7 +13,11 @@ export default {
           light: 'var(--primary-light)',
         },
         background: 'var(--background-color)',
-        surface: 'var(--surface-color)',
+        surface: {
+          DEFAULT: 'var(--surface-color)',
+          alt: 'var(--surface-alt-color)',
+        },
+        hover: 'var(--hover-color)',
         border: 'var(--border-color)',
         'text-primary': 'var(--text-primary)',
         'text-secondary': 'var(--text-secondary)',
