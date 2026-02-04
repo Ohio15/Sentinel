@@ -1,7 +1,7 @@
 {
-  "version": "1.67.10",
-  "releaseDate": "2026-01-19",
-  "changelog": "- Removed hourly update loop (updates now via heartbeat notifications)",
+  "version": "1.69.0",
+  "releaseDate": "2026-02-04",
+  "changelog": "- Add watchdog self-update capability via Task Scheduler\n- Add WatchdogInfo and WatchdogUpdateRequest IPC types\n- Watchdog writes version info on startup for monitoring\n- Agent can trigger watchdog updates via server API",
   "platforms": [
     "windows",
     "linux",
