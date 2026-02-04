@@ -145,7 +145,7 @@ func (s *DataPlaneServer) processMetrics(ctx context.Context, m *pb.Metrics) err
 	if s.bulkInserter != nil {
 		s.bulkInserter.Insert(metrics.MetricPoint{
 			DeviceID:         deviceID,
-			Timestamp:        time.Unix(m.Timestamp, 0),
+			Timestamp:        time.UnixMilli(m.Timestamp),
 			CPUPercent:       m.CpuPercent,
 			MemoryPercent:    m.MemoryPercent,
 			MemoryUsedBytes:  int64(m.MemoryUsed),
