@@ -22,14 +22,23 @@ type WebSocketHub interface {
 	RegisterDashboard(conn *websocket.Conn, userID uuid.UUID) *ws.Client
 }
 
+// MetricsRecorder defines the interface for metrics recording control
+type MetricsRecorder interface {
+	StartRecording(agentID string)
+	StopRecording(agentID string)
+	IsRecording(agentID string) bool
+	SetRecordingID(agentID string, recordingID uuid.UUID, deviceID uuid.UUID)
+}
+
 // Services contains all service dependencies for the API
 type Services struct {
-	Config       *config.Config
-	DB           *database.Database
-	Redis        *cache.Cache
-	Hub          WebSocketHub
-	BulkInserter *metrics.BulkInserter
-	CommandQueue *queue.CommandQueue
-	PushService  *push.Service
-	PKI          *pki.PKI
+	Config          *config.Config
+	DB              *database.Database
+	Redis           *cache.Cache
+	Hub             WebSocketHub
+	BulkInserter    *metrics.BulkInserter
+	CommandQueue    *queue.CommandQueue
+	PushService     *push.Service
+	PKI             *pki.PKI
+	MetricsRecorder MetricsRecorder // For controlling metrics recording per device
 }

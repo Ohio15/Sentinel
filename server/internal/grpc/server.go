@@ -22,6 +22,13 @@ import (
 	"google.golang.org/grpc/peer"
 )
 
+// ActiveRecording holds state for an active recording session
+type ActiveRecording struct {
+	RecordingID uuid.UUID
+	DeviceID    uuid.UUID
+	StartedAt   time.Time
+}
+
 // DataPlaneServer implements the gRPC DataPlaneService
 type DataPlaneServer struct {
 	pb.UnimplementedDataPlaneServiceServer
@@ -31,6 +38,9 @@ type DataPlaneServer struct {
 	streamsMu       sync.RWMutex
 	onMetrics       func(agentID string, m *pb.Metrics)
 	onInventory     func(agentID string, inv *pb.InventoryData)
+	// Recording state - store metrics to recording_metrics when recording is enabled
+	recordingDevices map[string]*ActiveRecording // agentID -> active recording info
+	recordingMu      sync.RWMutex
 }
 
 // ServerConfig holds configuration for the gRPC server
@@ -45,9 +55,10 @@ type ServerConfig struct {
 // NewDataPlaneServer creates a new DataPlane gRPC server
 func NewDataPlaneServer(db *database.DB, bulkInserter *metrics.BulkInserter) *DataPlaneServer {
 	return &DataPlaneServer{
-		db:            db,
-		bulkInserter:  bulkInserter,
-		activeStreams: make(map[string]time.Time),
+		db:               db,
+		bulkInserter:     bulkInserter,
+		activeStreams:    make(map[string]time.Time),
+		recordingDevices: make(map[string]*ActiveRecording),
 	}
 }
 
@@ -118,14 +129,14 @@ func (s *DataPlaneServer) StreamMetrics(stream pb.DataPlaneService_StreamMetrics
 			// Don't fail the stream for processing errors
 		}
 
-		// Callback if set
+		// Callback if set - broadcast to dashboards
 		if s.onMetrics != nil {
 			s.onMetrics(agentID, m)
 		}
 	}
 }
 
-// processMetrics stores metrics in the database
+// processMetrics handles incoming metrics - streams to dashboards by default, stores to recording_metrics when recording
 func (s *DataPlaneServer) processMetrics(ctx context.Context, m *pb.Metrics) error {
 	if m.AgentId == "" {
 		return fmt.Errorf("missing agent_id in metrics")
@@ -141,31 +152,95 @@ func (s *DataPlaneServer) processMetrics(ctx context.Context, m *pb.Metrics) err
 		return fmt.Errorf("failed to find device for agent %s: %w", m.AgentId, err)
 	}
 
-	// Use bulk inserter if available
-	if s.bulkInserter != nil {
-		s.bulkInserter.Insert(metrics.MetricPoint{
-			DeviceID:         deviceID,
-			Timestamp:        time.UnixMilli(m.Timestamp),
-			CPUPercent:       m.CpuPercent,
-			MemoryPercent:    m.MemoryPercent,
-			MemoryUsedBytes:  int64(m.MemoryUsed),
-			MemoryTotalBytes: int64(m.MemoryUsed + m.MemoryAvailable),
-			DiskPercent:      m.DiskPercent,
-			DiskUsedBytes:    int64(m.DiskUsed),
-			DiskTotalBytes:   int64(m.DiskTotal),
-			NetworkRxBytes:   int64(m.NetworkRxBytes),
-			NetworkTxBytes:   int64(m.NetworkTxBytes),
-			ProcessCount:     int(m.ProcessCount),
-		})
+	// Check if recording is enabled for this device
+	s.recordingMu.RLock()
+	activeRecording := s.recordingDevices[m.AgentId]
+	s.recordingMu.RUnlock()
+
+	if activeRecording != nil {
+		// Store metrics to recording_metrics table
+		ts := time.UnixMilli(m.Timestamp)
+		memTotal := int64(m.MemoryUsed + m.MemoryAvailable)
+		diskTotal := int64(m.DiskTotal)
+
+		_, err := s.db.Pool().Exec(ctx, `
+			INSERT INTO recording_metrics (
+				recording_id, timestamp, cpu_percent, memory_percent, memory_used_bytes,
+				memory_total_bytes, disk_percent, disk_used_bytes, disk_total_bytes,
+				network_rx_bytes, network_tx_bytes, process_count
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		`,
+			activeRecording.RecordingID, ts, m.CpuPercent, m.MemoryPercent, int64(m.MemoryUsed),
+			memTotal, m.DiskPercent, int64(m.DiskUsed), diskTotal,
+			int64(m.NetworkRxBytes), int64(m.NetworkTxBytes), int(m.ProcessCount),
+		)
+		if err != nil {
+			log.Printf("[gRPC] Error inserting recording metric for %s: %v", m.AgentId, err)
+		}
 	}
 
-	// Update device last_seen
+	// Update device last_seen (always do this for online status tracking)
 	_, err = s.db.Pool().Exec(ctx,
 		"UPDATE devices SET last_seen = NOW() WHERE id = $1",
 		deviceID,
 	)
 
 	return err
+}
+
+// StartRecording enables metrics storage for a device with a specific recording session
+func (s *DataPlaneServer) StartRecording(agentID string) {
+	s.StartRecordingWithID(agentID, uuid.Nil, uuid.Nil)
+}
+
+// StartRecordingWithID enables metrics storage for a device with a specific recording ID
+func (s *DataPlaneServer) StartRecordingWithID(agentID string, recordingID uuid.UUID, deviceID uuid.UUID) {
+	s.recordingMu.Lock()
+	s.recordingDevices[agentID] = &ActiveRecording{
+		RecordingID: recordingID,
+		DeviceID:    deviceID,
+		StartedAt:   time.Now(),
+	}
+	s.recordingMu.Unlock()
+	log.Printf("[gRPC] Started recording metrics for agent %s (recording: %s)", agentID, recordingID)
+}
+
+// StopRecording disables metrics storage for a device
+func (s *DataPlaneServer) StopRecording(agentID string) {
+	s.recordingMu.Lock()
+	delete(s.recordingDevices, agentID)
+	s.recordingMu.Unlock()
+	log.Printf("[gRPC] Stopped recording metrics for agent %s", agentID)
+}
+
+// IsRecording returns whether metrics are being recorded for a device
+func (s *DataPlaneServer) IsRecording(agentID string) bool {
+	s.recordingMu.RLock()
+	defer s.recordingMu.RUnlock()
+	return s.recordingDevices[agentID] != nil
+}
+
+// GetActiveRecording returns the active recording for an agent (if any)
+func (s *DataPlaneServer) GetActiveRecording(agentID string) *ActiveRecording {
+	s.recordingMu.RLock()
+	defer s.recordingMu.RUnlock()
+	return s.recordingDevices[agentID]
+}
+
+// SetRecordingID updates the recording ID for an active recording session
+func (s *DataPlaneServer) SetRecordingID(agentID string, recordingID uuid.UUID, deviceID uuid.UUID) {
+	s.recordingMu.Lock()
+	if s.recordingDevices[agentID] != nil {
+		s.recordingDevices[agentID].RecordingID = recordingID
+		s.recordingDevices[agentID].DeviceID = deviceID
+	} else {
+		s.recordingDevices[agentID] = &ActiveRecording{
+			RecordingID: recordingID,
+			DeviceID:    deviceID,
+			StartedAt:   time.Now(),
+		}
+	}
+	s.recordingMu.Unlock()
 }
 
 // UploadInventory handles inventory uploads from agents

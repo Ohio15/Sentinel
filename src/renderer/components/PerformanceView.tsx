@@ -1,5 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import { DeviceMetrics, useDeviceStore } from '../stores/deviceStore';
+import { RecordingControls } from './RecordingControls';
+import { RecordingsList } from './RecordingsList';
+import { RecordingViewer } from './RecordingViewer';
 
 interface PerformanceViewProps {
   deviceId: string;
@@ -32,6 +35,18 @@ export function PerformanceView({ deviceId, systemInfo }: PerformanceViewProps) 
   // Note: App.tsx handles the subscription to updates, child components just read from store
   const metrics = useDeviceStore((state) => state.metrics);
   const [selectedResource, setSelectedResource] = useState<string>('cpu');
+  const [isRecording, setIsRecording] = useState(false);
+  const [selectedRecordingId, setSelectedRecordingId] = useState<string | null>(null);
+  const [showRecordings, setShowRecordings] = useState(false);
+
+  const handleRecordingChange = useCallback((recording: boolean, recordingId?: string) => {
+    setIsRecording(recording);
+    // Refresh recordings list when a recording stops
+    if (!recording) {
+      // Trigger refresh via window reference (set by RecordingsList)
+      (window as any).__recordingsListRefresh?.();
+    }
+  }, []);
 
   // Get the latest metrics
   const latestMetrics = metrics.length > 0 ? metrics[0] : null;
@@ -121,53 +136,94 @@ export function PerformanceView({ deviceId, systemInfo }: PerformanceViewProps) 
   }, [metrics]);
 
   return (
-    <div className="flex h-full bg-background text-text-primary">
-      {/* Left sidebar - resource list */}
-      <div className="w-72 bg-surface border-r border-border overflow-y-auto">
-        {resources.map((resource) => (
-          <ResourceSidebarItem
-            key={resource.id}
-            resource={resource}
-            isSelected={selectedResource === resource.id}
-            onClick={() => setSelectedResource(resource.id)}
-            metrics={graphMetrics}
-          />
-        ))}
+    <div className="flex flex-col h-full bg-background text-text-primary">
+      {/* Top bar with recording controls */}
+      <div className="flex items-center justify-between px-4 py-2 bg-surface border-b border-border">
+        <RecordingControls deviceId={deviceId} onRecordingChange={handleRecordingChange} />
+        <button
+          onClick={() => setShowRecordings(!showRecordings)}
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors ${
+            showRecordings
+              ? 'bg-primary/10 text-primary'
+              : 'bg-surface-alt hover:bg-hover text-text-primary'
+          }`}
+        >
+          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="2" y="3" width="20" height="14" rx="2" />
+            <line x1="8" y1="21" x2="16" y2="21" />
+            <line x1="12" y1="17" x2="12" y2="21" />
+          </svg>
+          <span className="text-sm">Recordings</span>
+        </button>
       </div>
 
-      {/* Main content area */}
-      <div className="flex-1 p-6 overflow-y-auto">
-        {/* Debug info - remove after testing */}
-        {metrics.length === 0 && (
-          <div className="mb-4 p-3 bg-warning/20 border border-warning/50 rounded text-warning text-sm">
-            No metrics data received. Make sure the agent is connected and sending heartbeats.
-          </div>
-        )}
-        {selectedItem.type === 'cpu' && (
-          <CPUDetailView metrics={graphMetrics} systemInfo={systemInfo} latestMetrics={latestMetrics} />
-        )}
-        {selectedItem.type === 'memory' && (
-          <MemoryDetailView metrics={graphMetrics} systemInfo={systemInfo} latestMetrics={latestMetrics} />
-        )}
-        {selectedItem.type === 'disk' && (
-          <DiskDetailView
-            metrics={graphMetrics}
-            systemInfo={systemInfo}
-            latestMetrics={latestMetrics}
-            diskIndex={parseInt(selectedItem.id.split('-')[1] || '0')}
-          />
-        )}
-        {selectedItem.type === 'network' && (
-          <NetworkDetailView metrics={graphMetrics} latestMetrics={latestMetrics} />
-        )}
-        {selectedItem.type === 'gpu' && (
-          <GPUDetailView
-            systemInfo={systemInfo}
-            gpuIndex={parseInt(selectedItem.id.split('-')[1] || '0')}
-            latestMetrics={latestMetrics}
-          />
-        )}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left sidebar - resource list */}
+        <div className="w-72 bg-surface border-r border-border overflow-y-auto">
+          {resources.map((resource) => (
+            <ResourceSidebarItem
+              key={resource.id}
+              resource={resource}
+              isSelected={selectedResource === resource.id}
+              onClick={() => setSelectedResource(resource.id)}
+              metrics={graphMetrics}
+            />
+          ))}
+        </div>
+
+        {/* Main content area */}
+        <div className="flex-1 p-6 overflow-y-auto">
+          {/* Debug info - remove after testing */}
+          {metrics.length === 0 && (
+            <div className="mb-4 p-3 bg-warning/20 border border-warning/50 rounded text-warning text-sm">
+              No metrics data received. Make sure the agent is connected and sending heartbeats.
+            </div>
+          )}
+          {selectedItem.type === 'cpu' && (
+            <CPUDetailView metrics={graphMetrics} systemInfo={systemInfo} latestMetrics={latestMetrics} />
+          )}
+          {selectedItem.type === 'memory' && (
+            <MemoryDetailView metrics={graphMetrics} systemInfo={systemInfo} latestMetrics={latestMetrics} />
+          )}
+          {selectedItem.type === 'disk' && (
+            <DiskDetailView
+              metrics={graphMetrics}
+              systemInfo={systemInfo}
+              latestMetrics={latestMetrics}
+              diskIndex={parseInt(selectedItem.id.split('-')[1] || '0')}
+            />
+          )}
+          {selectedItem.type === 'network' && (
+            <NetworkDetailView metrics={graphMetrics} latestMetrics={latestMetrics} />
+          )}
+          {selectedItem.type === 'gpu' && (
+            <GPUDetailView
+              systemInfo={systemInfo}
+              gpuIndex={parseInt(selectedItem.id.split('-')[1] || '0')}
+              latestMetrics={latestMetrics}
+            />
+          )}
+
+          {/* Recordings section */}
+          {showRecordings && (
+            <div className="mt-8 border-t border-border pt-6">
+              <h3 className="text-lg font-medium text-text-primary mb-4">Saved Recordings</h3>
+              <RecordingsList
+                deviceId={deviceId}
+                onViewRecording={(id) => setSelectedRecordingId(id)}
+              />
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* Recording Viewer Modal */}
+      {selectedRecordingId && (
+        <RecordingViewer
+          recordingId={selectedRecordingId}
+          onClose={() => setSelectedRecordingId(null)}
+        />
+      )}
     </div>
   );
 }

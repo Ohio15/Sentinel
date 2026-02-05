@@ -17,11 +17,12 @@ import (
 )
 
 type Router struct {
-	config *config.Config
-	db     *database.DB
-	cache  *cache.Cache
-	hub    WebSocketHub
-	pki    *pki.PKI
+	config          *config.Config
+	db              *database.DB
+	cache           *cache.Cache
+	hub             WebSocketHub
+	pki             *pki.PKI
+	metricsRecorder MetricsRecorder
 }
 
 func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *websocket.Hub) *gin.Engine {
@@ -106,6 +107,7 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 			protected.GET("/devices/cert-status", router.getDeviceCertStatuses)
 			protected.GET("/certificates/info", router.getCertificateInfo)
 			protected.GET("/devices/:id", router.getDevice)
+			protected.PUT("/devices/:id", middleware.RequireRole("admin", "operator"), router.updateDevice)
 			protected.DELETE("/devices/:id", middleware.RequireRole("admin", "operator"), router.deleteDevice)
 			protected.GET("/devices/:id/metrics", router.getDeviceMetrics)
 			protected.POST("/devices/:id/commands", middleware.RequireRole("admin", "operator"), router.executeCommand)
@@ -281,6 +283,7 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			protected.GET("/devices", listDevicesHandler(services))
 			protected.GET("/devices/cert-status", getDeviceCertStatusesHandler(services))
 			protected.GET("/devices/:id", getDeviceHandler(services))
+			protected.PUT("/devices/:id", middleware.RequireRole("admin", "operator"), updateDeviceHandler(services))
 			protected.DELETE("/devices/:id", middleware.RequireRole("admin", "operator"), deleteDeviceHandler(services))
 			protected.GET("/devices/:id/metrics", getDeviceMetricsHandler(services))
 			protected.POST("/devices/:id/commands", middleware.RequireRole("admin", "operator"), executeCommandHandler(services))
@@ -441,6 +444,18 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			protected.POST("/kb/articles/:id/feedback", submitKBArticleFeedbackHandler(services))
 			protected.GET("/kb/articles/:id/feedback", getKBArticleFeedbackHandler(services))
 			protected.POST("/kb/articles/:id/view", recordKBArticleViewHandler(services))
+
+			// Performance Recordings
+			protected.GET("/recordings", listRecordingsHandler(services))
+			protected.POST("/recordings", middleware.RequireRole("admin", "operator"), startRecordingHandler(services))
+			protected.GET("/recordings/:id", getRecordingHandler(services))
+			protected.PUT("/recordings/:id", middleware.RequireRole("admin", "operator"), updateRecordingHandler(services))
+			protected.DELETE("/recordings/:id", middleware.RequireRole("admin", "operator"), deleteRecordingHandler(services))
+			protected.POST("/recordings/:id/stop", middleware.RequireRole("admin", "operator"), stopRecordingHandler(services))
+			protected.GET("/recordings/:id/metrics", getRecordingMetricsHandler(services))
+			protected.GET("/recordings/:id/export/csv", exportRecordingCSVHandler(services))
+			protected.GET("/recordings/:id/export/json", exportRecordingJSONHandler(services))
+			protected.GET("/devices/:id/recording/active", getActiveRecordingHandler(services))
 		}
 
 		// Mobile enrollment routes (public with token)
