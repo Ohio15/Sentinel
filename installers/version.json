@@ -1,7 +1,7 @@
 {
-    "version":  "1.70.0",
-    "releaseDate":  "2026-02-04",
-    "changelog":  "Fix CA certificate hash mismatch causing reconnection loop",
+    "version":  "1.71.0",
+    "releaseDate":  "2026-02-05",
+    "changelog":  "Add performance recording and pop-out window features",
     "platforms":  [
                       "windows",
                       "linux",

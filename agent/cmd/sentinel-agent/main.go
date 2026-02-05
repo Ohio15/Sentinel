@@ -35,7 +35,7 @@ import (
 	"github.com/sentinel/agent/internal/mtls"
 )
 
-var Version = "1.70.0"
+var Version = "1.71.0"
 
 const ServiceName = "SentinelAgent"
 
@@ -669,6 +669,14 @@ func (a *Agent) enroll() error {
 	}
 	if result.Config.MetricsInterval > 0 {
 		a.cfg.MetricsInterval = result.Config.MetricsInterval
+		// Also update the running metrics loop
+		newInterval := time.Duration(result.Config.MetricsInterval) * time.Second
+		select {
+		case a.metricsIntervalChan <- newInterval:
+			log.Printf("Updated metrics interval to %v from server config", newInterval)
+		default:
+			// Channel full, will be picked up next iteration
+		}
 	}
 	a.cfg.Save()
 
@@ -702,18 +710,38 @@ func (a *Agent) metricsLoop() {
 
 	log.Printf("Starting metrics loop with interval: %v", interval)
 
+	// Helper to check for interval changes (non-blocking)
+	checkIntervalChange := func() {
+		select {
+		case newInterval := <-a.metricsIntervalChan:
+			if newInterval > 0 && newInterval != interval {
+				interval = newInterval
+				ticker.Reset(interval)
+				log.Printf("Metrics interval changed to: %v", interval)
+			}
+		default:
+			// No pending interval change
+		}
+	}
+
 	for {
+		// Always check for interval changes first (non-blocking)
+		checkIntervalChange()
+
 		select {
 		case <-a.ctx.Done():
 			return
 		case newInterval := <-a.metricsIntervalChan:
-			// Dynamic interval change requested
+			// Dynamic interval change requested (blocking case for when ticker isn't ready)
 			if newInterval > 0 && newInterval != interval {
 				interval = newInterval
 				ticker.Reset(interval)
 				log.Printf("Metrics interval changed to: %v", interval)
 			}
 		case <-ticker.C:
+			// Check again before collecting (in case change came during wait)
+			checkIntervalChange()
+
 			if !a.client.IsConnected() || !a.client.IsAuthenticated() {
 				continue
 			}
