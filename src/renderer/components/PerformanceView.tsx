@@ -37,7 +37,6 @@ export function PerformanceView({ deviceId, systemInfo }: PerformanceViewProps) 
   const [selectedResource, setSelectedResource] = useState<string>('cpu');
   const [isRecording, setIsRecording] = useState(false);
   const [selectedRecordingId, setSelectedRecordingId] = useState<string | null>(null);
-  const [showRecordings, setShowRecordings] = useState(false);
 
   const handleRecordingChange = useCallback((recording: boolean, recordingId?: string) => {
     setIsRecording(recording);
@@ -138,24 +137,9 @@ export function PerformanceView({ deviceId, systemInfo }: PerformanceViewProps) 
 
   return (
     <div className="flex flex-col h-full bg-background text-text-primary">
-      {/* Top bar with recording controls */}
-      <div className="flex items-center justify-between px-4 py-2 bg-surface border-b border-border">
+      {/* Top bar with recording controls on the right */}
+      <div className="flex items-center justify-end px-4 py-2 bg-surface border-b border-border">
         <RecordingControls deviceId={deviceId} onRecordingChange={handleRecordingChange} onRecordingStopped={handleRecordingStopped} />
-        <button
-          onClick={() => setShowRecordings(!showRecordings)}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors ${
-            showRecordings
-              ? 'bg-primary/10 text-primary'
-              : 'bg-surface-alt hover:bg-hover text-text-primary'
-          }`}
-        >
-          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <rect x="2" y="3" width="20" height="14" rx="2" />
-            <line x1="8" y1="21" x2="16" y2="21" />
-            <line x1="12" y1="17" x2="12" y2="21" />
-          </svg>
-          <span className="text-sm">Recordings</span>
-        </button>
       </div>
 
       <div className="flex flex-1 overflow-hidden">
@@ -205,16 +189,14 @@ export function PerformanceView({ deviceId, systemInfo }: PerformanceViewProps) 
             />
           )}
 
-          {/* Recordings section */}
-          {showRecordings && (
-            <div className="mt-8 border-t border-border pt-6">
-              <h3 className="text-lg font-medium text-text-primary mb-4">Saved Recordings</h3>
-              <RecordingsList
-                deviceId={deviceId}
-                onViewRecording={(id) => setSelectedRecordingId(id)}
-              />
-            </div>
-          )}
+          {/* Recordings section - always visible */}
+          <div className="mt-8 border-t border-border pt-6">
+            <h3 className="text-lg font-medium text-text-primary mb-4">Saved Recordings</h3>
+            <RecordingsList
+              deviceId={deviceId}
+              onViewRecording={(id) => setSelectedRecordingId(id)}
+            />
+          </div>
         </div>
       </div>
 

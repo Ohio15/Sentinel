@@ -83,8 +83,23 @@ export function RecordingControls({ deviceId, onRecordingChange, onRecordingStop
   const checkActiveRecording = useCallback(async () => {
     try {
       const response = await fetchApi(`/devices/${deviceId}/recording/active`);
-      const data = await response.json();
+      if (!response.ok) {
+        // No active recording or endpoint not available
+        setActiveRecording(null);
+        setIsRecording(false);
+        onRecordingChange?.(false);
+        return;
+      }
 
+      const text = await response.text();
+      if (!text) {
+        setActiveRecording(null);
+        setIsRecording(false);
+        onRecordingChange?.(false);
+        return;
+      }
+
+      const data = JSON.parse(text);
       if (data.recording) {
         setActiveRecording(data.recording);
         setIsRecording(true);
@@ -96,6 +111,8 @@ export function RecordingControls({ deviceId, onRecordingChange, onRecordingStop
       }
     } catch (err) {
       console.error('Failed to check active recording:', err);
+      setActiveRecording(null);
+      setIsRecording(false);
     }
   }, [deviceId, onRecordingChange]);
 
@@ -112,12 +129,18 @@ export function RecordingControls({ deviceId, onRecordingChange, onRecordingStop
         }),
       });
 
+      const text = await response.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(`Server error: ${text.substring(0, 100)}`);
+      }
+
       if (!response.ok) {
-        const data = await response.json();
         throw new Error(data.error || 'Failed to start recording');
       }
 
-      const data = await response.json();
       setActiveRecording({
         id: data.id,
         deviceId: data.deviceId,
