@@ -439,7 +439,7 @@ func stopRecordingHandler(services *Services) gin.HandlerFunc {
 		// Clear recording ID from cache
 		cacheKey := fmt.Sprintf("recording:active:%s", agentID)
 		if services.Redis != nil {
-			services.Redis.Del(ctx, cacheKey)
+			services.Redis.Delete(ctx, cacheKey)
 		}
 
 		// Update recording status
