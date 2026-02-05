@@ -41,11 +41,12 @@ export function PerformanceView({ deviceId, systemInfo }: PerformanceViewProps) 
 
   const handleRecordingChange = useCallback((recording: boolean, recordingId?: string) => {
     setIsRecording(recording);
+  }, []);
+
+  const handleRecordingStopped = useCallback(() => {
     // Refresh recordings list when a recording stops
-    if (!recording) {
-      // Trigger refresh via window reference (set by RecordingsList)
-      (window as any).__recordingsListRefresh?.();
-    }
+    // Trigger refresh via window reference (set by RecordingsList)
+    (window as any).__recordingsListRefresh?.();
   }, []);
 
   // Get the latest metrics
@@ -139,7 +140,7 @@ export function PerformanceView({ deviceId, systemInfo }: PerformanceViewProps) 
     <div className="flex flex-col h-full bg-background text-text-primary">
       {/* Top bar with recording controls */}
       <div className="flex items-center justify-between px-4 py-2 bg-surface border-b border-border">
-        <RecordingControls deviceId={deviceId} onRecordingChange={handleRecordingChange} />
+        <RecordingControls deviceId={deviceId} onRecordingChange={handleRecordingChange} onRecordingStopped={handleRecordingStopped} />
         <button
           onClick={() => setShowRecordings(!showRecordings)}
           className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors ${

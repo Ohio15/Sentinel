@@ -4,6 +4,7 @@ import { isWeb, getApiBaseUrl } from '../services/env';
 interface RecordingControlsProps {
   deviceId: string;
   onRecordingChange?: (isRecording: boolean, recordingId?: string) => void;
+  onRecordingStopped?: () => void; // Called after recording stops to refresh list
 }
 
 interface ActiveRecording {
@@ -43,7 +44,7 @@ async function fetchApi(endpoint: string, options: RequestInit = {}): Promise<Re
   });
 }
 
-export function RecordingControls({ deviceId, onRecordingChange }: RecordingControlsProps) {
+export function RecordingControls({ deviceId, onRecordingChange, onRecordingStopped }: RecordingControlsProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [activeRecording, setActiveRecording] = useState<ActiveRecording | null>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -154,12 +155,14 @@ export function RecordingControls({ deviceId, onRecordingChange }: RecordingCont
       setIsRecording(false);
       setElapsedTime(0);
       onRecordingChange?.(false);
+      // Notify parent to refresh recordings list
+      onRecordingStopped?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to stop recording');
     } finally {
       setIsLoading(false);
     }
-  }, [activeRecording, onRecordingChange]);
+  }, [activeRecording, onRecordingChange, onRecordingStopped]);
 
   const formatTime = (seconds: number): string => {
     const hrs = Math.floor(seconds / 3600);
@@ -176,37 +179,32 @@ export function RecordingControls({ deviceId, onRecordingChange }: RecordingCont
     <div className="flex items-center gap-3">
       {isRecording ? (
         <>
-          {/* Recording indicator with pulsing animation */}
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-error/10 border border-error/30 rounded-lg">
+          {/* Recording button - turns red with outline when recording */}
+          <button
+            onClick={stopRecording}
+            disabled={isLoading}
+            className="flex items-center gap-2 px-4 py-1.5 bg-error/10 hover:bg-error/20 border-2 border-error text-error rounded-lg transition-colors disabled:opacity-50"
+          >
             <div className="relative">
               <div className="w-3 h-3 bg-error rounded-full" />
               <div className="absolute inset-0 w-3 h-3 bg-error rounded-full animate-ping opacity-75" />
             </div>
-            <span className="text-sm font-medium text-error">Recording</span>
-            <span className="text-sm font-mono text-error">{formatTime(elapsedTime)}</span>
-          </div>
-
-          {/* Stop button */}
-          <button
-            onClick={stopRecording}
-            disabled={isLoading}
-            className="flex items-center gap-2 px-4 py-1.5 bg-error hover:bg-error/90 text-white rounded-lg transition-colors disabled:opacity-50"
-          >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+            <span className="text-sm font-semibold">REC</span>
+            <span className="text-sm font-mono">{formatTime(elapsedTime)}</span>
+            <svg className="w-4 h-4 ml-1" viewBox="0 0 24 24" fill="currentColor">
               <rect x="6" y="6" width="12" height="12" rx="1" />
             </svg>
-            <span className="text-sm font-medium">Stop</span>
           </button>
         </>
       ) : (
-        /* Start recording button */
+        /* Start recording button - outlined style */
         <button
           onClick={startRecording}
           disabled={isLoading}
-          className="flex items-center gap-2 px-4 py-1.5 bg-surface hover:bg-hover border border-border rounded-lg transition-colors disabled:opacity-50"
+          className="flex items-center gap-2 px-4 py-1.5 bg-transparent hover:bg-hover border-2 border-border hover:border-text-secondary rounded-lg transition-colors disabled:opacity-50"
         >
           <svg className="w-4 h-4 text-error" viewBox="0 0 24 24" fill="currentColor">
-            <circle cx="12" cy="12" r="8" />
+            <circle cx="12" cy="12" r="6" />
           </svg>
           <span className="text-sm font-medium text-text-primary">Record</span>
         </button>
