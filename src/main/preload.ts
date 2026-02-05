@@ -263,6 +263,19 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.invoke('devices:bulkAssignToClient', deviceIds, clientId),
   },
 
+  // Agent Installation Links
+  agentLinks: {
+    list: (params?: { status?: string; search?: string; page?: number; pageSize?: number }) =>
+      ipcRenderer.invoke('agentLinks:list', params),
+    get: (linkId: string) => ipcRenderer.invoke('agentLinks:get', linkId),
+    stats: () => ipcRenderer.invoke('agentLinks:stats'),
+    create: (data: { deviceName: string; userEmail: string; userName?: string; notes?: string; expiresInHours?: number; sendEmail?: boolean }) =>
+      ipcRenderer.invoke('agentLinks:create', data),
+    resendEmail: (linkId: string) => ipcRenderer.invoke('agentLinks:resendEmail', linkId),
+    revoke: (linkId: string) => ipcRenderer.invoke('agentLinks:revoke', linkId),
+    delete: (linkId: string) => ipcRenderer.invoke('agentLinks:delete', linkId),
+  },
+
   // Server
   server: {
     getInfo: () => ipcRenderer.invoke('server:getInfo'),
@@ -311,6 +324,21 @@ contextBridge.exposeInMainWorld('api', {
     downloadMsi: () => ipcRenderer.invoke('agent:downloadMsi'),
     getMsiCommand: () => ipcRenderer.invoke('agent:getMsiCommand'),
     runPowerShellInstall: () => ipcRenderer.invoke('agent:runPowerShellInstall'),
+  },
+
+  // Pop-out windows
+  popOut: {
+    create: (config: { deviceId: string; tab: string; width?: number; height?: number; x?: number; y?: number }) =>
+      ipcRenderer.invoke('popOut:create', config),
+    close: (id: string) => ipcRenderer.invoke('popOut:close', id),
+    reattach: (id: string) => ipcRenderer.invoke('popOut:reattach', id),
+    list: () => ipcRenderer.invoke('popOut:list'),
+    focus: (id: string) => ipcRenderer.invoke('popOut:focus', id),
+    onReattachRequest: (callback: (data: { deviceId: string; tab: string }) => void) => {
+      const handler = (_: any, data: { deviceId: string; tab: string }) => callback(data);
+      ipcRenderer.on('popOut:reattachRequest', handler);
+      return () => ipcRenderer.removeListener('popOut:reattachRequest', handler);
+    },
   },
 
   // Updater
@@ -364,6 +392,7 @@ contextBridge.exposeInMainWorld('api', {
       'certs:distributed',
       'certs:agentConfirmed',
       'updates:status',
+      'popOut:reattachRequest',
     ];
     if (validChannels.includes(channel)) {
       const handler = (_: any, ...args: any[]) => callback(...args);
@@ -521,6 +550,14 @@ export interface ElectronAPI {
       success: boolean;
       error?: string;
     }>;
+  };
+  popOut: {
+    create: (config: PopOutConfig) => Promise<PopOutResult>;
+    close: (id: string) => Promise<boolean>;
+    reattach: (id: string) => Promise<boolean>;
+    list: () => Promise<PopOutInfo[]>;
+    focus: (id: string) => Promise<boolean>;
+    onReattachRequest: (callback: (data: { deviceId: string; tab: string }) => void) => () => void;
   };
   updater: {
     checkForUpdates: () => Promise<{ success: boolean; updateInfo?: any; error?: string }>;
@@ -874,6 +911,28 @@ interface ClientTenant {
   tenantName?: string;
   clientName?: string;
   createdAt: string;
+}
+
+interface PopOutConfig {
+  deviceId: string;
+  tab: string;
+  width?: number;
+  height?: number;
+  x?: number;
+  y?: number;
+}
+
+interface PopOutResult {
+  id: string;
+  success: boolean;
+  error?: string;
+}
+
+interface PopOutInfo {
+  id: string;
+  deviceId: string;
+  tab: string;
+  createdAt: number;
 }
 
 declare global {

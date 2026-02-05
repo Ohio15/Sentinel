@@ -6,6 +6,7 @@ import * as dotenv from 'dotenv';
 import { LocalStore } from './local-store';
 import { listCertificates, renewCertificates, getCACertificate, getCertsDir } from './cert-manager';
 import { BackendRelay } from './backend-relay';
+import { popOutManager, registerPopOutHandlers } from './popOutManager';
 import * as os from 'os';
 
 // Note: Server-only architecture - all agent operations go through BackendRelay
@@ -967,6 +968,23 @@ function createWindow(): void {
     return { action: 'deny' };
   });
 
+  // Handle certificate errors for trusted domains
+  // This allows WebSocket connections to work even with self-signed or temporarily invalid certs
+  mainWindow.webContents.on('certificate-error', (event, url, error, certificate, callback) => {
+    const trustedHosts = ['sentinelrmm.us', 'localhost', '127.0.0.1'];
+    const urlObj = new URL(url);
+    const hostname = urlObj.hostname;
+
+    if (trustedHosts.includes(hostname)) {
+      console.log(`[TLS] Allowing certificate for trusted host: ${hostname} (error: ${error})`);
+      event.preventDefault();
+      callback(true); // Trust the certificate
+    } else {
+      console.warn(`[TLS] Rejecting certificate for untrusted host: ${hostname} (error: ${error})`);
+      callback(false); // Reject the certificate
+    }
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -1048,14 +1066,16 @@ function setupIpcHandlers(): void {
   ipcMain.handle('backend:getConfig', async () => {
     return {
       url: backendRelay.getBackendUrl(),
+      apiKey: backendRelay.getApiKey(),
       isConfigured: backendRelay.isConfigured(),
       isAuthenticated: backendRelay.isAuthenticated(),
     };
   });
 
   ipcMain.handle('backend:setUrl', async (_, url: string) => {
-    backendRelay.setBackendUrl(url);
     await database.updateSettings({ externalBackendUrl: url });
+    // Re-initialize to load all settings together (preserves API key)
+    await backendRelay.initialize();
     return { success: true };
   });
 
@@ -1071,7 +1091,8 @@ function setupIpcHandlers(): void {
   ipcMain.handle('backend:setApiKey', async (_, apiKey: string) => {
     try {
       await database.updateSettings({ backendApiKey: apiKey });
-      await backendRelay.initialize();
+      // Set API key directly for immediate effect
+      backendRelay.setApiKey(apiKey);
       return { success: true };
     } catch (error) {
       return { success: false, error: (error as Error).message };
@@ -1090,11 +1111,26 @@ function setupIpcHandlers(): void {
 
   // Helper function to ensure backend is connected
   function ensureBackendConnected(): void {
-    if (!backendRelay.isConfigured()) {
+    const isConfigured = backendRelay.isConfigured();
+    const isAuthenticated = backendRelay.isAuthenticated();
+    const backendUrl = backendRelay.getBackendUrl();
+    const apiKey = backendRelay.getApiKey();
+
+    console.log('[Backend] ensureBackendConnected check:', {
+      isConfigured,
+      isAuthenticated,
+      backendUrl,
+      hasApiKey: !!apiKey,
+      apiKeyPrefix: apiKey ? apiKey.substring(0, 8) + '...' : 'none'
+    });
+
+    if (!isConfigured) {
       throw new Error('Backend server not configured. Go to Settings to configure the server URL.');
     }
-    if (!backendRelay.isAuthenticated()) {
-      throw new Error('Not authenticated with backend server. Go to Settings to log in.');
+    if (!isAuthenticated) {
+      // Include diagnostic info in error message for debugging
+      const debugInfo = `[DEBUG: url=${backendUrl}, apiKey=${apiKey ? 'SET(' + apiKey.substring(0,4) + ')' : 'NONE'}, wsConnected=${backendRelay.isWebSocketConnected()}]`;
+      throw new Error(`Not authenticated with backend ${debugInfo}`);
     }
   }
 
@@ -1877,6 +1913,42 @@ function setupIpcHandlers(): void {
     return backendRelay.deleteClient(id);
   });
 
+  // Agent Installation Links
+  ipcMain.handle('agentLinks:list', async (_, params?: { status?: string; search?: string; page?: number; pageSize?: number }) => {
+    ensureBackendConnected();
+    return backendRelay.getAgentLinks(params);
+  });
+
+  ipcMain.handle('agentLinks:get', async (_, linkId: string) => {
+    ensureBackendConnected();
+    return backendRelay.getAgentLink(linkId);
+  });
+
+  ipcMain.handle('agentLinks:stats', async () => {
+    ensureBackendConnected();
+    return backendRelay.getAgentLinkStats();
+  });
+
+  ipcMain.handle('agentLinks:create', async (_, data: { deviceName: string; userEmail: string; userName?: string; notes?: string; expiresInHours?: number; sendEmail?: boolean }) => {
+    ensureBackendConnected();
+    return backendRelay.createAgentLink(data);
+  });
+
+  ipcMain.handle('agentLinks:resendEmail', async (_, linkId: string) => {
+    ensureBackendConnected();
+    return backendRelay.resendAgentLinkEmail(linkId);
+  });
+
+  ipcMain.handle('agentLinks:revoke', async (_, linkId: string) => {
+    ensureBackendConnected();
+    return backendRelay.revokeAgentLink(linkId);
+  });
+
+  ipcMain.handle('agentLinks:delete', async (_, linkId: string) => {
+    ensureBackendConnected();
+    return backendRelay.deleteAgentLink(linkId);
+  });
+
   ipcMain.handle('devices:assignToClient', async (_, deviceId: string, clientId: string | null) => {
     if (backendRelay.isAuthenticated()) {
       await backendRelay.updateDevice(deviceId, { clientId });
@@ -2279,6 +2351,14 @@ function formatActivePrograms(programs: any[]): string {
 app.whenReady().then(async () => {
   // Create window first so user sees something immediately
   createWindow();
+
+  // Register pop-out window handlers
+  registerPopOutHandlers();
+
+  // Set main window reference for pop-out manager
+  if (mainWindow) {
+    popOutManager.setMainWindow(mainWindow);
+  }
 
   // Register updater handlers early (before DB init) so updates work even if DB fails
   setupUpdaterHandlers();

@@ -4,10 +4,12 @@ import { shallow } from 'zustand/shallow';
 import { useClientStore } from '../stores/clientStore';
 import { Terminal } from '../components/Terminal';
 import { FileExplorer } from '../components/FileExplorer';
-import { RemoteDesktop } from '../components/RemoteDesktop';
+import { HighPerformanceRemoteDesktop as RemoteDesktop } from '../components/RemoteDesktop';
 import { PerformanceView } from '../components/PerformanceView';
 import { WindowsUpdateStatus } from '../components/WindowsUpdateStatus';
 import { OverviewMetrics } from '../components/OverviewMetrics';
+import { ErrorBoundary } from '../components/ErrorBoundary';
+import { usePopOut } from '../hooks/usePopOut';
 
 interface DeviceDetailProps {
   deviceId: string;
@@ -29,6 +31,81 @@ interface Command {
 }
 
 type Tab = 'overview' | 'performance' | 'terminal' | 'files' | 'remote' | 'commands' | 'history';
+
+// Tab Error Fallback Component - for isolated tab failures
+function TabErrorFallback({
+  tabName,
+  error,
+  onRetry
+}: {
+  tabName: string;
+  error?: Error;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="flex flex-col items-center justify-center h-[400px] bg-surface border border-border rounded-lg">
+      <div className="text-red-500 mb-4">
+        <svg className="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        </svg>
+      </div>
+      <h3 className="text-lg font-semibold text-text-primary mb-2">
+        {tabName} encountered an error
+      </h3>
+      <p className="text-text-secondary text-center mb-4 max-w-md text-sm">
+        This component failed to load. Other tabs remain functional.
+      </p>
+      {error && (
+        <details className="mb-4 max-w-md">
+          <summary className="cursor-pointer text-xs text-text-secondary hover:text-text-primary">
+            Technical details
+          </summary>
+          <pre className="mt-2 p-2 bg-background rounded text-xs text-red-400 overflow-auto max-h-24">
+            {error.message}
+          </pre>
+        </details>
+      )}
+      <button
+        onClick={onRetry}
+        className="px-4 py-2 bg-primary text-white rounded hover:bg-primary/90 transition-colors"
+      >
+        Try Again
+      </button>
+    </div>
+  );
+}
+
+// Wrapper component to provide retry functionality for ErrorBoundary
+function TabErrorBoundary({
+  children,
+  tabName
+}: {
+  children: React.ReactNode;
+  tabName: string;
+}) {
+  const [key, setKey] = useState(0);
+
+  const handleError = (error: Error) => {
+    console.error(`[${tabName}] Component error:`, error);
+    // Could add error reporting here (e.g., Sentry, custom logging)
+  };
+
+  return (
+    <ErrorBoundary
+      key={key}
+      onError={handleError}
+      fallback={
+        <TabErrorFallback
+          tabName={tabName}
+          onRetry={() => setKey(k => k + 1)}
+        />
+      }
+    >
+      {children}
+    </ErrorBoundary>
+  );
+}
 
 // Collapsible Section Component - Light Theme
 function CollapsibleSection({
@@ -127,6 +204,24 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState('');
   const [isAssigningClient, setIsAssigningClient] = useState(false);
+
+  // Pop-out window management
+  const { createPopOut, isPopOutOpen, onReattachRequest } = usePopOut();
+
+  // Listen for pop-out reattach requests
+  useEffect(() => {
+    const unsubscribe = onReattachRequest((data) => {
+      if (data.deviceId === deviceId && data.tab === 'performance') {
+        // Switch to the performance tab when the pop-out is reattached
+        setActiveTab('performance');
+      }
+    });
+    return unsubscribe;
+  }, [deviceId, onReattachRequest]);
+
+  const handlePopOut = useCallback(async () => {
+    await createPopOut({ deviceId, tab: 'performance' });
+  }, [createPopOut, deviceId]);
 
   // Real-time metrics subscription moved to individual components (OverviewMetrics, PerformanceView)
 
@@ -322,18 +417,30 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
           {tabs.map(tab => {
             const Icon = tab.icon;
             return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as Tab)}
-                className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
-                  activeTab === tab.id
-                    ? 'bg-surface border border-b-0 border-border text-primary'
-                    : 'text-text-secondary hover:text-text-primary'
-                }`}
-              >
-                <Icon className="w-4 h-4" />
-                {tab.label}
-              </button>
+              <div key={tab.id} className="flex items-center">
+                <button
+                  onClick={() => setActiveTab(tab.id as Tab)}
+                  className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+                    activeTab === tab.id
+                      ? 'bg-surface border border-b-0 border-border text-primary'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  {tab.label}
+                </button>
+                {/* Pop-out button for Performance tab */}
+                {tab.id === 'performance' && activeTab === 'performance' && (
+                  <button
+                    onClick={handlePopOut}
+                    className="ml-1 p-1.5 text-text-secondary hover:text-primary hover:bg-hover rounded transition-colors"
+                    title="Pop out to new window"
+                    disabled={isPopOutOpen(deviceId, 'performance')}
+                  >
+                    <ExternalLinkIcon className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
             );
           })}
         </div>
@@ -517,42 +624,50 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
         )}
 
                 {activeTab === 'performance' && (
-          <div className="card overflow-hidden" style={{ height: 'calc(100vh - 250px)' }}>
-            <PerformanceView
-              deviceId={deviceId}
-              systemInfo={{
-                cpuModel: selectedDevice.cpuModel,
-                cpuCores: selectedDevice.cpuCores,
-                cpuThreads: selectedDevice.cpuThreads,
-                cpuSpeed: selectedDevice.cpuSpeed,
-                totalMemory: selectedDevice.totalMemory,
-                gpu: selectedDevice.gpu,
-                storage: selectedDevice.storage,
-                bootTime: selectedDevice.bootTime,
-              }}
-            />
-          </div>
+          <TabErrorBoundary tabName="Performance">
+            <div className="card overflow-hidden" style={{ height: 'calc(100vh - 250px)' }}>
+              <PerformanceView
+                deviceId={deviceId}
+                systemInfo={{
+                  cpuModel: selectedDevice.cpuModel,
+                  cpuCores: selectedDevice.cpuCores,
+                  cpuThreads: selectedDevice.cpuThreads,
+                  cpuSpeed: selectedDevice.cpuSpeed,
+                  totalMemory: selectedDevice.totalMemory,
+                  gpu: selectedDevice.gpu,
+                  storage: selectedDevice.storage,
+                  bootTime: selectedDevice.bootTime,
+                }}
+              />
+            </div>
+          </TabErrorBoundary>
         )}
 
         {/* Terminal always mounted to preserve session across tab switches */}
         <div className={activeTab === 'terminal' ? '' : 'hidden'}>
-          <div className="card overflow-hidden">
-            <Terminal deviceId={deviceId} isOnline={selectedDevice.status === 'online'} />
-          </div>
+          <TabErrorBoundary tabName="Terminal">
+            <div className="card overflow-hidden">
+              <Terminal deviceId={deviceId} isOnline={selectedDevice.status === 'online'} />
+            </div>
+          </TabErrorBoundary>
         </div>
 
         {/* FileExplorer always mounted to preserve state across tab switches */}
         <div className={activeTab === 'files' ? '' : 'hidden'}>
-          <div className="card overflow-hidden">
-            <FileExplorer deviceId={deviceId} isOnline={selectedDevice.status === 'online'} isActive={activeTab === 'files'} />
-          </div>
+          <TabErrorBoundary tabName="File Explorer">
+            <div className="card overflow-hidden">
+              <FileExplorer deviceId={deviceId} isOnline={selectedDevice.status === 'online'} isActive={activeTab === 'files'} />
+            </div>
+          </TabErrorBoundary>
         </div>
 
         {/* RemoteDesktop always mounted to preserve state across tab switches */}
         <div className={activeTab === 'remote' ? '' : 'hidden'}>
-          <div className="card overflow-hidden">
-            <RemoteDesktop deviceId={deviceId} isOnline={selectedDevice.status === 'online'} isActive={activeTab === 'remote'} />
-          </div>
+          <TabErrorBoundary tabName="Remote Desktop">
+            <div className="card overflow-hidden">
+              <RemoteDesktop deviceId={deviceId} isOnline={selectedDevice.status === 'online'} isActive={activeTab === 'remote'} />
+            </div>
+          </TabErrorBoundary>
         </div>
 
         {activeTab === 'commands' && (
@@ -910,6 +1025,14 @@ function EditIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+    </svg>
+  );
+}
+
+function ExternalLinkIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
     </svg>
   );
 }
