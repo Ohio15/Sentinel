@@ -192,6 +192,32 @@ func (r *Router) handleDashboardMessage(userID uuid.UUID, message []byte) {
 		})
 		r.hub.SendToAgent(agentID, agentMsg)
 
+	case ws.MsgTypeStartRecording:
+		// Start recording metrics for this device
+		if r.metricsRecorder != nil {
+			r.metricsRecorder.StartRecording(agentID)
+			response, _ := json.Marshal(map[string]interface{}{
+				"type":      "recording_started",
+				"requestId": msg.RequestID,
+				"deviceId":  payload.DeviceID,
+				"agentId":   agentID,
+			})
+			r.hub.BroadcastToDashboards(response)
+		}
+
+	case ws.MsgTypeStopRecording:
+		// Stop recording metrics for this device
+		if r.metricsRecorder != nil {
+			r.metricsRecorder.StopRecording(agentID)
+			response, _ := json.Marshal(map[string]interface{}{
+				"type":      "recording_stopped",
+				"requestId": msg.RequestID,
+				"deviceId":  payload.DeviceID,
+				"agentId":   agentID,
+			})
+			r.hub.BroadcastToDashboards(response)
+		}
+
 	case ws.MsgTypeDownloadFile:
 		// Forward file download request to agent
 		agentMsg, _ := json.Marshal(map[string]interface{}{

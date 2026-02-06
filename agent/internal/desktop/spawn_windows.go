@@ -181,43 +181,21 @@ func SpawnViaScheduledTask(sessionID uint32, helperPath string, token string) er
 }
 
 // SpawnInSession spawns a process in the specified Windows session
-// Uses scheduled task approach with proper user context
+// Uses CreateProcessAsUser directly (scheduled task approach disabled due to ACCESS_DENIED issues)
 func SpawnInSession(sessionID uint32, exePath string, args []string) (*os.Process, error) {
 	log.Printf("[Spawn] SpawnInSession called: sessionID=%d, exePath=%s", sessionID, exePath)
 
-	// Extract token from args
-	var token string
-	for i, arg := range args {
-		if arg == "--token" && i+1 < len(args) {
-			token = args[i+1]
-			break
-		}
-	}
-
-	// Get the session username for proper task creation
+	// Get the session username for logging
 	username, domain, err := GetSessionUsername(sessionID)
 	if err != nil {
 		log.Printf("[Spawn] Warning: failed to get session username: %v", err)
-		// Fall through to try legacy approach or direct spawn
 	} else {
 		log.Printf("[Spawn] Session %d user: %s\\%s", sessionID, domain, username)
-
-		// Create task for this specific user
-		if err := EnsureScheduledTaskForUser(exePath, username, domain); err != nil {
-			log.Printf("[Spawn] Warning: failed to create user-specific task: %v", err)
-		} else {
-			// Try scheduled task approach
-			if err := SpawnViaScheduledTask(sessionID, exePath, token); err != nil {
-				log.Printf("[Spawn] Scheduled task failed: %v, trying direct spawn...", err)
-			} else {
-				log.Printf("[Spawn] Scheduled task triggered successfully")
-				return nil, nil
-			}
-		}
 	}
 
-	// Fallback: try CreateProcessAsUser
-	log.Printf("[Spawn] Falling back to CreateProcessAsUser...")
+	// Use CreateProcessAsUser directly - scheduled task approach disabled
+	// because schtasks returns success even when the task fails with ACCESS_DENIED
+	log.Printf("[Spawn] Using CreateProcessAsUser to spawn helper...")
 	return spawnDirect(sessionID, exePath, args)
 }
 

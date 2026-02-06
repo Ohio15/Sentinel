@@ -1,9 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback, memo } from 'react';
-import { useCursor, CursorShape } from './useCursor';
 import { useWebRTC, WebRTCStats } from './useWebRTC';
-import { useInput } from './useInput';
-import { CursorOverlay } from './CursorOverlay';
-import { useFramePacing } from './useFramePacing';
+import { useSimpleInput } from './useSimpleInput';
 import { useDeviceStore } from '../../stores/deviceStore';
 import { wsService } from '../../services/websocket';
 import {
@@ -11,11 +8,12 @@ import {
   Minimize2,
   Monitor,
   MousePointer,
+  Pause,
   Keyboard,
   Wifi,
   WifiOff,
-  Settings,
   Bug,
+  Shield,
 } from 'lucide-react';
 
 interface HighPerformanceRemoteDesktopProps {
@@ -33,23 +31,18 @@ export const HighPerformanceRemoteDesktop = memo(function HighPerformanceRemoteD
   const agentId = device?.agentId || deviceId;
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const videoContainerRef = useRef<HTMLDivElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  const [displaySize, setDisplaySize] = useState({ width: 0, height: 0 });
-  const [videoOffset, setVideoOffset] = useState({ x: 0, y: 0 }); // Offset from container to video
   const [remoteSize, setRemoteSize] = useState({ width: 1920, height: 1080 });
+  const [wrapperSize, setWrapperSize] = useState({ width: 0, height: 0 });
   const [videoReady, setVideoReady] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [stats, setStats] = useState<WebRTCStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showDebug, setShowDebug] = useState(false);
-  const [latencyStats, setLatencyStats] = useState<{
-    rtt: number;
-    serverCapture: number;
-    serverConvert: number;
-    serverEncode: number;
-    serverTotal: number;
-  } | null>(null);
+  const [pauseMouse, setPauseMouse] = useState(false); // Pause mouse moves for PIN entry etc.
 
   // WebRTC connection
   const {
@@ -70,118 +63,77 @@ export const HighPerformanceRemoteDesktop = memo(function HighPerformanceRemoteD
       console.log('[RemoteDesktop] Remote info received:', info);
       setRemoteSize({ width: info.width, height: info.height });
     },
-    onCursorUpdate: (update) => {
-      // Update remote cursor position (for debugging)
-      updateRemotePosition(update.x, update.y);
-      if (update.visible !== undefined) {
-        setCursorVisible(update.visible);
-      }
-    },
-    onCursorShape: (shape) => {
-      updateCursorShape(shape);
-    },
-    onLatencyUpdate: (latency) => {
-      setLatencyStats(latency);
-    },
   });
 
-  // CSS custom cursor (native system cursor - instant feedback at mouse polling rate)
+  // Send Ctrl+Alt+Del sequence (for Windows login screens)
+  const sendCtrlAltDel = useCallback(() => {
+    if (!isConnected) return;
+
+    // Send key down events
+    sendInput({ type: 'keydown', key: 'Control', code: 'ControlLeft' });
+    sendInput({ type: 'keydown', key: 'Alt', code: 'AltLeft' });
+    sendInput({ type: 'keydown', key: 'Delete', code: 'Delete' });
+
+    // Small delay then release
+    setTimeout(() => {
+      sendInput({ type: 'keyup', key: 'Delete', code: 'Delete' });
+      sendInput({ type: 'keyup', key: 'Alt', code: 'AltLeft' });
+      sendInput({ type: 'keyup', key: 'Control', code: 'ControlLeft' });
+    }, 50);
+  }, [isConnected, sendInput]);
+
+  // Simple input handling (Neko-inspired approach)
+  const inputEnabled = isConnected && videoReady;
   const {
-    cursor,
-    cssCursor,
     handleMouseMove,
-    updateCursorShape,
-    updateRemotePosition,
-    setCursorVisible,
-  } = useCursor({
-    displayWidth: displaySize.width,
-    displayHeight: displaySize.height,
+    handleMouseDown,
+    handleMouseUp,
+    handleWheel,
+    handleContextMenu,
+    handleKeyDown,
+    handleKeyUp,
+  } = useSimpleInput({
     remoteWidth: remoteSize.width,
     remoteHeight: remoteSize.height,
-    videoOffsetX: videoOffset.x,
-    videoOffsetY: videoOffset.y,
-    onMove: (x, y) => {
-      sendInput({ type: 'mousemove', x, y });
-    },
-  });
-
-  // Frame pacing for jitter measurement
-  const { stats: framePacingStats } = useFramePacing(videoRef);
-
-  // Input handling (clicks, keyboard)
-  const { handleMouseDown, handleMouseUp, handleWheel, handleContextMenu, setContainer } = useInput({
-    displayWidth: displaySize.width,
-    displayHeight: displaySize.height,
-    remoteWidth: remoteSize.width,
-    remoteHeight: remoteSize.height,
-    videoOffsetX: videoOffset.x,
-    videoOffsetY: videoOffset.y,
     sendInput,
-    enabled: isConnected && videoReady,
+    enabled: inputEnabled,
   });
 
-  // Set container ref for keyboard focus
+  // Calculate wrapper size to fit container while maintaining aspect ratio
   useEffect(() => {
-    setContainer(containerRef.current);
-  }, [setContainer]);
-
-  // Track container size for coordinate mapping
-  useEffect(() => {
-    const container = containerRef.current;
+    const container = videoContainerRef.current;
     if (!container) return;
 
     const updateSize = () => {
-      const video = videoRef.current;
-      if (!video) return;
+      const rect = container.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
 
-      // Get the actual rendered video dimensions (accounting for letterboxing)
-      const containerRect = container.getBoundingClientRect();
-      const videoRect = video.getBoundingClientRect();
-      const videoAspect = remoteSize.width / remoteSize.height;
-      const containerAspect = containerRect.width / containerRect.height;
+      // Calculate wrapper size that maintains remote aspect ratio
+      const remoteAspect = remoteSize.width / remoteSize.height;
+      const containerAspect = rect.width / rect.height;
 
-      let displayWidth: number, displayHeight: number;
-      let offsetX: number, offsetY: number;
+      let width: number;
+      let height: number;
 
-      if (containerAspect > videoAspect) {
-        // Letterbox on sides (black bars left/right)
-        displayHeight = containerRect.height;
-        displayWidth = containerRect.height * videoAspect;
-        offsetX = (containerRect.width - displayWidth) / 2;
-        offsetY = 0;
+      if (remoteAspect > containerAspect) {
+        // Remote is wider - fit to container width
+        width = rect.width;
+        height = rect.width / remoteAspect;
       } else {
-        // Letterbox on top/bottom (black bars top/bottom)
-        displayWidth = containerRect.width;
-        displayHeight = containerRect.width / videoAspect;
-        offsetX = 0;
-        offsetY = (containerRect.height - displayHeight) / 2;
+        // Remote is taller - fit to container height
+        height = rect.height;
+        width = rect.height * remoteAspect;
       }
 
-      setDisplaySize({ width: displayWidth, height: displayHeight });
-      setVideoOffset({ x: offsetX, y: offsetY });
+      console.log('[RemoteDesktop] Wrapper size:', { width, height, container: { w: rect.width, h: rect.height } });
+      setWrapperSize({ width, height });
     };
 
+    updateSize();
     const observer = new ResizeObserver(updateSize);
     observer.observe(container);
 
-    // Also update when video metadata loads
-    const video = videoRef.current;
-    if (video) {
-      video.addEventListener('loadedmetadata', () => {
-        if (video.videoWidth && video.videoHeight) {
-          setRemoteSize({ width: video.videoWidth, height: video.videoHeight });
-          updateSize();
-        }
-      });
-      video.addEventListener('resize', updateSize);
-    }
-
-    return () => {
-      observer.disconnect();
-      if (video) {
-        video.removeEventListener('resize', updateSize);
-      }
-    };
+    return () => observer.disconnect();
   }, [remoteSize.width, remoteSize.height]);
 
   // Handle video ready state
@@ -337,6 +289,26 @@ export const HighPerformanceRemoteDesktop = memo(function HighPerformanceRemoteD
               <Wifi className="w-3 h-3 text-green-400" />
             </div>
           )}
+          {isConnected && (
+            <>
+              <button
+                onClick={sendCtrlAltDel}
+                className="p-1 text-gray-400 hover:text-white transition-colors"
+                title="Send Ctrl+Alt+Del"
+              >
+                <Shield className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setPauseMouse(!pauseMouse)}
+                className={`p-1 transition-colors ${
+                  pauseMouse ? 'text-orange-400' : 'text-gray-400 hover:text-white'
+                }`}
+                title={pauseMouse ? 'Resume mouse (click to enable)' : 'Pause mouse (for PIN entry)'}
+              >
+                {pauseMouse ? <Pause className="w-4 h-4" /> : <MousePointer className="w-4 h-4" />}
+              </button>
+            </>
+          )}
           <button
             onClick={() => setShowDebug(!showDebug)}
             className={`p-1 transition-colors ${
@@ -374,38 +346,61 @@ export const HighPerformanceRemoteDesktop = memo(function HighPerformanceRemoteD
         </div>
       </div>
 
-      {/* Video container with CSS custom cursor (native system cursor for instant feedback) */}
+      {/* Video container - centers the wrapper */}
       <div
+        ref={videoContainerRef}
         className="flex-1 flex items-center justify-center bg-black overflow-hidden relative"
-        style={{ cursor: isConnected && videoReady ? cssCursor : 'default' }}
-        onMouseMove={isConnected && videoReady ? handleMouseMove : undefined}
-        onMouseDown={handleMouseDown}
-        onMouseUp={handleMouseUp}
-        onWheel={handleWheel}
-        onContextMenu={handleContextMenu}
       >
-        {/* Video element - browser handles all H.264 decoding */}
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          onCanPlay={handleVideoCanPlay}
-          className="max-w-full max-h-full"
+        {/* Video wrapper - explicit size maintains aspect ratio, receives input events */}
+        <div
+          ref={wrapperRef}
+          tabIndex={0}
+          className="relative focus:outline-none"
           style={{
-            objectFit: 'contain',
-            backgroundColor: '#000',
-            display: isConnected ? 'block' : 'none',
+            width: wrapperSize.width > 0 ? `${wrapperSize.width}px` : '100%',
+            height: wrapperSize.height > 0 ? `${wrapperSize.height}px` : '100%',
+            cursor: inputEnabled ? 'crosshair' : 'default',
           }}
-        />
-
-        {/* Local cursor overlay - moves instantly with mouse, server corrections applied invisibly */}
-        {isConnected && videoReady && (
-          <CursorOverlay
-            cursor={cursor}
-            showRemoteCursor={showDebug}
+          onMouseMove={inputEnabled && !pauseMouse ? handleMouseMove : undefined}
+          onMouseDown={inputEnabled ? handleMouseDown : undefined}
+          onMouseUp={inputEnabled ? handleMouseUp : undefined}
+          onWheel={inputEnabled ? handleWheel : undefined}
+          onContextMenu={handleContextMenu}
+          onKeyDown={inputEnabled ? handleKeyDown : undefined}
+          onKeyUp={inputEnabled ? handleKeyUp : undefined}
+        >
+          {/* Video fills wrapper completely */}
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            onCanPlay={handleVideoCanPlay}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'fill',
+              backgroundColor: '#000',
+              display: isConnected ? 'block' : 'none',
+              pointerEvents: 'none',
+            }}
           />
-        )}
+
+          {/* Debug overlay */}
+          {showDebug && isConnected && (
+            <div className="absolute top-2 left-2 bg-black/80 text-xs text-white p-2 rounded font-mono z-10">
+              <div>Remote: {remoteSize.width}x{remoteSize.height}</div>
+              <div>Wrapper: {wrapperSize.width.toFixed(0)}x{wrapperSize.height.toFixed(0)}</div>
+              {stats && (
+                <>
+                  <div className="mt-1 pt-1 border-t border-gray-600">WebRTC:</div>
+                  <div>FPS: {stats.fps.toFixed(1)} | {stats.latency.toFixed(0)}ms</div>
+                  <div>{(stats.bitrate / 1_000_000).toFixed(2)} Mbps</div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Placeholder when not connected */}
         {!isConnected && (
@@ -442,48 +437,6 @@ export const HighPerformanceRemoteDesktop = memo(function HighPerformanceRemoteD
           </div>
         )}
 
-        {/* Debug info overlay */}
-        {showDebug && isConnected && (
-          <div className="absolute top-2 left-2 bg-black/75 text-xs text-white p-2 rounded font-mono">
-            <div>Remote: {remoteSize.width}x{remoteSize.height}</div>
-            <div>Display: {displaySize.width.toFixed(0)}x{displaySize.height.toFixed(0)}</div>
-            <div>
-              Local cursor: ({cursor.local.x.toFixed(0)}, {cursor.local.y.toFixed(0)})
-            </div>
-            <div>
-              Remote cursor: ({cursor.remote.x.toFixed(0)}, {cursor.remote.y.toFixed(0)})
-            </div>
-            {stats && (
-              <>
-                <div className="mt-1 pt-1 border-t border-gray-600">WebRTC Stats:</div>
-                <div>FPS: {stats.fps.toFixed(1)}</div>
-                <div>Latency: {stats.latency.toFixed(1)}ms</div>
-                <div>Bitrate: {(stats.bitrate / 1_000_000).toFixed(2)} Mbps</div>
-                <div>Packets lost: {stats.packetsLost}</div>
-                <div>Jitter: {(stats.jitter * 1000).toFixed(2)}ms</div>
-              </>
-            )}
-            {latencyStats && (
-              <>
-                <div className="mt-1 pt-1 border-t border-gray-600">Pipeline Timing:</div>
-                <div>RTT: {latencyStats.rtt.toFixed(1)}ms</div>
-                <div>Capture: {latencyStats.serverCapture.toFixed(1)}ms</div>
-                <div>Convert: {latencyStats.serverConvert.toFixed(1)}ms</div>
-                <div>Encode: {latencyStats.serverEncode.toFixed(1)}ms</div>
-                <div>Server Total: {latencyStats.serverTotal.toFixed(1)}ms</div>
-              </>
-            )}
-            {framePacingStats && (
-              <>
-                <div className="mt-1 pt-1 border-t border-gray-600">Frame Pacing:</div>
-                <div>Jitter: {framePacingStats.avgJitter.toFixed(1)}ms</div>
-                <div>Buffer Target: {framePacingStats.targetBuffer.toFixed(0)}ms</div>
-                <div>Frame Interval: {framePacingStats.frameInterval.toFixed(1)}ms</div>
-                <div>Dropped: {framePacingStats.droppedFrames}</div>
-              </>
-            )}
-          </div>
-        )}
       </div>
 
       {/* Status bar */}

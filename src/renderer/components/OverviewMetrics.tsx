@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { useDeviceStore, GPUInfo, StorageInfo } from '../stores/deviceStore';
 
 interface OverviewMetricsProps {
@@ -33,15 +33,9 @@ function formatUptime(seconds: number): string {
 }
 
 export function OverviewMetrics({ deviceId, totalMemory, gpu, storage }: OverviewMetricsProps) {
-  // Subscribe to metrics directly - only this component re-renders when metrics update
+  // Read metrics from store - component re-renders automatically when metrics update
+  // Note: App.tsx handles the subscription to updates, child components just read from store
   const metrics = useDeviceStore((state) => state.metrics);
-  const subscribeToUpdates = useDeviceStore((state) => state.subscribeToUpdates);
-
-  // Subscribe to real-time updates
-  useEffect(() => {
-    const unsubscribe = subscribeToUpdates();
-    return unsubscribe;
-  }, [subscribeToUpdates]);
 
   const latestMetrics = metrics.length > 0 ? metrics[0] : null;
 

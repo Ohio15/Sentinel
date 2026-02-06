@@ -699,37 +699,15 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 		iceServers = append(iceServers, iceServer)
 	}
 
-	// Default STUN + TURN servers if none provided
-	// TURN servers enable NAT traversal when direct P2P fails (e.g., hairpin NAT)
+	// Default STUN servers if none provided
+	// NOTE: TURN servers temporarily disabled - metered.ca rate limited
+	// For LAN connections, STUN alone should work via host candidates
 	if len(iceServers) == 0 {
 		iceServers = []webrtc.ICEServer{
 			{URLs: []string{"stun:stun.l.google.com:19302"}},
 			{URLs: []string{"stun:stun1.l.google.com:19302"}},
-			// Metered TURN servers (more reliable than openrelay)
-			{
-				URLs:           []string{"turn:a.relay.metered.ca:80"},
-				Username:       "e8dd65b92f8b3c9bd6c4e894",
-				Credential:     "uWdWNmkhvyqTmhD0",
-				CredentialType: webrtc.ICECredentialTypePassword,
-			},
-			{
-				URLs:           []string{"turn:a.relay.metered.ca:80?transport=tcp"},
-				Username:       "e8dd65b92f8b3c9bd6c4e894",
-				Credential:     "uWdWNmkhvyqTmhD0",
-				CredentialType: webrtc.ICECredentialTypePassword,
-			},
-			{
-				URLs:           []string{"turn:a.relay.metered.ca:443"},
-				Username:       "e8dd65b92f8b3c9bd6c4e894",
-				Credential:     "uWdWNmkhvyqTmhD0",
-				CredentialType: webrtc.ICECredentialTypePassword,
-			},
-			{
-				URLs:           []string{"turn:a.relay.metered.ca:443?transport=tcp"},
-				Username:       "e8dd65b92f8b3c9bd6c4e894",
-				Credential:     "uWdWNmkhvyqTmhD0",
-				CredentialType: webrtc.ICECredentialTypePassword,
-			},
+			{URLs: []string{"stun:stun2.l.google.com:19302"}},
+			{URLs: []string{"stun:stun3.l.google.com:19302"}},
 		}
 	}
 
@@ -863,9 +841,11 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 		return nil, fmt.Errorf("failed to add video track: %w", err)
 	}
 	log.Printf("[WebRTC] Video track added to peer connection")
+	log.Printf("[WebRTC] DEBUG: Starting RTCP goroutine...")
 
 	// Read incoming RTCP packets for PLI handling
 	go func() {
+		log.Printf("[WebRTC] DEBUG: RTCP goroutine started")
 		rtcpBuf := make([]byte, 1500)
 		for {
 			if _, _, rtcpErr := rtpSender.Read(rtcpBuf); rtcpErr != nil {
@@ -874,22 +854,40 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 		}
 	}()
 
+	log.Printf("[WebRTC] DEBUG: Creating context...")
 	ctx, cancel := context.WithCancel(context.Background())
+	log.Printf("[WebRTC] DEBUG: Context created")
 
 	// Try DXGI capture first (high performance), fall back to screenshot if it fails
+	// Use a timeout to prevent blocking the SDP exchange
 	var dxgiCap *capture.DXGICapture
 	useDXGI := false
 
-	dxgiCap, err = capture.NewDXGICapture(0) // Monitor 0 (primary)
-	if err != nil {
-		log.Printf("[WebRTC] DXGI capture initialization failed, using screenshot fallback: %v", err)
+	log.Printf("[WebRTC] Attempting DXGI capture initialization (3s timeout)...")
+	dxgiInitDone := make(chan struct{})
+	var dxgiErr error
+	go func() {
+		defer close(dxgiInitDone)
+		dxgiCap, dxgiErr = capture.NewDXGICapture(0) // Monitor 0 (primary)
+	}()
+
+	select {
+	case <-dxgiInitDone:
+		if dxgiErr != nil {
+			log.Printf("[WebRTC] DXGI capture initialization failed, using screenshot fallback: %v", dxgiErr)
+			dxgiCap = nil
+			useDXGI = false
+		} else {
+			useDXGI = true
+			w, h := dxgiCap.GetDimensions()
+			log.Printf("[WebRTC] DXGI capture enabled: %dx%d", w, h)
+		}
+	case <-time.After(3 * time.Second):
+		log.Printf("[WebRTC] DXGI capture initialization timed out after 3s, using screenshot fallback")
 		dxgiCap = nil
 		useDXGI = false
-	} else {
-		useDXGI = true
-		w, h := dxgiCap.GetDimensions()
-		log.Printf("[WebRTC] DXGI capture enabled: %dx%d", w, h)
 	}
+	log.Printf("[WebRTC] Capture initialization complete, useDXGI=%v", useDXGI)
 
 	// Create capture strategy for smart frame decisions
 	captureStrategy := NewCaptureStrategy(screenWidth, screenHeight)

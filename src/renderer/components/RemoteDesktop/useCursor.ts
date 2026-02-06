@@ -68,11 +68,9 @@ export function useCursor(options: UseCursorOptions) {
   // Correction offset: accumulated drift correction applied to local cursor
   const correctionRef = useRef<CursorPosition>({ x: 0, y: 0 });
 
-  // Generate CSS cursor value - hide system cursor since we render our own via CursorOverlay
-  // The CursorOverlay provides instant local cursor movement with smooth server-correction
+  // Use native system cursor for best performance (no React rendering lag)
   const cssCursor = useMemo(() => {
-    // Hide system cursor - CursorOverlay renders the cursor at native polling rate
-    return 'none';
+    return 'crosshair';
   }, []);
 
   // Scale local coordinates to remote coordinates
@@ -103,7 +101,7 @@ export function useCursor(options: UseCursorOptions) {
     [displayWidth, displayHeight, remoteWidth, remoteHeight, videoOffsetX, videoOffsetY]
   );
 
-  // Handle mouse move - CursorOverlay renders cursor, we track position and send to remote
+  // Handle mouse move - send position to remote (no React state updates for performance)
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLElement>) => {
       const rect = e.currentTarget.getBoundingClientRect();
@@ -118,44 +116,25 @@ export function useCursor(options: UseCursorOptions) {
       const clampedX = Math.max(0, Math.min(videoX, displayWidth));
       const clampedY = Math.max(0, Math.min(videoY, displayHeight));
 
-      // Apply correction offset to local cursor position
-      // This smoothly corrects for any drift between local and server cursor positions
-      const correctedX = videoOffsetX + clampedX + correctionRef.current.x;
-      const correctedY = videoOffsetY + clampedY + correctionRef.current.y;
-
-      // Decay correction offset over time (prevents accumulation)
-      correctionRef.current.x *= 0.95;
-      correctionRef.current.y *= 0.95;
-
-      // Zero out very small corrections (avoids micro-jitter)
-      if (Math.abs(correctionRef.current.x) < 0.5) correctionRef.current.x = 0;
-      if (Math.abs(correctionRef.current.y) < 0.5) correctionRef.current.y = 0;
-
-      // Update local cursor position (used by CursorOverlay for rendering)
-      setCursor((prev) => ({
-        ...prev,
-        local: { x: correctedX, y: correctedY },
-      }));
-
       // Only send to remote if within video bounds
       if (videoX >= 0 && videoX <= displayWidth && videoY >= 0 && videoY <= displayHeight) {
         // Scale to remote coordinates
         const remote = scaleToRemote(clampedX, clampedY);
 
-        // Throttle remote updates via RAF (60fps for network, cursor rendered locally at native rate)
+        // Only send if position changed by at least 2 pixels (reduces noise, helps with PIN entry etc)
+        const dx = Math.abs(remote.x - lastSentRef.current.x);
+        const dy = Math.abs(remote.y - lastSentRef.current.y);
+        if (dx < 2 && dy < 2) {
+          return; // Skip tiny movements
+        }
+
+        // Throttle remote updates via RAF
         if (!rafRef.current) {
           rafRef.current = requestAnimationFrame(() => {
             rafRef.current = undefined;
-
-            // Only send if position changed
-            if (remote.x !== lastSentRef.current.x || remote.y !== lastSentRef.current.y) {
-              lastSentRef.current = remote;
-              onMove(remote.x, remote.y);
-            }
+            lastSentRef.current = remote;
+            onMove(remote.x, remote.y);
           });
-        } else {
-          // Update pending position for next RAF
-          pendingRef.current = remote;
         }
       }
     },

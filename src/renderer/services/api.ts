@@ -152,7 +152,7 @@ class ApiService {
     return this.get<unknown>(`/devices/${id}`);
   }
 
-  async updateDevice(id: string, data: { displayName?: string; tags?: string[] }) {
+  async updateDevice(id: string, data: { displayName?: string; tags?: string[]; clientId?: string | null }) {
     return this.put(`/devices/${id}`, data);
   }
 

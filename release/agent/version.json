@@ -1,11 +1,11 @@
 {
-  "version": "1.67.10",
-  "releaseDate": "2026-01-19",
-  "changelog": "- Removed hourly update loop (updates now via heartbeat notifications)",
-  "platforms": [
-    "windows",
-    "linux",
-    "darwin"
-  ],
-  "minAppVersion": "1.50.0"
+    "version":  "1.71.0",
+    "releaseDate":  "2026-02-05",
+    "changelog":  "Add performance recording and pop-out window features",
+    "platforms":  [
+                      "windows",
+                      "linux",
+                      "darwin"
+                  ],
+    "minAppVersion":  "1.50.0"
 }

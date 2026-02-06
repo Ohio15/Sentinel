@@ -113,7 +113,9 @@ export function PasskeyManager() {
       const { sessionId, options } = beginResponse;
 
       // Step 2: Prompt user for biometric
-      const registrationResponse = await startRegistration(options);
+      // go-webauthn returns { publicKey: { ... } }, but @simplewebauthn/browser expects just the publicKey contents
+      const publicKeyOptions = (options as any)?.publicKey || options;
+      const registrationResponse = await startRegistration(publicKeyOptions);
 
       // Step 3: Complete registration
       await window.api.passkeys?.finishRegistration({

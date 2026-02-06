@@ -503,6 +503,7 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 				"processCount":     m.ProcessCount,
 			},
 		})
+		log.Printf("[Metrics] Broadcasting device_metrics for device %s: CPU=%.1f%% MEM=%.1f%%", deviceID, m.CPUPercent, m.MemoryPercent)
 		r.hub.BroadcastToDashboards(broadcastMsg)
 
 		// Check alert rules

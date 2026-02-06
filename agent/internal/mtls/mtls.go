@@ -47,7 +47,14 @@ func loadTLSConfig() (*tls.Config, error) {
 		MinVersion: tls.VersionTLS12,
 	}
 
-	// Load CA certificate if available
+	// Start with system root CAs so we trust public CAs (like Let's Encrypt)
+	caCertPool, err := x509.SystemCertPool()
+	if err != nil {
+		log.Printf("[mTLS] Warning: Could not load system cert pool: %v, creating new pool", err)
+		caCertPool = x509.NewCertPool()
+	}
+
+	// Also load our internal CA certificate if available (for mTLS and internal CA-signed certs)
 	caCertPath := paths.CACertPath()
 	if _, err := os.Stat(caCertPath); err == nil {
 		caCert, err := os.ReadFile(caCertPath)
@@ -55,17 +62,16 @@ func loadTLSConfig() (*tls.Config, error) {
 			return nil, fmt.Errorf("failed to read CA certificate: %w", err)
 		}
 
-		caCertPool := x509.NewCertPool()
 		if !caCertPool.AppendCertsFromPEM(caCert) {
-			return nil, fmt.Errorf("failed to parse CA certificate")
+			log.Println("[mTLS] Warning: Failed to parse internal CA certificate")
+		} else {
+			log.Println("[mTLS] Loaded internal CA certificate (in addition to system CAs)")
 		}
-
-		config.RootCAs = caCertPool
-		log.Println("[mTLS] Loaded CA certificate for server verification")
 	} else {
-		// No CA cert - use system root CAs (less secure but allows development)
-		log.Println("[mTLS] No CA certificate found, using system root CAs")
+		log.Println("[mTLS] No internal CA certificate found, using system root CAs only")
 	}
+
+	config.RootCAs = caCertPool
 
 	// Load client certificate and key if available (for mTLS)
 	certPath := paths.ClientCertPath()

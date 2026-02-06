@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { useDeviceStore } from '../stores/deviceStore';
 import { useAlertStore } from '../stores/alertStore';
+import { useClientStore } from '../stores/clientStore';
 
 interface DashboardProps {
   onDeviceSelect: (deviceId: string) => void;
@@ -9,10 +10,25 @@ interface DashboardProps {
 export function Dashboard({ onDeviceSelect }: DashboardProps) {
   const { devices } = useDeviceStore();
   const { alerts } = useAlertStore();
+  const { currentClientId } = useClientStore();
 
   // Ensure arrays are valid (defensive check for API response issues)
-  const deviceList = Array.isArray(devices) ? devices : [];
-  const alertList = Array.isArray(alerts) ? alerts : [];
+  const allDevices = Array.isArray(devices) ? devices : [];
+  const allAlerts = Array.isArray(alerts) ? alerts : [];
+
+  // Filter by current client if one is selected
+  const deviceList = currentClientId
+    ? allDevices.filter(d => d.clientId === currentClientId)
+    : allDevices;
+
+  // Get device IDs for the current client to filter alerts
+  const clientDeviceIds = currentClientId
+    ? new Set(deviceList.map(d => d.id))
+    : null;
+
+  const alertList = currentClientId
+    ? allAlerts.filter(a => clientDeviceIds && clientDeviceIds.has(a.deviceId))
+    : allAlerts;
 
   const stats = useMemo(() => {
     const online = deviceList.filter(d => d.status === 'online').length;
@@ -103,7 +119,7 @@ export function Dashboard({ onDeviceSelect }: DashboardProps) {
             <h2 className="text-lg font-semibold text-text-primary">Device Overview</h2>
           </div>
           <div className="p-4">
-            {devices.length === 0 ? (
+            {deviceList.length === 0 ? (
               <div className="text-center py-8">
                 <p className="text-text-secondary mb-4">No devices registered yet</p>
                 <p className="text-sm text-text-secondary">
@@ -112,7 +128,7 @@ export function Dashboard({ onDeviceSelect }: DashboardProps) {
               </div>
             ) : (
               <div className="space-y-2">
-                {devices.slice(0, 8).map(device => (
+                {deviceList.slice(0, 8).map(device => (
                   <button
                     key={device.id}
                     onClick={() => onDeviceSelect(device.id)}
@@ -134,9 +150,9 @@ export function Dashboard({ onDeviceSelect }: DashboardProps) {
                     <ChevronRightIcon className="w-4 h-4 text-text-secondary" />
                   </button>
                 ))}
-                {devices.length > 8 && (
+                {deviceList.length > 8 && (
                   <p className="text-sm text-text-secondary text-center pt-2">
-                    +{devices.length - 8} more devices
+                    +{deviceList.length - 8} more devices
                   </p>
                 )}
               </div>

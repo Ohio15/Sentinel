@@ -2,12 +2,18 @@
 
 tls:
   # Server certificates
-  certificates:
-    # Internal CA-signed certificate for mTLS/gRPC endpoints
-    - certFile: /certs/server-cert.pem
-      keyFile: /certs/server-key.pem
-      stores:
-        - default
+  # NOTE: Let's Encrypt certificates are managed automatically by routers with certResolver
+  # Do NOT define a "default" store - this causes Traefik to override Let's Encrypt certs
+  # The internal Sentinel CA cert is only used for mTLS agent connections (port 8443)
+  # and gRPC data plane (port 4444), which use their own TLS options with explicit cert paths
+
+  # Define certificate stores - only for internal CA (mTLS/gRPC)
+  # The "default" store is intentionally omitted to let Let's Encrypt work via certResolver
+  stores:
+    internalCA:
+      defaultCertificate:
+        certFile: /certs/server-cert.pem
+        keyFile: /certs/server-key.pem
 
   options:
     # Standard TLS for web clients

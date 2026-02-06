@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef } from 'react';
 
+export interface InputModifiers {
+  ctrl?: boolean;
+  alt?: boolean;
+  shift?: boolean;
+  meta?: boolean;
+}
+
 export interface InputEvent {
   type: 'mousemove' | 'mousedown' | 'mouseup' | 'keydown' | 'keyup' | 'wheel';
   x?: number;
@@ -10,14 +17,9 @@ export interface InputEvent {
   code?: string;
   deltaX?: number;
   deltaY?: number;
-  modifiers?: number;
+  modifiers?: InputModifiers;
 }
 
-// Modifier flags matching agent expectations
-const MODIFIER_SHIFT = 1;
-const MODIFIER_CTRL = 2;
-const MODIFIER_ALT = 4;
-const MODIFIER_META = 8;
 
 interface UseInputOptions {
   displayWidth: number;
@@ -111,38 +113,57 @@ export function useInput(options: UseInputOptions) {
   // Scale local coordinates to remote coordinates (accounting for video offset)
   const scaleCoordinates = useCallback(
     (containerX: number, containerY: number): { x: number; y: number; inBounds: boolean } => {
-      if (displayWidth === 0 || displayHeight === 0) {
-        return { x: 0, y: 0, inBounds: false };
+      // If display size is 0, fall back to assuming 1:1 mapping with remote
+      // This prevents clicks from being blocked during initialization
+      const effectiveDisplayWidth = displayWidth > 0 ? displayWidth : remoteWidth;
+      const effectiveDisplayHeight = displayHeight > 0 ? displayHeight : remoteHeight;
+
+      console.log('[useInput] scaleCoordinates input:', {
+        containerX, containerY,
+        displayWidth, displayHeight,
+        effectiveDisplayWidth, effectiveDisplayHeight,
+        remoteWidth, remoteHeight,
+        videoOffsetX, videoOffsetY,
+      });
+
+      if (effectiveDisplayWidth === 0 || effectiveDisplayHeight === 0) {
+        console.warn('[useInput] scaleCoordinates: all sizes are 0!');
+        return { x: Math.round(containerX), y: Math.round(containerY), inBounds: true };
       }
 
       // Adjust for video offset (letterboxing)
       const videoX = containerX - videoOffsetX;
       const videoY = containerY - videoOffsetY;
 
-      // Check if within video bounds
-      const inBounds = videoX >= 0 && videoX <= displayWidth && videoY >= 0 && videoY <= displayHeight;
-
       // Clamp to video bounds
-      const clampedX = Math.max(0, Math.min(videoX, displayWidth));
-      const clampedY = Math.max(0, Math.min(videoY, displayHeight));
+      const clampedX = Math.max(0, Math.min(videoX, effectiveDisplayWidth));
+      const clampedY = Math.max(0, Math.min(videoY, effectiveDisplayHeight));
 
-      return {
-        x: Math.round((clampedX / displayWidth) * remoteWidth),
-        y: Math.round((clampedY / displayHeight) * remoteHeight),
-        inBounds,
+      const result = {
+        x: Math.round((clampedX / effectiveDisplayWidth) * remoteWidth),
+        y: Math.round((clampedY / effectiveDisplayHeight) * remoteHeight),
+        inBounds: true,
       };
+
+      console.log('[useInput] scaleCoordinates result:', {
+        videoX, videoY,
+        clampedX, clampedY,
+        resultX: result.x, resultY: result.y,
+      });
+
+      return result;
     },
     [displayWidth, displayHeight, remoteWidth, remoteHeight, videoOffsetX, videoOffsetY]
   );
 
   // Get modifiers from keyboard/mouse event
-  const getModifiers = useCallback((e: KeyboardEvent | MouseEvent): number => {
-    let modifiers = 0;
-    if (e.shiftKey) modifiers |= MODIFIER_SHIFT;
-    if (e.ctrlKey) modifiers |= MODIFIER_CTRL;
-    if (e.altKey) modifiers |= MODIFIER_ALT;
-    if (e.metaKey) modifiers |= MODIFIER_META;
-    return modifiers;
+  const getModifiers = useCallback((e: KeyboardEvent | MouseEvent): InputModifiers => {
+    return {
+      shift: e.shiftKey,
+      ctrl: e.ctrlKey,
+      alt: e.altKey,
+      meta: e.metaKey,
+    };
   }, []);
 
   // Get virtual key code from keyboard event
@@ -156,36 +177,49 @@ export function useInput(options: UseInputOptions) {
   }, []);
 
   // Mouse down handler
+  // Note: Handler attachment is now conditional in parent (isConnected && videoReady)
+  // So we don't need strict `enabled` check here, but we keep it for safety
   const handleMouseDown = useCallback(
     (e: React.MouseEvent<HTMLElement>) => {
-      if (!enabled) return;
-
       e.preventDefault();
       const rect = e.currentTarget.getBoundingClientRect();
       const { x, y, inBounds } = scaleCoordinates(e.clientX - rect.left, e.clientY - rect.top);
 
-      // Only send if click is within video bounds
-      if (!inBounds) return;
+      console.log('[useInput] mousedown:', { x, y, inBounds, button: e.button, enabled });
 
-      sendInput({
-        type: 'mousedown',
-        x,
-        y,
-        button: e.button,
-        modifiers: getModifiers(e.nativeEvent),
-      });
+      // Skip if completely outside bounds (with margin)
+      if (!inBounds) {
+        console.log('[useInput] mousedown outside bounds, still sending (edge case)');
+        // Still send - let the server decide
+      }
+
+      try {
+        const mods = getModifiers(e.nativeEvent);
+        const event = {
+          type: 'mousedown' as const,
+          x,
+          y,
+          button: e.button,
+          modifiers: mods,
+        };
+        console.log('[useInput] Sending mousedown:', JSON.stringify(event));
+        sendInput(event);
+      } catch (err) {
+        console.error('[useInput] Error in mousedown handler:', err);
+      }
     },
     [enabled, scaleCoordinates, sendInput, getModifiers]
   );
 
   // Mouse up handler
+  // Note: Handler attachment is now conditional in parent
   const handleMouseUp = useCallback(
     (e: React.MouseEvent<HTMLElement>) => {
-      if (!enabled) return;
-
       e.preventDefault();
       const rect = e.currentTarget.getBoundingClientRect();
       const { x, y } = scaleCoordinates(e.clientX - rect.left, e.clientY - rect.top);
+
+      console.log('[useInput] mouseup:', { x, y, button: e.button });
 
       // Always send mouse up (even if outside bounds, to release any drag)
       sendInput({
@@ -196,24 +230,27 @@ export function useInput(options: UseInputOptions) {
         modifiers: getModifiers(e.nativeEvent),
       });
     },
-    [enabled, scaleCoordinates, sendInput, getModifiers]
+    [scaleCoordinates, sendInput, getModifiers]
   );
 
   // Wheel handler
+  // Note: Handler attachment is now conditional in parent
   const handleWheel = useCallback(
     (e: React.WheelEvent<HTMLElement>) => {
-      if (!enabled) return;
-
       e.preventDefault();
       const rect = e.currentTarget.getBoundingClientRect();
       const { x, y, inBounds } = scaleCoordinates(e.clientX - rect.left, e.clientY - rect.top);
 
-      // Only scroll if within video bounds
-      if (!inBounds) return;
+      // Still send wheel events even if slightly outside bounds
+      if (!inBounds) {
+        console.log('[useInput] wheel outside bounds, sending anyway');
+      }
 
       // Normalize wheel delta (different browsers report different values)
       const deltaX = Math.sign(e.deltaX) * Math.min(Math.abs(e.deltaX), 120);
       const deltaY = Math.sign(e.deltaY) * Math.min(Math.abs(e.deltaY), 120);
+
+      console.log('[useInput] wheel:', { x, y, deltaX, deltaY });
 
       sendInput({
         type: 'wheel',
@@ -224,7 +261,7 @@ export function useInput(options: UseInputOptions) {
         modifiers: getModifiers(e.nativeEvent),
       });
     },
-    [enabled, scaleCoordinates, sendInput, getModifiers]
+    [scaleCoordinates, sendInput, getModifiers]
   );
 
   // Context menu handler (prevent default)

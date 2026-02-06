@@ -1,4 +1,5 @@
 import { Device, useDeviceStore } from '../stores/deviceStore';
+import { useClientStore } from '../stores/clientStore';
 import React, { useState, useEffect } from 'react';
 
 interface Script {
@@ -180,11 +181,16 @@ function LanguageBadge({ language }: { language: string }) {
 
 function ExecuteScriptForm({ scriptId }: { scriptId: string }) {
   const { devices: allDevices } = useDeviceStore();
+  const { currentClientId } = useClientStore();
   const [selectedDevices, setSelectedDevices] = useState<string[]>([]);
   const [executing, setExecuting] = useState(false);
 
   // Derive online devices from device store - single source of truth
-  const devices = allDevices.filter(d => d.status === 'online');
+  // Also filter by current client if one is selected
+  const devices = allDevices.filter(d =>
+    d.status === 'online' &&
+    (!currentClientId || d.clientId === currentClientId)
+  );
 
   const handleExecute = async () => {
     if (selectedDevices.length === 0) {

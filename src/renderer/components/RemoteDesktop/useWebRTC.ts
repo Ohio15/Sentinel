@@ -517,8 +517,14 @@ export function useWebRTC(options: UseWebRTCOptions) {
   // Send input event via data channel
   const sendInput = useCallback((event: InputEvent) => {
     const dc = dcRef.current;
+    console.log('[WebRTC] sendInput called:', event.type, 'dc:', dc ? 'exists' : 'null', 'readyState:', dc?.readyState);
     if (dc && dc.readyState === 'open') {
-      dc.send(JSON.stringify(event));
+      const jsonStr = JSON.stringify(event);
+      console.log('[WebRTC] Sending via data channel:', jsonStr);
+      dc.send(jsonStr);
+      console.log('[WebRTC] Sent successfully');
+    } else {
+      console.warn('[WebRTC] sendInput DROPPED - data channel not open:', dc?.readyState, 'event:', event.type);
     }
   }, []);
 

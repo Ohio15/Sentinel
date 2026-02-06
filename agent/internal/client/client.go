@@ -174,21 +174,19 @@ func New(cfg *config.Config, version string) *Client {
 
 // initHTTPClient initializes the HTTP client with mTLS configuration if available
 func (c *Client) initHTTPClient() {
-	if c.httpClient != nil {
-		return
-	}
-
 	// Get mTLS configuration
 	tlsConfig, err := mtls.GetTLSConfig()
 	if err != nil {
 		log.Printf("[mTLS] Warning: Failed to load TLS config, using default: %v", err)
-		c.httpClient = &http.Client{
-			Timeout: 2 * time.Second,
+		if c.httpClient == nil {
+			c.httpClient = &http.Client{
+				Timeout: 2 * time.Second,
+			}
 		}
 		return
 	}
 
-	// Create HTTP client with mTLS
+	// Create/update HTTP client with mTLS config
 	c.httpClient = &http.Client{
 		Timeout: 2 * time.Second,
 		Transport: &http.Transport{
@@ -274,6 +272,9 @@ func (c *Client) checkServerHealth() bool {
 // waitForServer polls the server until it becomes available
 func (c *Client) waitForServer(ctx context.Context) bool {
 	log.Println("Waiting for server to become available...")
+
+	// Initialize HTTP client with TLS config before making health check requests
+	c.initHTTPClient()
 
 	// Try immediately first
 	if c.checkServerHealth() {

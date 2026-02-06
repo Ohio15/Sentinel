@@ -5,7 +5,9 @@ package paths
 
 import (
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -151,6 +153,8 @@ var ClientKeyPath = func() string {
 }
 
 // GetCACertHash reads the CA certificate and returns its SHA-256 hash.
+// The hash is computed on the DER-encoded certificate bytes (not the PEM wrapper)
+// to match the server's hash computation.
 // Returns empty string if certificate doesn't exist or can't be read.
 func GetCACertHash() string {
 	certPath := CACertPath()
@@ -158,7 +162,25 @@ func GetCACertHash() string {
 	if err != nil {
 		return ""
 	}
-	hash := sha256.Sum256(data)
+
+	// Decode PEM to get DER bytes
+	block, _ := pem.Decode(data)
+	if block == nil {
+		// Fall back to hashing raw data if not valid PEM
+		hash := sha256.Sum256(data)
+		return hex.EncodeToString(hash[:])
+	}
+
+	// Parse to verify it's a valid certificate
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		// Fall back to hashing raw data if can't parse
+		hash := sha256.Sum256(data)
+		return hex.EncodeToString(hash[:])
+	}
+
+	// Hash the DER-encoded certificate (cert.Raw) like the server does
+	hash := sha256.Sum256(cert.Raw)
 	return hex.EncodeToString(hash[:])
 }
 

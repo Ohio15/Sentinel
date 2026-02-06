@@ -48,6 +48,18 @@ if (isWeb && typeof (window as any).api === 'undefined') {
         // For other types, pass just the data field for backward compatibility
         if (msg.type === 'response') {
           emitEvent(msg.type, msg);
+        } else if (msg.type === 'device_metrics') {
+          // Server sends 'device_metrics' but frontend expects 'metrics:updated'
+          // The message format is: { type: 'device_metrics', deviceId: '...', metrics: {...} }
+          // deviceStore expects: { deviceId: '...', metrics: {...} }
+          const metricsData = {
+            deviceId: msg.deviceId,
+            metrics: msg.metrics,
+            source: 'websocket',
+          };
+          console.log('[WebApiShim] device_metrics received:', metricsData.deviceId, 'CPU:', metricsData.metrics?.cpuPercent);
+          emitEvent('metrics:updated', metricsData);
+          emitEvent('device_metrics', metricsData);
         } else {
           emitEvent(msg.type, msg.data);
         }
@@ -94,8 +106,13 @@ if (isWeb && typeof (window as any).api === 'undefined') {
         return (result as any).metrics || result || [];
       },
       setMetricsInterval: async (deviceId: string, intervalMs: number) => {
-        console.log('[WebApiShim] setMetricsInterval not available in web mode');
-        return { success: true };
+        console.log(`[WebApiShim] setMetricsInterval: device=${deviceId}, interval=${intervalMs}ms`);
+        // Send WebSocket message to server to change agent's metrics interval
+        if (wsService) {
+          wsService.send('set_metrics_interval', { deviceId, intervalMs });
+          return { success: true };
+        }
+        return { success: false, error: 'WebSocket not connected' };
       },
     },
 
