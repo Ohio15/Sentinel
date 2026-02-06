@@ -285,6 +285,25 @@ func runBootstrap() error {
 		os.Chmod(agentBinary, 0755)
 	}
 
+	// Download additional components for Windows (desktop helper and OpenH264)
+	if runtime.GOOS == "windows" {
+		printInfo("Downloading WebRTC desktop helper...")
+		helperPath := filepath.Join(targetPath, "sentinel-desktop.exe")
+		if err := downloadFile(*serverURL, "/api/bootstrap/desktop-helper", helperPath); err != nil {
+			printInfo("Warning: Desktop helper download failed (remote desktop may not work): %v", err)
+		} else {
+			printSuccess("Desktop helper installed")
+		}
+
+		printInfo("Downloading OpenH264 encoder...")
+		dllPath := filepath.Join(targetPath, "openh264-2.4.1-win64.dll")
+		if err := downloadFile(*serverURL, "/api/bootstrap/openh264", dllPath); err != nil {
+			printInfo("Warning: OpenH264 download failed (remote desktop may not work): %v", err)
+		} else {
+			printSuccess("OpenH264 encoder installed")
+		}
+	}
+
 	// Run agent installation
 	printInfo("Configuring and starting service...")
 	if err := runAgentInstall(agentBinary, *serverURL, *token); err != nil {
@@ -396,6 +415,42 @@ func downloadAgent(serverURL, destPath string, info *AgentInfo) error {
 
 	if !*silentMode && totalSize > 0 {
 		fmt.Printf("\r    Downloaded: %.2f MB\n", float64(written)/1024/1024)
+	}
+
+	return nil
+}
+
+// downloadFile downloads a file from a server endpoint to a local path
+func downloadFile(serverURL, endpoint, destPath string) error {
+	url := serverURL + endpoint + fmt.Sprintf("?platform=%s&arch=%s", runtime.GOOS, runtime.GOARCH)
+
+	client := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := client.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("server returned %d", resp.StatusCode)
+	}
+
+	// Remove existing file if present
+	os.Remove(destPath)
+
+	out, err := os.Create(destPath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	written, err := io.Copy(out, resp.Body)
+	if err != nil {
+		return err
+	}
+
+	if !*silentMode {
+		fmt.Printf("    Downloaded: %.2f MB\n", float64(written)/1024/1024)
 	}
 
 	return nil
@@ -515,6 +570,21 @@ func repairAgent() error {
 
 	if runtime.GOOS != "windows" {
 		os.Chmod(agentBinary, 0755)
+	}
+
+	// Re-download additional components for Windows (desktop helper and OpenH264)
+	if runtime.GOOS == "windows" {
+		printInfo("Re-downloading WebRTC desktop helper...")
+		helperPath := filepath.Join(targetPath, "sentinel-desktop.exe")
+		if err := downloadFile(*serverURL, "/api/bootstrap/desktop-helper", helperPath); err != nil {
+			printInfo("Warning: Desktop helper download failed: %v", err)
+		}
+
+		printInfo("Re-downloading OpenH264 encoder...")
+		dllPath := filepath.Join(targetPath, "openh264-2.4.1-win64.dll")
+		if err := downloadFile(*serverURL, "/api/bootstrap/openh264", dllPath); err != nil {
+			printInfo("Warning: OpenH264 download failed: %v", err)
+		}
 	}
 
 	// Start service

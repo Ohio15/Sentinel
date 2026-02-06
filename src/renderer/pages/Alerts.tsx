@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAlertStore, Alert, AlertRule } from '../stores/alertStore';
+import { useDeviceStore } from '../stores/deviceStore';
+import { useClientStore } from '../stores/clientStore';
 
 export function Alerts() {
   const {
@@ -15,6 +17,9 @@ export function Alerts() {
     deleteRule,
   } = useAlertStore();
 
+  const { devices } = useDeviceStore();
+  const { currentClientId } = useClientStore();
+
   const [activeTab, setActiveTab] = useState<'alerts' | 'rules'>('alerts');
   const [statusFilter, setStatusFilter] = useState<string>('open');
   const [showRuleModal, setShowRuleModal] = useState(false);
@@ -25,9 +30,17 @@ export function Alerts() {
     fetchRules();
   }, []);
 
+  // Get device IDs that belong to the current client for filtering alerts
+  const clientDeviceIds = currentClientId
+    ? new Set(devices.filter(d => d.clientId === currentClientId).map(d => d.id))
+    : null;
+
   const filteredAlerts = alerts.filter(alert => {
-    if (statusFilter === 'all') return true;
-    return alert.status === statusFilter;
+    // Filter by status
+    const matchesStatus = statusFilter === 'all' || alert.status === statusFilter;
+    // Filter by client (check if alert's device belongs to the current client)
+    const matchesClient = !currentClientId || (clientDeviceIds && clientDeviceIds.has(alert.deviceId));
+    return matchesStatus && matchesClient;
   });
 
   const handleEditRule = (rule: AlertRule) => {

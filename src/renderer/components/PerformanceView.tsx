@@ -136,67 +136,74 @@ export function PerformanceView({ deviceId, systemInfo }: PerformanceViewProps) 
   }, [metrics]);
 
   return (
-    <div className="flex flex-col h-full bg-background text-text-primary">
-      {/* Top bar with recording controls on the right */}
-      <div className="flex items-center justify-end px-4 py-2 bg-surface border-b border-border">
-        <RecordingControls deviceId={deviceId} onRecordingChange={handleRecordingChange} onRecordingStopped={handleRecordingStopped} />
-      </div>
-
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left sidebar - resource list */}
-        <div className="w-72 bg-surface border-r border-border overflow-y-auto">
-          {resources.map((resource) => (
-            <ResourceSidebarItem
-              key={resource.id}
-              resource={resource}
-              isSelected={selectedResource === resource.id}
-              onClick={() => setSelectedResource(resource.id)}
-              metrics={graphMetrics}
-            />
-          ))}
+    <div className="h-full bg-background text-text-primary overflow-y-auto p-4 space-y-4">
+      {/* Container 1: Performance Metrics */}
+      <div className="bg-surface border border-border rounded-lg overflow-hidden">
+        {/* Top bar with recording controls on the right */}
+        <div className="flex items-center justify-end px-4 py-2 border-b border-border">
+          <RecordingControls deviceId={deviceId} onRecordingChange={handleRecordingChange} onRecordingStopped={handleRecordingStopped} />
         </div>
 
-        {/* Main content area */}
-        <div className="flex-1 p-6 overflow-y-auto">
-          {/* Debug info - remove after testing */}
-          {metrics.length === 0 && (
-            <div className="mb-4 p-3 bg-warning/20 border border-warning/50 rounded text-warning text-sm">
-              No metrics data received. Make sure the agent is connected and sending heartbeats.
-            </div>
-          )}
-          {selectedItem.type === 'cpu' && (
-            <CPUDetailView metrics={graphMetrics} systemInfo={systemInfo} latestMetrics={latestMetrics} />
-          )}
-          {selectedItem.type === 'memory' && (
-            <MemoryDetailView metrics={graphMetrics} systemInfo={systemInfo} latestMetrics={latestMetrics} />
-          )}
-          {selectedItem.type === 'disk' && (
-            <DiskDetailView
-              metrics={graphMetrics}
-              systemInfo={systemInfo}
-              latestMetrics={latestMetrics}
-              diskIndex={parseInt(selectedItem.id.split('-')[1] || '0')}
-            />
-          )}
-          {selectedItem.type === 'network' && (
-            <NetworkDetailView metrics={graphMetrics} latestMetrics={latestMetrics} />
-          )}
-          {selectedItem.type === 'gpu' && (
-            <GPUDetailView
-              systemInfo={systemInfo}
-              gpuIndex={parseInt(selectedItem.id.split('-')[1] || '0')}
-              latestMetrics={latestMetrics}
-            />
-          )}
-
-          {/* Recordings section - always visible */}
-          <div className="mt-8 border-t border-border pt-6">
-            <h3 className="text-lg font-medium text-text-primary mb-4">Saved Recordings</h3>
-            <RecordingsList
-              deviceId={deviceId}
-              onViewRecording={(id) => setSelectedRecordingId(id)}
-            />
+        <div className="flex" style={{ height: '600px' }}>
+          {/* Left sidebar - resource list */}
+          <div className="w-72 border-r border-border overflow-y-auto">
+            {resources.map((resource) => (
+              <ResourceSidebarItem
+                key={resource.id}
+                resource={resource}
+                isSelected={selectedResource === resource.id}
+                onClick={() => setSelectedResource(resource.id)}
+                metrics={graphMetrics}
+              />
+            ))}
           </div>
+
+          {/* Main content area */}
+          <div className="flex-1 p-6 overflow-y-auto">
+            {/* Debug info - remove after testing */}
+            {metrics.length === 0 && (
+              <div className="mb-4 p-3 bg-warning/20 border border-warning/50 rounded text-warning text-sm">
+                No metrics data received. Make sure the agent is connected and sending heartbeats.
+              </div>
+            )}
+            {selectedItem.type === 'cpu' && (
+              <CPUDetailView metrics={graphMetrics} systemInfo={systemInfo} latestMetrics={latestMetrics} />
+            )}
+            {selectedItem.type === 'memory' && (
+              <MemoryDetailView metrics={graphMetrics} systemInfo={systemInfo} latestMetrics={latestMetrics} />
+            )}
+            {selectedItem.type === 'disk' && (
+              <DiskDetailView
+                metrics={graphMetrics}
+                systemInfo={systemInfo}
+                latestMetrics={latestMetrics}
+                diskIndex={parseInt(selectedItem.id.split('-')[1] || '0')}
+              />
+            )}
+            {selectedItem.type === 'network' && (
+              <NetworkDetailView metrics={graphMetrics} latestMetrics={latestMetrics} />
+            )}
+            {selectedItem.type === 'gpu' && (
+              <GPUDetailView
+                systemInfo={systemInfo}
+                gpuIndex={parseInt(selectedItem.id.split('-')[1] || '0')}
+                latestMetrics={latestMetrics}
+              />
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Container 2: Saved Recordings */}
+      <div className="bg-surface border border-border rounded-lg overflow-hidden">
+        <div className="px-6 py-3 border-b border-border">
+          <h3 className="text-lg font-medium text-text-primary">Saved Recordings</h3>
+        </div>
+        <div className="p-4">
+          <RecordingsList
+            deviceId={deviceId}
+            onViewRecording={(id) => setSelectedRecordingId(id)}
+          />
         </div>
       </div>
 

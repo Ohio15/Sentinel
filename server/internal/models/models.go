@@ -71,6 +71,7 @@ type Device struct {
 	MACAddress     string            `json:"macAddress"`
 	Tags           []string          `json:"tags"`
 	Metadata       map[string]string `json:"metadata"`
+	ClientID       *uuid.UUID        `json:"clientId,omitempty"`
 	CreatedAt      time.Time         `json:"createdAt"`
 	UpdatedAt      time.Time         `json:"updatedAt"`
 }

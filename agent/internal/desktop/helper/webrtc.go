@@ -15,18 +15,20 @@ import (
 
 // WebRTCHandler manages WebRTC sessions in the helper process
 type WebRTCHandler struct {
-	mu          sync.Mutex
-	manager     *webrtc.Manager
-	session     *webrtc.Session
-	client      *desktop.IPCClient
+	mu           sync.Mutex
+	manager      *webrtc.Manager
+	session      *webrtc.Session
+	client       *desktop.IPCClient
 	connectionID string
+	injector     *InputInjector
 }
 
 // NewWebRTCHandler creates a new WebRTC handler
 func NewWebRTCHandler(client *desktop.IPCClient) *WebRTCHandler {
 	return &WebRTCHandler{
-		client:  client,
-		manager: webrtc.NewManager(),
+		client:   client,
+		manager:  webrtc.NewManager(),
+		injector: NewInputInjector(),
 	}
 }
 
@@ -38,6 +40,17 @@ func (h *WebRTCHandler) HandleStartSession(ctx context.Context, payload *desktop
 	log.Printf("[WebRTCHandler] Starting session, connectionID=%s, sdpType=%s", payload.ConnectionID, payload.SDPType)
 
 	h.connectionID = payload.ConnectionID
+
+	// Configure input injector for primary monitor (index 0)
+	// This sets up coordinate transformation for the captured screen area
+	h.injector.SetActiveMonitor(0)
+
+	// Get the primary screen dimensions and configure the injector
+	// Video is captured at screen resolution, so viewer = source
+	screenWidth, screenHeight := GetPrimaryScreenDimensions()
+	log.Printf("[WebRTCHandler] Configuring injector for primary screen: %dx%d", screenWidth, screenHeight)
+	h.injector.SetSourceDimensions(screenWidth, screenHeight, 0, 0)
+	h.injector.SetViewerDimensions(screenWidth, screenHeight)
 
 	// Update status
 	h.client.SendStatus(desktop.StateConnecting, "Creating WebRTC session", payload.ConnectionID)
@@ -121,7 +134,8 @@ func (h *WebRTCHandler) HandleICECandidate(payload *desktop.ICECandidatePayload)
 		return nil
 	}
 
-	log.Printf("[WebRTCHandler] Adding ICE candidate")
+	// Log the actual candidate value to help debug ICE issues
+	log.Printf("[WebRTCHandler] Adding ICE candidate: %s", payload.Candidate)
 	return h.session.AddICECandidate(payload.Candidate)
 }
 
@@ -155,8 +169,12 @@ func (h *WebRTCHandler) onSignal(signal webrtc.SignalMessage) {
 
 // onInput is called when input events are received from the browser
 func (h *WebRTCHandler) onInput(input webrtc.InputEvent) {
-	log.Printf("[WebRTCHandler] Input: type=%s, event=%s", input.Type, input.Event)
-	// Input handling is done in the webrtc package - the callbacks handle it
+	log.Printf("[WebRTCHandler] Input: type=%s, event=%s, x=%.1f, y=%.1f, button=%d, key=%s",
+		input.Type, input.Event, input.X, input.Y, input.Button, input.Key)
+	// Inject the input into Windows
+	if h.injector != nil {
+		h.injector.InjectInput(input)
+	}
 }
 
 // Close cleans up resources

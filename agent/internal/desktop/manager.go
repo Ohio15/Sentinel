@@ -13,11 +13,23 @@ import (
 	"time"
 )
 
+// pendingICECandidate stores an ICE candidate that arrived before the session was ready
+type pendingICECandidate struct {
+	connectionID  string
+	candidate     string
+	sdpMid        string
+	sdpMLineIndex *int
+	timestamp     time.Time
+}
+
 // Manager coordinates desktop helper processes
 type Manager struct {
 	mu       sync.Mutex
 	sessions map[uint32]*HelperSession
 	helperPath string
+
+	// Queue for ICE candidates that arrive before session is ready
+	pendingCandidates map[uint32][]pendingICECandidate
 
 	// Callbacks for forwarding messages to server
 	onSessionAnswer func(sessionID uint32, connectionID, sdpType, sdp string)
@@ -45,8 +57,9 @@ type HelperSession struct {
 // NewManager creates a new desktop manager
 func NewManager(helperPath string) *Manager {
 	return &Manager{
-		sessions:   make(map[uint32]*HelperSession),
-		helperPath: helperPath,
+		sessions:          make(map[uint32]*HelperSession),
+		pendingCandidates: make(map[uint32][]pendingICECandidate),
+		helperPath:        helperPath,
 	}
 }
 
@@ -94,6 +107,11 @@ func (m *Manager) StartSession(ctx context.Context, sessionID uint32, connection
 	select {
 	case answer := <-session.answerChan:
 		log.Printf("[Manager] Got answer from helper, sdpType=%s, sdp length=%d", answer.SDPType, len(answer.SDP))
+
+		// Replay any ICE candidates that arrived before the session was ready
+		// Do this after receiving the answer - the helper's peer connection is now set up
+		go m.replayPendingCandidates(sessionID)
+
 		return answer.SDPType, answer.SDP, nil
 	case <-time.After(30 * time.Second):
 		return "", "", fmt.Errorf("timeout waiting for WebRTC answer from helper")
@@ -116,16 +134,56 @@ func (m *Manager) StopSession(sessionID uint32, connectionID, reason string) err
 }
 
 // AddICECandidate forwards an ICE candidate to the helper
+// If the session doesn't exist yet (helper still spawning), queue the candidate for later
 func (m *Manager) AddICECandidate(sessionID uint32, connectionID, candidate, sdpMid string, sdpMLineIndex *int) error {
 	m.mu.Lock()
 	session, exists := m.sessions[sessionID]
-	m.mu.Unlock()
 
 	if !exists {
-		return fmt.Errorf("no session for sessionID %d", sessionID)
+		// Queue the candidate - session is still being created
+		log.Printf("[Manager] Session %d not ready yet, queuing ICE candidate", sessionID)
+		m.pendingCandidates[sessionID] = append(m.pendingCandidates[sessionID], pendingICECandidate{
+			connectionID:  connectionID,
+			candidate:     candidate,
+			sdpMid:        sdpMid,
+			sdpMLineIndex: sdpMLineIndex,
+			timestamp:     time.Now(),
+		})
+		m.mu.Unlock()
+		return nil // Don't return error - candidate is queued
 	}
+	m.mu.Unlock()
 
 	return session.Server.SendICECandidate(connectionID, candidate, sdpMid, sdpMLineIndex)
+}
+
+// replayPendingCandidates sends any queued ICE candidates to the helper
+func (m *Manager) replayPendingCandidates(sessionID uint32) {
+	m.mu.Lock()
+	candidates := m.pendingCandidates[sessionID]
+	delete(m.pendingCandidates, sessionID)
+	session := m.sessions[sessionID]
+	m.mu.Unlock()
+
+	if len(candidates) == 0 || session == nil {
+		return
+	}
+
+	log.Printf("[Manager] Replaying %d queued ICE candidates for session %d", len(candidates), sessionID)
+
+	for _, c := range candidates {
+		// Skip candidates older than 30 seconds
+		if time.Since(c.timestamp) > 30*time.Second {
+			log.Printf("[Manager] Skipping stale ICE candidate (age: %v)", time.Since(c.timestamp))
+			continue
+		}
+
+		if err := session.Server.SendICECandidate(c.connectionID, c.candidate, c.sdpMid, c.sdpMLineIndex); err != nil {
+			log.Printf("[Manager] Failed to replay ICE candidate: %v", err)
+		} else {
+			log.Printf("[Manager] Replayed queued ICE candidate")
+		}
+	}
 }
 
 // Shutdown gracefully shuts down all helpers
@@ -198,9 +256,12 @@ func (m *Manager) spawnHelper(sessionID uint32) (*HelperSession, error) {
 		helperPath = filepath.Join(filepath.Dir(exePath), "sentinel-desktop.exe")
 	}
 
+	// Build pipe name for helper to connect back
+	pipeName := fmt.Sprintf("%s%d", PipeNamePrefix, sessionID)
+
 	args := []string{
-		"--session-id", fmt.Sprintf("%d", sessionID),
-		"--token", token,
+		"-pipe", pipeName,
+		"-session", fmt.Sprintf("%d", sessionID),
 	}
 
 	log.Printf("[Manager] Launching helper: %s %v", helperPath, args)
@@ -367,5 +428,11 @@ func (h *helperHandler) OnStatus(msg *IPCMessage, payload *StatusPayload) error 
 }
 
 func (h *helperHandler) OnDisconnect() {
-	log.Printf("[Manager] Helper disconnected for session %d", h.sessionID)
+	log.Printf("[Manager] Helper disconnected for session %d, cleaning up session", h.sessionID)
+
+	// Clean up the session and any pending candidates
+	h.manager.mu.Lock()
+	delete(h.manager.sessions, h.sessionID)
+	delete(h.manager.pendingCandidates, h.sessionID)
+	h.manager.mu.Unlock()
 }

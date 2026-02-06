@@ -179,24 +179,29 @@ export class BackendRelay {
 
       const apiKey = await this.database.getSetting('backendApiKey');
       this.config = { url: backendUrl, apiKey: apiKey || undefined };
-      console.log('[BackendRelay] Initialized with URL:', backendUrl);
+      console.log('[BackendRelay] Initialized with URL:', backendUrl, 'API Key:', apiKey ? 'SET (' + apiKey.substring(0, 8) + '...)' : 'NOT SET');
 
       // Load saved credentials and auto-authenticate
       const savedUsername = await this.database.getSetting('backendUsername');
       const savedPassword = await this.database.getSetting('backendPassword');
 
       if (savedUsername && savedPassword) {
-        console.log('[BackendRelay] Found saved credentials, auto-authenticating...');
+        console.log('[BackendRelay] Found saved credentials, auto-authenticating to:', backendUrl);
         try {
           const success = await this.authenticate(savedUsername, savedPassword, true);
           if (success) {
-            console.log('[BackendRelay] Auto-authentication successful');
+            console.log('[BackendRelay] Auto-authentication successful, isAuthenticated:', this.isAuthenticated());
           } else {
-            console.log('[BackendRelay] Auto-authentication failed, credentials may have changed');
+            console.log('[BackendRelay] Auto-authentication failed - server may be unreachable or credentials invalid');
+            console.log('[BackendRelay] User will need to re-login via Settings');
           }
-        } catch (authError) {
-          console.error('[BackendRelay] Auto-authentication error:', authError);
+        } catch (authError: any) {
+          console.error('[BackendRelay] Auto-authentication error:', authError?.message || authError);
+          console.log('[BackendRelay] Backend URL:', backendUrl, '- Server may be down or unreachable');
         }
+      } else {
+        console.log('[BackendRelay] No saved credentials found. User needs to login via Settings.');
+        console.log('[BackendRelay] API Key auth:', apiKey ? 'Available' : 'Not configured');
       }
     } catch (error) {
       console.log('[BackendRelay] No external backend configured, using default');
@@ -206,10 +211,12 @@ export class BackendRelay {
 
 
   setBackendUrl(url: string): void {
-    this.config = { url: url.replace(/\/$/, '') }; // Remove trailing slash
+    // Preserve existing apiKey when changing URL
+    const existingApiKey = this.config?.apiKey;
+    this.config = { url: url.replace(/\/$/, ''), apiKey: existingApiKey }; // Remove trailing slash
     this.tokens = null; // Clear tokens when URL changes
     this.websocket.disconnect(); // Disconnect WebSocket when URL changes
-    console.log('[BackendRelay] Backend URL set to:', url);
+    console.log('[BackendRelay] Backend URL set to:', url, 'API Key preserved:', existingApiKey ? 'YES' : 'NO');
   }
 
   getBackendUrl(): string | null {
@@ -225,6 +232,19 @@ export class BackendRelay {
       return true;
     }
     return !!this.tokens && Date.now() < this.tokens.expiresAt;
+  }
+
+  setApiKey(apiKey: string): void {
+    if (!this.config) {
+      this.config = { url: 'http://localhost:8090' };
+    }
+    this.config.apiKey = apiKey || undefined;
+    this.tokens = null; // Clear JWT tokens when switching to API key
+    console.log('[BackendRelay] API Key set:', apiKey ? 'YES (' + apiKey.substring(0, 8) + '...)' : 'CLEARED');
+  }
+
+  getApiKey(): string | undefined {
+    return this.config?.apiKey;
   }
 
   isWebSocketConnected(): boolean {
@@ -384,14 +404,22 @@ export class BackendRelay {
       options.body = JSON.stringify(body);
     }
 
-    const response = await fetch(`${this.config.url}${path}`, options);
+    const fullUrl = `${this.config.url}${path}`;
+    console.log(`[BackendRelay] ${method} ${fullUrl}`);
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Backend request failed: ${response.status} ${errorText}`);
+    try {
+      const response = await fetch(fullUrl, options);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Backend request failed: ${response.status} ${errorText}`);
+      }
+
+      return response.json();
+    } catch (error: any) {
+      console.error(`[BackendRelay] Request failed: ${fullUrl}`, error.message);
+      throw error;
     }
-
-    return response.json();
   }
 
   // Device operations
@@ -1030,5 +1058,48 @@ export class BackendRelay {
     if (filters?.to) params.append('to', filters.to);
     const query = params.toString();
     return this.makeRequest('GET', `/api/audit-logs${query ? '?' + query : ''}`);
+  }
+
+  // ==================== AGENT INSTALLATION LINKS ====================
+
+  async getAgentLinks(params?: { status?: string; search?: string; page?: number; pageSize?: number }): Promise<any> {
+    const queryParams = new URLSearchParams();
+    if (params?.status) queryParams.append('status', params.status);
+    if (params?.search) queryParams.append('search', params.search);
+    if (params?.page) queryParams.append('page', String(params.page));
+    if (params?.pageSize) queryParams.append('pageSize', String(params.pageSize));
+    const query = queryParams.toString();
+    return this.makeRequest('GET', `/api/admin/agent-links${query ? '?' + query : ''}`);
+  }
+
+  async getAgentLink(linkId: string): Promise<any> {
+    return this.makeRequest('GET', `/api/admin/agent-links/${linkId}`);
+  }
+
+  async getAgentLinkStats(): Promise<any> {
+    return this.makeRequest('GET', '/api/admin/agent-links/stats');
+  }
+
+  async createAgentLink(data: {
+    deviceName: string;
+    userEmail: string;
+    userName?: string;
+    notes?: string;
+    expiresInHours?: number;
+    sendEmail?: boolean;
+  }): Promise<any> {
+    return this.makeRequest('POST', '/api/admin/agent-links', data);
+  }
+
+  async resendAgentLinkEmail(linkId: string): Promise<any> {
+    return this.makeRequest('POST', `/api/admin/agent-links/${linkId}/resend`);
+  }
+
+  async revokeAgentLink(linkId: string): Promise<any> {
+    return this.makeRequest('POST', `/api/admin/agent-links/${linkId}/revoke`);
+  }
+
+  async deleteAgentLink(linkId: string): Promise<any> {
+    return this.makeRequest('DELETE', `/api/admin/agent-links/${linkId}`);
   }
 }

@@ -44,9 +44,13 @@ type IPCHandler interface {
 func NewIPCServer(sessionID uint32, handler IPCHandler) (*IPCServer, error) {
 	pipeName := fmt.Sprintf("%s%d", PipeNamePrefix, sessionID)
 
-	// Create named pipe with security descriptor allowing SYSTEM and the session user
+	// Create named pipe with security descriptor allowing SYSTEM and Authenticated Users
+	// SDDL: D:(A;;GA;;;SY)(A;;GA;;;AU)
+	// - D: = DACL
+	// - A;;GA;;;SY = Allow SYSTEM full access (Generic All)
+	// - A;;GA;;;AU = Allow Authenticated Users full access
 	config := &winio.PipeConfig{
-		SecurityDescriptor: "", // Default: creator and SYSTEM have full access
+		SecurityDescriptor: "D:(A;;GA;;;SY)(A;;GA;;;AU)",
 		MessageMode:        false,
 		InputBufferSize:    65536,
 		OutputBufferSize:   65536,

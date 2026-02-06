@@ -51,10 +51,12 @@ func getAgentVersionFromFile() *AgentVersionFile {
 	defer versionCacheMutex.Unlock()
 
 	// Check paths for version.json
+	// Priority: mounted/updatable paths first, then baked-in fallbacks
 	paths := []string{
-		"agent/version.json",
-		"../agent/version.json",
-		"installers/version.json",
+		"installers/version.json",      // Mounted volume - deployable updates
+		"release/agent/version.json",   // Release directory
+		"agent/version.json",           // Baked into Docker image (fallback)
+		"../agent/version.json",        // Legacy path
 	}
 
 	for _, path := range paths {

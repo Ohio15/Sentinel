@@ -13,6 +13,8 @@ import (
 
 	"github.com/sentinel/server/internal/api"
 	grpcserver "github.com/sentinel/server/internal/grpc"
+	pb "github.com/sentinel/server/internal/grpc/dataplane"
+	"github.com/sentinel/server/internal/constants"
 	"github.com/sentinel/server/internal/metrics"
 	"github.com/sentinel/server/internal/pki"
 	"github.com/sentinel/server/internal/push"
@@ -125,16 +127,23 @@ func main() {
 		}
 	}
 
+	// Create gRPC Data Plane server (create early so we can pass to Services)
+	var grpcServer *grpcserver.DataPlaneServer
+	if cfg.GRPCPort > 0 {
+		grpcServer = grpcserver.NewDataPlaneServer(db, bulkInserter)
+	}
+
 	// Create services container for dependency injection
 	services := &api.Services{
-		Config:       cfg,
-		DB:           db,
-		Redis:        redisClient,
-		Hub:          wsHub,
-		BulkInserter: bulkInserter,
-		CommandQueue: cmdQueue,
-		PushService:  pushService,
-		PKI:          pkiService,
+		Config:          cfg,
+		DB:              db,
+		Redis:           redisClient,
+		Hub:             wsHub,
+		BulkInserter:    bulkInserter,
+		CommandQueue:    cmdQueue,
+		PushService:     pushService,
+		PKI:             pkiService,
+		MetricsRecorder: grpcServer, // gRPC server implements MetricsRecorder interface
 	}
 
 	// Initialize API router with all services
@@ -162,12 +171,40 @@ func main() {
 		}
 	}()
 
-	// Start gRPC Data Plane server
-	var grpcServer *grpcserver.DataPlaneServer
+	// Start gRPC Data Plane server (grpcServer was created earlier for Services)
 	var grpcSrv interface{ GracefulStop() }
-	if cfg.GRPCPort > 0 {
+	if cfg.GRPCPort > 0 && grpcServer != nil {
 		log.Printf("Starting gRPC Data Plane server on port %d...", cfg.GRPCPort)
-		grpcServer = grpcserver.NewDataPlaneServer(db, bulkInserter)
+
+		// Set up metrics callback to broadcast to dashboards (no storage by default)
+		grpcServer.SetMetricsCallback(func(agentID string, m *pb.Metrics) {
+			// Look up device ID from agent ID
+			var deviceID string
+			ctx := context.Background()
+			err := db.Pool().QueryRow(ctx,
+				"SELECT id FROM devices WHERE agent_id = $1 AND organization_id = $2",
+				agentID, constants.CurrentOrganizationID).Scan(&deviceID)
+			if err != nil {
+				return // Device not found, skip broadcast
+			}
+
+			// Broadcast to connected dashboards - metrics are streamed, not stored
+			broadcastMsg, _ := json.Marshal(map[string]interface{}{
+				"type":     "device_metrics",
+				"deviceId": deviceID,
+				"metrics": map[string]interface{}{
+					"cpuPercent":       m.CpuPercent,
+					"memoryPercent":    m.MemoryPercent,
+					"memoryUsedBytes":  m.MemoryUsed,
+					"diskPercent":      m.DiskPercent,
+					"diskUsedBytes":    m.DiskUsed,
+					"networkRxBytes":   m.NetworkRxBytes,
+					"networkTxBytes":   m.NetworkTxBytes,
+					"processCount":     m.ProcessCount,
+				},
+			})
+			wsHub.BroadcastToDashboards(broadcastMsg)
+		})
 
 		grpcConfig := grpcserver.ServerConfig{
 			Port:        cfg.GRPCPort,

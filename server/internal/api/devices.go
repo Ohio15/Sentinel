@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -62,7 +63,7 @@ func (r *Router) listDevices(c *gin.Context) {
 			   COALESCE(platform, ''), COALESCE(platform_family, ''), COALESCE(architecture, ''), COALESCE(cpu_model, ''), COALESCE(cpu_cores, 0), COALESCE(cpu_threads, 0),
 			   COALESCE(cpu_speed, 0), COALESCE(total_memory, 0), COALESCE(EXTRACT(EPOCH FROM boot_time)::bigint, 0), COALESCE(gpu::jsonb, '[]'::jsonb), COALESCE(storage, '[]'::jsonb), COALESCE(serial_number, ''),
 			   COALESCE(manufacturer, ''), COALESCE(model, ''), COALESCE(domain, ''), COALESCE(agent_version, ''), last_seen, COALESCE(status, 'offline'),
-			   COALESCE(host(ip_address), '' ) as ip_address, COALESCE(host(public_ip), '' ) as public_ip, COALESCE(mac_address, ''), COALESCE(tags, ARRAY[]::text[]), COALESCE(metadata, '{}'::jsonb), created_at, updated_at
+			   COALESCE(host(ip_address), '' ) as ip_address, COALESCE(host(public_ip), '' ) as public_ip, COALESCE(mac_address, ''), COALESCE(tags, ARRAY[]::text[]), COALESCE(metadata, '{}'::jsonb), client_id, created_at, updated_at
 		FROM devices
 		WHERE organization_id = $1
 		ORDER BY hostname
@@ -87,7 +88,7 @@ func (r *Router) listDevices(c *gin.Context) {
 			&d.BootTime, &gpuJSON, &storageJSON, &d.SerialNumber, &d.Manufacturer,
 			&d.Model, &d.Domain, &d.AgentVersion, &d.LastSeen, &d.Status,
 			&d.IPAddress, &d.PublicIP, &d.MACAddress, &tags, &metadata,
-			&d.CreatedAt, &d.UpdatedAt)
+			&d.ClientID, &d.CreatedAt, &d.UpdatedAt)
 		if err != nil {
 			log.Printf("Error scanning device row: %v", err)
 			continue
@@ -139,7 +140,7 @@ func (r *Router) getDevice(c *gin.Context) {
 			   COALESCE(platform, ''), COALESCE(platform_family, ''), COALESCE(architecture, ''), COALESCE(cpu_model, ''), COALESCE(cpu_cores, 0), COALESCE(cpu_threads, 0),
 			   COALESCE(cpu_speed, 0), COALESCE(total_memory, 0), COALESCE(EXTRACT(EPOCH FROM boot_time)::bigint, 0), COALESCE(gpu::jsonb, '[]'::jsonb), COALESCE(storage, '[]'::jsonb), COALESCE(serial_number, ''),
 			   COALESCE(manufacturer, ''), COALESCE(model, ''), COALESCE(domain, ''), COALESCE(agent_version, ''), last_seen, COALESCE(status, 'offline'),
-			   COALESCE(host(ip_address), '' ) as ip_address, COALESCE(host(public_ip), '' ) as public_ip, COALESCE(mac_address, ''), COALESCE(tags, ARRAY[]::text[]), COALESCE(metadata, '{}'::jsonb), created_at, updated_at
+			   COALESCE(host(ip_address), '' ) as ip_address, COALESCE(host(public_ip), '' ) as public_ip, COALESCE(mac_address, ''), COALESCE(tags, ARRAY[]::text[]), COALESCE(metadata, '{}'::jsonb), client_id, created_at, updated_at
 		FROM devices WHERE id = $1 AND organization_id = $2
 	`, id, constants.CurrentOrganizationID).Scan(&d.ID, &d.AgentID, &d.Hostname, &d.DisplayName, &d.OSType,
 		&d.OSVersion, &d.OSBuild, &d.Platform, &d.PlatformFamily, &d.Architecture,
@@ -147,7 +148,7 @@ func (r *Router) getDevice(c *gin.Context) {
 		&d.BootTime, &gpuJSON, &storageJSON, &d.SerialNumber, &d.Manufacturer,
 		&d.Model, &d.Domain, &d.AgentVersion, &d.LastSeen, &d.Status,
 		&d.IPAddress, &d.PublicIP, &d.MACAddress, &tags, &metadata,
-		&d.CreatedAt, &d.UpdatedAt)
+		&d.ClientID, &d.CreatedAt, &d.UpdatedAt)
 
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
@@ -168,6 +169,81 @@ func (r *Router) getDevice(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, d)
+}
+
+// UpdateDeviceRequest defines the fields that can be updated
+type UpdateDeviceRequest struct {
+	DisplayName *string    `json:"displayName"`
+	Tags        []string   `json:"tags"`
+	ClientID    *uuid.UUID `json:"clientId"`
+}
+
+// updateDevice updates device properties like display name, tags, and client assignment
+func (r *Router) updateDevice(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid device ID"})
+		return
+	}
+
+	var req UpdateDeviceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	ctx := context.Background()
+
+	// Build dynamic update query
+	updates := []string{}
+	args := []interface{}{}
+	argNum := 1
+
+	if req.DisplayName != nil {
+		updates = append(updates, "display_name = $"+strconv.Itoa(argNum))
+		args = append(args, *req.DisplayName)
+		argNum++
+	}
+
+	if req.Tags != nil {
+		updates = append(updates, "tags = $"+strconv.Itoa(argNum))
+		args = append(args, req.Tags)
+		argNum++
+	}
+
+	// Handle ClientID - allow setting to null to unassign
+	if req.ClientID != nil {
+		updates = append(updates, "client_id = $"+strconv.Itoa(argNum))
+		args = append(args, *req.ClientID)
+		argNum++
+	}
+
+	if len(updates) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No fields to update"})
+		return
+	}
+
+	// Add updated_at
+	updates = append(updates, "updated_at = NOW()")
+
+	// Add WHERE clause arguments
+	args = append(args, id, constants.CurrentOrganizationID)
+
+	query := "UPDATE devices SET " + strings.Join(updates, ", ") + " WHERE id = $" + strconv.Itoa(argNum) + " AND organization_id = $" + strconv.Itoa(argNum+1)
+
+	result, err := r.db.Pool().Exec(ctx, query, args...)
+	if err != nil {
+		log.Printf("Error updating device %s: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update device"})
+		return
+	}
+
+	if result.RowsAffected() == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Device updated successfully"})
 }
 
 // deleteDevice removes a device record - allowed for devices in 'uninstalling' or 'offline' status
@@ -502,7 +578,7 @@ func (r *Router) enrollAgent(c *gin.Context) {
 			"deviceId": existingID,
 			"config": map[string]int{
 				"heartbeatInterval": 30,
-				"metricsInterval":   60,
+				"metricsInterval":   2, // 2 seconds default
 			},
 		})
 		return
@@ -540,7 +616,7 @@ func (r *Router) enrollAgent(c *gin.Context) {
 		"deviceId": deviceID,
 		"config": map[string]int{
 			"heartbeatInterval": 30,
-			"metricsInterval":   60,
+			"metricsInterval":   2, // 2 seconds default
 		},
 	})
 }

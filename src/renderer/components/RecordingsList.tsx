@@ -77,16 +77,13 @@ export function RecordingsList({ deviceId, onViewRecording, onRefresh }: Recordi
     loadRecordings();
   }, [loadRecordings]);
 
-  // Expose refresh function
+  // Expose refresh function globally so parent can trigger refresh
   useEffect(() => {
-    if (onRefresh) {
-      // Create a stable reference
-      (window as any).__recordingsListRefresh = loadRecordings;
-    }
+    (window as any).__recordingsListRefresh = loadRecordings;
     return () => {
       delete (window as any).__recordingsListRefresh;
     };
-  }, [loadRecordings, onRefresh]);
+  }, [loadRecordings]);
 
   const handleDelete = async (id: string) => {
     try {

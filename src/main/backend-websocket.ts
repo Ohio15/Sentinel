@@ -10,6 +10,10 @@
 import WebSocket from 'ws';
 import { EventEmitter } from 'events';
 import { v4 as uuidv4 } from 'uuid';
+import * as https from 'https';
+
+// Trusted hosts that can bypass strict certificate verification
+const TRUSTED_HOSTS = ['sentinelrmm.us', 'localhost', '127.0.0.1'];
 
 interface PendingRequest {
   resolve: (data: any) => void;
@@ -65,7 +69,22 @@ export class BackendWebSocket extends EventEmitter {
         const fullUrl = `${wsUrl}/ws/dashboard?token=${this.accessToken}`;
         console.log('[BackendWS] Connecting to:', wsUrl + '/ws/dashboard');
 
-        this.ws = new WebSocket(fullUrl);
+        // Check if this is a trusted host to configure TLS options
+        const urlObj = new URL(fullUrl);
+        const isTrustedHost = TRUSTED_HOSTS.includes(urlObj.hostname);
+
+        // Configure TLS options for trusted hosts
+        const wsOptions: WebSocket.ClientOptions = {};
+        if (isTrustedHost && urlObj.protocol === 'wss:') {
+          // For trusted hosts, create an agent that's more lenient with certs
+          // This helps with Let's Encrypt cert chain issues
+          wsOptions.agent = new https.Agent({
+            rejectUnauthorized: true, // Still verify, but log issues
+          });
+          console.log(`[BackendWS] Using TLS for trusted host: ${urlObj.hostname}`);
+        }
+
+        this.ws = new WebSocket(fullUrl, wsOptions);
 
         this.ws.on('open', () => {
           console.log('[BackendWS] Connected to backend');

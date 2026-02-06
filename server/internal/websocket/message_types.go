@@ -13,6 +13,18 @@ const (
 	MsgTypeInventoryConfig   = "inventory_config"
 )
 
+// RDP Remote Desktop message types
+const (
+	MsgTypeRDPGetCapabilities   = "rdp_get_capabilities"
+	MsgTypeRDPCapabilitiesResp  = "rdp_capabilities_response"
+	MsgTypeRDPPrepareShadow     = "rdp_prepare_shadow"
+	MsgTypeRDPShadowReady       = "rdp_shadow_ready"
+	MsgTypeRDPShadowError       = "rdp_shadow_error"
+	MsgTypeRDPStartTunnel       = "rdp_start_tunnel"
+	MsgTypeRDPStopSession       = "rdp_stop_session"
+	MsgTypeRDPSessionEnded      = "rdp_session_ended"
+)
+
 // Mobile device message types
 const (
 	MsgTypeMobileMetrics    = "mobile_metrics"

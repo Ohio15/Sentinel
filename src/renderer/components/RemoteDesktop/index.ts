@@ -7,6 +7,8 @@
 // - Dirty rectangle optimization
 
 export { HighPerformanceRemoteDesktop } from './HighPerformanceRemoteDesktop';
+// Re-export as RemoteDesktop for backward compatibility
+export { HighPerformanceRemoteDesktop as RemoteDesktop } from './HighPerformanceRemoteDesktop';
 export { CursorOverlay } from './CursorOverlay';
 export { useCursor } from './useCursor';
 export { useWebRTC } from './useWebRTC';

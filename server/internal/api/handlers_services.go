@@ -109,6 +109,11 @@ func deleteDeviceHandler(services *Services) gin.HandlerFunc {
 	return router.deleteDevice
 }
 
+func updateDeviceHandler(services *Services) gin.HandlerFunc {
+	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub}
+	return router.updateDevice
+}
+
 func getDeviceMetricsHandler(services *Services) gin.HandlerFunc {
 	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub}
 	return router.getDeviceMetrics
@@ -351,8 +356,13 @@ func handleAgentWebSocketWithServices(services *Services) gin.HandlerFunc {
 }
 
 func handleDashboardWebSocketWithServices(services *Services) gin.HandlerFunc {
-	
-	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub}
+	router := &Router{
+		config:          services.Config,
+		db:              services.DB.AsDB(),
+		cache:           services.Redis,
+		hub:             services.Hub,
+		metricsRecorder: services.MetricsRecorder,
+	}
 	return router.handleDashboardWebSocket
 }
 

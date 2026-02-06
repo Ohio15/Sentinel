@@ -31,6 +31,7 @@ export interface InputEvent {
 
 type ConnectionStateHandler = (state: RTCPeerConnectionState) => void;
 type ErrorHandler = (error: string) => void;
+type RemoteInfoHandler = (width: number, height: number) => void;
 
 export class WebRTCService {
   private pc: RTCPeerConnection | null = null;
@@ -39,6 +40,11 @@ export class WebRTCService {
   private sessionId: string = '';
   private onConnectionStateChange: ConnectionStateHandler | null = null;
   private onError: ErrorHandler | null = null;
+  private onRemoteInfo: RemoteInfoHandler | null = null;
+
+  // Store remote screen dimensions for coordinate mapping
+  public remoteWidth: number = 0;
+  public remoteHeight: number = 0;
   private unsubscribeSignal: (() => void) | null = null;
   private unsubscribeResponse: (() => void) | null = null;
   private pendingCandidates: RTCIceCandidateInit[] = [];
@@ -56,21 +62,62 @@ export class WebRTCService {
     this.onError = handler;
   }
 
+  setOnRemoteInfo(handler: RemoteInfoHandler): void {
+    this.onRemoteInfo = handler;
+  }
+
   async connect(sessionId: string): Promise<MediaStream> {
     if (!wsService) {
       throw new Error('WebSocket service not available');
+    }
+
+    // Clean up any existing connection/subscriptions FIRST
+    this.unsubscribeSignal?.();
+    this.unsubscribeResponse?.();
+    this.unsubscribeSignal = null;
+    this.unsubscribeResponse = null;
+
+    if (this.pc) {
+      this.pc.close();
+      this.pc = null;
+    }
+    if (this.dataChannel) {
+      this.dataChannel.close();
+      this.dataChannel = null;
     }
 
     this.sessionId = sessionId;
     this.remoteDescriptionSet = false;
     this.pendingCandidates = [];
 
-    // Create peer connection with ICE servers
+    console.log('[WebRTC] Starting connection for session:', sessionId);
+
+    // Create peer connection with ICE servers (STUN + TURN for NAT traversal)
     this.pc = new RTCPeerConnection({
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
+        // Metered TURN servers (more reliable)
+        {
+          urls: 'turn:a.relay.metered.ca:80',
+          username: 'e8dd65b92f8b3c9bd6c4e894',
+          credential: 'uWdWNmkhvyqTmhD0',
+        },
+        {
+          urls: 'turn:a.relay.metered.ca:80?transport=tcp',
+          username: 'e8dd65b92f8b3c9bd6c4e894',
+          credential: 'uWdWNmkhvyqTmhD0',
+        },
+        {
+          urls: 'turn:a.relay.metered.ca:443',
+          username: 'e8dd65b92f8b3c9bd6c4e894',
+          credential: 'uWdWNmkhvyqTmhD0',
+        },
+        {
+          urls: 'turn:a.relay.metered.ca:443?transport=tcp',
+          username: 'e8dd65b92f8b3c9bd6c4e894',
+          credential: 'uWdWNmkhvyqTmhD0',
+        },
       ],
       iceCandidatePoolSize: 10,
     });
@@ -90,6 +137,22 @@ export class WebRTCService {
 
     this.dataChannel.onerror = (event) => {
       console.error('[WebRTC] Data channel error:', event);
+    };
+
+    this.dataChannel.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        console.log('[WebRTC] Data channel message:', data.type);
+
+        if (data.type === 'remoteInfo') {
+          this.remoteWidth = data.width;
+          this.remoteHeight = data.height;
+          console.log('[WebRTC] Remote screen dimensions:', data.width, 'x', data.height);
+          this.onRemoteInfo?.(data.width, data.height);
+        }
+      } catch (err) {
+        console.warn('[WebRTC] Failed to parse data channel message:', err);
+      }
     };
 
     // Subscribe to WebRTC signals from server (ICE candidates from agent)
@@ -198,6 +261,14 @@ export class WebRTCService {
       };
       error?: string;
     };
+
+    console.log('[WebRTC] Response received:', {
+      hasData: !!response.data,
+      hasAnswerSdp: !!response.data?.answerSdp,
+      responseSessionId: response.data?.sessionId,
+      mySessionId: this.sessionId,
+      matches: response.data?.sessionId === this.sessionId,
+    });
 
     // Check if this is a WebRTC answer response
     if (response.data?.answerSdp && response.data?.sessionId === this.sessionId) {
@@ -308,7 +379,10 @@ export class WebRTCService {
 
   sendInput(input: InputEvent): void {
     if (this.dataChannel?.readyState === 'open') {
+      console.log('[WebRTC] sendInput:', input.type, 'x:', input.x, 'y:', input.y, 'button:', input.button);
       this.dataChannel.send(JSON.stringify(input));
+    } else {
+      console.warn('[WebRTC] sendInput FAILED - dataChannel not open. State:', this.dataChannel?.readyState);
     }
   }
 
