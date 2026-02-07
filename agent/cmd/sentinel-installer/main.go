@@ -72,17 +72,34 @@ func logMsg(format string, args ...interface{}) {
 // Version is set at build time
 var Version = "1.0.0"
 
-// Embedded configuration - these strings are patched by the server when generating direct downloads
-// The server replaces the placeholder values with actual configuration
-// IMPORTANT: These must be var (not const) to prevent compiler from inlining the values
-var embeddedServerURL = "SENTINEL_EMBEDDED_SERVER:https://placeholder-server-url-padding-to-64-chars___:END"
-var embeddedToken = "SENTINEL_EMBEDDED_TOKEN:placeholder-token-value-padding-to-64-characters_____:END"
-var embeddedCode = "SENTINEL_EMBEDDED_CODE:_________:END"
+// Embedded configuration - using a unique approach to survive Go compiler optimizations
+// We store config in a way that the binary patcher can find and replace
+// The magic bytes XYZCFG help locate the config block in the binary
 
-// init ensures the embedded variables are not optimized away
-func init() {
-	// Reference the variables to prevent dead code elimination
-	_ = len(embeddedServerURL) + len(embeddedToken) + len(embeddedCode)
+// ConfigBlock is a fixed-size structure that gets patched by the server
+// Total size: 200 bytes (must stay constant for binary patching to work)
+// Layout:
+//   [0:6]   = "XYZCFG" magic header
+//   [6:59]  = Server URL (53 bytes, null-padded)
+//   [59:112] = Token (53 bytes, null-padded)
+//   [112:121] = Code (9 bytes, null-padded)
+//   [121:200] = Reserved/padding
+var configBlock = [200]byte{
+	// Magic header: XYZCFG
+	'X', 'Y', 'Z', 'C', 'F', 'G',
+	// Server URL placeholder (53 bytes): "https://config-placeholder-url.local________________"
+	'h', 't', 't', 'p', 's', ':', '/', '/', 'c', 'o', 'n', 'f', 'i', 'g', '-', 'p',
+	'l', 'a', 'c', 'e', 'h', 'o', 'l', 'd', 'e', 'r', '-', 'u', 'r', 'l', '.', 'l',
+	'o', 'c', 'a', 'l', '_', '_', '_', '_', '_', '_', '_', '_', '_', '_', '_', '_',
+	'_', '_', '_', '_', '_',
+	// Token placeholder (53 bytes): "token-placeholder-value-replace-me___________________"
+	't', 'o', 'k', 'e', 'n', '-', 'p', 'l', 'a', 'c', 'e', 'h', 'o', 'l', 'd', 'e',
+	'r', '-', 'v', 'a', 'l', 'u', 'e', '-', 'r', 'e', 'p', 'l', 'a', 'c', 'e', '-',
+	'm', 'e', '_', '_', '_', '_', '_', '_', '_', '_', '_', '_', '_', '_', '_', '_',
+	'_', '_', '_', '_', '_',
+	// Code placeholder (9 bytes): "CODE_____"
+	'C', 'O', 'D', 'E', '_', '_', '_', '_', '_',
+	// Padding to 200 bytes (79 bytes of zeros follow)
 }
 
 // EmbeddedConfig holds configuration extracted from embedded variables
@@ -92,48 +109,38 @@ type EmbeddedConfig struct {
 	InstallCode     string
 }
 
-// readEmbeddedConfig reads the installer's own binary and extracts patched configuration
-// The server patches placeholder strings in the binary when generating the installer download
-// We must read from the binary file itself because Go variable values are set at compile time
+// readEmbeddedConfig reads configuration from the configBlock array
+// The server patches this block when generating the installer download
 func readEmbeddedConfig() *EmbeddedConfig {
-	// Read our own executable
-	exePath, err := os.Executable()
-	if err != nil {
-		logMsg("[DEBUG] Could not get executable path: %v", err)
-		return nil
-	}
-
-	data, err := os.ReadFile(exePath)
-	if err != nil {
-		logMsg("[DEBUG] Could not read executable: %v", err)
-		return nil
-	}
-
+	// Read directly from the config block (which may have been patched)
 	config := &EmbeddedConfig{}
-	binaryStr := string(data)
 
-	// Extract server URL from binary
-	if serverURL := extractFromBinary(binaryStr, "SENTINEL_EMBEDDED_SERVER:", ":END"); serverURL != "" {
-		if !strings.Contains(serverURL, "placeholder") && !strings.HasPrefix(serverURL, "_") {
-			config.ServerURL = serverURL
-			logMsg("[DEBUG] Found embedded server URL: %s", serverURL)
-		}
+	// Check magic header
+	magic := string(configBlock[0:6])
+	if magic != "XYZCFG" {
+		logMsg("[DEBUG] Config block magic header invalid: %s", magic)
+		return nil
 	}
 
-	// Extract enrollment token from binary
-	if token := extractFromBinary(binaryStr, "SENTINEL_EMBEDDED_TOKEN:", ":END"); token != "" {
-		if !strings.Contains(token, "placeholder") && !strings.HasPrefix(token, "_") {
-			config.EnrollmentToken = token
-			logMsg("[DEBUG] Found embedded enrollment token: %s...", token[:min(10, len(token))])
-		}
+	// Extract server URL (bytes 6-59, 53 chars, trimmed)
+	serverURL := strings.TrimRight(string(configBlock[6:59]), "_\x00")
+	if serverURL != "" && !strings.Contains(serverURL, "placeholder") {
+		config.ServerURL = serverURL
+		logMsg("[DEBUG] Found embedded server URL: %s", serverURL)
 	}
 
-	// Extract installation code from binary
-	if code := extractFromBinary(binaryStr, "SENTINEL_EMBEDDED_CODE:", ":END"); code != "" {
-		if !strings.HasPrefix(code, "_") {
-			config.InstallCode = code
-			logMsg("[DEBUG] Found embedded installation code: %s", code)
-		}
+	// Extract token (bytes 59-112, 53 chars, trimmed)
+	token := strings.TrimRight(string(configBlock[59:112]), "_\x00")
+	if token != "" && !strings.Contains(token, "placeholder") {
+		config.EnrollmentToken = token
+		logMsg("[DEBUG] Found embedded token: %s...", token[:min(10, len(token))])
+	}
+
+	// Extract code (bytes 112-121, 9 chars, trimmed)
+	code := strings.TrimRight(string(configBlock[112:121]), "_\x00")
+	if code != "" && code != "CODE" && !strings.HasPrefix(code, "CODE_") {
+		config.InstallCode = code
+		logMsg("[DEBUG] Found embedded code: %s", code)
 	}
 
 	// Return nil if no valid config found
@@ -143,25 +150,6 @@ func readEmbeddedConfig() *EmbeddedConfig {
 	}
 
 	return config
-}
-
-// extractFromBinary extracts a value between prefix and suffix markers from binary data
-func extractFromBinary(data, prefix, suffix string) string {
-	startIdx := strings.Index(data, prefix)
-	if startIdx == -1 {
-		return ""
-	}
-	startIdx += len(prefix)
-
-	// Search for suffix starting from after prefix
-	endIdx := strings.Index(data[startIdx:], suffix)
-	if endIdx == -1 {
-		return ""
-	}
-
-	value := data[startIdx : startIdx+endIdx]
-	value = strings.TrimRight(value, "_")
-	return value
 }
 
 // InstallConfig holds the configuration for installation
