@@ -1239,7 +1239,13 @@ function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('devices:update', async (_, id: string, updates: { displayName?: string; tags?: string[] }) => {
-    return database.updateDevice(id, updates);
+    // Sync to backend server if connected
+    if (backendRelay.isAuthenticated()) {
+      await backendRelay.updateDevice(id, updates);
+    }
+    // Also update local cache
+    await database.updateDevice(id, updates);
+    return database.getDevice(id);
   });
 
 

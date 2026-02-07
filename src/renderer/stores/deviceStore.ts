@@ -129,6 +129,7 @@ interface DeviceState {
   enableDevice: (id: string) => Promise<void>;
   uninstallDevice: (id: string) => Promise<void>;
   forceUpdateDevice: (id: string) => Promise<void>;
+  updateDevice: (id: string, data: { displayName?: string; tags?: string[]; clientId?: string | null }) => Promise<void>;
   subscribeToUpdates: () => () => void;
 }
 
@@ -244,6 +245,25 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
   forceUpdateDevice: async (id: string) => {
     try {
       await devicesService.forceUpdate(id);
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error' });
+      throw error;
+    }
+  },
+
+  updateDevice: async (id: string, data: { displayName?: string; tags?: string[]; clientId?: string | null }) => {
+    try {
+      await devicesService.update(id, data);
+      const { devices, selectedDevice } = get();
+      const updated = devices.map(d =>
+        d.id === id ? { ...d, ...data } : d
+      );
+      set({
+        devices: updated,
+        selectedDevice: selectedDevice?.id === id
+          ? { ...selectedDevice, ...data }
+          : selectedDevice
+      });
     } catch (error: unknown) {
       set({ error: error instanceof Error ? error.message : 'Unknown error' });
       throw error;

@@ -124,6 +124,13 @@ export const devices = {
     }
     return api!.forceUpdate(id) as unknown as void;
   },
+
+  async update(id: string, data: { displayName?: string; tags?: string[]; clientId?: string | null }): Promise<Device> {
+    if (isElectron) {
+      return (window as any).api.devices.update?.(id, data);
+    }
+    return api!.updateDevice(id, data) as Promise<Device>;
+  },
 };
 
 // Alerts Service Adapter

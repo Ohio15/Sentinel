@@ -68,7 +68,7 @@ const linkStatusConfig: Record<string, { label: string; color: string }> = {
 };
 
 export function Devices({ onDeviceSelect }: DevicesProps) {
-  const { devices, loading, deleteDevice, disableDevice, enableDevice, uninstallDevice, forceUpdateDevice } = useDeviceStore();
+  const { devices, loading, deleteDevice, disableDevice, enableDevice, uninstallDevice, forceUpdateDevice, updateDevice } = useDeviceStore();
   const { clients, currentClientId } = useClientStore();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -87,7 +87,8 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null);
   const [downloadingPlatform, setDownloadingPlatform] = useState<string | null>(null);
   const [downloadResult, setDownloadResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const [psRunning, setPsRunning] = useState(false);
+  const [editingName, setEditingName] = useState<string | null>(null);
+  const [editNameValue, setEditNameValue] = useState('');
 
   // Installation Links state
   const [links, setLinks] = useState<AgentLink[]>([]);
@@ -218,27 +219,6 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
       });
     } finally {
       setDownloadingPlatform(null);
-    }
-  };
-
-  const handlePowerShellInstall = async () => {
-    setPsRunning(true);
-    try {
-      if (!window.api.agent) throw new Error('Agent API not available');
-      const result = await window.api.agent.runPowerShellInstall();
-      if (!result.success) {
-        setDownloadResult({
-          type: 'error',
-          message: result.error || 'Failed to launch PowerShell',
-        });
-      }
-    } catch (error) {
-      setDownloadResult({
-        type: 'error',
-        message: error instanceof Error ? error.message : 'Failed to launch PowerShell',
-      });
-    } finally {
-      setPsRunning(false);
     }
   };
 
@@ -598,6 +578,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                 <thead className="sticky top-0 bg-surface z-10">
                   <tr>
                     <th>Status</th>
+                    <th>Custom Name</th>
                     <th>Hostname</th>
                     {!currentClientId && <th>Client</th>}
                     <th>OS</th>
@@ -613,15 +594,59 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                       <td>
                         <StatusBadge status={device.status} />
                       </td>
+                      <td onClick={e => e.stopPropagation()}>
+                        {editingName === device.id ? (
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="text"
+                              value={editNameValue}
+                              onChange={(e) => setEditNameValue(e.target.value)}
+                              className="input py-1 px-2 text-sm w-32"
+                              autoFocus
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  updateDevice(device.id, { displayName: editNameValue || undefined });
+                                  setEditingName(null);
+                                } else if (e.key === 'Escape') {
+                                  setEditingName(null);
+                                }
+                              }}
+                            />
+                            <button
+                              onClick={() => {
+                                updateDevice(device.id, { displayName: editNameValue || undefined });
+                                setEditingName(null);
+                              }}
+                              className="p-1 text-green-600 hover:text-green-700"
+                              title="Save"
+                            >
+                              <CheckIcon className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => setEditingName(null)}
+                              className="p-1 text-gray-400 hover:text-gray-600"
+                              title="Cancel"
+                            >
+                              <CloseIcon className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div
+                            className="flex items-center gap-1 group cursor-pointer"
+                            onClick={() => {
+                              setEditingName(device.id);
+                              setEditNameValue(device.displayName || '');
+                            }}
+                          >
+                            <span className="text-sm text-text-primary">
+                              {device.displayName || <span className="text-text-secondary italic">Click to set</span>}
+                            </span>
+                            <EditIcon className="w-3 h-3 text-text-secondary opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </div>
+                        )}
+                      </td>
                       <td>
-                        <div>
-                          <p className="font-medium text-text-primary">
-                            {device.displayName || device.hostname}
-                          </p>
-                          {device.displayName && device.hostname !== device.displayName && (
-                            <p className="text-sm text-text-secondary">{device.hostname}</p>
-                          )}
-                        </div>
+                        <p className="font-medium text-text-primary">{device.hostname}</p>
                       </td>
                       {!currentClientId && (
                         <td>
@@ -873,44 +898,6 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                 </div>
                 {downloadingPlatform === 'linux' ? <SpinnerIcon /> : <DownloadIcon />}
               </button>
-            </div>
-          </div>
-
-          
-          {/* Quick Install - PowerShell */}
-          <div className="card p-6">
-            <h2 className="text-lg font-semibold text-text-primary mb-4">Quick Install (PowerShell)</h2>
-            <p className="text-sm text-text-secondary mb-4">
-              One-click installation using PowerShell. Opens an elevated PowerShell window and automatically runs the install script.
-            </p>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <button
-                onClick={handlePowerShellInstall}
-                disabled={psRunning}
-                className="flex items-center gap-3 p-4 bg-blue-50 dark:bg-blue-900/30 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors border border-blue-200 dark:border-blue-800 disabled:opacity-50 disabled:cursor-not-allowed text-left"
-              >
-                <PowerShellIcon className="w-5 h-5 text-blue-700 dark:text-blue-400" />
-                <div className="flex-1">
-                  <p className="font-medium text-blue-900 dark:text-blue-100">Run PowerShell Install</p>
-                  <p className="text-xs text-blue-700 dark:text-blue-300">
-                    {psRunning ? 'Launching...' : 'Opens elevated PowerShell window'}
-                  </p>
-                </div>
-                {psRunning ? <SpinnerIcon /> : <PlayIcon className="w-5 h-5 text-blue-600 dark:text-blue-400" />}
-              </button>
-
-              <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-border">
-                <div className="flex items-center gap-2 mb-2">
-                  <InfoIcon className="w-5 h-5 text-gray-500 dark:text-gray-400" />
-                  <span className="font-medium text-text-primary">What happens</span>
-                </div>
-                <ul className="text-xs text-text-secondary space-y-1">
-                  <li>1. UAC prompt requests admin rights</li>
-                  <li>2. Downloads agent from this server</li>
-                  <li>3. Installs and starts the service</li>
-                </ul>
-              </div>
             </div>
           </div>
 
@@ -1303,6 +1290,14 @@ function BanIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+    </svg>
+  );
+}
+
+function EditIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
     </svg>
   );
 }
