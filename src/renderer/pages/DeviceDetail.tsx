@@ -231,6 +231,13 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
     fetchClients();
   }, [deviceId]);
 
+  // Redirect from remote tab if device is Linux (no X11 display support)
+  useEffect(() => {
+    if (selectedDevice?.osType?.toLowerCase().includes('linux') && activeTab === 'remote') {
+      setActiveTab('terminal');
+    }
+  }, [selectedDevice?.osType, activeTab]);
+
   const handleAssignClient = async (clientId: string | null) => {
     if (!selectedDevice) return;
     try {
@@ -370,15 +377,19 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
     );
   }
 
+  // Check if device is Linux (remote desktop not supported on headless Linux servers)
+  const isLinux = selectedDevice.osType?.toLowerCase().includes('linux');
+
   const tabs = [
     { id: 'overview', label: 'Overview', icon: MonitorIcon },
     { id: 'performance', label: 'Performance', icon: ChartIcon },
     { id: 'terminal', label: 'Terminal', icon: TerminalTabIcon },
     { id: 'files', label: 'Files', icon: FolderIcon },
-    { id: 'remote', label: 'Remote Desktop', icon: DesktopIcon },
+    // Hide Remote Desktop for Linux devices (no X11 display on headless servers)
+    ...(!isLinux ? [{ id: 'remote', label: 'Remote Desktop', icon: DesktopIcon }] : []),
     { id: 'commands', label: 'Commands', icon: PlayIcon },
     { id: 'history', label: 'History', icon: HistoryIcon },
-  ];
+  ] as const;
 
 
   return (
@@ -661,14 +672,16 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
           </TabErrorBoundary>
         </div>
 
-        {/* RemoteDesktop always mounted to preserve state across tab switches */}
-        <div className={activeTab === 'remote' ? '' : 'hidden'}>
-          <TabErrorBoundary tabName="Remote Desktop">
-            <div className="card overflow-hidden">
-              <RemoteDesktop deviceId={deviceId} isOnline={selectedDevice.status === 'online'} isActive={activeTab === 'remote'} />
-            </div>
-          </TabErrorBoundary>
-        </div>
+        {/* RemoteDesktop - only available for Windows devices (Linux headless servers don't have X11 display) */}
+        {!isLinux && (
+          <div className={activeTab === 'remote' ? '' : 'hidden'}>
+            <TabErrorBoundary tabName="Remote Desktop">
+              <div className="card overflow-hidden">
+                <RemoteDesktop deviceId={deviceId} isOnline={selectedDevice.status === 'online'} isActive={activeTab === 'remote'} />
+              </div>
+            </TabErrorBoundary>
+          </div>
+        )}
 
         {activeTab === 'commands' && (
           <div className="space-y-4">

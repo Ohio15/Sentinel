@@ -390,6 +390,7 @@ export function useWebRTC(options: UseWebRTCOptions) {
     unsubscribeResponseRef.current = wsService.on('response', (data: unknown) => {
       const response = data as {
         success?: boolean;
+        error?: string;
         data?: {
           sessionId?: string;
           answerSdp?: string;
@@ -402,11 +403,35 @@ export function useWebRTC(options: UseWebRTCOptions) {
         responseSessionId: response.data?.sessionId,
         expectedSessionId: newSessionId,
         matches: response.data?.sessionId === newSessionId,
+        success: response.success,
+        error: response.error,
       });
 
-      if (response.data?.answerSdp && response.data?.sessionId === newSessionId) {
-        console.log('[WebRTC] Received answer, SDP length:', response.data.answerSdp.length);
-        setRemoteAnswer(response.data.answerSdp);
+      // Check if this is a response for our session
+      if (response.data?.sessionId === newSessionId) {
+        // Handle error response
+        if (response.success === false || response.error) {
+          const errorMsg = response.error || 'Remote desktop connection failed';
+          console.error('[WebRTC] Connection error from agent:', errorMsg);
+          // Clear timeout
+          if (connectTimeoutRef.current) {
+            clearTimeout(connectTimeoutRef.current);
+            connectTimeoutRef.current = null;
+          }
+          // Reject the connection promise
+          if (connectRejectRef.current) {
+            connectRejectRef.current(new Error(errorMsg));
+            connectResolveRef.current = null;
+            connectRejectRef.current = null;
+          }
+          return;
+        }
+
+        // Handle successful answer
+        if (response.data?.answerSdp) {
+          console.log('[WebRTC] Received answer, SDP length:', response.data.answerSdp.length);
+          setRemoteAnswer(response.data.answerSdp);
+        }
       }
     });
 

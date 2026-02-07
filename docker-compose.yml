@@ -121,6 +121,10 @@ services:
     volumes:
       # Mount local dist for hot updates without rebuilding container
       - ./dist/web:/usr/share/nginx/html:ro
+      # Mount installers for direct download (separate path for read-only FS)
+      - ./installers:/app/installers:ro
+      # Mount nginx config for live updates
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - sentinel-network
     security_opt:

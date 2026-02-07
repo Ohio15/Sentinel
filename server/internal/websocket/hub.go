@@ -339,13 +339,22 @@ func (h *Hub) SendToAgent(agentID string, message []byte) error {
 	h.mu.RUnlock()
 
 	if !ok {
+		log.Printf("[Hub] SendToAgent: agent %s not connected", agentID)
 		return ErrAgentNotConnected
 	}
+
+	// Log the message being sent (truncated for readability)
+	msgPreview := string(message)
+	if len(msgPreview) > 200 {
+		msgPreview = msgPreview[:200] + "..."
+	}
+	log.Printf("[Hub] SendToAgent %s: %s", agentID, msgPreview)
 
 	select {
 	case client.send <- message:
 		return nil
 	default:
+		log.Printf("[Hub] SendToAgent: send channel full for agent %s", agentID)
 		return ErrSendFailed
 	}
 }
