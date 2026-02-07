@@ -72,61 +72,49 @@ func logMsg(format string, args ...interface{}) {
 // Version is set at build time
 var Version = "1.0.0"
 
-// Embedded configuration placeholders (patched by server when generating direct download)
-// These are searched for in the binary and replaced with actual values
-// Format: SENTINEL_CONFIG_SERVER:http://_______________________________________________:END (50 chars for URL)
-// Format: SENTINEL_CONFIG_TOKEN:__________________________________________________________:END (64 chars for token)
-// Format: SENTINEL_CONFIG_CODE:_________:END (9 chars for code XXXX-XXXX)
-var (
-	EmbeddedServerPlaceholder = "SENTINEL_CONFIG_SERVER:http://_______________________________________________:END"
-	EmbeddedTokenPlaceholder  = "SENTINEL_CONFIG_TOKEN:__________________________________________________________:END"
-	EmbeddedCodePlaceholder   = "SENTINEL_CONFIG_CODE:_________:END"
-)
+// Embedded configuration - these strings are patched by the server when generating direct downloads
+// The server replaces the placeholder values with actual configuration
+// IMPORTANT: These must be var (not const) to prevent compiler from inlining the values
+var embeddedServerURL = "SENTINEL_EMBEDDED_SERVER:https://placeholder-server-url-padding-to-64-chars___:END"
+var embeddedToken = "SENTINEL_EMBEDDED_TOKEN:placeholder-token-value-padding-to-64-characters_____:END"
+var embeddedCode = "SENTINEL_EMBEDDED_CODE:_________:END"
 
-// EmbeddedConfig holds configuration extracted from the binary itself
+// init ensures the embedded variables are not optimized away
+func init() {
+	// Reference the variables to prevent dead code elimination
+	_ = len(embeddedServerURL) + len(embeddedToken) + len(embeddedCode)
+}
+
+// EmbeddedConfig holds configuration extracted from embedded variables
 type EmbeddedConfig struct {
 	ServerURL       string
 	EnrollmentToken string
 	InstallCode     string
 }
 
-// readEmbeddedConfig reads the installer binary and extracts patched configuration values
+// readEmbeddedConfig extracts patched configuration from embedded variables
+// The server patches these strings when generating the installer download
 func readEmbeddedConfig() *EmbeddedConfig {
-	exe, err := os.Executable()
-	if err != nil {
-		logMsg("[DEBUG] Could not get executable path: %v", err)
-		return nil
-	}
-
-	data, err := os.ReadFile(exe)
-	if err != nil {
-		logMsg("[DEBUG] Could not read executable: %v", err)
-		return nil
-	}
-
 	config := &EmbeddedConfig{}
 
-	// Extract server URL
-	if serverURL := extractConfigValue(data, "SENTINEL_CONFIG_SERVER:", ":END"); serverURL != "" {
-		// Check if it's still the placeholder (all underscores after http://)
-		if !strings.HasPrefix(serverURL, "http://_") && serverURL != "http://_______________________________________________" {
+	// Extract server URL - check if it's been patched from the placeholder
+	if serverURL := extractEmbeddedValue(embeddedServerURL, "SENTINEL_EMBEDDED_SERVER:", ":END"); serverURL != "" {
+		if !strings.Contains(serverURL, "placeholder") && !strings.HasPrefix(serverURL, "_") {
 			config.ServerURL = serverURL
 			logMsg("[DEBUG] Found embedded server URL: %s", serverURL)
 		}
 	}
 
 	// Extract enrollment token
-	if token := extractConfigValue(data, "SENTINEL_CONFIG_TOKEN:", ":END"); token != "" {
-		// Check if it's still the placeholder (all underscores)
-		if !strings.HasPrefix(token, "_") {
+	if token := extractEmbeddedValue(embeddedToken, "SENTINEL_EMBEDDED_TOKEN:", ":END"); token != "" {
+		if !strings.Contains(token, "placeholder") && !strings.HasPrefix(token, "_") {
 			config.EnrollmentToken = token
 			logMsg("[DEBUG] Found embedded enrollment token: %s...", token[:min(10, len(token))])
 		}
 	}
 
 	// Extract installation code
-	if code := extractConfigValue(data, "SENTINEL_CONFIG_CODE:", ":END"); code != "" {
-		// Check if it's still the placeholder (all underscores)
+	if code := extractEmbeddedValue(embeddedCode, "SENTINEL_EMBEDDED_CODE:", ":END"); code != "" {
 		if !strings.HasPrefix(code, "_") {
 			config.InstallCode = code
 			logMsg("[DEBUG] Found embedded installation code: %s", code)
@@ -135,35 +123,28 @@ func readEmbeddedConfig() *EmbeddedConfig {
 
 	// Return nil if no valid config found
 	if config.ServerURL == "" && config.EnrollmentToken == "" && config.InstallCode == "" {
-		logMsg("[DEBUG] No embedded configuration found in binary")
+		logMsg("[DEBUG] No embedded configuration found (using placeholders)")
 		return nil
 	}
 
 	return config
 }
 
-// extractConfigValue extracts a value between prefix and suffix markers from binary data
-func extractConfigValue(data []byte, prefix, suffix string) string {
-	dataStr := string(data)
-
-	startIdx := strings.Index(dataStr, prefix)
+// extractEmbeddedValue extracts the value between prefix and suffix from an embedded string
+func extractEmbeddedValue(embedded, prefix, suffix string) string {
+	startIdx := strings.Index(embedded, prefix)
 	if startIdx == -1 {
 		return ""
 	}
-
-	// Move past the prefix
 	startIdx += len(prefix)
 
-	// Find the end marker
-	endIdx := strings.Index(dataStr[startIdx:], suffix)
+	endIdx := strings.Index(embedded[startIdx:], suffix)
 	if endIdx == -1 {
 		return ""
 	}
 
-	// Extract the value and trim trailing underscores (padding)
-	value := dataStr[startIdx : startIdx+endIdx]
+	value := embedded[startIdx : startIdx+endIdx]
 	value = strings.TrimRight(value, "_")
-
 	return value
 }
 
