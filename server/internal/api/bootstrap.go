@@ -589,17 +589,20 @@ func generateConfiguredInstallerHandler(services *Services) gin.HandlerFunc {
 			// Continue anyway - the token still works
 		}
 
-		// Get server URL
-		serverURL := services.Config.ServerURL
+		// Get server URL - use PUBLIC_URL if set, otherwise derive from request
+		// Important: Use port 4443 for installer downloads, not 8443 (which is mTLS-only)
+		serverURL := services.Config.PublicURL
+		if serverURL == "" {
+			serverURL = services.Config.ServerURL
+		}
 		if serverURL == "" {
 			scheme := "https"
-			if c.Request.TLS == nil && !strings.Contains(c.Request.Host, "localhost") {
-				// Try to detect from X-Forwarded-Proto header (when behind proxy)
-				if proto := c.GetHeader("X-Forwarded-Proto"); proto != "" {
-					scheme = proto
-				}
+			host := c.Request.Host
+			// Remove port 8443 (mTLS) and use 4443 instead for public access
+			if strings.HasSuffix(host, ":8443") {
+				host = strings.TrimSuffix(host, ":8443") + ":4443"
 			}
-			serverURL = fmt.Sprintf("%s://%s", scheme, c.Request.Host)
+			serverURL = fmt.Sprintf("%s://%s", scheme, host)
 		}
 
 		switch platform {
