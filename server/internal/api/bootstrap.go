@@ -674,9 +674,10 @@ func buildPatchedInstallerWithCode(serverURL, enrollmentToken, installCode strin
 	// SENTINEL_EMBEDDED_TOKEN:placeholder-token-value-padding-to-64-characters_____:END (64 char value)
 	// SENTINEL_EMBEDDED_CODE:_________:END (9 chars for XXXX-XXXX)
 
-	// Patch server URL (must match exact placeholder length)
+	// Patch server URL (must match exact placeholder length = 82 chars total)
+	// Prefix (25) + Value (53) + Suffix (4) = 82
 	serverPlaceholder := []byte("SENTINEL_EMBEDDED_SERVER:https://placeholder-server-url-padding-to-64-chars___:END")
-	serverValue := fmt.Sprintf("SENTINEL_EMBEDDED_SERVER:%s:END", padRightStr(serverURL, 54, '_'))
+	serverValue := fmt.Sprintf("SENTINEL_EMBEDDED_SERVER:%s:END", padRightStr(serverURL, 53, '_'))
 	if bytes.Contains(installerData, serverPlaceholder) {
 		installerData = bytes.Replace(installerData, serverPlaceholder, []byte(serverValue), 1)
 		log.Printf("[Patch] Server URL: %s (len %d->%d)", serverURL, len(serverPlaceholder), len(serverValue))
