@@ -840,7 +840,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                 <div className="flex-1">
                   <p className="font-medium text-text-primary">Windows</p>
                   <p className="text-xs text-text-secondary">
-                    {downloadingPlatform === 'windows' ? 'Saving...' : 'sentinel-install.ps1'}
+                    {downloadingPlatform === 'windows' ? 'Downloading...' : 'SentinelAgent-Setup.exe'}
                   </p>
                 </div>
                 {downloadingPlatform === 'windows' ? <SpinnerIcon /> : <DownloadIcon />}
