@@ -92,29 +92,44 @@ type EmbeddedConfig struct {
 	InstallCode     string
 }
 
-// readEmbeddedConfig extracts patched configuration from embedded variables
-// The server patches these strings when generating the installer download
+// readEmbeddedConfig reads the installer's own binary and extracts patched configuration
+// The server patches placeholder strings in the binary when generating the installer download
+// We must read from the binary file itself because Go variable values are set at compile time
 func readEmbeddedConfig() *EmbeddedConfig {
-	config := &EmbeddedConfig{}
+	// Read our own executable
+	exePath, err := os.Executable()
+	if err != nil {
+		logMsg("[DEBUG] Could not get executable path: %v", err)
+		return nil
+	}
 
-	// Extract server URL - check if it's been patched from the placeholder
-	if serverURL := extractEmbeddedValue(embeddedServerURL, "SENTINEL_EMBEDDED_SERVER:", ":END"); serverURL != "" {
+	data, err := os.ReadFile(exePath)
+	if err != nil {
+		logMsg("[DEBUG] Could not read executable: %v", err)
+		return nil
+	}
+
+	config := &EmbeddedConfig{}
+	binaryStr := string(data)
+
+	// Extract server URL from binary
+	if serverURL := extractFromBinary(binaryStr, "SENTINEL_EMBEDDED_SERVER:", ":END"); serverURL != "" {
 		if !strings.Contains(serverURL, "placeholder") && !strings.HasPrefix(serverURL, "_") {
 			config.ServerURL = serverURL
 			logMsg("[DEBUG] Found embedded server URL: %s", serverURL)
 		}
 	}
 
-	// Extract enrollment token
-	if token := extractEmbeddedValue(embeddedToken, "SENTINEL_EMBEDDED_TOKEN:", ":END"); token != "" {
+	// Extract enrollment token from binary
+	if token := extractFromBinary(binaryStr, "SENTINEL_EMBEDDED_TOKEN:", ":END"); token != "" {
 		if !strings.Contains(token, "placeholder") && !strings.HasPrefix(token, "_") {
 			config.EnrollmentToken = token
 			logMsg("[DEBUG] Found embedded enrollment token: %s...", token[:min(10, len(token))])
 		}
 	}
 
-	// Extract installation code
-	if code := extractEmbeddedValue(embeddedCode, "SENTINEL_EMBEDDED_CODE:", ":END"); code != "" {
+	// Extract installation code from binary
+	if code := extractFromBinary(binaryStr, "SENTINEL_EMBEDDED_CODE:", ":END"); code != "" {
 		if !strings.HasPrefix(code, "_") {
 			config.InstallCode = code
 			logMsg("[DEBUG] Found embedded installation code: %s", code)
@@ -123,27 +138,28 @@ func readEmbeddedConfig() *EmbeddedConfig {
 
 	// Return nil if no valid config found
 	if config.ServerURL == "" && config.EnrollmentToken == "" && config.InstallCode == "" {
-		logMsg("[DEBUG] No embedded configuration found (using placeholders)")
+		logMsg("[DEBUG] No embedded configuration found (placeholders not patched)")
 		return nil
 	}
 
 	return config
 }
 
-// extractEmbeddedValue extracts the value between prefix and suffix from an embedded string
-func extractEmbeddedValue(embedded, prefix, suffix string) string {
-	startIdx := strings.Index(embedded, prefix)
+// extractFromBinary extracts a value between prefix and suffix markers from binary data
+func extractFromBinary(data, prefix, suffix string) string {
+	startIdx := strings.Index(data, prefix)
 	if startIdx == -1 {
 		return ""
 	}
 	startIdx += len(prefix)
 
-	endIdx := strings.Index(embedded[startIdx:], suffix)
+	// Search for suffix starting from after prefix
+	endIdx := strings.Index(data[startIdx:], suffix)
 	if endIdx == -1 {
 		return ""
 	}
 
-	value := embedded[startIdx : startIdx+endIdx]
+	value := data[startIdx : startIdx+endIdx]
 	value = strings.TrimRight(value, "_")
 	return value
 }
