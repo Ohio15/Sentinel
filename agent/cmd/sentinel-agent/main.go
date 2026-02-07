@@ -42,6 +42,7 @@ const ServiceName = "SentinelAgent"
 var (
 	serverURL   = flag.String("server", "", "Sentinel server URL (e.g., http://192.168.1.100:8080)")
 	token       = flag.String("token", "", "Enrollment token")
+	grpcAddress = flag.String("grpc-address", "", "gRPC Data Plane address (e.g., 192.168.1.100:8444)")
 	installFlag = flag.Bool("install", false, "Install as system service")
 	uninstall   = flag.Bool("uninstall", false, "Uninstall the system service")
 	runService  = flag.Bool("service", false, "Run as a service (internal)")
@@ -214,6 +215,9 @@ func main() {
 	}
 	if *token != "" {
 		cfg.EnrollmentToken = *token
+	}
+	if *grpcAddress != "" {
+		cfg.GrpcAddress = *grpcAddress
 	}
 
 	// Validate configuration
