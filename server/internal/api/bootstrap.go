@@ -529,8 +529,10 @@ func getDesktopHelperBinaryPath(services *Services, platform, arch string) strin
 	return ""
 }
 
-// generateConfiguredInstallerHandler generates a pre-configured install script with embedded server URL and token
-// This is for the "Direct Download" feature in the web dashboard - returns a ready-to-run script
+// generateConfiguredInstallerHandler generates a pre-configured installer with embedded server URL and token
+// This is for the "Direct Download" feature in the web dashboard
+// For Windows: returns a patched EXE installer (same method as installation links)
+// For Linux/macOS: returns a pre-configured shell script
 func generateConfiguredInstallerHandler(services *Services) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		platform := c.Param("platform")
@@ -582,28 +584,34 @@ func generateConfiguredInstallerHandler(services *Services) gin.HandlerFunc {
 			serverURL = fmt.Sprintf("%s://%s", scheme, c.Request.Host)
 		}
 
-		var script string
-		var filename string
-		var contentType string
-
 		switch platform {
 		case "windows":
-			script = generateWindowsInstaller(serverURL, token)
-			filename = "sentinel-install.ps1"
-			contentType = "application/octet-stream"
+			// Use the same patched EXE method as installation links
+			installerData, err := buildPatchedInstaller(serverURL, token)
+			if err != nil {
+				log.Printf("Failed to build patched installer: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare installer: " + err.Error()})
+				return
+			}
+
+			c.Header("Content-Disposition", "attachment; filename=\"SentinelAgent-Setup.exe\"")
+			c.Header("Content-Type", "application/octet-stream")
+			c.Header("Content-Length", fmt.Sprintf("%d", len(installerData)))
+			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+			c.Data(http.StatusOK, "application/octet-stream", installerData)
+
 		case "linux", "macos":
-			script = generateLinuxInstaller(serverURL, token)
-			filename = "sentinel-install.sh"
-			contentType = "application/x-sh"
+			// For Linux/macOS, use the shell script approach
+			script := generateLinuxInstaller(serverURL, token)
+			c.Header("Content-Disposition", "attachment; filename=sentinel-install.sh")
+			c.Header("Content-Type", "application/x-sh")
+			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+			c.Data(http.StatusOK, "application/x-sh", []byte(script))
+
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid platform. Supported: windows, linux, macos"})
 			return
 		}
-
-		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
-		c.Header("Content-Type", contentType)
-		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
-		c.Data(http.StatusOK, contentType, []byte(script))
 	}
 }
 

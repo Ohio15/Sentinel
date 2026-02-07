@@ -604,7 +604,7 @@ if (isWeb && typeof (window as any).api === 'undefined') {
         }
 
         try {
-          // Use the authenticated API endpoint that generates a pre-configured script
+          // Use the authenticated API endpoint that generates a pre-configured installer
           const token = localStorage.getItem('token') || localStorage.getItem('backend_api_key');
           const csrfToken = localStorage.getItem('csrf_token');
 
@@ -625,7 +625,8 @@ if (isWeb && typeof (window as any).api === 'undefined') {
           }
 
           const blob = await response.blob();
-          const filename = platform === 'windows' ? 'sentinel-install.ps1' : 'sentinel-install.sh';
+          // Windows: EXE installer, Linux/macOS: shell script
+          const filename = platform === 'windows' ? 'SentinelAgent-Setup.exe' : 'sentinel-install.sh';
 
           const url = URL.createObjectURL(blob);
           const link = document.createElement('a');
@@ -640,7 +641,7 @@ if (isWeb && typeof (window as any).api === 'undefined') {
             success: true,
             size: blob.size,
             note: platform === 'windows'
-              ? 'Right-click the downloaded file and select "Run with PowerShell". UAC will prompt for administrator access.'
+              ? 'Run the downloaded installer. It will prompt for administrator access automatically.'
               : 'Run with: chmod +x sentinel-install.sh && sudo ./sentinel-install.sh',
           };
         } catch (err) {
