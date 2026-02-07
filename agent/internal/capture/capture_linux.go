@@ -45,7 +45,6 @@ import "C"
 import (
 	"errors"
 	"fmt"
-	"image"
 	"sync"
 	"time"
 	"unsafe"
