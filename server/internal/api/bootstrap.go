@@ -674,20 +674,35 @@ func buildPatchedInstallerWithCode(serverURL, enrollmentToken, installCode strin
 	// SENTINEL_EMBEDDED_TOKEN:placeholder-token-value-padding-to-64-characters_____:END (64 char value)
 	// SENTINEL_EMBEDDED_CODE:_________:END (9 chars for XXXX-XXXX)
 
-	// Patch server URL (must match exact placeholder length = 64 chars for value)
+	// Patch server URL (must match exact placeholder length)
 	serverPlaceholder := []byte("SENTINEL_EMBEDDED_SERVER:https://placeholder-server-url-padding-to-64-chars___:END")
 	serverValue := fmt.Sprintf("SENTINEL_EMBEDDED_SERVER:%s:END", padRightStr(serverURL, 54, '_'))
-	installerData = bytes.Replace(installerData, serverPlaceholder, []byte(serverValue), 1)
+	if bytes.Contains(installerData, serverPlaceholder) {
+		installerData = bytes.Replace(installerData, serverPlaceholder, []byte(serverValue), 1)
+		log.Printf("[Patch] Server URL: %s (len %d->%d)", serverURL, len(serverPlaceholder), len(serverValue))
+	} else {
+		log.Printf("[Patch] ERROR: Server placeholder not found in binary!")
+	}
 
-	// Patch enrollment token (64 char value)
+	// Patch enrollment token
 	tokenPlaceholder := []byte("SENTINEL_EMBEDDED_TOKEN:placeholder-token-value-padding-to-64-characters_____:END")
 	tokenValue := fmt.Sprintf("SENTINEL_EMBEDDED_TOKEN:%s:END", padRightStr(enrollmentToken, 53, '_'))
-	installerData = bytes.Replace(installerData, tokenPlaceholder, []byte(tokenValue), 1)
+	if bytes.Contains(installerData, tokenPlaceholder) {
+		installerData = bytes.Replace(installerData, tokenPlaceholder, []byte(tokenValue), 1)
+		log.Printf("[Patch] Token: %s... (len %d->%d)", enrollmentToken[:8], len(tokenPlaceholder), len(tokenValue))
+	} else {
+		log.Printf("[Patch] ERROR: Token placeholder not found in binary!")
+	}
 
 	// Patch installation code (9 chars for XXXX-XXXX format)
 	codePlaceholder := []byte("SENTINEL_EMBEDDED_CODE:_________:END")
 	codeValue := fmt.Sprintf("SENTINEL_EMBEDDED_CODE:%s:END", padRightStr(installCode, 9, '_'))
-	installerData = bytes.Replace(installerData, codePlaceholder, []byte(codeValue), 1)
+	if bytes.Contains(installerData, codePlaceholder) {
+		installerData = bytes.Replace(installerData, codePlaceholder, []byte(codeValue), 1)
+		log.Printf("[Patch] Code: %s (len %d->%d)", installCode, len(codePlaceholder), len(codeValue))
+	} else {
+		log.Printf("[Patch] ERROR: Code placeholder not found in binary!")
+	}
 
 	return installerData, nil
 }
