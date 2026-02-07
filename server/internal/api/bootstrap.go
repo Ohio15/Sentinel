@@ -589,21 +589,42 @@ func generateConfiguredInstallerHandler(services *Services) gin.HandlerFunc {
 			// Continue anyway - the token still works
 		}
 
-		// Get server URL - use PUBLIC_URL if set, otherwise derive from request
-		// Important: Use port 4443 for installer downloads, not 8443 (which is mTLS-only)
+		// Get server URL - use PUBLIC_URL if set, otherwise derive from request headers
+		// Priority: PUBLIC_URL env > X-Forwarded headers > Request.Host
 		serverURL := services.Config.PublicURL
 		if serverURL == "" {
 			serverURL = services.Config.ServerURL
 		}
 		if serverURL == "" {
-			scheme := "https"
-			host := c.Request.Host
+			// Get scheme from X-Forwarded-Proto (set by Traefik)
+			scheme := c.GetHeader("X-Forwarded-Proto")
+			if scheme == "" {
+				scheme = "https"
+			}
+
+			// Get host from X-Forwarded-Host (set by Traefik), fallback to Request.Host
+			host := c.GetHeader("X-Forwarded-Host")
+			if host == "" {
+				host = c.Request.Host
+			}
+
 			// Remove port 8443 (mTLS) and use 4443 instead for public access
 			if strings.HasSuffix(host, ":8443") {
 				host = strings.TrimSuffix(host, ":8443") + ":4443"
 			}
+
+			// If still localhost, use the domain from config or a sensible default
+			if strings.HasPrefix(host, "localhost") || strings.HasPrefix(host, "127.0.0.1") {
+				// Try to get from DOMAIN environment variable
+				if domain := os.Getenv("DOMAIN"); domain != "" {
+					host = domain + ":4443"
+				}
+			}
+
 			serverURL = fmt.Sprintf("%s://%s", scheme, host)
 		}
+		log.Printf("[Installer] Using server URL: %s (X-Forwarded-Host: %s, Request.Host: %s)",
+			serverURL, c.GetHeader("X-Forwarded-Host"), c.Request.Host)
 
 		switch platform {
 		case "windows":
