@@ -268,12 +268,25 @@ export class WebRTCService {
       responseSessionId: response.data?.sessionId,
       mySessionId: this.sessionId,
       matches: response.data?.sessionId === this.sessionId,
+      success: response.success,
+      error: response.error,
     });
 
-    // Check if this is a WebRTC answer response
-    if (response.data?.answerSdp && response.data?.sessionId === this.sessionId) {
-      console.log('[WebRTC] Received answer, SDP length:', response.data.answerSdp.length);
-      this.setRemoteAnswer(response.data.answerSdp);
+    // Check if this is a response for our session
+    if (response.data?.sessionId === this.sessionId) {
+      // Handle error response
+      if (response.success === false || response.error) {
+        const errorMsg = response.error || 'Remote desktop connection failed';
+        console.error('[WebRTC] Connection error from agent:', errorMsg);
+        this.emit('error', new Error(errorMsg));
+        return;
+      }
+
+      // Check if this is a WebRTC answer response
+      if (response.data?.answerSdp) {
+        console.log('[WebRTC] Received answer, SDP length:', response.data.answerSdp.length);
+        this.setRemoteAnswer(response.data.answerSdp);
+      }
     }
   }
 

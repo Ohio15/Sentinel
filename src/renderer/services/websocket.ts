@@ -75,9 +75,11 @@ class ReliableWebSocket {
 
     const token = localStorage.getItem('token');
     if (!token) {
-      console.warn('[WebSocket] No auth token, skipping connection');
+      console.warn('[WebSocket] No auth token in localStorage, skipping connection');
+      console.warn('[WebSocket] localStorage keys:', Object.keys(localStorage));
       return;
     }
+    console.log('[WebSocket] Found token, length:', token.length);
 
     this.isConnecting = true;
     this.connectionState = this.reconnectAttempts > 0 ? 'reconnecting' : 'connecting';
@@ -128,7 +130,8 @@ class ReliableWebSocket {
       };
 
       this.ws.onerror = (error) => {
-        console.error('[WebSocket] Error:', error);
+        console.error('[WebSocket] Connection error:', error);
+        console.error('[WebSocket] WebSocket state:', this.ws?.readyState, 'URL:', wsUrl);
         this.isConnecting = false;
         // Connection error will be followed by onclose, which handles reconnection
       };
