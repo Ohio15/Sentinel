@@ -232,7 +232,9 @@ func (h *Hub) Run() {
 			delete(h.connections, client.connectionID)
 
 			if client.isAgent {
-				if _, ok := h.agents[client.agentID]; ok {
+				// Only remove from agents map if this is the current registered connection
+				// This prevents removing a newer connection when an old one closes
+				if existing, ok := h.agents[client.agentID]; ok && existing.connectionID == client.connectionID {
 					delete(h.agents, client.agentID)
 					close(client.send)
 					log.Printf("Agent disconnected: %s (sent: %d, dropped: %d)",
