@@ -282,6 +282,7 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			// Devices
 			protected.GET("/devices", listDevicesHandler(services))
 			protected.GET("/devices/cert-status", getDeviceCertStatusesHandler(services))
+			protected.GET("/certificates/info", getCertificateInfoHandler(services))
 			protected.GET("/devices/:id", getDeviceHandler(services))
 			protected.PUT("/devices/:id", middleware.RequireRole("admin", "operator"), updateDeviceHandler(services))
 			protected.DELETE("/devices/:id", middleware.RequireRole("admin", "operator"), deleteDeviceHandler(services))
