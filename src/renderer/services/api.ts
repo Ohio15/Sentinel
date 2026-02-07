@@ -101,8 +101,8 @@ class ApiService {
     return this.post('/auth/logout');
   }
 
-  async refreshToken() {
-    return this.post<{ token: string }>('/auth/refresh');
+  async refreshToken(refreshToken: string) {
+    return this.post<{ token: string; expiresIn: number }>('/auth/refresh', { refreshToken });
   }
 
   async getCurrentUser() {
