@@ -72,6 +72,100 @@ func logMsg(format string, args ...interface{}) {
 // Version is set at build time
 var Version = "1.0.0"
 
+// Embedded configuration placeholders (patched by server when generating direct download)
+// These are searched for in the binary and replaced with actual values
+// Format: SENTINEL_CONFIG_SERVER:http://_______________________________________________:END (50 chars for URL)
+// Format: SENTINEL_CONFIG_TOKEN:__________________________________________________________:END (64 chars for token)
+// Format: SENTINEL_CONFIG_CODE:_________:END (9 chars for code XXXX-XXXX)
+var (
+	EmbeddedServerPlaceholder = "SENTINEL_CONFIG_SERVER:http://_______________________________________________:END"
+	EmbeddedTokenPlaceholder  = "SENTINEL_CONFIG_TOKEN:__________________________________________________________:END"
+	EmbeddedCodePlaceholder   = "SENTINEL_CONFIG_CODE:_________:END"
+)
+
+// EmbeddedConfig holds configuration extracted from the binary itself
+type EmbeddedConfig struct {
+	ServerURL       string
+	EnrollmentToken string
+	InstallCode     string
+}
+
+// readEmbeddedConfig reads the installer binary and extracts patched configuration values
+func readEmbeddedConfig() *EmbeddedConfig {
+	exe, err := os.Executable()
+	if err != nil {
+		logMsg("[DEBUG] Could not get executable path: %v", err)
+		return nil
+	}
+
+	data, err := os.ReadFile(exe)
+	if err != nil {
+		logMsg("[DEBUG] Could not read executable: %v", err)
+		return nil
+	}
+
+	config := &EmbeddedConfig{}
+
+	// Extract server URL
+	if serverURL := extractConfigValue(data, "SENTINEL_CONFIG_SERVER:", ":END"); serverURL != "" {
+		// Check if it's still the placeholder (all underscores after http://)
+		if !strings.HasPrefix(serverURL, "http://_") && serverURL != "http://_______________________________________________" {
+			config.ServerURL = serverURL
+			logMsg("[DEBUG] Found embedded server URL: %s", serverURL)
+		}
+	}
+
+	// Extract enrollment token
+	if token := extractConfigValue(data, "SENTINEL_CONFIG_TOKEN:", ":END"); token != "" {
+		// Check if it's still the placeholder (all underscores)
+		if !strings.HasPrefix(token, "_") {
+			config.EnrollmentToken = token
+			logMsg("[DEBUG] Found embedded enrollment token: %s...", token[:min(10, len(token))])
+		}
+	}
+
+	// Extract installation code
+	if code := extractConfigValue(data, "SENTINEL_CONFIG_CODE:", ":END"); code != "" {
+		// Check if it's still the placeholder (all underscores)
+		if !strings.HasPrefix(code, "_") {
+			config.InstallCode = code
+			logMsg("[DEBUG] Found embedded installation code: %s", code)
+		}
+	}
+
+	// Return nil if no valid config found
+	if config.ServerURL == "" && config.EnrollmentToken == "" && config.InstallCode == "" {
+		logMsg("[DEBUG] No embedded configuration found in binary")
+		return nil
+	}
+
+	return config
+}
+
+// extractConfigValue extracts a value between prefix and suffix markers from binary data
+func extractConfigValue(data []byte, prefix, suffix string) string {
+	dataStr := string(data)
+
+	startIdx := strings.Index(dataStr, prefix)
+	if startIdx == -1 {
+		return ""
+	}
+
+	// Move past the prefix
+	startIdx += len(prefix)
+
+	// Find the end marker
+	endIdx := strings.Index(dataStr[startIdx:], suffix)
+	if endIdx == -1 {
+		return ""
+	}
+
+	// Extract the value and trim trailing underscores (padding)
+	value := dataStr[startIdx : startIdx+endIdx]
+	value = strings.TrimRight(value, "_")
+
+	return value
+}
 
 // InstallConfig holds the configuration for installation
 type InstallConfig struct {
@@ -175,10 +269,23 @@ func main() {
 }
 
 // getConfiguration obtains installation configuration through priority chain:
+// 0. Embedded config in binary (server + token patched by server on download)
 // 1. CLI arguments (--server + --token)
-// 2. CLI code argument (--code) -> validates with server
-// 3. Interactive prompt for code
+// 2. Embedded code in binary -> validates with server
+// 3. CLI code argument (--code) -> validates with server
+// 4. Interactive prompt for code
 func getConfiguration() *InstallConfig {
+	// Priority 0: Embedded config (server + token) patched into binary
+	embedded := readEmbeddedConfig()
+	if embedded != nil && embedded.ServerURL != "" && embedded.EnrollmentToken != "" {
+		logMsg("[DEBUG] Using embedded config from binary (server + token)")
+		printInfo("Using pre-configured installation settings...")
+		return &InstallConfig{
+			ServerURL:       embedded.ServerURL,
+			EnrollmentToken: embedded.EnrollmentToken,
+		}
+	}
+
 	// Priority 1: Direct CLI arguments
 	if *flagServer != "" && *flagToken != "" {
 		logMsg("[DEBUG] Using CLI arguments for config")
@@ -188,7 +295,18 @@ func getConfiguration() *InstallConfig {
 		}
 	}
 
-	// Priority 2: Code from CLI argument
+	// Priority 2: Embedded installation code in binary -> validate with server
+	if embedded != nil && embedded.InstallCode != "" {
+		logMsg("[DEBUG] Validating embedded installation code: %s", embedded.InstallCode)
+		printInfo("Validating pre-configured installation code...")
+		config := validateInstallationCode(embedded.InstallCode)
+		if config != nil {
+			return config
+		}
+		printWarning("Embedded installation code is invalid or expired, trying other methods...")
+	}
+
+	// Priority 3: Code from CLI argument
 	if *flagCode != "" {
 		logMsg("[DEBUG] Validating installation code from CLI: %s", *flagCode)
 		config := validateInstallationCode(*flagCode)
@@ -199,7 +317,7 @@ func getConfiguration() *InstallConfig {
 		return nil
 	}
 
-	// Priority 3: Interactive code prompt (only if not silent mode)
+	// Priority 4: Interactive code prompt (only if not silent mode)
 	if *flagSilent {
 		printError("No configuration found and running in silent mode.")
 		printError("Provide --code or --server/--token arguments.")
