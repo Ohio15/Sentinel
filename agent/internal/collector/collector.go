@@ -15,29 +15,41 @@ import (
 	"github.com/shirou/gopsutil/v3/process"
 )
 
+// PowerManagement contains power management capabilities
+type PowerManagement struct {
+	WoLSupported    bool   `json:"wol_supported"`    // NIC supports Wake-on-LAN
+	WoLEnabled      bool   `json:"wol_enabled"`      // WoL currently enabled
+	AMTSupported    bool   `json:"amt_supported"`    // Intel AMT hardware present
+	AMTProvisioned  bool   `json:"amt_provisioned"`  // AMT configured and ready
+	AMTVersion      string `json:"amt_version"`      // AMT firmware version
+	MACAddress      string `json:"mac_address"`      // MAC for WoL packets
+	WoLModes        string `json:"wol_modes"`        // Supported WoL modes (g=magic packet, etc.)
+}
+
 // SystemInfo contains static system information
 type SystemInfo struct {
-	Hostname       string        `json:"hostname"`
-	OS             string        `json:"os"`
-	OSVersion      string        `json:"os_version"`
-	OSBuild        string        `json:"os_build"`
-	Platform       string        `json:"platform"`
-	PlatformFamily string        `json:"platform_family"`
-	Architecture   string        `json:"architecture"`
-	CPUModel       string        `json:"cpu_model"`
-	CPUCores       int           `json:"cpu_cores"`
-	CPUThreads     int           `json:"cpu_threads"`
-	CPUSpeed       float64       `json:"cpu_speed"`
-	TotalMemory    uint64        `json:"total_memory"`
-	BootTime       uint64        `json:"boot_time"`
-	GPU            []GPUInfo     `json:"gpu"`
-	Storage        []StorageInfo `json:"storage"`
-	SerialNumber   string        `json:"serial_number"`
-	Manufacturer   string        `json:"manufacturer"`
-	Model          string        `json:"model"`
-	Domain         string        `json:"domain"`
-	IPAddress      string        `json:"ip_address"`
-	MACAddress     string        `json:"mac_address"`
+	Hostname        string           `json:"hostname"`
+	OS              string           `json:"os"`
+	OSVersion       string           `json:"os_version"`
+	OSBuild         string           `json:"os_build"`
+	Platform        string           `json:"platform"`
+	PlatformFamily  string           `json:"platform_family"`
+	Architecture    string           `json:"architecture"`
+	CPUModel        string           `json:"cpu_model"`
+	CPUCores        int              `json:"cpu_cores"`
+	CPUThreads      int              `json:"cpu_threads"`
+	CPUSpeed        float64          `json:"cpu_speed"`
+	TotalMemory     uint64           `json:"total_memory"`
+	BootTime        uint64           `json:"boot_time"`
+	GPU             []GPUInfo        `json:"gpu"`
+	Storage         []StorageInfo    `json:"storage"`
+	SerialNumber    string           `json:"serial_number"`
+	Manufacturer    string           `json:"manufacturer"`
+	Model           string           `json:"model"`
+	Domain          string           `json:"domain"`
+	IPAddress       string           `json:"ip_address"`
+	MACAddress      string           `json:"mac_address"`
+	PowerManagement *PowerManagement `json:"power_management,omitempty"`
 }
 
 // GPUInfo contains graphics card information
@@ -185,28 +197,32 @@ func (c *Collector) GetSystemInfo() (*SystemInfo, error) {
 	// Get network info (IP and MAC)
 	ipAddress, macAddress := c.getNetworkInfo()
 
+	// Get power management capabilities (WoL, AMT)
+	powerMgmt := c.getPowerManagement(macAddress)
+
 	return &SystemInfo{
-		Hostname:       hostInfo.Hostname,
-		OS:             hostInfo.OS,
-		OSVersion:      hostInfo.PlatformVersion,
-		OSBuild:        hostInfo.KernelVersion,
-		Platform:       hostInfo.Platform,
-		PlatformFamily: hostInfo.PlatformFamily,
-		Architecture:   runtime.GOARCH,
-		CPUModel:       cpuModel,
-		CPUCores:       runtime.NumCPU(),
-		CPUThreads:     cpuThreads,
-		CPUSpeed:       cpuSpeed,
-		TotalMemory:    memInfo.Total,
-		BootTime:       hostInfo.BootTime,
-		GPU:            gpu,
-		Storage:        storage,
-		SerialNumber:   serialNumber,
-		Manufacturer:   manufacturer,
-		Model:          model,
-		Domain:         domain,
-		IPAddress:      ipAddress,
-		MACAddress:     macAddress,
+		Hostname:        hostInfo.Hostname,
+		OS:              hostInfo.OS,
+		OSVersion:       hostInfo.PlatformVersion,
+		OSBuild:         hostInfo.KernelVersion,
+		Platform:        hostInfo.Platform,
+		PlatformFamily:  hostInfo.PlatformFamily,
+		Architecture:    runtime.GOARCH,
+		CPUModel:        cpuModel,
+		CPUCores:        runtime.NumCPU(),
+		CPUThreads:      cpuThreads,
+		CPUSpeed:        cpuSpeed,
+		TotalMemory:     memInfo.Total,
+		BootTime:        hostInfo.BootTime,
+		GPU:             gpu,
+		Storage:         storage,
+		SerialNumber:    serialNumber,
+		Manufacturer:    manufacturer,
+		Model:           model,
+		Domain:          domain,
+		IPAddress:       ipAddress,
+		MACAddress:      macAddress,
+		PowerManagement: powerMgmt,
 	}, nil
 }
 
