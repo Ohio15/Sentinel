@@ -74,11 +74,22 @@ type Agent struct {
 func main() {
 	flag.Parse()
 
-	// Set up logging to file for debugging
-	logFile, err := os.OpenFile("C:\\ProgramData\\Sentinel\\agent.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	// Set up logging - use platform-specific path
+	var logPath string
+	if runtime.GOOS == "windows" {
+		logPath = "C:\\ProgramData\\Sentinel\\agent.log"
+	} else {
+		// On Linux/Unix, write to /var/log if possible, otherwise just use stderr
+		logPath = "/var/log/sentinel/agent.log"
+	}
+
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err == nil {
 		log.SetOutput(logFile)
 		defer logFile.Close()
+	} else if runtime.GOOS != "windows" {
+		// On Linux, if we can't write to log file, write to stderr for systemd
+		log.SetOutput(os.Stderr)
 	}
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
@@ -1387,7 +1398,10 @@ func (a *Agent) handleWebRTCStart(msg *client.Message) error {
 	answerType, answerSdp, err := a.desktopManager.StartSession(a.ctx, winSessionID, connectionID, "offer", offerSdp)
 	if err != nil {
 		log.Printf("[WebRTC] Failed to start session via desktop helper: %v", err)
-		return a.client.SendResponse(msg.RequestID, false, nil, err.Error())
+		// Include sessionId in error response so frontend can match it
+		return a.client.SendResponse(msg.RequestID, false, map[string]interface{}{
+			"sessionId": connectionID,
+		}, err.Error())
 	}
 
 	log.Printf("[WebRTC] Got answer from helper: type=%s, sdp length=%d", answerType, len(answerSdp))

@@ -311,18 +311,29 @@ export class WebRTCEnhancedService {
   private setupSignalingHandlers() {
     // Handle SDP answer via response channel (matching server routing)
     this.unsubscribeResponse = wsService?.on('response', async (data: any) => {
-      // Check if this is our WebRTC answer
-      if (data.data?.answerSdp && data.data?.sessionId === this.sessionId) {
-        console.log('[WebRTC] Received answer, SDP length:', data.data.answerSdp.length);
-        try {
-          await this.pc?.setRemoteDescription({
-            type: 'answer',
-            sdp: data.data.answerSdp,
-          });
-          console.log('[WebRTC] Remote description set successfully');
-        } catch (err) {
-          console.error('[WebRTC] Failed to set remote description:', err);
-          this.emit('error', err);
+      // Check if this response is for our session
+      if (data.data?.sessionId === this.sessionId || data.requestId?.includes(this.sessionId)) {
+        // Check for error response
+        if (data.success === false || data.error) {
+          const errorMsg = data.error || 'Remote desktop connection failed';
+          console.error('[WebRTC] Connection error from agent:', errorMsg);
+          this.emit('error', new Error(errorMsg));
+          return;
+        }
+
+        // Check if this is our WebRTC answer
+        if (data.data?.answerSdp) {
+          console.log('[WebRTC] Received answer, SDP length:', data.data.answerSdp.length);
+          try {
+            await this.pc?.setRemoteDescription({
+              type: 'answer',
+              sdp: data.data.answerSdp,
+            });
+            console.log('[WebRTC] Remote description set successfully');
+          } catch (err) {
+            console.error('[WebRTC] Failed to set remote description:', err);
+            this.emit('error', err);
+          }
         }
       }
     });

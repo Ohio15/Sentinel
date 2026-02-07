@@ -266,6 +266,9 @@ if (isWeb && typeof (window as any).api === 'undefined') {
       dismiss: async (id: string) => {
         return api!.resolveAlert(id);
       },
+      resolve: async (id: string) => {
+        return api!.resolveAlert(id);
+      },
       onNew: (callback: (alert: any) => void) => {
         return registerHandler('alerts:new', callback);
       },
@@ -591,13 +594,59 @@ if (isWeb && typeof (window as any).api === 'undefined') {
       getInfo: async () => ({ version: '1.70.0-web', port: 443, environment: 'production' }),
     },
 
-    // Agent API
+    // Agent API - for web, trigger browser downloads from server
     agent: {
-      download: async (platform: string) => null,
-      downloadConfigured: async (platform: string) => null,
-      downloadMsi: async () => null,
+      download: async (platform: string) => {
+        // Trigger browser download of install script
+        const scripts: Record<string, string> = {
+          windows: '/installers/install.ps1',
+          linux: '/installers/install.sh',
+          macos: '/installers/install.sh',
+        };
+        const url = scripts[platform];
+        if (url) {
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = platform === 'windows' ? 'sentinel-install.ps1' : 'sentinel-install.sh';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          return { success: true };
+        }
+        return { success: false, error: 'Unknown platform' };
+      },
+      downloadConfigured: async (platform: string) => {
+        // For web, download the install script with embedded server URL
+        const scripts: Record<string, { url: string; filename: string }> = {
+          windows: { url: '/installers/install.ps1', filename: 'sentinel-install.ps1' },
+          linux: { url: '/installers/install.sh', filename: 'sentinel-install.sh' },
+          macos: { url: '/installers/install.sh', filename: 'sentinel-install.sh' },
+        };
+        const script = scripts[platform];
+        if (script) {
+          try {
+            // Fetch the script and download it
+            const response = await fetch(script.url);
+            if (!response.ok) throw new Error('Failed to fetch installer');
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = script.filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+            return { success: true, size: blob.size, note: 'Script downloaded. Run with admin/root privileges.' };
+          } catch (err) {
+            return { success: false, error: (err as Error).message };
+          }
+        }
+        return { success: false, error: 'Unknown platform' };
+      },
+      downloadMsi: async () => ({ success: false, error: 'MSI download not available in web mode' }),
       getMsiCommand: async () => '',
-      runPowerShellInstall: async () => null,
+      runPowerShellInstall: async () => ({ success: false, error: 'PowerShell install not available in web mode' }),
     },
 
     // Certs API (used by certificateStore)
