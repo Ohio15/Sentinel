@@ -128,7 +128,10 @@ func (m *Manager) StartSession(ctx context.Context, sessionID uint32, connection
 	session.peerConnection = pc
 
 	// Create video track
-	width, height := screenCapture.GetDimensions()
+	// Get dimensions for input coordinate scaling
+	captureWidth, captureHeight := screenCapture.GetDimensions()
+	log.Printf("[LinuxManager] Capture dimensions: %dx%d", captureWidth, captureHeight)
+
 	videoTrack, err := webrtc.NewTrackLocalStaticSample(
 		webrtc.RTPCodecCapability{
 			MimeType:  webrtc.MimeTypeVP8,
@@ -191,7 +194,12 @@ func (m *Manager) StartSession(ctx context.Context, sessionID uint32, connection
 		}
 		if m.onICECandidate != nil {
 			init := candidate.ToJSON()
-			m.onICECandidate(sessionID, connectionID, init.Candidate, *init.SDPMid, init.SDPMLineIndex)
+			var sdpMLineIndex *int
+			if init.SDPMLineIndex != nil {
+				idx := int(*init.SDPMLineIndex)
+				sdpMLineIndex = &idx
+			}
+			m.onICECandidate(sessionID, connectionID, init.Candidate, *init.SDPMid, sdpMLineIndex)
 		}
 	})
 
