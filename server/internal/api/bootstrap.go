@@ -669,24 +669,24 @@ func buildPatchedInstallerWithCode(serverURL, enrollmentToken, installCode strin
 	}
 
 	// Binary patch the placeholders
-	// The installer has these placeholders that get replaced:
-	// SENTINEL_CONFIG_SERVER:http://_______________________________________________:END (50 chars)
-	// SENTINEL_CONFIG_TOKEN:__________________________________________________________:END (64 chars)
-	// SENTINEL_CONFIG_CODE:________:END (8 chars for XXXX-XXXX without dash, or 9 with)
+	// The installer has these embedded variables that get patched:
+	// SENTINEL_EMBEDDED_SERVER:https://placeholder-server-url-padding-to-64-chars___:END (64 char value)
+	// SENTINEL_EMBEDDED_TOKEN:placeholder-token-value-padding-to-64-characters_____:END (64 char value)
+	// SENTINEL_EMBEDDED_CODE:_________:END (9 chars for XXXX-XXXX)
 
-	// Patch server URL (pad to 50 chars)
-	serverPlaceholder := []byte("SENTINEL_CONFIG_SERVER:http://_______________________________________________:END")
-	serverValue := fmt.Sprintf("SENTINEL_CONFIG_SERVER:%s", padRightStr(serverURL, 50, '_')) + ":END"
+	// Patch server URL (must match exact placeholder length = 64 chars for value)
+	serverPlaceholder := []byte("SENTINEL_EMBEDDED_SERVER:https://placeholder-server-url-padding-to-64-chars___:END")
+	serverValue := fmt.Sprintf("SENTINEL_EMBEDDED_SERVER:%s:END", padRightStr(serverURL, 54, '_'))
 	installerData = bytes.Replace(installerData, serverPlaceholder, []byte(serverValue), 1)
 
-	// Patch enrollment token (pad to 64 chars)
-	tokenPlaceholder := []byte("SENTINEL_CONFIG_TOKEN:__________________________________________________________:END")
-	tokenValue := fmt.Sprintf("SENTINEL_CONFIG_TOKEN:%s", padRightStr(enrollmentToken, 64, '_')) + ":END"
+	// Patch enrollment token (64 char value)
+	tokenPlaceholder := []byte("SENTINEL_EMBEDDED_TOKEN:placeholder-token-value-padding-to-64-characters_____:END")
+	tokenValue := fmt.Sprintf("SENTINEL_EMBEDDED_TOKEN:%s:END", padRightStr(enrollmentToken, 53, '_'))
 	installerData = bytes.Replace(installerData, tokenPlaceholder, []byte(tokenValue), 1)
 
-	// Patch installation code (pad to 9 chars for XXXX-XXXX format)
-	codePlaceholder := []byte("SENTINEL_CONFIG_CODE:_________:END")
-	codeValue := fmt.Sprintf("SENTINEL_CONFIG_CODE:%s", padRightStr(installCode, 9, '_')) + ":END"
+	// Patch installation code (9 chars for XXXX-XXXX format)
+	codePlaceholder := []byte("SENTINEL_EMBEDDED_CODE:_________:END")
+	codeValue := fmt.Sprintf("SENTINEL_EMBEDDED_CODE:%s:END", padRightStr(installCode, 9, '_'))
 	installerData = bytes.Replace(installerData, codePlaceholder, []byte(codeValue), 1)
 
 	return installerData, nil
