@@ -32,6 +32,13 @@ static void xshm_set_shmaddr(XShmSegmentInfo *info, char *addr) {
 static void xshm_set_readOnly(XShmSegmentInfo *info, Bool readOnly) {
     info->readOnly = readOnly;
 }
+
+// Wrapper for XDestroyImage macro
+static void destroy_ximage(XImage *image) {
+    if (image != NULL) {
+        XDestroyImage(image);
+    }
+}
 */
 import "C"
 
@@ -150,7 +157,7 @@ func (c *X11Capture) initShm() bool {
 	// Allocate shared memory
 	shmid := C.shmget(C.IPC_PRIVATE, C.size_t(c.xImage.bytes_per_line*c.xImage.height), C.IPC_CREAT|0777)
 	if shmid < 0 {
-		C.XDestroyImage(c.xImage)
+		C.destroy_ximage(c.xImage)
 		c.xImage = nil
 		return false
 	}
@@ -160,7 +167,7 @@ func (c *X11Capture) initShm() bool {
 	shmaddr := C.shmat(shmid, nil, 0)
 	if shmaddr == unsafe.Pointer(uintptr(^uint(0))) {
 		C.shmctl(shmid, C.IPC_RMID, nil)
-		C.XDestroyImage(c.xImage)
+		C.destroy_ximage(c.xImage)
 		c.xImage = nil
 		return false
 	}
@@ -172,7 +179,7 @@ func (c *X11Capture) initShm() bool {
 	if C.XShmAttach(c.display, &c.shmInfo) == 0 {
 		C.shmdt(shmaddr)
 		C.shmctl(shmid, C.IPC_RMID, nil)
-		C.XDestroyImage(c.xImage)
+		C.destroy_ximage(c.xImage)
 		c.xImage = nil
 		return false
 	}
@@ -239,7 +246,7 @@ func (c *X11Capture) CaptureFrame(timeoutMs int) (*CapturedFrame, error) {
 		if xImage == nil {
 			return nil, errors.New("XGetImage failed")
 		}
-		defer C.XDestroyImage(xImage)
+		defer C.destroy_ximage(xImage)
 
 		data = make([]byte, c.width*c.height*4)
 		bytesPerPixel := int(xImage.bits_per_pixel) / 8
@@ -345,7 +352,7 @@ func (c *X11Capture) Release() {
 		if shmid >= 0 {
 			C.shmctl(shmid, C.IPC_RMID, nil)
 		}
-		C.XDestroyImage(c.xImage)
+		C.destroy_ximage(c.xImage)
 		c.xImage = nil
 	}
 

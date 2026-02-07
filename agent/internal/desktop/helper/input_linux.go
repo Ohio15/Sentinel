@@ -63,9 +63,8 @@ import (
 	"errors"
 	"log"
 	"sync"
-	"unsafe"
 
-	"github.com/sentinel/agent/internal/webrtc"
+	internalWebrtc "github.com/sentinel/agent/internal/webrtc"
 )
 
 // InputInjector handles injecting mouse and keyboard input on Linux using XTEST
@@ -266,7 +265,7 @@ func (i *InputInjector) GetMonitors() []MonitorInfo {
 }
 
 // InjectInput processes an input event and injects it into X11
-func (i *InputInjector) InjectInput(input webrtc.InputEvent) {
+func (i *InputInjector) InjectInput(input internalWebrtc.InputEvent) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
@@ -304,7 +303,7 @@ func (i *InputInjector) InjectInput(input webrtc.InputEvent) {
 	}
 }
 
-func (i *InputInjector) handleMouseInput(input webrtc.InputEvent) {
+func (i *InputInjector) handleMouseInput(input internalWebrtc.InputEvent) {
 	var screenX, screenY int
 
 	if i.useTransformer && i.viewerWidth > 0 && i.viewerHeight > 0 {
@@ -395,7 +394,7 @@ func (i *InputInjector) mapButton(button int) int {
 	}
 }
 
-func (i *InputInjector) handleKeyboardInput(input webrtc.InputEvent) {
+func (i *InputInjector) handleKeyboardInput(input internalWebrtc.InputEvent) {
 	keySym := i.keyToKeySym(input.Key)
 	if keySym == 0 {
 		log.Printf("[InputInjector] Unknown key: %s", input.Key)
