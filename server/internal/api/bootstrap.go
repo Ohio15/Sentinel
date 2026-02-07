@@ -1,6 +1,8 @@
 package api
 
 import (
+	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -529,9 +531,9 @@ func getDesktopHelperBinaryPath(services *Services, platform, arch string) strin
 	return ""
 }
 
-// generateConfiguredInstallerHandler generates a pre-configured installer with embedded server URL and token
+// generateConfiguredInstallerHandler generates a pre-configured installer with embedded server URL, token, and code
 // This is for the "Direct Download" feature in the web dashboard
-// For Windows: returns a patched EXE installer (same method as installation links)
+// For Windows: returns a patched EXE installer with embedded config (same method as installation links)
 // For Linux/macOS: returns a pre-configured shell script
 func generateConfiguredInstallerHandler(services *Services) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -541,34 +543,50 @@ func generateConfiguredInstallerHandler(services *Services) gin.HandlerFunc {
 		}
 		platform = strings.ToLower(platform)
 
-		// Get or create an enrollment token for this download
-		// First, try to get an existing active default token
-		var token string
-		var tokenID uuid.UUID
-		err := services.DB.Pool().QueryRow(c.Request.Context(), `
-			SELECT id, token FROM enrollment_tokens
-			WHERE is_active = true
-			AND (expires_at IS NULL OR expires_at > NOW())
-			AND (max_uses IS NULL OR use_count < max_uses)
-			AND name = 'Direct Download Token'
-			LIMIT 1
-		`).Scan(&tokenID, &token)
-
-		if err != nil {
-			// No existing token, create a new one
-			tokenID = uuid.New()
-			token = uuid.New().String()
-			expiresAt := time.Now().Add(24 * time.Hour) // 24-hour validity
-
-			_, err = services.DB.Pool().Exec(c.Request.Context(), `
-				INSERT INTO enrollment_tokens (id, name, token, is_active, expires_at, created_at)
-				VALUES ($1, 'Direct Download Token', $2, true, $3, NOW())
-			`, tokenID, token, expiresAt)
-			if err != nil {
-				log.Printf("Error creating enrollment token: %v", err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate enrollment token"})
-				return
+		// Get user info from context for tracking
+		var createdBy *uuid.UUID
+		if userID, exists := c.Get("userID"); exists {
+			if uid, ok := userID.(uuid.UUID); ok {
+				createdBy = &uid
 			}
+		}
+
+		// Generate a unique installation code (like ABCD-1234)
+		installCode := generateDirectDownloadCode()
+
+		// Create enrollment token for this download
+		enrollmentToken := uuid.New().String()
+		expiresAt := time.Now().Add(7 * 24 * time.Hour) // 7-day validity
+
+		// Create enrollment token in database
+		var enrollmentTokenID uuid.UUID
+		err := services.DB.Pool().QueryRow(c.Request.Context(), `
+			INSERT INTO enrollment_tokens (
+				token, name, description, created_by, expires_at, max_uses, is_active, is_legacy
+			) VALUES ($1, $2, $3, $4, $5, 1, TRUE, FALSE)
+			RETURNING id
+		`, enrollmentToken,
+			fmt.Sprintf("Direct Download: %s", installCode),
+			fmt.Sprintf("Auto-generated for direct download %s", installCode),
+			createdBy, expiresAt).Scan(&enrollmentTokenID)
+		if err != nil {
+			log.Printf("Error creating enrollment token: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate enrollment token"})
+			return
+		}
+
+		// Create installation link record for tracking (with the code)
+		downloadToken := "DD-" + uuid.New().String()
+		_, err = services.DB.Pool().Exec(c.Request.Context(), `
+			INSERT INTO agent_installation_links (
+				download_token, installation_code, device_name,
+				enrollment_token_id, created_by, expires_at, notes, status
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
+		`, downloadToken, installCode, "Direct Download",
+			enrollmentTokenID, createdBy, expiresAt, "Created via Direct Download")
+		if err != nil {
+			log.Printf("Error creating installation link: %v", err)
+			// Continue anyway - the token still works
 		}
 
 		// Get server URL
@@ -586,8 +604,8 @@ func generateConfiguredInstallerHandler(services *Services) gin.HandlerFunc {
 
 		switch platform {
 		case "windows":
-			// Use the same patched EXE method as installation links
-			installerData, err := buildPatchedInstaller(serverURL, token)
+			// Use the patched EXE method with embedded config AND installation code
+			installerData, err := buildPatchedInstallerWithCode(serverURL, enrollmentToken, installCode)
 			if err != nil {
 				log.Printf("Failed to build patched installer: %v", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare installer: " + err.Error()})
@@ -602,7 +620,7 @@ func generateConfiguredInstallerHandler(services *Services) gin.HandlerFunc {
 
 		case "linux", "macos":
 			// For Linux/macOS, use the shell script approach
-			script := generateLinuxInstaller(serverURL, token)
+			script := generateLinuxInstaller(serverURL, enrollmentToken)
 			c.Header("Content-Disposition", "attachment; filename=sentinel-install.sh")
 			c.Header("Content-Type", "application/x-sh")
 			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -613,6 +631,73 @@ func generateConfiguredInstallerHandler(services *Services) gin.HandlerFunc {
 			return
 		}
 	}
+}
+
+// generateDirectDownloadCode generates a random 8-character code in XXXX-XXXX format
+func generateDirectDownloadCode() string {
+	const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789" // Excludes ambiguous: 0,O,1,I,L
+	code := make([]byte, 8)
+	for i := range code {
+		randByte := make([]byte, 1)
+		rand.Read(randByte)
+		code[i] = chars[int(randByte[0])%len(chars)]
+	}
+	return string(code[0:4]) + "-" + string(code[4:8])
+}
+
+// buildPatchedInstallerWithCode creates a patched installer EXE with embedded config AND installation code
+func buildPatchedInstallerWithCode(serverURL, enrollmentToken, installCode string) ([]byte, error) {
+	// Find installer template
+	installerPaths := []string{
+		"installers/sentinel-installer-template.exe",
+		"release/agent/sentinel-installer-template.exe",
+		"../installers/sentinel-installer-template.exe",
+		"/app/installers/sentinel-installer-template.exe",
+	}
+
+	var installerData []byte
+	var err error
+	for _, path := range installerPaths {
+		installerData, err = os.ReadFile(path)
+		if err == nil {
+			log.Printf("Using installer template from: %s", path)
+			break
+		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("installer template not found: %w", err)
+	}
+
+	// Binary patch the placeholders
+	// The installer has these placeholders that get replaced:
+	// SENTINEL_CONFIG_SERVER:http://_______________________________________________:END (50 chars)
+	// SENTINEL_CONFIG_TOKEN:__________________________________________________________:END (64 chars)
+	// SENTINEL_CONFIG_CODE:________:END (8 chars for XXXX-XXXX without dash, or 9 with)
+
+	// Patch server URL (pad to 50 chars)
+	serverPlaceholder := []byte("SENTINEL_CONFIG_SERVER:http://_______________________________________________:END")
+	serverValue := fmt.Sprintf("SENTINEL_CONFIG_SERVER:%s", padRightStr(serverURL, 50, '_')) + ":END"
+	installerData = bytes.Replace(installerData, serverPlaceholder, []byte(serverValue), 1)
+
+	// Patch enrollment token (pad to 64 chars)
+	tokenPlaceholder := []byte("SENTINEL_CONFIG_TOKEN:__________________________________________________________:END")
+	tokenValue := fmt.Sprintf("SENTINEL_CONFIG_TOKEN:%s", padRightStr(enrollmentToken, 64, '_')) + ":END"
+	installerData = bytes.Replace(installerData, tokenPlaceholder, []byte(tokenValue), 1)
+
+	// Patch installation code (pad to 9 chars for XXXX-XXXX format)
+	codePlaceholder := []byte("SENTINEL_CONFIG_CODE:_________:END")
+	codeValue := fmt.Sprintf("SENTINEL_CONFIG_CODE:%s", padRightStr(installCode, 9, '_')) + ":END"
+	installerData = bytes.Replace(installerData, codePlaceholder, []byte(codeValue), 1)
+
+	return installerData, nil
+}
+
+// padRightStr pads a string to the specified length with the given character
+func padRightStr(s string, length int, pad rune) string {
+	if len(s) >= length {
+		return s[:length]
+	}
+	return s + strings.Repeat(string(pad), length-len(s))
 }
 
 // generateWindowsInstaller creates a PowerShell script with UAC auto-elevation and embedded config
