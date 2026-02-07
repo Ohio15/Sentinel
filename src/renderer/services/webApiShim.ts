@@ -597,52 +597,60 @@ if (isWeb && typeof (window as any).api === 'undefined') {
     // Agent API - for web, trigger browser downloads from server
     agent: {
       download: async (platform: string) => {
-        // Trigger browser download of install script
-        const scripts: Record<string, string> = {
-          windows: '/installers/install.ps1',
-          linux: '/installers/install.sh',
-          macos: '/installers/install.sh',
-        };
-        const url = scripts[platform];
-        if (url) {
+        // Download pre-configured installer from API (includes server URL and enrollment token)
+        const validPlatforms = ['windows', 'linux', 'macos'];
+        if (!validPlatforms.includes(platform)) {
+          return { success: false, error: 'Unknown platform' };
+        }
+
+        try {
+          // Use the authenticated API endpoint that generates a pre-configured script
+          const token = localStorage.getItem('token') || localStorage.getItem('backend_api_key');
+          const csrfToken = localStorage.getItem('csrf_token');
+
+          const headers: Record<string, string> = {
+            Accept: 'application/octet-stream',
+          };
+          if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+          }
+          if (csrfToken) {
+            headers['X-CSRF-Token'] = csrfToken;
+          }
+
+          const response = await fetch(`/api/installer/${platform}`, { headers });
+          if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: 'Download failed' }));
+            throw new Error(error.error || `Download failed: ${response.status}`);
+          }
+
+          const blob = await response.blob();
+          const filename = platform === 'windows' ? 'sentinel-install.ps1' : 'sentinel-install.sh';
+
+          const url = URL.createObjectURL(blob);
           const link = document.createElement('a');
           link.href = url;
-          link.download = platform === 'windows' ? 'sentinel-install.ps1' : 'sentinel-install.sh';
+          link.download = filename;
           document.body.appendChild(link);
           link.click();
           document.body.removeChild(link);
-          return { success: true };
+          URL.revokeObjectURL(url);
+
+          return {
+            success: true,
+            size: blob.size,
+            note: platform === 'windows'
+              ? 'Right-click the downloaded file and select "Run with PowerShell". UAC will prompt for administrator access.'
+              : 'Run with: chmod +x sentinel-install.sh && sudo ./sentinel-install.sh',
+          };
+        } catch (err) {
+          console.error('[WebApiShim] Agent download failed:', err);
+          return { success: false, error: (err as Error).message };
         }
-        return { success: false, error: 'Unknown platform' };
       },
       downloadConfigured: async (platform: string) => {
-        // For web, download the install script with embedded server URL
-        const scripts: Record<string, { url: string; filename: string }> = {
-          windows: { url: '/installers/install.ps1', filename: 'sentinel-install.ps1' },
-          linux: { url: '/installers/install.sh', filename: 'sentinel-install.sh' },
-          macos: { url: '/installers/install.sh', filename: 'sentinel-install.sh' },
-        };
-        const script = scripts[platform];
-        if (script) {
-          try {
-            // Fetch the script and download it
-            const response = await fetch(script.url);
-            if (!response.ok) throw new Error('Failed to fetch installer');
-            const blob = await response.blob();
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = script.filename;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            URL.revokeObjectURL(url);
-            return { success: true, size: blob.size, note: 'Script downloaded. Run with admin/root privileges.' };
-          } catch (err) {
-            return { success: false, error: (err as Error).message };
-          }
-        }
-        return { success: false, error: 'Unknown platform' };
+        // Same as download - all downloads are now pre-configured
+        return (window as any).api.agent.download(platform);
       },
       downloadMsi: async () => ({ success: false, error: 'MSI download not available in web mode' }),
       getMsiCommand: async () => '',

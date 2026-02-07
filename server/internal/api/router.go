@@ -294,6 +294,9 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			protected.POST("/devices/:id/force-update", middleware.RequireRole("admin"), forceUpdateHandler(services))
 			protected.GET("/devices/:id/commands", listDeviceCommandsHandler(services))
 
+			// Agent installer (generates pre-configured script for direct download)
+			protected.GET("/installer/:platform", generateConfiguredInstallerHandler(services))
+
 			// Inventory endpoints (new)
 			protected.GET("/devices/:id/inventory", inventoryHandlers.GetDeviceInventory)
 			protected.GET("/devices/:id/inventory/software", inventoryHandlers.GetDeviceSoftware)
