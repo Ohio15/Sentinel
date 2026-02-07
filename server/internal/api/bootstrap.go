@@ -677,35 +677,40 @@ func buildPatchedInstallerWithCode(serverURL, enrollmentToken, installCode strin
 	// SENTINEL_EMBEDDED_TOKEN:placeholder-token-value-padding-to-64-characters_____:END (64 char value)
 	// SENTINEL_EMBEDDED_CODE:_________:END (9 chars for XXXX-XXXX)
 
-	// Patch server URL (must match exact placeholder length = 82 chars total)
-	// Prefix (25) + Value (53) + Suffix (4) = 82
-	serverPlaceholder := []byte("SENTINEL_EMBEDDED_SERVER:https://placeholder-server-url-padding-to-64-chars___:END")
-	serverValue := fmt.Sprintf("SENTINEL_EMBEDDED_SERVER:%s:END", padRightStr(serverURL, 53, '_'))
-	if bytes.Contains(installerData, serverPlaceholder) {
-		installerData = bytes.Replace(installerData, serverPlaceholder, []byte(serverValue), 1)
-		log.Printf("[Patch] Server URL: %s (len %d->%d)", serverURL, len(serverPlaceholder), len(serverValue))
-	} else {
-		log.Printf("[Patch] ERROR: Server placeholder not found in binary!")
-	}
+	// Fixed-size config block patching
+	// The installer has a 200-byte config block starting with "XYZCFG" magic
+	// Layout:
+	//   [0:6]   = "XYZCFG" magic header (unchanged)
+	//   [6:59]  = Server URL (53 bytes, underscore-padded)
+	//   [59:112] = Token (53 bytes, underscore-padded)
+	//   [112:121] = Code (9 bytes, underscore-padded)
+	//   [121:200] = Reserved/padding (zeros)
 
-	// Patch enrollment token
-	tokenPlaceholder := []byte("SENTINEL_EMBEDDED_TOKEN:placeholder-token-value-padding-to-64-characters_____:END")
-	tokenValue := fmt.Sprintf("SENTINEL_EMBEDDED_TOKEN:%s:END", padRightStr(enrollmentToken, 53, '_'))
-	if bytes.Contains(installerData, tokenPlaceholder) {
-		installerData = bytes.Replace(installerData, tokenPlaceholder, []byte(tokenValue), 1)
-		log.Printf("[Patch] Token: %s... (len %d->%d)", enrollmentToken[:8], len(tokenPlaceholder), len(tokenValue))
-	} else {
-		log.Printf("[Patch] ERROR: Token placeholder not found in binary!")
-	}
+	// Build the placeholder config block
+	placeholder := make([]byte, 200)
+	copy(placeholder[0:6], []byte("XYZCFG"))
+	copy(placeholder[6:59], []byte("https://config-placeholder-url.local_________________"))
+	copy(placeholder[59:112], []byte("token-placeholder-value-replace-me___________________"))
+	copy(placeholder[112:121], []byte("CODE_____"))
 
-	// Patch installation code (9 chars for XXXX-XXXX format)
-	codePlaceholder := []byte("SENTINEL_EMBEDDED_CODE:_________:END")
-	codeValue := fmt.Sprintf("SENTINEL_EMBEDDED_CODE:%s:END", padRightStr(installCode, 9, '_'))
-	if bytes.Contains(installerData, codePlaceholder) {
-		installerData = bytes.Replace(installerData, codePlaceholder, []byte(codeValue), 1)
-		log.Printf("[Patch] Code: %s (len %d->%d)", installCode, len(codePlaceholder), len(codeValue))
+	// Build the patched config block
+	patched := make([]byte, 200)
+	copy(patched[0:6], []byte("XYZCFG"))
+	copy(patched[6:59], []byte(padRightStr(serverURL, 53, '_')))
+	copy(patched[59:112], []byte(padRightStr(enrollmentToken, 53, '_')))
+	copy(patched[112:121], []byte(padRightStr(installCode, 9, '_')))
+
+	if bytes.Contains(installerData, placeholder) {
+		installerData = bytes.Replace(installerData, placeholder, patched, 1)
+		log.Printf("[Patch] Config block patched: server=%s, token=%s..., code=%s",
+			serverURL, enrollmentToken[:min(8, len(enrollmentToken))], installCode)
 	} else {
-		log.Printf("[Patch] ERROR: Code placeholder not found in binary!")
+		log.Printf("[Patch] ERROR: Config block not found in binary! Looking for XYZCFG magic...")
+		// Try to find the magic header to debug
+		if idx := bytes.Index(installerData, []byte("XYZCFG")); idx >= 0 {
+			log.Printf("[Patch] Found XYZCFG at offset %d, but full block didn't match", idx)
+			log.Printf("[Patch] Actual bytes: %x", installerData[idx:idx+20])
+		}
 	}
 
 	return installerData, nil
