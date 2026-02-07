@@ -44,14 +44,25 @@ export function getCertsDir(): string {
 
 /**
  * Calculate SHA256 hash of a certificate file
+ * Hashes the DER-encoded certificate bytes (not the PEM wrapper) to match
+ * the Go agent and server hash computation.
  */
 export function getCertHash(certPath: string): string | null {
   try {
     if (!fs.existsSync(certPath)) {
       return null;
     }
-    const certData = fs.readFileSync(certPath);
-    return crypto.createHash('sha256').update(certData).digest('hex');
+    const certPem = fs.readFileSync(certPath, 'utf-8');
+
+    // Parse certificate using node-forge
+    const cert = forge.pki.certificateFromPem(certPem);
+
+    // Convert to DER bytes (same as cert.Raw in Go)
+    const certDer = forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes();
+
+    // Hash the DER bytes
+    const hash = crypto.createHash('sha256').update(certDer, 'binary').digest('hex');
+    return hash;
   } catch (error) {
     console.error('[CertManager] Error calculating cert hash:', error);
     return null;
@@ -179,7 +190,11 @@ export function getCACertificate(): { content: string; hash: string } | null {
     }
 
     const content = fs.readFileSync(caCertPath, 'utf-8');
-    const hash = crypto.createHash('sha256').update(content).digest('hex');
+
+    // Parse certificate and hash DER bytes to match Go agent/server
+    const cert = forge.pki.certificateFromPem(content);
+    const certDer = forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes();
+    const hash = crypto.createHash('sha256').update(certDer, 'binary').digest('hex');
 
     return { content, hash };
   } catch (error) {
