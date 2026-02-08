@@ -1,0 +1,758 @@
+openapi: 3.0.3
+info:
+  title: Sentinel RMM API
+  description: |
+    Remote Monitoring and Management API for Sentinel RMM.
+
+    ## Authentication
+    All authenticated endpoints require a Bearer token in the Authorization header.
+    Tokens are obtained via the `/api/auth/login` endpoint.
+
+    ## Rate Limiting
+    API requests are rate limited. Default limits are 100 requests per minute.
+  version: 1.0.0
+  contact:
+    name: Sentinel RMM Support
+  license:
+    name: Proprietary
+
+servers:
+  - url: /api
+    description: API Base Path
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Authentication
+    description: User authentication and session management
+  - name: Devices
+    description: Device management and monitoring
+  - name: Alerts
+    description: Alert management
+  - name: Scripts
+    description: Script management and execution
+  - name: Updates
+    description: Windows Update management
+  - name: Reports
+    description: Report generation
+  - name: Users
+    description: User management (admin only)
+  - name: Search
+    description: Global search functionality
+
+paths:
+  /auth/login:
+    post:
+      tags: [Authentication]
+      summary: User login
+      description: Authenticate user and receive JWT tokens
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  format: password
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  refreshToken:
+                    type: string
+                  user:
+                    $ref: '#/components/schemas/User'
+                  mfaRequired:
+                    type: boolean
+        '401':
+          description: Invalid credentials
+        '429':
+          description: Too many login attempts
+
+  /auth/mfa/verify:
+    post:
+      tags: [Authentication]
+      summary: Verify MFA code
+      description: Verify TOTP or backup code during login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, code]
+              properties:
+                userId:
+                  type: string
+                  format: uuid
+                code:
+                  type: string
+      responses:
+        '200':
+          description: MFA verification successful
+        '401':
+          description: Invalid code
+
+  /devices:
+    get:
+      tags: [Devices]
+      summary: List all devices
+      description: Retrieve a list of all managed devices
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [online, offline, all]
+        - name: search
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Device list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Device'
+
+  /devices/{id}:
+    get:
+      tags: [Devices]
+      summary: Get device details
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '200':
+          description: Device details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Device'
+        '404':
+          description: Device not found
+
+  /devices/{id}/metrics:
+    get:
+      tags: [Devices]
+      summary: Get device metrics
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+        - name: hours
+          in: query
+          schema:
+            type: integer
+            default: 24
+      responses:
+        '200':
+          description: Device metrics
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DeviceMetrics'
+
+  /devices/{id}/commands:
+    post:
+      tags: [Devices]
+      summary: Execute command on device
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [command]
+              properties:
+                command:
+                  type: string
+                commandType:
+                  type: string
+                  enum: [shell, powershell]
+                  default: shell
+      responses:
+        '200':
+          description: Command initiated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  commandId:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+
+  /devices/{id}/install-updates:
+    post:
+      tags: [Updates]
+      summary: Install Windows updates on device
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstallUpdatesRequest'
+      responses:
+        '200':
+          description: Update installation initiated
+
+  /alerts:
+    get:
+      tags: [Alerts]
+      summary: List alerts
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [open, acknowledged, resolved]
+        - name: severity
+          in: query
+          schema:
+            type: string
+            enum: [critical, warning, info]
+      responses:
+        '200':
+          description: Alert list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Alert'
+
+  /alerts/{id}/acknowledge:
+    post:
+      tags: [Alerts]
+      summary: Acknowledge alert
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+      responses:
+        '200':
+          description: Alert acknowledged
+
+  /alerts/{id}/resolve:
+    post:
+      tags: [Alerts]
+      summary: Resolve alert
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+      responses:
+        '200':
+          description: Alert resolved
+
+  /alert-rules:
+    get:
+      tags: [Alerts]
+      summary: List alert rules
+      responses:
+        '200':
+          description: Alert rule list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AlertRule'
+    post:
+      tags: [Alerts]
+      summary: Create alert rule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlertRuleCreate'
+      responses:
+        '201':
+          description: Alert rule created
+
+  /scripts:
+    get:
+      tags: [Scripts]
+      summary: List scripts
+      responses:
+        '200':
+          description: Script list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Script'
+    post:
+      tags: [Scripts]
+      summary: Create script
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScriptCreate'
+      responses:
+        '201':
+          description: Script created
+
+  /scripts/{id}/execute:
+    post:
+      tags: [Scripts]
+      summary: Execute script on devices
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                deviceIds:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        '200':
+          description: Script execution initiated
+
+  /webhooks:
+    get:
+      tags: [Webhooks]
+      summary: List webhooks
+      responses:
+        '200':
+          description: Webhook list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Webhook'
+    post:
+      tags: [Webhooks]
+      summary: Create webhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookCreate'
+      responses:
+        '201':
+          description: Webhook created
+
+  /reports/security-posture:
+    get:
+      tags: [Reports]
+      summary: Generate security posture PDF report
+      responses:
+        '200':
+          description: PDF report
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+
+  /reports/executive:
+    get:
+      tags: [Reports]
+      summary: Generate executive summary PDF report
+      responses:
+        '200':
+          description: PDF report
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+
+  /export/devices:
+    get:
+      tags: [Export]
+      summary: Export device data
+      parameters:
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [csv, xlsx]
+            default: csv
+      responses:
+        '200':
+          description: Export file
+          content:
+            text/csv:
+              schema:
+                type: string
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+
+  /search:
+    get:
+      tags: [Search]
+      summary: Global search
+      description: Search across devices, alerts, scripts, and users
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+
+  /users:
+    get:
+      tags: [Users]
+      summary: List users (admin only)
+      responses:
+        '200':
+          description: User list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+    post:
+      tags: [Users]
+      summary: Create user (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+      responses:
+        '201':
+          description: User created
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    DeviceId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AlertId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        username:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+          enum: [admin, operator, viewer]
+        mfaEnabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    UserCreate:
+      type: object
+      required: [email, password, role]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        username:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+          enum: [admin, operator, viewer]
+
+    Device:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        hostname:
+          type: string
+        osType:
+          type: string
+        osVersion:
+          type: string
+        status:
+          type: string
+          enum: [online, offline]
+        ipAddress:
+          type: string
+        lastSeen:
+          type: string
+          format: date-time
+        agentVersion:
+          type: string
+
+    DeviceMetrics:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        cpuPercent:
+          type: number
+        memoryPercent:
+          type: number
+        diskPercent:
+          type: number
+        networkRxBytes:
+          type: integer
+        networkTxBytes:
+          type: integer
+
+    Alert:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        deviceId:
+          type: string
+          format: uuid
+        severity:
+          type: string
+          enum: [critical, warning, info]
+        title:
+          type: string
+        message:
+          type: string
+        status:
+          type: string
+          enum: [open, acknowledged, resolved]
+        createdAt:
+          type: string
+          format: date-time
+
+    AlertRule:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        enabled:
+          type: boolean
+        metric:
+          type: string
+        operator:
+          type: string
+        threshold:
+          type: number
+        severity:
+          type: string
+
+    AlertRuleCreate:
+      type: object
+      required: [name, metric, operator, threshold, severity]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        metric:
+          type: string
+          enum: [cpu_percent, memory_percent, disk_percent, status]
+        operator:
+          type: string
+          enum: [gt, gte, lt, lte, eq, neq]
+        threshold:
+          type: number
+        severity:
+          type: string
+          enum: [critical, warning, info]
+        durationSeconds:
+          type: integer
+        cooldownMinutes:
+          type: integer
+
+    Script:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        language:
+          type: string
+          enum: [powershell, bash, python]
+        content:
+          type: string
+        isPreset:
+          type: boolean
+
+    ScriptCreate:
+      type: object
+      required: [name, language, content]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        language:
+          type: string
+          enum: [powershell, bash, python]
+        content:
+          type: string
+
+    Webhook:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        url:
+          type: string
+          format: uri
+        events:
+          type: array
+          items:
+            type: string
+        isEnabled:
+          type: boolean
+        lastTriggeredAt:
+          type: string
+          format: date-time
+
+    WebhookCreate:
+      type: object
+      required: [name, url, events]
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+          format: uri
+        secret:
+          type: string
+        events:
+          type: array
+          items:
+            type: string
+            enum: [alert.created, alert.resolved, device.online, device.offline]
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+
+    InstallUpdatesRequest:
+      type: object
+      properties:
+        securityOnly:
+          type: boolean
+          default: false
+        specificKBs:
+          type: array
+          items:
+            type: string
+        acceptEULA:
+          type: boolean
+          default: true
+        allowReboot:
+          type: boolean
+          default: false
+        rebootDelaySecs:
+          type: integer
+          default: 120
+
+    SearchResponse:
+      type: object
+      properties:
+        query:
+          type: string
+        total:
+          type: integer
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/SearchResult'
+        timingMs:
+          type: integer
+
+    SearchResult:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [device, alert, script, user, command]
+        id:
+          type: string
+        title:
+          type: string
+        subtitle:
+          type: string
+        description:
+          type: string
+        url:
+          type: string

@@ -18,6 +18,16 @@ export interface StorageInfo {
   percent: number;
 }
 
+export interface PowerManagement {
+  wolSupported: boolean;
+  wolEnabled: boolean;
+  amtSupported: boolean;
+  amtProvisioned: boolean;
+  amtVersion?: string;
+  macAddress: string;
+  wolModes?: string;
+}
+
 export interface Device {
   id: string;
   agentId: string;
@@ -52,6 +62,7 @@ export interface Device {
   clientId?: string;
   isDisabled?: boolean;
   disabledAt?: string;
+  powerManagement?: PowerManagement;
   createdAt: string;
   updatedAt: string;
 }
@@ -130,6 +141,10 @@ interface DeviceState {
   uninstallDevice: (id: string) => Promise<void>;
   forceUpdateDevice: (id: string) => Promise<void>;
   updateDevice: (id: string, data: { displayName?: string; tags?: string[]; clientId?: string | null }) => Promise<void>;
+  // Power management
+  shutdownDevice: (id: string) => Promise<void>;
+  restartDevice: (id: string) => Promise<void>;
+  wakeDevice: (id: string) => Promise<void>;
   subscribeToUpdates: () => () => void;
 }
 
@@ -264,6 +279,34 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
           ? { ...selectedDevice, ...data }
           : selectedDevice
       });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error' });
+      throw error;
+    }
+  },
+
+  // Power management actions
+  shutdownDevice: async (id: string) => {
+    try {
+      await devicesService.powerAction(id, 'shutdown');
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error' });
+      throw error;
+    }
+  },
+
+  restartDevice: async (id: string) => {
+    try {
+      await devicesService.powerAction(id, 'restart');
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error' });
+      throw error;
+    }
+  },
+
+  wakeDevice: async (id: string) => {
+    try {
+      await devicesService.powerAction(id, 'wake');
     } catch (error: unknown) {
       set({ error: error instanceof Error ? error.message : 'Unknown error' });
       throw error;

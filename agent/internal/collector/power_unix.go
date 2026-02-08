@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -202,4 +203,30 @@ func SendWakeOnLAN(macAddress string, broadcastIP string) error {
 	}
 
 	return nil
+}
+
+// ExecutePowerAction executes a power action on Unix/Linux/macOS
+func ExecutePowerAction(action string) error {
+	var cmd *exec.Cmd
+
+	switch action {
+	case "shutdown":
+		// Use shutdown now for immediate shutdown
+		if runtime.GOOS == "darwin" {
+			cmd = exec.Command("shutdown", "-h", "now")
+		} else {
+			cmd = exec.Command("shutdown", "-h", "now")
+		}
+	case "restart":
+		// Use shutdown -r for restart
+		if runtime.GOOS == "darwin" {
+			cmd = exec.Command("shutdown", "-r", "now")
+		} else {
+			cmd = exec.Command("shutdown", "-r", "now")
+		}
+	default:
+		return fmt.Errorf("unsupported power action: %s", action)
+	}
+
+	return cmd.Run()
 }

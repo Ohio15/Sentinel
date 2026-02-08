@@ -116,6 +116,7 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 			protected.POST("/devices/:id/enable", middleware.RequireRole("admin", "operator"), router.enableDevice)
 			protected.POST("/devices/:id/ping", router.pingAgent)
 			protected.POST("/devices/:id/force-update", middleware.RequireRole("admin"), router.forceUpdate)
+			protected.POST("/devices/:id/power", middleware.RequireRole("admin", "operator"), router.powerAction)
 			protected.GET("/devices/:id/commands", router.listDeviceCommands)
 
 			// Commands
@@ -214,6 +215,11 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 	// API routes
 	api := r.Group("/api")
 	{
+		// API Documentation (public)
+		api.GET("", apiInfoHandler())
+		api.GET("/docs", serveSwaggerUI())
+		api.GET("/openapi.yaml", serveOpenAPISpec())
+
 		// Public routes with rate limiting
 		// DC-001: Apply authentication rate limiting middleware for brute force protection
 		auth := api.Group("/auth")
@@ -224,6 +230,7 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			auth.POST("/refresh", refreshTokenHandler(services))
 			auth.GET("/invitations/validate", validateInvitationHandler(services))
 			auth.POST("/register", registerHandler(services))
+			auth.POST("/mfa/verify", verifyMFACodeHandler(services)) // MFA verification during login
 		}
 
 		// Agent routes (uses enrollment token)
@@ -293,6 +300,8 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			protected.POST("/devices/:id/enable", middleware.RequireRole("admin", "operator"), enableDeviceHandler(services))
 			protected.POST("/devices/:id/ping", pingAgentHandler(services))
 			protected.POST("/devices/:id/force-update", middleware.RequireRole("admin"), forceUpdateHandler(services))
+			protected.POST("/devices/:id/power", middleware.RequireRole("admin", "operator"), powerActionHandler(services))
+			protected.POST("/devices/:id/install-updates", middleware.RequireRole("admin", "operator"), installUpdatesHandler(services))
 			protected.GET("/devices/:id/commands", listDeviceCommandsHandler(services))
 
 			// Agent installer (generates pre-configured script for direct download)
@@ -337,8 +346,70 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			protected.PUT("/alert-rules/:id", middleware.RequireRole("admin"), updateAlertRuleHandler(services))
 			protected.DELETE("/alert-rules/:id", middleware.RequireRole("admin"), deleteAlertRuleHandler(services))
 
+			// Webhooks
+			protected.GET("/webhooks", listWebhooksHandler(services))
+			protected.POST("/webhooks", middleware.RequireRole("admin"), createWebhookHandler(services))
+			protected.GET("/webhooks/:id", getWebhookHandler(services))
+			protected.PUT("/webhooks/:id", middleware.RequireRole("admin"), updateWebhookHandler(services))
+			protected.DELETE("/webhooks/:id", middleware.RequireRole("admin"), deleteWebhookHandler(services))
+			protected.POST("/webhooks/:id/test", middleware.RequireRole("admin"), testWebhookHandler(services))
+			protected.GET("/webhooks/:id/deliveries", listWebhookDeliveriesHandler(services))
+
 			// Dashboard
 			protected.GET("/dashboard/stats", getDashboardStatsHandler(services))
+
+			// Reports (PDF generation)
+			protected.GET("/reports", listReportTypesHandler(services))
+			protected.GET("/reports/security-posture", generateSecurityReportHandler(services))
+			protected.GET("/reports/alert-history", generateAlertHistoryReportHandler(services))
+			protected.GET("/reports/executive", generateExecutiveReportHandler(services))
+			protected.GET("/devices/:id/report", generateDeviceReportHandler(services))
+
+			// Patch Management
+			protected.GET("/patch-policies", listPatchPoliciesHandler(services))
+			protected.POST("/patch-policies", middleware.RequireRole("admin"), createPatchPolicyHandler(services))
+			protected.GET("/patch-policies/:id", getPatchPolicyHandler(services))
+			protected.PUT("/patch-policies/:id", middleware.RequireRole("admin"), updatePatchPolicyHandler(services))
+			protected.DELETE("/patch-policies/:id", middleware.RequireRole("admin"), deletePatchPolicyHandler(services))
+			protected.GET("/patch-approvals", listPatchApprovalsHandler(services))
+			protected.POST("/patch-approvals/:id/approve", middleware.RequireRole("admin", "operator"), approvePatchHandler(services))
+			protected.POST("/patch-approvals/bulk", middleware.RequireRole("admin", "operator"), bulkApprovePatchesHandler(services))
+			protected.GET("/devices/:id/pending-patches", getPendingPatchesForDeviceHandler(services))
+
+			// Multi-Factor Authentication (MFA/TOTP)
+			protected.GET("/auth/mfa/status", getMFAStatusHandler(services))
+			protected.POST("/auth/mfa/setup", setupMFAHandler(services))
+			protected.POST("/auth/mfa/verify-setup", verifyMFASetupHandler(services))
+			protected.POST("/auth/mfa/disable", disableMFAHandler(services))
+			protected.POST("/auth/mfa/regenerate-backup-codes", regenerateBackupCodesHandler(services))
+
+			// Script Scheduling
+			protected.GET("/schedules", listSchedulesHandler(services))
+			protected.POST("/schedules", middleware.RequireRole("admin", "operator"), createScheduleHandler(services))
+			protected.GET("/schedules/:id", getScheduleHandler(services))
+			protected.PUT("/schedules/:id", middleware.RequireRole("admin", "operator"), updateScheduleHandler(services))
+			protected.DELETE("/schedules/:id", middleware.RequireRole("admin"), deleteScheduleHandler(services))
+			protected.POST("/schedules/:id/toggle", middleware.RequireRole("admin", "operator"), toggleScheduleHandler(services))
+			protected.POST("/schedules/:id/run", middleware.RequireRole("admin", "operator"), runScheduleNowHandler(services))
+			protected.GET("/executions", listExecutionsHandler(services))
+			protected.GET("/executions/:id", getExecutionHandler(services))
+
+			// Data Export (CSV/Excel)
+			protected.GET("/export", listExportTypesHandler(services))
+			protected.GET("/export/devices", exportDevicesHandler(services))
+			protected.GET("/export/alerts", exportAlertsHandler(services))
+			protected.GET("/export/updates", exportUpdatesHandler(services))
+			protected.GET("/export/software", exportSoftwareHandler(services))
+			protected.GET("/export/users", middleware.RequireRole("admin"), exportUsersHandler(services))
+			protected.GET("/export/metrics", exportMetricsHandler(services))
+
+			// Global Search (Cmd+K)
+			protected.GET("/search", globalSearchHandler(services))
+			protected.GET("/search/suggestions", searchSuggestionsHandler(services))
+			protected.GET("/search/quick-actions", quickActionsHandler(services))
+
+			// USB/Peripheral Device Management
+			RegisterUSBRoutes(protected, services.DB.Pool())
 
 			// Settings
 			protected.GET("/settings", getSettingsHandler(services))

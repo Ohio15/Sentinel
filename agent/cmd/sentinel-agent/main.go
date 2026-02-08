@@ -33,6 +33,7 @@ import (
 	"github.com/sentinel/agent/internal/updates"
 	"github.com/sentinel/agent/internal/admin"
 	"github.com/sentinel/agent/internal/mtls"
+	"github.com/sentinel/agent/internal/peripheral"
 )
 
 var Version = "1.72.0"
@@ -65,6 +66,8 @@ type Agent struct {
 	diagnosticsCollector *diagnostics.Collector
 	adminManager         *admin.Manager
 	updateChecker        *updates.Checker
+	updateInstaller      *updates.Installer
+	peripheralManager    *peripheral.Manager
 	tamperChan           chan string
 	metricsIntervalChan  chan time.Duration // Channel for dynamic metrics interval changes
 	ctx                  context.Context
@@ -297,7 +300,7 @@ func NewAgent(cfg *config.Config) *Agent {
 		dataPlane = agentgrpc.NewDataPlaneClient(cfg.AgentID, grpcAddr)
 	}
 
-	return &Agent{
+	agent := &Agent{
 		cfg:                  cfg,
 		client:               client.New(cfg, Version),
 		dataPlane:            dataPlane,
@@ -311,11 +314,17 @@ func NewAgent(cfg *config.Config) *Agent {
 		diagnosticsCollector: diagnostics.New(),
 		adminManager:         admin.NewManager(Version),
 		updateChecker:        updates.NewChecker(),
+		updateInstaller:      updates.NewInstaller(),
 		tamperChan:           make(chan string, 10),
 		metricsIntervalChan:  make(chan time.Duration, 1),
 		ctx:                  ctx,
 		cancel:               cancel,
 	}
+
+	// Initialize peripheral manager with callback
+	agent.peripheralManager = peripheral.NewManager(agent.handleUSBDeviceEvent)
+
+	return agent
 }
 
 // Run starts the agent in interactive mode
@@ -462,6 +471,13 @@ func (a *Agent) Start() error {
 	// Start certificate renewal check loop (daily)
 	go a.certRenewalLoop()
 
+	// Start USB/peripheral device monitoring
+	if a.peripheralManager != nil {
+		if err := a.peripheralManager.Start(); err != nil {
+			log.Printf("Warning: Failed to start peripheral monitoring: %v", err)
+		}
+	}
+
 	return nil
 }
 
@@ -486,6 +502,11 @@ func (a *Agent) Stop() error {
 	log.Println("Stopping agent...")
 
 	a.cancel()
+
+	// Stop peripheral monitoring
+	if a.peripheralManager != nil {
+		a.peripheralManager.Stop()
+	}
 
 	// Shutdown desktop manager (kills helper processes)
 	if a.desktopManager != nil {
@@ -534,6 +555,12 @@ func (a *Agent) registerHandlers() {
 	a.client.RegisterHandler(client.MsgTypeUpdateCertificate, a.handleUpdateCertificate)
 	// Update handlers
 	a.client.RegisterHandler(client.MsgTypeForceUpdate, a.handleForceUpdate)
+	// Power management handlers
+	a.client.RegisterHandler(client.MsgTypePowerAction, a.handlePowerAction)
+	// Windows Update installation handlers
+	a.client.RegisterHandler(client.MsgTypeInstallUpdates, a.handleInstallUpdates)
+	// USB/Peripheral device handlers
+	a.client.RegisterHandler(client.MsgTypeUSBDeviceRequest, a.handleUSBDeviceRequest)
 }
 
 func (a *Agent) onConnect() {
@@ -1689,4 +1716,299 @@ func (a *Agent) handleForceUpdate(msg *client.Message) error {
 	}()
 
 	return nil
+}
+
+func (a *Agent) handlePowerAction(msg *client.Message) error {
+	data, ok := msg.Data.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("invalid power action message format")
+	}
+
+	action, _ := data["action"].(string)
+	log.Printf("[Power] Received power action: %s", action)
+
+	switch action {
+	case "shutdown":
+		// Send acknowledgment before shutting down
+		if err := a.client.SendResponse(msg.RequestID, true, map[string]interface{}{
+			"status": "executing",
+			"action": "shutdown",
+		}, ""); err != nil {
+			log.Printf("[Power] Failed to send acknowledgment: %v", err)
+		}
+
+		// Execute shutdown in background after small delay
+		go func() {
+			time.Sleep(2 * time.Second) // Give time for acknowledgment to be sent
+			if err := a.collector.ExecutePowerAction("shutdown"); err != nil {
+				log.Printf("[Power] Shutdown failed: %v", err)
+			}
+		}()
+
+	case "restart":
+		// Send acknowledgment before restarting
+		if err := a.client.SendResponse(msg.RequestID, true, map[string]interface{}{
+			"status": "executing",
+			"action": "restart",
+		}, ""); err != nil {
+			log.Printf("[Power] Failed to send acknowledgment: %v", err)
+		}
+
+		// Execute restart in background after small delay
+		go func() {
+			time.Sleep(2 * time.Second) // Give time for acknowledgment to be sent
+			if err := a.collector.ExecutePowerAction("restart"); err != nil {
+				log.Printf("[Power] Restart failed: %v", err)
+			}
+		}()
+
+	case "wake":
+		// Wake-on-LAN - send magic packet to the target MAC
+		macAddress, _ := data["macAddress"].(string)
+		if macAddress == "" {
+			return a.client.SendResponse(msg.RequestID, false, nil, "Missing MAC address for Wake-on-LAN")
+		}
+
+		if err := a.collector.SendWakeOnLAN(macAddress); err != nil {
+			log.Printf("[Power] Wake-on-LAN failed: %v", err)
+			return a.client.SendResponse(msg.RequestID, false, nil, fmt.Sprintf("Wake-on-LAN failed: %v", err))
+		}
+
+		return a.client.SendResponse(msg.RequestID, true, map[string]interface{}{
+			"status":     "sent",
+			"action":     "wake",
+			"macAddress": macAddress,
+		}, "")
+
+	default:
+		return a.client.SendResponse(msg.RequestID, false, nil, fmt.Sprintf("Unknown power action: %s", action))
+	}
+
+	return nil
+}
+
+// handleInstallUpdates handles Windows Update installation requests
+func (a *Agent) handleInstallUpdates(msg *client.Message) error {
+	if runtime.GOOS != "windows" {
+		return a.client.SendResponse(msg.RequestID, false, nil, "Windows Update installation only supported on Windows")
+	}
+
+	data, ok := msg.Data.(map[string]interface{})
+	if !ok {
+		data = make(map[string]interface{})
+	}
+
+	// Parse options
+	opts := updates.InstallOptions{
+		AcceptEULA: true,
+	}
+
+	if securityOnly, ok := data["securityOnly"].(bool); ok {
+		opts.SecurityOnly = securityOnly
+	}
+	if allowReboot, ok := data["allowReboot"].(bool); ok {
+		opts.AllowReboot = allowReboot
+	}
+	if rebootDelay, ok := data["rebootDelaySecs"].(float64); ok {
+		opts.RebootDelaySecs = int(rebootDelay)
+	}
+	if kbs, ok := data["specificKBs"].([]interface{}); ok {
+		for _, kb := range kbs {
+			if kbStr, ok := kb.(string); ok {
+				opts.SpecificKBs = append(opts.SpecificKBs, kbStr)
+			}
+		}
+	}
+
+	log.Printf("[Updates] Received install updates request (securityOnly=%v, allowReboot=%v)",
+		opts.SecurityOnly, opts.AllowReboot)
+
+	// Check if installation is already in progress
+	if a.updateInstaller.IsInstalling() {
+		return a.client.SendResponse(msg.RequestID, false, nil, "Update installation already in progress")
+	}
+
+	// Send acknowledgment
+	if err := a.client.SendResponse(msg.RequestID, true, map[string]interface{}{
+		"status":  "started",
+		"message": "Windows Update installation started",
+	}, ""); err != nil {
+		log.Printf("[Updates] Failed to send acknowledgment: %v", err)
+	}
+
+	// Run installation in background
+	go func() {
+		result, err := a.updateInstaller.InstallUpdates(a.ctx, opts)
+		if err != nil {
+			log.Printf("[Updates] Installation failed: %v", err)
+			// Send failure notification
+			a.client.SendJSON(map[string]interface{}{
+				"type":      client.MsgTypeInstallProgress,
+				"requestId": msg.RequestID,
+				"phase":     "error",
+				"error":     err.Error(),
+				"success":   false,
+			})
+			return
+		}
+
+		log.Printf("[Updates] Installation completed: installed=%d, failed=%d, reboot=%v",
+			result.InstalledCount, result.FailedCount, result.RebootRequired)
+
+		// Send completion notification
+		a.client.SendJSON(map[string]interface{}{
+			"type":             client.MsgTypeInstallProgress,
+			"requestId":        msg.RequestID,
+			"phase":            "complete",
+			"success":          result.Success,
+			"installedCount":   result.InstalledCount,
+			"failedCount":      result.FailedCount,
+			"rebootRequired":   result.RebootRequired,
+			"installedUpdates": result.InstalledUpdates,
+			"failedUpdates":    result.FailedUpdates,
+			"error":            result.Error,
+			"startedAt":        result.StartedAt.Format(time.RFC3339),
+			"completedAt":      result.CompletedAt.Format(time.RFC3339),
+		})
+
+		// Refresh update status after installation
+		if _, err := a.updateChecker.GetStatus(a.ctx, true); err != nil {
+			log.Printf("[Updates] Failed to refresh status: %v", err)
+		}
+
+		// Handle reboot if required and allowed
+		if result.RebootRequired && opts.AllowReboot {
+			delay := opts.RebootDelaySecs
+			if delay <= 0 {
+				delay = 120 // Default 2 minute delay
+			}
+
+			log.Printf("[Updates] Scheduling system reboot in %d seconds", delay)
+
+			// Notify server about pending reboot
+			a.client.SendJSON(map[string]interface{}{
+				"type":         client.MsgTypeInstallProgress,
+				"phase":        "reboot_scheduled",
+				"rebootDelay":  delay,
+				"rebootReason": "Windows Update installation completed - reboot required",
+			})
+
+			if err := updates.ScheduleReboot(a.ctx, delay, "Windows Update installation completed. System will restart."); err != nil {
+				log.Printf("[Updates] Failed to schedule reboot: %v", err)
+			}
+		}
+	}()
+
+	return nil
+}
+
+// handleUSBDeviceEvent is called when a USB device is connected/disconnected
+func (a *Agent) handleUSBDeviceEvent(event *peripheral.DeviceEvent) {
+	if event == nil || event.Device == nil {
+		return
+	}
+
+	if !a.client.IsConnected() || !a.client.IsAuthenticated() {
+		log.Printf("[USB] Event %s but not connected to server, queuing", event.EventType)
+		return
+	}
+
+	log.Printf("[USB] Sending %s event for device: %s (%s %s)",
+		event.EventType, event.Device.DeviceID, event.Device.Manufacturer, event.Device.ProductName)
+
+	// Send event to server
+	a.client.SendJSON(map[string]interface{}{
+		"type": client.MsgTypeUSBDeviceEvent,
+		"data": map[string]interface{}{
+			"eventType": event.EventType,
+			"device": map[string]interface{}{
+				"deviceId":       event.Device.DeviceID,
+				"instancePath":   event.Device.InstancePath,
+				"vendorId":       event.Device.VendorID,
+				"productId":      event.Device.ProductID,
+				"serialNumber":   event.Device.SerialNumber,
+				"manufacturer":   event.Device.Manufacturer,
+				"productName":    event.Device.ProductName,
+				"deviceClass":    string(event.Device.DeviceClass),
+				"classCode":      event.Device.ClassCode,
+				"subclassCode":   event.Device.SubclassCode,
+				"protocolCode":   event.Device.ProtocolCode,
+				"busNumber":      event.Device.BusNumber,
+				"portNumber":     event.Device.PortNumber,
+				"deviceSpeed":    event.Device.DeviceSpeed,
+				"parentDevice":   event.Device.ParentDevice,
+				"driveLetter":    event.Device.DriveLetter,
+				"mountPoint":     event.Device.MountPoint,
+				"volumeLabel":    event.Device.VolumeLabel,
+				"fileSystem":     event.Device.FileSystem,
+				"totalSize":      event.Device.TotalSize,
+				"freeSpace":      event.Device.FreeSpace,
+				"isConnected":    event.Device.IsConnected,
+				"connectionTime": event.Device.ConnectionTime.Format(time.RFC3339),
+				"isRemovable":    event.Device.IsRemovable,
+				"isBootable":     event.Device.IsBootable,
+				"isEncrypted":    event.Device.IsEncrypted,
+			},
+			"timestamp":    event.Timestamp.Format(time.RFC3339),
+			"securityRisk": peripheral.ClassifySecurityRisk(event.Device),
+		},
+	})
+}
+
+// handleUSBDeviceRequest handles requests from the server to scan USB devices
+func (a *Agent) handleUSBDeviceRequest(msg *client.Message) error {
+	log.Println("[USB] Received USB device scan request")
+
+	if a.peripheralManager == nil {
+		return a.client.SendResponse(msg.RequestID, false, nil, "Peripheral manager not available")
+	}
+
+	// Get current connected devices
+	devices := a.peripheralManager.GetConnectedDevices()
+
+	// Convert to serializable format
+	deviceList := make([]map[string]interface{}, len(devices))
+	for i, device := range devices {
+		deviceList[i] = map[string]interface{}{
+			"deviceId":       device.DeviceID,
+			"instancePath":   device.InstancePath,
+			"vendorId":       device.VendorID,
+			"productId":      device.ProductID,
+			"serialNumber":   device.SerialNumber,
+			"manufacturer":   device.Manufacturer,
+			"productName":    device.ProductName,
+			"deviceClass":    string(device.DeviceClass),
+			"classCode":      device.ClassCode,
+			"subclassCode":   device.SubclassCode,
+			"protocolCode":   device.ProtocolCode,
+			"busNumber":      device.BusNumber,
+			"portNumber":     device.PortNumber,
+			"deviceSpeed":    device.DeviceSpeed,
+			"parentDevice":   device.ParentDevice,
+			"driveLetter":    device.DriveLetter,
+			"mountPoint":     device.MountPoint,
+			"volumeLabel":    device.VolumeLabel,
+			"fileSystem":     device.FileSystem,
+			"totalSize":      device.TotalSize,
+			"freeSpace":      device.FreeSpace,
+			"isConnected":    device.IsConnected,
+			"connectionTime": device.ConnectionTime.Format(time.RFC3339),
+			"isRemovable":    device.IsRemovable,
+			"isBootable":     device.IsBootable,
+			"isEncrypted":    device.IsEncrypted,
+			"securityRisk":   peripheral.ClassifySecurityRisk(device),
+		}
+	}
+
+	log.Printf("[USB] Returning %d connected devices", len(deviceList))
+
+	return a.client.SendJSON(map[string]interface{}{
+		"type":      client.MsgTypeUSBDeviceList,
+		"requestId": msg.RequestID,
+		"data": map[string]interface{}{
+			"devices":   deviceList,
+			"count":     len(deviceList),
+			"timestamp": time.Now().Format(time.RFC3339),
+		},
+	})
 }

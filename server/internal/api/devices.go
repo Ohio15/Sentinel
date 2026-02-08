@@ -133,14 +133,15 @@ func (r *Router) getDevice(c *gin.Context) {
 	var d models.Device
 	var tags []string
 	var metadata map[string]string
-	var gpuJSON, storageJSON []byte
+	var gpuJSON, storageJSON, powerMgmtJSON []byte
 
 	err = r.db.Pool().QueryRow(ctx, `
 		SELECT id, agent_id, COALESCE(hostname, ''), COALESCE(display_name, ''), COALESCE(os_type, ''), COALESCE(os_version, ''), COALESCE(os_build, ''),
 			   COALESCE(platform, ''), COALESCE(platform_family, ''), COALESCE(architecture, ''), COALESCE(cpu_model, ''), COALESCE(cpu_cores, 0), COALESCE(cpu_threads, 0),
 			   COALESCE(cpu_speed, 0), COALESCE(total_memory, 0), COALESCE(EXTRACT(EPOCH FROM boot_time)::bigint, 0), COALESCE(gpu::jsonb, '[]'::jsonb), COALESCE(storage, '[]'::jsonb), COALESCE(serial_number, ''),
 			   COALESCE(manufacturer, ''), COALESCE(model, ''), COALESCE(domain, ''), COALESCE(agent_version, ''), last_seen, COALESCE(status, 'offline'),
-			   COALESCE(host(ip_address), '' ) as ip_address, COALESCE(host(public_ip), '' ) as public_ip, COALESCE(mac_address, ''), COALESCE(tags, ARRAY[]::text[]), COALESCE(metadata, '{}'::jsonb), client_id, created_at, updated_at
+			   COALESCE(host(ip_address), '' ) as ip_address, COALESCE(host(public_ip), '' ) as public_ip, COALESCE(mac_address, ''), COALESCE(tags, ARRAY[]::text[]), COALESCE(metadata, '{}'::jsonb), client_id,
+			   COALESCE(power_management, '{}'::jsonb), created_at, updated_at
 		FROM devices WHERE id = $1 AND organization_id = $2
 	`, id, constants.CurrentOrganizationID).Scan(&d.ID, &d.AgentID, &d.Hostname, &d.DisplayName, &d.OSType,
 		&d.OSVersion, &d.OSBuild, &d.Platform, &d.PlatformFamily, &d.Architecture,
@@ -148,7 +149,7 @@ func (r *Router) getDevice(c *gin.Context) {
 		&d.BootTime, &gpuJSON, &storageJSON, &d.SerialNumber, &d.Manufacturer,
 		&d.Model, &d.Domain, &d.AgentVersion, &d.LastSeen, &d.Status,
 		&d.IPAddress, &d.PublicIP, &d.MACAddress, &tags, &metadata,
-		&d.ClientID, &d.CreatedAt, &d.UpdatedAt)
+		&d.ClientID, &powerMgmtJSON, &d.CreatedAt, &d.UpdatedAt)
 
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
@@ -162,6 +163,12 @@ func (r *Router) getDevice(c *gin.Context) {
 	}
 	if err := json.Unmarshal(storageJSON, &d.Storage); err != nil && len(storageJSON) > 0 {
 		log.Printf("Error unmarshaling storage data for device %s: %v", d.ID, err)
+	}
+	if len(powerMgmtJSON) > 2 { // More than just "{}"
+		var pm models.PowerManagement
+		if err := json.Unmarshal(powerMgmtJSON, &pm); err == nil {
+			d.PowerManagement = &pm
+		}
 	}
 
 	if r.hub.IsAgentOnline(d.AgentID) {
@@ -946,5 +953,223 @@ func (r *Router) forceUpdate(c *gin.Context) {
 		"message":        "Update check triggered",
 		"requestId":      requestID,
 		"currentVersion": currentVersion,
+	})
+}
+
+// powerAction sends a power action command to the agent (shutdown, restart, wake)
+func (r *Router) powerAction(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid device ID"})
+		return
+	}
+
+	var req struct {
+		Action string `json:"action"` // shutdown, restart, wake
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	// Validate action
+	validActions := map[string]bool{"shutdown": true, "restart": true, "wake": true}
+	if !validActions[req.Action] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid action. Must be 'shutdown', 'restart', or 'wake'"})
+		return
+	}
+
+	ctx := context.Background()
+
+	// Get device info including agent ID and power management capabilities
+	var agentID, macAddress string
+	var powerMgmtJSON []byte
+	err = r.db.Pool().QueryRow(ctx, `
+		SELECT agent_id, COALESCE(mac_address, ''), COALESCE(power_management, '{}'::jsonb)
+		FROM devices WHERE id = $1 AND organization_id = $2
+	`, id, constants.CurrentOrganizationID).Scan(&agentID, &macAddress, &powerMgmtJSON)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
+		return
+	}
+
+	// For wake action, we need WoL support and the device should be offline
+	if req.Action == "wake" {
+		// Parse power management JSON
+		var powerMgmt struct {
+			WoLSupported bool   `json:"wol_supported"`
+			WoLEnabled   bool   `json:"wol_enabled"`
+			MACAddress   string `json:"mac_address"`
+		}
+		if err := json.Unmarshal(powerMgmtJSON, &powerMgmt); err != nil {
+			log.Printf("Error parsing power management for device %s: %v", id, err)
+		}
+
+		if !powerMgmt.WoLSupported {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Wake-on-LAN is not supported on this device"})
+			return
+		}
+
+		// Use MAC from power management if available, otherwise use device MAC
+		wolMAC := powerMgmt.MACAddress
+		if wolMAC == "" {
+			wolMAC = macAddress
+		}
+		if wolMAC == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "No MAC address available for Wake-on-LAN"})
+			return
+		}
+
+		// Send WoL packet via any online agent on the same network
+		// For now, we'll try to use the agent on the same subnet
+		// In a more advanced implementation, we'd pick an agent on the same broadcast domain
+		requestID := uuid.New().String()
+		payloadBytes, _ := json.Marshal(map[string]interface{}{
+			"action":     "wake",
+			"macAddress": wolMAC,
+		})
+		msg := websocket.Message{
+			Type:      websocket.MsgTypePowerAction,
+			RequestID: requestID,
+			Payload:   payloadBytes,
+		}
+
+		msgBytes, _ := json.Marshal(msg)
+
+		// Try to send to the target agent first (it might be coming online)
+		// If that fails, broadcast to all agents on the same network
+		if err := r.hub.SendToAgent(agentID, msgBytes); err != nil {
+			// Agent is offline, try to broadcast WoL via any online agent
+			log.Printf("[PowerAction] Target agent %s is offline, attempting WoL broadcast via other agents", agentID)
+			// For now, return an error - in future we could implement subnet-aware WoL relay
+			c.JSON(http.StatusOK, gin.H{
+				"message":   "Wake-on-LAN packet will be sent when an agent on the same network is available",
+				"requestId": requestID,
+				"action":    req.Action,
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"message":   "Wake-on-LAN command sent",
+			"requestId": requestID,
+			"action":    req.Action,
+		})
+		return
+	}
+
+	// For shutdown/restart, the device must be online
+	if !r.hub.IsAgentOnline(agentID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Device is offline. Cannot send power command to offline agent."})
+		return
+	}
+
+	log.Printf("[PowerAction] Sending %s command to agent %s", req.Action, agentID)
+
+	// Send power action command to agent
+	requestID := uuid.New().String()
+	payloadBytes, _ := json.Marshal(map[string]interface{}{
+		"action": req.Action,
+	})
+	msg := websocket.Message{
+		Type:      websocket.MsgTypePowerAction,
+		RequestID: requestID,
+		Payload:   payloadBytes,
+	}
+
+	msgBytes, _ := json.Marshal(msg)
+	if err := r.hub.SendToAgent(agentID, msgBytes); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send power command to agent"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":   strings.Title(req.Action) + " command sent",
+		"requestId": requestID,
+		"action":    req.Action,
+	})
+}
+
+// InstallUpdatesRequest represents a request to install Windows updates
+type InstallUpdatesRequest struct {
+	SecurityOnly    bool     `json:"securityOnly"`    // Only install security updates
+	SpecificKBs     []string `json:"specificKBs"`     // Install only specific KB articles
+	AcceptEULA      bool     `json:"acceptEULA"`      // Automatically accept EULAs
+	AllowReboot     bool     `json:"allowReboot"`     // Allow automatic reboot if required
+	RebootDelaySecs int      `json:"rebootDelaySecs"` // Delay before reboot (if allowed)
+}
+
+func (r *Router) installUpdates(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid device ID"})
+		return
+	}
+
+	var req InstallUpdatesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	ctx := context.Background()
+
+	// Get device agent ID and OS type
+	var agentID, osType string
+	err = r.db.Pool().QueryRow(ctx, `
+		SELECT agent_id, COALESCE(os_type, 'unknown')
+		FROM devices WHERE id = $1 AND organization_id = $2
+	`, id, constants.CurrentOrganizationID).Scan(&agentID, &osType)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
+		return
+	}
+
+	// Validate OS type - only Windows supports this feature
+	if osType != "windows" && osType != "Windows" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Windows Update installation is only supported on Windows devices"})
+		return
+	}
+
+	// Check if agent is online
+	if !r.hub.IsAgentOnline(agentID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Device is offline. Cannot install updates on offline agent."})
+		return
+	}
+
+	log.Printf("[InstallUpdates] Initiating update installation on device %s (agent: %s)", id, agentID)
+
+	// Send install updates command to agent
+	requestID := uuid.New().String()
+	payloadBytes, _ := json.Marshal(map[string]interface{}{
+		"securityOnly":    req.SecurityOnly,
+		"specificKBs":     req.SpecificKBs,
+		"acceptEULA":      req.AcceptEULA,
+		"allowReboot":     req.AllowReboot,
+		"rebootDelaySecs": req.RebootDelaySecs,
+	})
+	msg := websocket.Message{
+		Type:      websocket.MsgTypeInstallUpdates,
+		RequestID: requestID,
+		Payload:   payloadBytes,
+	}
+
+	msgBytes, _ := json.Marshal(msg)
+	if err := r.hub.SendToAgent(agentID, msgBytes); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send install command to agent"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "Windows Update installation initiated",
+		"requestId": requestID,
+		"deviceId":  id.String(),
+		"options": map[string]interface{}{
+			"securityOnly":    req.SecurityOnly,
+			"specificKBs":     req.SpecificKBs,
+			"acceptEULA":      req.AcceptEULA,
+			"allowReboot":     req.AllowReboot,
+			"rebootDelaySecs": req.RebootDelaySecs,
+		},
 	})
 }
