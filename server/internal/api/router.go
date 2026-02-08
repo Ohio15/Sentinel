@@ -358,9 +358,8 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			// Dashboard
 			protected.GET("/dashboard/stats", getDashboardStatsHandler(services))
 
-			// Reports (PDF generation)
+			// Reports (PDF generation) - Note: /reports/security-posture is in inventory section
 			protected.GET("/reports", listReportTypesHandler(services))
-			protected.GET("/reports/security-posture", generateSecurityReportHandler(services))
 			protected.GET("/reports/alert-history", generateAlertHistoryReportHandler(services))
 			protected.GET("/reports/executive", generateExecutiveReportHandler(services))
 			protected.GET("/devices/:id/report", generateDeviceReportHandler(services))
