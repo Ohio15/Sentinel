@@ -28,6 +28,8 @@ interface AuthState {
   error: string | null;
   _authChecked: boolean; // Flag to prevent duplicate checkAuth calls
   _refreshTimer: ReturnType<typeof setTimeout> | null;
+  _refreshAttempts: number; // Counter to prevent infinite refresh loops
+  _isRefreshing: boolean; // Flag to prevent concurrent refresh attempts
   login: (identifier: string, password: string) => Promise<void>;
   logout: () => void;
   checkAuth: () => Promise<void>;
@@ -82,6 +84,8 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   error: null,
   _authChecked: false, // Prevents duplicate checkAuth calls
   _refreshTimer: null,
+  _refreshAttempts: 0, // Prevents infinite refresh loops (max 2 attempts)
+  _isRefreshing: false, // Prevents concurrent refresh attempts
 
   _scheduleTokenRefresh: (expiresIn: number) => {
     const state = get();
@@ -109,13 +113,29 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
   refreshAccessToken: async () => {
     const state = get();
+
+    // Prevent concurrent refresh attempts
+    if (state._isRefreshing) {
+      console.log('[AuthStore] Refresh already in progress, skipping');
+      return false;
+    }
+
+    // Prevent infinite refresh loops (max 2 attempts per session)
+    if (state._refreshAttempts >= 2) {
+      console.log('[AuthStore] Max refresh attempts reached, clearing tokens');
+      get().logout();
+      return false;
+    }
+
     if (!state.refreshToken) {
       console.log('[AuthStore] No refresh token available');
       return false;
     }
 
+    set({ _isRefreshing: true, _refreshAttempts: state._refreshAttempts + 1 });
+
     try {
-      console.log('[AuthStore] Refreshing access token...');
+      console.log(`[AuthStore] Refreshing access token (attempt ${state._refreshAttempts + 1}/2)...`);
       const response = await api!.refreshToken(state.refreshToken);
       const { token: newToken, expiresIn } = response;
 
@@ -126,6 +146,9 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       set({
         token: newToken,
         tokenExpiresAt: expiresAt,
+        _isRefreshing: false,
+        // Reset attempts on successful refresh
+        _refreshAttempts: 0,
       });
 
       // Schedule next refresh
@@ -135,6 +158,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       return true;
     } catch (err) {
       console.error('[AuthStore] Token refresh failed:', err);
+      set({ _isRefreshing: false });
       // If refresh fails, logout
       get().logout();
       return false;
@@ -166,6 +190,8 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         isAuthenticated: true,
         isLoading: false,
         error: null,
+        _refreshAttempts: 0,
+        _isRefreshing: false,
       });
 
       // Schedule token refresh
@@ -218,6 +244,8 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       isLoading: false,
       error: null,
       _refreshTimer: null,
+      _refreshAttempts: 0,
+      _isRefreshing: false,
     });
   },
 
@@ -299,18 +327,39 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     } catch (err) {
       console.log('[AuthStore] Token invalid:', err);
 
-      // Try to refresh if we have a refresh token
-      if (refreshToken) {
+      // Try to refresh if we have a refresh token AND haven't already tried
+      const currentState = get();
+      if (refreshToken && currentState._refreshAttempts === 0) {
         console.log('[AuthStore] Attempting token refresh...');
         set({ refreshToken });
         const refreshed = await get().refreshAccessToken();
         if (refreshed) {
-          // Retry checkAuth after successful refresh
-          set({ _authChecked: false });
-          return get().checkAuth();
+          // Retry validation ONE time with the new token
+          try {
+            console.log('[AuthStore] Validating new token...');
+            const user = await auth.getCurrentUser();
+            const newToken = localStorage.getItem('token');
+            const newExpiresAt = localStorage.getItem('tokenExpiresAt');
+
+            set({
+              user: user as User,
+              token: newToken,
+              isAuthenticated: true,
+              isLoading: false,
+              _authChecked: true,
+            });
+
+            connection.connect();
+            return;
+          } catch (retryErr) {
+            console.log('[AuthStore] New token also invalid, giving up:', retryErr);
+            // Fall through to logout
+          }
         }
       }
 
+      // Clear everything and show login
+      console.log('[AuthStore] Clearing tokens and showing login');
       localStorage.removeItem('token');
       localStorage.removeItem('refreshToken');
       localStorage.removeItem('tokenExpiresAt');
@@ -323,6 +372,8 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         isAuthenticated: false,
         isLoading: false,
         _authChecked: true,
+        _refreshAttempts: 0,
+        _isRefreshing: false,
       });
     }
   },
