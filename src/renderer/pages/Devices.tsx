@@ -72,6 +72,8 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
   const { clients, currentClientId } = useClientStore();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [osFilter, setOsFilter] = useState<string>('all');
 
   const getClientName = (clientId?: string) => {
     if (!clientId) return null;
@@ -375,6 +377,20 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
     setCreateLinkResult(null);
   };
 
+  // Get unique OS types for the filter dropdown (respecting client filter)
+  const uniqueOsTypes = React.useMemo(() => {
+    const clientFilteredDevices = devices.filter(d => !currentClientId || d.clientId === currentClientId);
+    const osSet = new Set(clientFilteredDevices.map(d => d.osType).filter(Boolean));
+    return Array.from(osSet).sort();
+  }, [devices, currentClientId]);
+
+  // Get unique device types for filter (respecting client filter)
+  const uniqueDeviceTypes = React.useMemo(() => {
+    const clientFilteredDevices = devices.filter(d => !currentClientId || d.clientId === currentClientId);
+    const typeSet = new Set(clientFilteredDevices.map(d => d.deviceType || 'desktop').filter(Boolean));
+    return Array.from(typeSet).sort();
+  }, [devices, currentClientId]);
+
   const filteredDevices = devices.filter(device => {
     const matchesSearch =
       device.hostname.toLowerCase().includes(search.toLowerCase()) ||
@@ -382,11 +398,13 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
       device.ipAddress.includes(search);
 
     const matchesStatus = statusFilter === 'all' || device.status === statusFilter;
+    const matchesType = typeFilter === 'all' || (device.deviceType || 'desktop') === typeFilter;
+    const matchesOs = osFilter === 'all' || device.osType === osFilter;
 
     // Filter by selected client from the header dropdown
     const matchesClient = !currentClientId || device.clientId === currentClientId;
 
-    return matchesSearch && matchesStatus && matchesClient;
+    return matchesSearch && matchesStatus && matchesType && matchesOs && matchesClient;
   });
 
   const handleDisable = async (id: string) => {
@@ -522,8 +540,8 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
           )}
 
           {/* Filters */}
-          <div className="flex gap-4">
-            <div className="flex-1">
+          <div className="flex flex-wrap gap-3">
+            <div className="flex-1 min-w-[200px]">
               <input
                 type="text"
                 placeholder="Search devices..."
@@ -535,7 +553,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
             <select
               value={statusFilter}
               onChange={e => setStatusFilter(e.target.value)}
-              className="input w-40"
+              className="input w-36"
             >
               <option value="all">All Status</option>
               <option value="online">Online</option>
@@ -545,6 +563,40 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
               <option value="disabled">Disabled</option>
               <option value="uninstalling">Uninstalling</option>
             </select>
+            <select
+              value={typeFilter}
+              onChange={e => setTypeFilter(e.target.value)}
+              className="input w-32"
+            >
+              <option value="all">All Types</option>
+              {uniqueDeviceTypes.map(type => (
+                <option key={type} value={type}>
+                  {type.charAt(0).toUpperCase() + type.slice(1)}
+                </option>
+              ))}
+            </select>
+            <select
+              value={osFilter}
+              onChange={e => setOsFilter(e.target.value)}
+              className="input w-32"
+            >
+              <option value="all">All OS</option>
+              {uniqueOsTypes.map(os => (
+                <option key={os} value={os}>{os}</option>
+              ))}
+            </select>
+            {(statusFilter !== 'all' || typeFilter !== 'all' || osFilter !== 'all') && (
+              <button
+                onClick={() => {
+                  setStatusFilter('all');
+                  setTypeFilter('all');
+                  setOsFilter('all');
+                }}
+                className="btn btn-secondary text-sm"
+              >
+                Clear Filters
+              </button>
+            )}
           </div>
 
           {/* Device Table */}
