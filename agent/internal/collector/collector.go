@@ -35,6 +35,7 @@ type SystemInfo struct {
 	Platform        string           `json:"platform"`
 	PlatformFamily  string           `json:"platform_family"`
 	Architecture    string           `json:"architecture"`
+	DeviceType      string           `json:"device_type"` // desktop, laptop, server, tablet, virtual
 	CPUModel        string           `json:"cpu_model"`
 	CPUCores        int              `json:"cpu_cores"`
 	CPUThreads      int              `json:"cpu_threads"`
@@ -200,6 +201,9 @@ func (c *Collector) GetSystemInfo() (*SystemInfo, error) {
 	// Get power management capabilities (WoL, AMT)
 	powerMgmt := c.getPowerManagement(macAddress)
 
+	// Get device type (desktop, laptop, server, etc.)
+	deviceType := c.getDeviceType(hostInfo.OS, hostInfo.PlatformFamily, manufacturer, model)
+
 	return &SystemInfo{
 		Hostname:        hostInfo.Hostname,
 		OS:              hostInfo.OS,
@@ -208,6 +212,7 @@ func (c *Collector) GetSystemInfo() (*SystemInfo, error) {
 		Platform:        hostInfo.Platform,
 		PlatformFamily:  hostInfo.PlatformFamily,
 		Architecture:    runtime.GOARCH,
+		DeviceType:      deviceType,
 		CPUModel:        cpuModel,
 		CPUCores:        runtime.NumCPU(),
 		CPUThreads:      cpuThreads,
