@@ -56,6 +56,7 @@ type Device struct {
 	AgentID        string            `json:"agentId"`
 	Hostname       string            `json:"hostname"`
 	DisplayName    string            `json:"displayName"`
+	DeviceType     string            `json:"deviceType"` // desktop, laptop, server, tablet, virtual
 	OSType         string            `json:"osType"`
 	OSVersion      string            `json:"osVersion"`
 	OSBuild        string            `json:"osBuild"`
@@ -191,6 +192,7 @@ type Session struct {
 type AgentEnrollment struct {
 	AgentID        string        `json:"agentId"`
 	Hostname       string        `json:"hostname"`
+	DeviceType     string        `json:"deviceType"` // desktop, laptop, server, tablet, virtual
 	OSType         string        `json:"osType"`
 	OSVersion      string        `json:"osVersion"`
 	OSBuild        string        `json:"osBuild"`

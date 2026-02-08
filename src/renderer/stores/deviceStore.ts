@@ -33,6 +33,7 @@ export interface Device {
   agentId: string;
   hostname: string;
   displayName?: string;
+  deviceType?: 'desktop' | 'laptop' | 'server' | 'tablet' | 'virtual';
   osType: string;
   osVersion: string;
   osBuild?: string;

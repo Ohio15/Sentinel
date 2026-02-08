@@ -59,7 +59,8 @@ func (r *Router) listDevices(c *gin.Context) {
 
 	// Query devices with pagination using LIMIT and OFFSET
 	rows, err := r.db.Pool().Query(ctx, `
-		SELECT id, agent_id, COALESCE(hostname, ''), COALESCE(display_name, ''), COALESCE(os_type, ''), COALESCE(os_version, ''), COALESCE(os_build, ''),
+		SELECT id, agent_id, COALESCE(hostname, ''), COALESCE(display_name, ''), COALESCE(device_type, 'desktop'),
+			   COALESCE(os_type, ''), COALESCE(os_version, ''), COALESCE(os_build, ''),
 			   COALESCE(platform, ''), COALESCE(platform_family, ''), COALESCE(architecture, ''), COALESCE(cpu_model, ''), COALESCE(cpu_cores, 0), COALESCE(cpu_threads, 0),
 			   COALESCE(cpu_speed, 0), COALESCE(total_memory, 0), COALESCE(EXTRACT(EPOCH FROM boot_time)::bigint, 0), COALESCE(gpu::jsonb, '[]'::jsonb), COALESCE(storage, '[]'::jsonb), COALESCE(serial_number, ''),
 			   COALESCE(manufacturer, ''), COALESCE(model, ''), COALESCE(domain, ''), COALESCE(agent_version, ''), last_seen, COALESCE(status, 'offline'),
@@ -82,8 +83,8 @@ func (r *Router) listDevices(c *gin.Context) {
 		var metadata map[string]string
 		var gpuJSON, storageJSON []byte
 
-		err := rows.Scan(&d.ID, &d.AgentID, &d.Hostname, &d.DisplayName, &d.OSType,
-			&d.OSVersion, &d.OSBuild, &d.Platform, &d.PlatformFamily, &d.Architecture,
+		err := rows.Scan(&d.ID, &d.AgentID, &d.Hostname, &d.DisplayName, &d.DeviceType,
+			&d.OSType, &d.OSVersion, &d.OSBuild, &d.Platform, &d.PlatformFamily, &d.Architecture,
 			&d.CPUModel, &d.CPUCores, &d.CPUThreads, &d.CPUSpeed, &d.TotalMemory,
 			&d.BootTime, &gpuJSON, &storageJSON, &d.SerialNumber, &d.Manufacturer,
 			&d.Model, &d.Domain, &d.AgentVersion, &d.LastSeen, &d.Status,
@@ -136,15 +137,16 @@ func (r *Router) getDevice(c *gin.Context) {
 	var gpuJSON, storageJSON, powerMgmtJSON []byte
 
 	err = r.db.Pool().QueryRow(ctx, `
-		SELECT id, agent_id, COALESCE(hostname, ''), COALESCE(display_name, ''), COALESCE(os_type, ''), COALESCE(os_version, ''), COALESCE(os_build, ''),
+		SELECT id, agent_id, COALESCE(hostname, ''), COALESCE(display_name, ''), COALESCE(device_type, 'desktop'),
+			   COALESCE(os_type, ''), COALESCE(os_version, ''), COALESCE(os_build, ''),
 			   COALESCE(platform, ''), COALESCE(platform_family, ''), COALESCE(architecture, ''), COALESCE(cpu_model, ''), COALESCE(cpu_cores, 0), COALESCE(cpu_threads, 0),
 			   COALESCE(cpu_speed, 0), COALESCE(total_memory, 0), COALESCE(EXTRACT(EPOCH FROM boot_time)::bigint, 0), COALESCE(gpu::jsonb, '[]'::jsonb), COALESCE(storage, '[]'::jsonb), COALESCE(serial_number, ''),
 			   COALESCE(manufacturer, ''), COALESCE(model, ''), COALESCE(domain, ''), COALESCE(agent_version, ''), last_seen, COALESCE(status, 'offline'),
 			   COALESCE(host(ip_address), '' ) as ip_address, COALESCE(host(public_ip), '' ) as public_ip, COALESCE(mac_address, ''), COALESCE(tags, ARRAY[]::text[]), COALESCE(metadata, '{}'::jsonb), client_id,
 			   COALESCE(power_management, '{}'::jsonb), created_at, updated_at
 		FROM devices WHERE id = $1 AND organization_id = $2
-	`, id, constants.CurrentOrganizationID).Scan(&d.ID, &d.AgentID, &d.Hostname, &d.DisplayName, &d.OSType,
-		&d.OSVersion, &d.OSBuild, &d.Platform, &d.PlatformFamily, &d.Architecture,
+	`, id, constants.CurrentOrganizationID).Scan(&d.ID, &d.AgentID, &d.Hostname, &d.DisplayName, &d.DeviceType,
+		&d.OSType, &d.OSVersion, &d.OSBuild, &d.Platform, &d.PlatformFamily, &d.Architecture,
 		&d.CPUModel, &d.CPUCores, &d.CPUThreads, &d.CPUSpeed, &d.TotalMemory,
 		&d.BootTime, &gpuJSON, &storageJSON, &d.SerialNumber, &d.Manufacturer,
 		&d.Model, &d.Domain, &d.AgentVersion, &d.LastSeen, &d.Status,
@@ -181,6 +183,7 @@ func (r *Router) getDevice(c *gin.Context) {
 // UpdateDeviceRequest defines the fields that can be updated
 type UpdateDeviceRequest struct {
 	DisplayName *string    `json:"displayName"`
+	DeviceType  *string    `json:"deviceType"` // desktop, laptop, server, tablet, virtual
 	Tags        []string   `json:"tags"`
 	ClientID    *uuid.UUID `json:"clientId"`
 }
@@ -209,6 +212,18 @@ func (r *Router) updateDevice(c *gin.Context) {
 	if req.DisplayName != nil {
 		updates = append(updates, "display_name = $"+strconv.Itoa(argNum))
 		args = append(args, *req.DisplayName)
+		argNum++
+	}
+
+	if req.DeviceType != nil {
+		// Validate device type
+		validTypes := map[string]bool{"desktop": true, "laptop": true, "server": true, "tablet": true, "virtual": true}
+		if !validTypes[*req.DeviceType] {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid device type. Must be: desktop, laptop, server, tablet, or virtual"})
+			return
+		}
+		updates = append(updates, "device_type = $"+strconv.Itoa(argNum))
+		args = append(args, *req.DeviceType)
 		argNum++
 	}
 
@@ -598,15 +613,21 @@ func (r *Router) enrollAgent(c *gin.Context) {
 		displayName = enrollment.AgentID
 	}
 
+	// Default device_type to 'desktop' if not provided
+	deviceType := enrollment.DeviceType
+	if deviceType == "" {
+		deviceType = "desktop"
+	}
+
 	_, err = r.db.Pool().Exec(ctx, `
-		INSERT INTO devices (id, agent_id, hostname, display_name, os_type, os_version,
+		INSERT INTO devices (id, agent_id, hostname, display_name, device_type, os_type, os_version,
 			os_build, platform, platform_family, architecture, cpu_model, cpu_cores,
 			cpu_threads, cpu_speed, total_memory, boot_time, gpu, storage, serial_number,
 			manufacturer, model, domain, agent_version, ip_address, mac_address,
 			last_seen, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, to_timestamp($16),
-			$17, $18, $19, $20, $21, $22, $23, $24, $25, NOW(), 'online')
-	`, deviceID, enrollment.AgentID, enrollment.Hostname, displayName, enrollment.OSType,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, to_timestamp($17),
+			$18, $19, $20, $21, $22, $23, $24, $25, $26, NOW(), 'online')
+	`, deviceID, enrollment.AgentID, enrollment.Hostname, displayName, deviceType, enrollment.OSType,
 		enrollment.OSVersion, enrollment.OSBuild, enrollment.Platform, enrollment.PlatformFamily,
 		enrollment.Architecture, enrollment.CPUModel, enrollment.CPUCores, enrollment.CPUThreads,
 		enrollment.CPUSpeed, enrollment.TotalMemory, enrollment.BootTime, string(gpuJSON), storageJSON,

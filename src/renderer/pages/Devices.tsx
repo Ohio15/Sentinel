@@ -580,6 +580,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                     <th>Status</th>
                     <th>Custom Name</th>
                     <th>Hostname</th>
+                    <th>Type</th>
                     {!currentClientId && <th>Client</th>}
                     <th>OS</th>
                     <th>IP Address</th>
@@ -647,6 +648,9 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                       </td>
                       <td>
                         <p className="font-medium text-text-primary">{device.hostname}</p>
+                      </td>
+                      <td>
+                        <DeviceTypeCell device={device} onUpdate={updateDevice} />
                       </td>
                       {!currentClientId && (
                         <td>
@@ -1134,6 +1138,71 @@ function OsIcon({ osType }: { osType: string }) {
   } else {
     return <LinuxIcon className="w-4 h-4 text-orange-500" />;
   }
+}
+
+// Device type icons and selector
+const deviceTypeConfig: Record<string, { icon: string; label: string; color: string }> = {
+  desktop: { icon: '🖥️', label: 'Desktop', color: 'text-blue-600' },
+  laptop: { icon: '💻', label: 'Laptop', color: 'text-green-600' },
+  server: { icon: '🖧', label: 'Server', color: 'text-purple-600' },
+  tablet: { icon: '📱', label: 'Tablet', color: 'text-orange-600' },
+  virtual: { icon: '☁️', label: 'Virtual', color: 'text-cyan-600' },
+};
+
+function DeviceTypeCell({ device, onUpdate }: { device: Device; onUpdate: (id: string, data: { deviceType?: string }) => void }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [selectedType, setSelectedType] = useState(device.deviceType || 'desktop');
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const currentType = device.deviceType || 'desktop';
+  const config = deviceTypeConfig[currentType] || deviceTypeConfig.desktop;
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setIsEditing(false);
+      }
+    };
+    if (isEditing) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isEditing]);
+
+  const handleSelect = (type: string) => {
+    setSelectedType(type);
+    onUpdate(device.id, { deviceType: type });
+    setIsEditing(false);
+  };
+
+  return (
+    <div className="relative" ref={dropdownRef} onClick={e => e.stopPropagation()}>
+      <button
+        onClick={() => setIsEditing(!isEditing)}
+        className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+        title="Click to change device type"
+      >
+        <span className="text-sm">{config.icon}</span>
+        <span className={`text-xs font-medium ${config.color}`}>{config.label}</span>
+      </button>
+      {isEditing && (
+        <div className="absolute z-50 top-full left-0 mt-1 bg-white dark:bg-gray-800 border border-border rounded-lg shadow-lg py-1 min-w-[120px]">
+          {Object.entries(deviceTypeConfig).map(([type, cfg]) => (
+            <button
+              key={type}
+              onClick={() => handleSelect(type)}
+              className={`w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-gray-700 ${
+                currentType === type ? 'bg-primary-light dark:bg-primary/20' : ''
+              }`}
+            >
+              <span>{cfg.icon}</span>
+              <span className={`text-sm ${cfg.color}`}>{cfg.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function formatLastSeen(lastSeen: string): string {
