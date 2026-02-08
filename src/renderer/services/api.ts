@@ -192,6 +192,10 @@ class ApiService {
     return this.post<unknown>(`/devices/${deviceId}/force-update`);
   }
 
+  async devicePowerAction(deviceId: string, action: 'shutdown' | 'restart' | 'wake') {
+    return this.post<unknown>(`/devices/${deviceId}/power`, { action });
+  }
+
   // Certificate endpoints
   async getDeviceCertStatuses() {
     return this.get<unknown>('/devices/cert-status');

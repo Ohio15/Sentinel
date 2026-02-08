@@ -54,6 +54,9 @@ const (
 	MsgTypeSetMetricsInterval = "set_metrics_interval"
 	MsgTypeUninstallAgent     = "uninstall_agent"
 
+	// Power management message types
+	MsgTypePowerAction = "power_action"
+
 	// Metrics recording message types
 	MsgTypeStartRecording = "start_recording"
 	MsgTypeStopRecording  = "stop_recording"
@@ -63,6 +66,10 @@ const (
 	MsgTypeUpdateAvailable = "update_available"
 	MsgTypeUpdateProgress  = "update_progress"
 
+	// Windows Update installation message types
+	MsgTypeInstallUpdates  = "install_updates"
+	MsgTypeInstallProgress = "install_progress"
+
 	// Certificate message types
 	MsgTypeUpdateCertificate = "update_certificate"
 	MsgTypeCertUpdateAck     = "cert_update_ack"
@@ -71,6 +78,12 @@ const (
 	MsgTypeWebRTCStart  = "webrtc_start"
 	MsgTypeWebRTCSignal = "webrtc_signal"
 	MsgTypeWebRTCStop   = "webrtc_stop"
+
+	// USB/Peripheral device message types
+	MsgTypeUSBDeviceEvent    = "usb_device_event"    // Agent sends USB device events
+	MsgTypeUSBDeviceList     = "usb_device_list"     // Agent sends full USB device list
+	MsgTypeUSBDeviceRequest  = "usb_device_request"  // Server requests USB device scan
+	MsgTypeUSBPolicyUpdate   = "usb_policy_update"   // Server sends policy updates to agent
 )
 
 type Message struct {

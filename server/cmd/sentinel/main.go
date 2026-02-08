@@ -11,11 +11,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sentinel/server/internal/alerting"
 	"github.com/sentinel/server/internal/api"
+	"github.com/sentinel/server/internal/constants"
 	grpcserver "github.com/sentinel/server/internal/grpc"
 	pb "github.com/sentinel/server/internal/grpc/dataplane"
-	"github.com/sentinel/server/internal/constants"
 	"github.com/sentinel/server/internal/metrics"
+	"github.com/sentinel/server/internal/notifier"
 	"github.com/sentinel/server/internal/pki"
 	"github.com/sentinel/server/internal/push"
 	"github.com/sentinel/server/internal/queue"
@@ -125,6 +127,35 @@ func main() {
 		} else {
 			log.Println("PKI service initialized - mTLS certificate issuance enabled")
 		}
+	}
+
+	// Initialize notification service (for email and webhooks)
+	log.Println("Initializing notification service...")
+	notifierService := notifier.NewService(notifier.Config{
+		SMTPHost:     cfg.SMTPHost,
+		SMTPPort:     cfg.SMTPPort,
+		SMTPUsername: cfg.SMTPUsername,
+		SMTPPassword: cfg.SMTPPassword,
+		SMTPFrom:     cfg.SMTPFrom,
+		SMTPFromName: cfg.SMTPFromName,
+		SMTPUseTLS:   cfg.SMTPUseTLS,
+	})
+	notifierService.SetDatabase(db.Pool())
+	if cfg.SMTPHost != "" {
+		log.Println("Email notifications enabled")
+	}
+	log.Println("Notification service initialized (webhooks enabled)")
+
+	// Initialize alert evaluation engine
+	var alertEngine *alerting.Engine
+	if cfg.AlertingEnabled {
+		log.Println("Initializing alert evaluation engine...")
+		alertEngine = alerting.NewEngine(db.Pool(), wsHub, notifierService, alerting.EngineConfig{
+			EvaluationInterval: time.Duration(cfg.AlertEvaluationInterval) * time.Second,
+		})
+		alertEngine.Start()
+		defer alertEngine.Stop()
+		log.Printf("Alert engine started (evaluation interval: %ds)", cfg.AlertEvaluationInterval)
 	}
 
 	// Create gRPC Data Plane server (create early so we can pass to Services)

@@ -202,3 +202,21 @@ func SendWakeOnLAN(macAddress string, broadcastIP string) error {
 
 	return nil
 }
+
+// ExecutePowerAction executes a power action on Windows
+func ExecutePowerAction(action string) error {
+	var cmd *exec.Cmd
+
+	switch action {
+	case "shutdown":
+		// shutdown /s /t 0 - immediate shutdown
+		cmd = exec.Command("shutdown", "/s", "/t", "0")
+	case "restart":
+		// shutdown /r /t 0 - immediate restart
+		cmd = exec.Command("shutdown", "/r", "/t", "0")
+	default:
+		return fmt.Errorf("unsupported power action: %s", action)
+	}
+
+	return cmd.Run()
+}

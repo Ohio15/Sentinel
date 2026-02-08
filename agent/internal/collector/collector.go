@@ -657,3 +657,13 @@ func (c *Collector) collectTopProcesses(ctx context.Context, limit int) []Proces
 
 	return result
 }
+
+// ExecutePowerAction executes a power action on the local system
+func (c *Collector) ExecutePowerAction(action string) error {
+	return ExecutePowerAction(action)
+}
+
+// SendWakeOnLAN sends a Wake-on-LAN magic packet to the specified MAC address
+func (c *Collector) SendWakeOnLAN(macAddress string) error {
+	return SendWakeOnLAN(macAddress, "255.255.255.255")
+}

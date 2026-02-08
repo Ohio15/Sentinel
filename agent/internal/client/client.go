@@ -61,8 +61,10 @@ const (
 	MsgTypeUpdateCertificate = "update_certificate"
 	MsgTypeCertUpdateAck     = "cert_update_ack"
 	// System update status
-	MsgTypeUpdateStatus = "update_status"
-	MsgTypeForceUpdate  = "force_update"
+	MsgTypeUpdateStatus     = "update_status"
+	MsgTypeForceUpdate      = "force_update"
+	MsgTypeInstallUpdates   = "install_updates"
+	MsgTypeInstallProgress  = "install_progress"
 	// Sync protocol messages
 	MsgTypeSyncRequest    = "sync_request"
 	MsgTypeSyncResponse   = "sync_response"
@@ -70,6 +72,14 @@ const (
 	MsgTypeBulkMetricsAck = "bulk_metrics_ack"
 	MsgTypeCommandResult  = "command_result"
 	MsgTypeHealthReport   = "health_report"
+	// Power management messages
+	MsgTypePowerAction = "power_action"
+
+	// USB/Peripheral device messages
+	MsgTypeUSBDeviceEvent   = "usb_device_event"   // Report USB device events
+	MsgTypeUSBDeviceList    = "usb_device_list"    // Report full USB device list
+	MsgTypeUSBDeviceRequest = "usb_device_request" // Server requests device scan
+	MsgTypeUSBPolicyUpdate  = "usb_policy_update"  // Receive policy updates
 )
 
 // Message represents a WebSocket message

@@ -662,6 +662,14 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 			log.Printf("[Certs] Agent %s failed to update certificate: %s", agentID, ackData.Error)
 		}
 
+	case ws.MsgTypeUSBDeviceEvent:
+		// Agent reports USB device connection/disconnection event
+		r.handleUSBDeviceEvent(ctx, deviceID, message)
+
+	case ws.MsgTypeUSBDeviceList:
+		// Agent reports full list of connected USB devices
+		r.handleUSBDeviceList(ctx, deviceID, message)
+
 	default:
 		log.Printf("[Agent] Unhandled message type from %s: %s", agentID, msg.Type)
 	}
@@ -739,6 +747,233 @@ func (r *Router) checkAlertRules(deviceID uuid.UUID, cpu, memory, disk float64) 
 			}
 		}
 	}
+}
+
+// handleUSBDeviceEvent processes USB device connection/disconnection events from agents
+func (r *Router) handleUSBDeviceEvent(ctx context.Context, deviceID uuid.UUID, message []byte) {
+	var eventMsg struct {
+		Data struct {
+			EventType string `json:"eventType"`
+			Device    struct {
+				DeviceID       string    `json:"deviceId"`
+				InstancePath   string    `json:"instancePath"`
+				VendorID       string    `json:"vendorId"`
+				ProductID      string    `json:"productId"`
+				SerialNumber   string    `json:"serialNumber"`
+				Manufacturer   string    `json:"manufacturer"`
+				ProductName    string    `json:"productName"`
+				DeviceClass    string    `json:"deviceClass"`
+				ClassCode      int       `json:"classCode"`
+				SubclassCode   int       `json:"subclassCode"`
+				ProtocolCode   int       `json:"protocolCode"`
+				BusNumber      int       `json:"busNumber"`
+				PortNumber     int       `json:"portNumber"`
+				DeviceSpeed    string    `json:"deviceSpeed"`
+				ParentDevice   string    `json:"parentDevice"`
+				DriveLetter    string    `json:"driveLetter"`
+				MountPoint     string    `json:"mountPoint"`
+				VolumeLabel    string    `json:"volumeLabel"`
+				FileSystem     string    `json:"fileSystem"`
+				TotalSize      int64     `json:"totalSize"`
+				FreeSpace      int64     `json:"freeSpace"`
+				IsConnected    bool      `json:"isConnected"`
+				ConnectionTime string    `json:"connectionTime"`
+				IsRemovable    bool      `json:"isRemovable"`
+				IsBootable     bool      `json:"isBootable"`
+				IsEncrypted    bool      `json:"isEncrypted"`
+			} `json:"device"`
+			Timestamp    string `json:"timestamp"`
+			SecurityRisk string `json:"securityRisk"`
+		} `json:"data"`
+	}
+
+	if err := json.Unmarshal(message, &eventMsg); err != nil {
+		log.Printf("[USB] Failed to parse USB device event: %v", err)
+		return
+	}
+
+	device := eventMsg.Data.Device
+	log.Printf("[USB] Event %s from device %s: %s (%s %s) - Risk: %s",
+		eventMsg.Data.EventType, deviceID, device.DeviceID,
+		device.Manufacturer, device.ProductName, eventMsg.Data.SecurityRisk)
+
+	// Parse connection time
+	connTime, _ := time.Parse(time.RFC3339, device.ConnectionTime)
+	if connTime.IsZero() {
+		connTime = time.Now()
+	}
+
+	// Upsert device record
+	if eventMsg.Data.EventType == "connected" {
+		_, err := r.db.Pool().Exec(ctx, `
+			INSERT INTO usb_devices (
+				device_id, usb_device_id, instance_path,
+				vendor_id, product_id, serial_number,
+				manufacturer, product_name, device_class,
+				class_code, subclass_code, protocol_code,
+				bus_number, port_number, device_speed, parent_device,
+				drive_letter, mount_point, volume_label, file_system,
+				total_size, free_space,
+				is_connected, connection_time,
+				is_removable, is_bootable, is_encrypted
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
+			ON CONFLICT (device_id, usb_device_id) DO UPDATE SET
+				manufacturer = EXCLUDED.manufacturer,
+				product_name = EXCLUDED.product_name,
+				drive_letter = EXCLUDED.drive_letter,
+				mount_point = EXCLUDED.mount_point,
+				volume_label = EXCLUDED.volume_label,
+				file_system = EXCLUDED.file_system,
+				total_size = EXCLUDED.total_size,
+				free_space = EXCLUDED.free_space,
+				is_connected = true,
+				connection_time = EXCLUDED.connection_time,
+				disconnection_time = NULL,
+				updated_at = NOW()
+		`,
+			deviceID, device.DeviceID, device.InstancePath,
+			device.VendorID, device.ProductID, device.SerialNumber,
+			device.Manufacturer, device.ProductName, device.DeviceClass,
+			device.ClassCode, device.SubclassCode, device.ProtocolCode,
+			device.BusNumber, device.PortNumber, device.DeviceSpeed, device.ParentDevice,
+			device.DriveLetter, device.MountPoint, device.VolumeLabel, device.FileSystem,
+			device.TotalSize, device.FreeSpace,
+			true, connTime,
+			device.IsRemovable, device.IsBootable, device.IsEncrypted,
+		)
+		if err != nil {
+			log.Printf("[USB] Failed to upsert USB device: %v", err)
+		}
+	} else if eventMsg.Data.EventType == "disconnected" {
+		_, err := r.db.Pool().Exec(ctx, `
+			UPDATE usb_devices SET
+				is_connected = false,
+				disconnection_time = NOW(),
+				updated_at = NOW()
+			WHERE device_id = $1 AND usb_device_id = $2
+		`, deviceID, device.DeviceID)
+		if err != nil {
+			log.Printf("[USB] Failed to update USB device disconnection: %v", err)
+		}
+	}
+
+	// Record event in audit log
+	_, err := r.db.Pool().Exec(ctx, `
+		INSERT INTO usb_device_events (
+			device_id, event_type,
+			vendor_id, product_id, serial_number,
+			manufacturer, product_name, device_class,
+			drive_letter, mount_point, volume_label, total_size
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	`,
+		deviceID, eventMsg.Data.EventType,
+		device.VendorID, device.ProductID, device.SerialNumber,
+		device.Manufacturer, device.ProductName, device.DeviceClass,
+		device.DriveLetter, device.MountPoint, device.VolumeLabel, device.TotalSize,
+	)
+	if err != nil {
+		log.Printf("[USB] Failed to record USB device event: %v", err)
+	}
+
+	// Check if device is approved
+	isApproved := r.checkUSBDeviceApproval(ctx, deviceID, device.VendorID, device.ProductID, device.SerialNumber)
+
+	// Generate alert for mass storage devices or high-risk events
+	shouldAlert := false
+	alertSeverity := "info"
+	alertTitle := ""
+	alertMessage := ""
+
+	if eventMsg.Data.EventType == "connected" {
+		switch eventMsg.Data.SecurityRisk {
+		case "critical":
+			shouldAlert = true
+			alertSeverity = "critical"
+			alertTitle = "Bootable USB Device Connected"
+			alertMessage = fmt.Sprintf("Bootable USB storage device connected: %s (%s). This poses a high security risk.",
+				device.ProductName, device.VolumeLabel)
+		case "high":
+			shouldAlert = !isApproved
+			alertSeverity = "warning"
+			alertTitle = "USB Storage Device Connected"
+			alertMessage = fmt.Sprintf("USB storage device connected: %s (%s) - %s",
+				device.ProductName, device.VolumeLabel, device.DriveLetter)
+		case "medium":
+			shouldAlert = !isApproved
+			alertSeverity = "warning"
+			alertTitle = "USB Network Adapter Connected"
+			alertMessage = fmt.Sprintf("USB network device connected: %s (%s)",
+				device.Manufacturer, device.ProductName)
+		}
+	}
+
+	if shouldAlert {
+		_, err := r.db.Pool().Exec(ctx, `
+			INSERT INTO alerts (device_id, severity, title, message, organization_id)
+			VALUES ($1, $2, $3, $4, (SELECT organization_id FROM devices WHERE id = $1))
+		`, deviceID, alertSeverity, alertTitle, alertMessage)
+		if err != nil {
+			log.Printf("[USB] Failed to create alert: %v", err)
+		}
+	}
+
+	// Broadcast to dashboards
+	broadcastMsg, _ := json.Marshal(map[string]interface{}{
+		"type":     ws.MsgTypeUSBDeviceEvent,
+		"deviceId": deviceID,
+		"data":     eventMsg.Data,
+	})
+	r.hub.BroadcastToDashboards(broadcastMsg)
+}
+
+// handleUSBDeviceList processes full USB device list from agents
+func (r *Router) handleUSBDeviceList(ctx context.Context, deviceID uuid.UUID, message []byte) {
+	var listMsg struct {
+		RequestID string `json:"requestId"`
+		Data      struct {
+			Devices   []json.RawMessage `json:"devices"`
+			Count     int               `json:"count"`
+			Timestamp string            `json:"timestamp"`
+		} `json:"data"`
+	}
+
+	if err := json.Unmarshal(message, &listMsg); err != nil {
+		log.Printf("[USB] Failed to parse USB device list: %v", err)
+		return
+	}
+
+	log.Printf("[USB] Received device list from %s: %d devices", deviceID, listMsg.Data.Count)
+
+	// Forward to dashboards (the request may have come from a dashboard)
+	broadcastMsg, _ := json.Marshal(map[string]interface{}{
+		"type":      ws.MsgTypeUSBDeviceList,
+		"deviceId":  deviceID,
+		"requestId": listMsg.RequestID,
+		"data":      listMsg.Data,
+	})
+	r.hub.BroadcastToDashboards(broadcastMsg)
+}
+
+// checkUSBDeviceApproval checks if a USB device is in the approved list
+func (r *Router) checkUSBDeviceApproval(ctx context.Context, deviceID uuid.UUID, vendorID, productID, serialNumber string) bool {
+	var count int
+	err := r.db.Pool().QueryRow(ctx, `
+		SELECT COUNT(*) FROM usb_approved_devices
+		WHERE (expires_at IS NULL OR expires_at > NOW())
+		AND (
+			(serial_number IS NOT NULL AND serial_number = $1)
+			OR (vendor_id = $2 AND product_id = $3)
+			OR (vendor_id = $2 AND product_id IS NULL)
+		)
+		AND (device_id IS NULL OR device_id = $4)
+	`, serialNumber, vendorID, productID, deviceID).Scan(&count)
+
+	if err != nil {
+		log.Printf("[USB] Failed to check device approval: %v", err)
+		return false
+	}
+
+	return count > 0
 }
 
 func (r *Router) handleDashboardWebSocket(c *gin.Context) {

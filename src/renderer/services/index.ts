@@ -131,6 +131,13 @@ export const devices = {
     }
     return api!.updateDevice(id, data) as Promise<Device>;
   },
+
+  async powerAction(id: string, action: 'shutdown' | 'restart' | 'wake'): Promise<void> {
+    if (isElectron) {
+      return (window as any).api.devices.powerAction?.(id, action);
+    }
+    return api!.devicePowerAction(id, action) as unknown as void;
+  },
 };
 
 // Alerts Service Adapter

@@ -309,6 +309,47 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
     setEditedName('');
   };
 
+  // Power management handlers
+  const shutdownDevice = useDeviceStore((state) => state.shutdownDevice);
+  const restartDevice = useDeviceStore((state) => state.restartDevice);
+  const wakeDevice = useDeviceStore((state) => state.wakeDevice);
+
+  const handleWake = async () => {
+    if (!selectedDevice) return;
+    if (!confirm('Send Wake-on-LAN magic packet to this device?')) return;
+    try {
+      await wakeDevice(selectedDevice.id);
+      alert('Wake-on-LAN packet sent successfully');
+    } catch (error) {
+      console.error('Failed to wake device:', error);
+      alert(`Failed to wake device: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const handleRestart = async () => {
+    if (!selectedDevice) return;
+    if (!confirm('Are you sure you want to restart this device? Any unsaved work will be lost.')) return;
+    try {
+      await restartDevice(selectedDevice.id);
+      alert('Restart command sent successfully');
+    } catch (error) {
+      console.error('Failed to restart device:', error);
+      alert(`Failed to restart device: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const handleShutdown = async () => {
+    if (!selectedDevice) return;
+    if (!confirm('Are you sure you want to shutdown this device? Any unsaved work will be lost.')) return;
+    try {
+      await shutdownDevice(selectedDevice.id);
+      alert('Shutdown command sent successfully');
+    } catch (error) {
+      console.error('Failed to shutdown device:', error);
+      alert(`Failed to shutdown device: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
     const executeCommand = async () => {
     if (!command.trim() || !selectedDevice) return;
 
@@ -526,6 +567,64 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                   <span className="text-text-secondary text-sm">
                     Last seen: {new Date(selectedDevice.lastSeen).toLocaleString()}
                   </span>
+                </div>
+                {/* Power Management Buttons */}
+                <div className="flex flex-col items-end gap-2 ml-auto">
+                  <div className="flex gap-2">
+                    {/* Wake Button - only enabled if WoL supported */}
+                    <button
+                      onClick={() => handleWake()}
+                      disabled={!selectedDevice.powerManagement?.wolSupported || selectedDevice.status === 'online'}
+                      className={`p-2 rounded-lg border transition-colors ${
+                        selectedDevice.powerManagement?.wolSupported && selectedDevice.status !== 'online'
+                          ? 'bg-blue-500 hover:bg-blue-600 border-blue-600 text-white'
+                          : 'bg-gray-100 dark:bg-gray-800 border-border text-gray-400 cursor-not-allowed'
+                      }`}
+                      title={
+                        !selectedDevice.powerManagement?.wolSupported
+                          ? 'Wake-on-LAN not supported'
+                          : selectedDevice.status === 'online'
+                          ? 'Device is already online'
+                          : 'Wake device (Wake-on-LAN)'
+                      }
+                    >
+                      <WakeIcon className="w-5 h-5" />
+                    </button>
+                    {/* Restart Button - only enabled if device is online */}
+                    <button
+                      onClick={() => handleRestart()}
+                      disabled={selectedDevice.status !== 'online'}
+                      className={`p-2 rounded-lg border transition-colors ${
+                        selectedDevice.status === 'online'
+                          ? 'bg-yellow-500 hover:bg-yellow-600 border-yellow-600 text-white'
+                          : 'bg-gray-100 dark:bg-gray-800 border-border text-gray-400 cursor-not-allowed'
+                      }`}
+                      title={selectedDevice.status !== 'online' ? 'Device must be online' : 'Restart device'}
+                    >
+                      <RestartIcon className="w-5 h-5" />
+                    </button>
+                    {/* Shutdown Button - only enabled if device is online */}
+                    <button
+                      onClick={() => handleShutdown()}
+                      disabled={selectedDevice.status !== 'online'}
+                      className={`p-2 rounded-lg border transition-colors ${
+                        selectedDevice.status === 'online'
+                          ? 'bg-red-500 hover:bg-red-600 border-red-600 text-white'
+                          : 'bg-gray-100 dark:bg-gray-800 border-border text-gray-400 cursor-not-allowed'
+                      }`}
+                      title={selectedDevice.status !== 'online' ? 'Device must be online' : 'Shutdown device'}
+                    >
+                      <PowerIcon className="w-5 h-5" />
+                    </button>
+                  </div>
+                  {selectedDevice.powerManagement && (
+                    <span className="text-xs text-text-secondary">
+                      {selectedDevice.powerManagement.wolSupported
+                        ? `WoL: ${selectedDevice.powerManagement.wolEnabled ? 'Enabled' : 'Supported'}`
+                        : 'WoL: Not supported'}
+                      {selectedDevice.powerManagement.amtSupported && ' | AMT'}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -1046,6 +1145,30 @@ function ExternalLinkIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+    </svg>
+  );
+}
+
+function WakeIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+    </svg>
+  );
+}
+
+function RestartIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+    </svg>
+  );
+}
+
+function PowerIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 5.636a9 9 0 11-12.728 0M12 3v9" />
     </svg>
   );
 }

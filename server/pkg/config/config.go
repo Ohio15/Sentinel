@@ -68,6 +68,19 @@ type Config struct {
 	WebAuthnRPOrigins        []string // Allowed origins for WebAuthn
 	WebAuthnTimeout          int      // Ceremony timeout in milliseconds
 	WebAuthnUserVerification string   // "preferred", "required", or "discouraged"
+
+	// Email / SMTP Configuration
+	SMTPHost     string // SMTP server hostname
+	SMTPPort     int    // SMTP server port (25, 465, 587)
+	SMTPUsername string // SMTP username
+	SMTPPassword string // SMTP password
+	SMTPFrom     string // From email address
+	SMTPFromName string // From display name
+	SMTPUseTLS   bool   // Use TLS for SMTP connection
+
+	// Alerting Configuration
+	AlertEvaluationInterval int  // Alert evaluation interval in seconds (default 60)
+	AlertingEnabled         bool // Enable/disable alert evaluation engine
 }
 
 func Load() (*Config, error) {
@@ -132,6 +145,19 @@ func Load() (*Config, error) {
 		WebAuthnRPOrigins:        getEnvSlice("WEBAUTHN_RP_ORIGINS", []string{"http://localhost:5173", "http://localhost:8080"}),
 		WebAuthnTimeout:          getEnvInt("WEBAUTHN_TIMEOUT", 60000),
 		WebAuthnUserVerification: getEnv("WEBAUTHN_USER_VERIFICATION", "preferred"),
+
+		// Email / SMTP Configuration
+		SMTPHost:     getEnv("SMTP_HOST", ""),
+		SMTPPort:     getEnvInt("SMTP_PORT", 587),
+		SMTPUsername: getEnv("SMTP_USERNAME", ""),
+		SMTPPassword: getEnv("SMTP_PASSWORD", ""),
+		SMTPFrom:     getEnv("SMTP_FROM", ""),
+		SMTPFromName: getEnv("SMTP_FROM_NAME", "Sentinel RMM"),
+		SMTPUseTLS:   getEnvBool("SMTP_USE_TLS", true),
+
+		// Alerting Configuration
+		AlertEvaluationInterval: getEnvInt("ALERT_EVALUATION_INTERVAL", 60),
+		AlertingEnabled:         getEnvBool("ALERTING_ENABLED", true),
 	}
 
 	// Validate required fields

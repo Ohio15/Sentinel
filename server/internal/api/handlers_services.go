@@ -153,6 +153,16 @@ func forceUpdateHandler(services *Services) gin.HandlerFunc {
 	return router.forceUpdate
 }
 
+func powerActionHandler(services *Services) gin.HandlerFunc {
+	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub}
+	return router.powerAction
+}
+
+func installUpdatesHandler(services *Services) gin.HandlerFunc {
+	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub}
+	return router.installUpdates
+}
+
 func listDeviceCommandsHandler(services *Services) gin.HandlerFunc {
 	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub}
 	return router.listDeviceCommands

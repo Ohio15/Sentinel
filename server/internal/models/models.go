@@ -39,6 +39,17 @@ type StorageInfo struct {
 	Percent    float64 `json:"percent"`
 }
 
+// PowerManagement contains power management capabilities
+type PowerManagement struct {
+	WoLSupported   bool   `json:"wolSupported"`
+	WoLEnabled     bool   `json:"wolEnabled"`
+	AMTSupported   bool   `json:"amtSupported"`
+	AMTProvisioned bool   `json:"amtProvisioned"`
+	AMTVersion     string `json:"amtVersion,omitempty"`
+	MACAddress     string `json:"macAddress"`
+	WoLModes       string `json:"wolModes,omitempty"`
+}
+
 // Device represents a monitored endpoint
 type Device struct {
 	ID             uuid.UUID         `json:"id"`
@@ -69,11 +80,12 @@ type Device struct {
 	IPAddress      string            `json:"ipAddress"`
 	PublicIP       string            `json:"publicIp"`
 	MACAddress     string            `json:"macAddress"`
-	Tags           []string          `json:"tags"`
-	Metadata       map[string]string `json:"metadata"`
-	ClientID       *uuid.UUID        `json:"clientId,omitempty"`
-	CreatedAt      time.Time         `json:"createdAt"`
-	UpdatedAt      time.Time         `json:"updatedAt"`
+	Tags            []string          `json:"tags"`
+	Metadata        map[string]string `json:"metadata"`
+	ClientID        *uuid.UUID        `json:"clientId,omitempty"`
+	PowerManagement *PowerManagement  `json:"powerManagement,omitempty"`
+	CreatedAt       time.Time         `json:"createdAt"`
+	UpdatedAt       time.Time         `json:"updatedAt"`
 }
 
 // DeviceMetrics represents system metrics from an agent
