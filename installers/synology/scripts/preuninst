@@ -1,0 +1,26 @@
+#!/bin/sh
+
+PACKAGE_NAME="sentinel-agent"
+PID_FILE="/var/run/sentinel-agent.pid"
+
+echo "Running pre-uninstall script..."
+
+# Stop the agent if running
+if [ -f "$PID_FILE" ]; then
+    PID=$(cat "$PID_FILE")
+    if kill -0 "$PID" 2>/dev/null; then
+        echo "Stopping Sentinel Agent..."
+        kill "$PID" 2>/dev/null
+        sleep 3
+        if kill -0 "$PID" 2>/dev/null; then
+            kill -9 "$PID" 2>/dev/null
+        fi
+    fi
+    rm -f "$PID_FILE"
+fi
+
+# Clean up
+rm -f /var/log/sentinel-agent.log
+
+echo "Pre-uninstall completed"
+exit 0

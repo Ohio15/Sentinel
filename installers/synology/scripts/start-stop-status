@@ -1,0 +1,113 @@
+#!/bin/sh
+
+PACKAGE_NAME="sentinel-agent"
+INSTALL_DIR="/var/packages/${PACKAGE_NAME}/target"
+PID_FILE="/var/run/sentinel-agent.pid"
+LOG_FILE="/var/log/sentinel-agent.log"
+
+start_daemon() {
+    if [ -f "$PID_FILE" ]; then
+        PID=$(cat "$PID_FILE")
+        if kill -0 "$PID" 2>/dev/null; then
+            echo "Sentinel Agent is already running (PID: $PID)"
+            return 0
+        fi
+        rm -f "$PID_FILE"
+    fi
+
+    echo "Starting Sentinel Agent..."
+
+    # Load configuration
+    if [ -f "/etc/sentinel/config.json" ]; then
+        CONFIG_FILE="/etc/sentinel/config.json"
+    else
+        CONFIG_FILE="${INSTALL_DIR}/config.json"
+    fi
+
+    # Start the agent
+    nohup "${INSTALL_DIR}/sentinel-agent" --config "$CONFIG_FILE" >> "$LOG_FILE" 2>&1 &
+    echo $! > "$PID_FILE"
+
+    sleep 2
+    if [ -f "$PID_FILE" ] && kill -0 $(cat "$PID_FILE") 2>/dev/null; then
+        echo "Sentinel Agent started successfully"
+        return 0
+    else
+        echo "Failed to start Sentinel Agent"
+        return 1
+    fi
+}
+
+stop_daemon() {
+    if [ -f "$PID_FILE" ]; then
+        PID=$(cat "$PID_FILE")
+        echo "Stopping Sentinel Agent (PID: $PID)..."
+        kill "$PID" 2>/dev/null
+
+        # Wait for graceful shutdown
+        for i in $(seq 1 10); do
+            if ! kill -0 "$PID" 2>/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+
+        # Force kill if still running
+        if kill -0 "$PID" 2>/dev/null; then
+            echo "Force killing Sentinel Agent..."
+            kill -9 "$PID" 2>/dev/null
+        fi
+
+        rm -f "$PID_FILE"
+        echo "Sentinel Agent stopped"
+    else
+        echo "Sentinel Agent is not running"
+    fi
+    return 0
+}
+
+daemon_status() {
+    if [ -f "$PID_FILE" ]; then
+        PID=$(cat "$PID_FILE")
+        if kill -0 "$PID" 2>/dev/null; then
+            return 0  # Running
+        fi
+    fi
+    return 1  # Not running
+}
+
+case "$1" in
+    start)
+        start_daemon
+        ;;
+    stop)
+        stop_daemon
+        ;;
+    restart)
+        stop_daemon
+        sleep 2
+        start_daemon
+        ;;
+    status)
+        if daemon_status; then
+            echo "Sentinel Agent is running"
+            exit 0
+        else
+            echo "Sentinel Agent is not running"
+            exit 1
+        fi
+        ;;
+    log)
+        if [ -f "$LOG_FILE" ]; then
+            tail -100 "$LOG_FILE"
+        else
+            echo "No log file found"
+        fi
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status|log}"
+        exit 1
+        ;;
+esac
+
+exit $?
