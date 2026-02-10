@@ -870,105 +870,108 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
               </div>
             )}
 
-            <div className="space-y-6">
+            {/* Platform Grid - Horizontal categories with vertical buttons */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
               {/* Windows */}
-              <div>
-                <div className="flex items-center gap-2 mb-3">
+              <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-200 dark:border-gray-700">
                   <WindowsIcon className="w-5 h-5 text-blue-500" />
                   <h3 className="font-medium text-text-primary">Windows</h3>
                 </div>
-                <div className="flex flex-wrap gap-3">
+                <div className="flex flex-col gap-2">
                   <button
                     onClick={() => handleDownloadInstaller('windows', 'amd64')}
                     disabled={downloadingPlatform !== null}
-                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {downloadingPlatform === 'windows-amd64' ? (
-                      <SpinnerIcon />
-                    ) : (
-                      <DownloadIcon />
-                    )}
-                    <span className="text-sm font-medium">Windows x64 .exe</span>
+                    {downloadingPlatform === 'windows-amd64' ? <SpinnerIcon /> : <DownloadIcon />}
+                    <span className="text-sm font-medium">x64 .exe</span>
                   </button>
                   <button
                     onClick={() => handleDownloadInstaller('windows', 'arm64')}
                     disabled={downloadingPlatform !== null}
-                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {downloadingPlatform === 'windows-arm64' ? (
-                      <SpinnerIcon />
-                    ) : (
-                      <DownloadIcon />
-                    )}
-                    <span className="text-sm font-medium">Windows ARM64 .exe</span>
+                    {downloadingPlatform === 'windows-arm64' ? <SpinnerIcon /> : <DownloadIcon />}
+                    <span className="text-sm font-medium">ARM64 .exe</span>
                   </button>
                 </div>
               </div>
 
               {/* Linux */}
-              <div>
-                <div className="flex items-center gap-2 mb-3">
+              <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-200 dark:border-gray-700">
                   <LinuxIcon className="w-5 h-5 text-orange-500" />
                   <h3 className="font-medium text-text-primary">Linux</h3>
                 </div>
-                <div className="flex flex-wrap gap-3">
+                <div className="flex flex-col gap-2">
                   <button
                     onClick={() => handleDownloadInstaller('linux-deb', 'amd64')}
                     disabled={downloadingPlatform !== null}
-                    className="flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {downloadingPlatform === 'linux-deb-amd64' ? (
-                      <SpinnerIcon />
-                    ) : (
-                      <DownloadIcon />
-                    )}
+                    {downloadingPlatform === 'linux-deb-amd64' ? <SpinnerIcon /> : <DownloadIcon />}
                     <span className="text-sm font-medium">Debian/Ubuntu .deb</span>
                   </button>
                   <button
                     onClick={() => handleDownloadInstaller('linux-rpm', 'amd64')}
                     disabled={downloadingPlatform !== null}
-                    className="flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {downloadingPlatform === 'linux-rpm-amd64' ? (
-                      <SpinnerIcon />
-                    ) : (
-                      <DownloadIcon />
-                    )}
+                    {downloadingPlatform === 'linux-rpm-amd64' ? <SpinnerIcon /> : <DownloadIcon />}
                     <span className="text-sm font-medium">RHEL/CentOS .rpm</span>
                   </button>
                 </div>
               </div>
 
               {/* macOS */}
-              <div>
-                <div className="flex items-center gap-2 mb-3">
+              <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-200 dark:border-gray-700">
                   <AppleIcon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
                   <h3 className="font-medium text-text-primary">macOS</h3>
                 </div>
-                <div className="flex flex-wrap gap-3">
+                <div className="flex flex-col gap-2">
                   <button
                     onClick={() => handleDownloadInstaller('macos', 'amd64')}
                     disabled={downloadingPlatform !== null}
-                    className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-800 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-gray-600 hover:bg-gray-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {downloadingPlatform === 'macos-amd64' ? (
-                      <SpinnerIcon />
-                    ) : (
-                      <DownloadIcon />
-                    )}
-                    <span className="text-sm font-medium">macOS Intel .pkg</span>
+                    {downloadingPlatform === 'macos-amd64' ? <SpinnerIcon /> : <DownloadIcon />}
+                    <span className="text-sm font-medium">Intel .pkg</span>
                   </button>
                   <button
                     onClick={() => handleDownloadInstaller('macos', 'arm64')}
                     disabled={downloadingPlatform !== null}
-                    className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-800 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-gray-600 hover:bg-gray-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {downloadingPlatform === 'macos-arm64' ? (
-                      <SpinnerIcon />
-                    ) : (
-                      <DownloadIcon />
-                    )}
-                    <span className="text-sm font-medium">macOS Apple Silicon .pkg</span>
+                    {downloadingPlatform === 'macos-arm64' ? <SpinnerIcon /> : <DownloadIcon />}
+                    <span className="text-sm font-medium">Apple Silicon .pkg</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Synology */}
+              <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-200 dark:border-gray-700">
+                  <ServerIcon className="w-5 h-5 text-teal-500" />
+                  <h3 className="font-medium text-text-primary">Synology</h3>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <button
+                    onClick={() => handleDownloadInstaller('synology', 'amd64')}
+                    disabled={downloadingPlatform !== null}
+                    className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {downloadingPlatform === 'synology-amd64' ? <SpinnerIcon /> : <DownloadIcon />}
+                    <span className="text-sm font-medium">x64 .spk</span>
+                  </button>
+                  <button
+                    onClick={() => handleDownloadInstaller('synology', 'arm64')}
+                    disabled={downloadingPlatform !== null}
+                    className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {downloadingPlatform === 'synology-arm64' ? <SpinnerIcon /> : <DownloadIcon />}
+                    <span className="text-sm font-medium">ARM64 .spk</span>
                   </button>
                 </div>
               </div>
@@ -1323,6 +1326,14 @@ function LinuxIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="currentColor">
       <path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 00-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139z" />
+    </svg>
+  );
+}
+
+function ServerIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M4 1h16a2 2 0 012 2v4a2 2 0 01-2 2H4a2 2 0 01-2-2V3a2 2 0 012-2zm0 8h16a2 2 0 012 2v4a2 2 0 01-2 2H4a2 2 0 01-2-2v-4a2 2 0 012-2zm0 8h16a2 2 0 012 2v2a2 2 0 01-2 2H4a2 2 0 01-2-2v-2a2 2 0 012-2zM6 4.5a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm0 8a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm0 8a1.5 1.5 0 100 3 1.5 1.5 0 000-3z" />
     </svg>
   );
 }
