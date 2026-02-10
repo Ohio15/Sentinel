@@ -1,6 +1,3 @@
-// Initialize web API shim before anything else (must be first import)
-import './services/webApiShim';
-
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
@@ -13,17 +10,8 @@ initializeTheme();
 
 // Global error handler for unhandled errors
 const handleGlobalError = (error: Error, errorInfo: React.ErrorInfo) => {
-  // Log to console in development
+  // Log to console
   console.error('[Global Error Boundary]', error, errorInfo);
-
-  // In production, this could send to an error tracking service
-  if (window.api?.logError) {
-    window.api.logError({
-      message: error.message,
-      stack: error.stack,
-      componentStack: errorInfo.componentStack ?? undefined,
-    });
-  }
 };
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

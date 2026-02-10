@@ -1,3 +1,6 @@
+/**
+ * Vite Configuration for Web builds
+ */
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
@@ -5,10 +8,12 @@ import path from 'path'
 export default defineConfig({
   plugins: [react()],
   root: './src/renderer',
-  base: './',
+  publicDir: 'public',
+  base: '/',
   build: {
-    outDir: '../../dist/renderer',
+    outDir: '../../dist/web',
     emptyOutDir: true,
+    sourcemap: false,
   },
   resolve: {
     alias: {
@@ -17,5 +22,16 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8081',
+        changeOrigin: true,
+      },
+      '/ws': {
+        target: 'http://localhost:8081',
+        changeOrigin: true,
+        ws: true,
+      },
+    },
   },
 })

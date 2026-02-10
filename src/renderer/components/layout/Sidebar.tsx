@@ -1,4 +1,7 @@
-﻿import React, { useState, useEffect } from 'react';
+﻿import React from 'react';
+
+// Version from package.json - web mode has no updater
+const APP_VERSION = '1.72.0';
 
 interface SidebarProps {
   currentPage: string;
@@ -6,11 +9,6 @@ interface SidebarProps {
 }
 
 export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
-  const [version, setVersion] = useState<string>('');
-
-  useEffect(() => {
-    window.api.updater.getVersion().then(setVersion);
-  }, []);
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: DashboardIcon },
     { id: 'clients', label: 'Clients', icon: ClientsIcon },
@@ -64,7 +62,7 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
       {/* Footer */}
       <div className="p-4 border-t border-border">
         <div className="text-xs text-text-secondary text-center">
-          Version {version}
+          Version {APP_VERSION}
         </div>
       </div>
     </aside>

@@ -10,6 +10,7 @@ import { WindowsUpdateStatus } from '../components/WindowsUpdateStatus';
 import { OverviewMetrics } from '../components/OverviewMetrics';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { usePopOut } from '../hooks/usePopOut';
+import { clients as clientsService, devices as devicesService, commands as commandsService } from '../services';
 
 interface DeviceDetailProps {
   deviceId: string;
@@ -241,7 +242,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
   const handleAssignClient = async (clientId: string | null) => {
     if (!selectedDevice) return;
     try {
-      await window.api.clients.assignDevice(selectedDevice.id, clientId || '');
+      await devicesService.update(selectedDevice.id, { clientId: clientId || null });
       await fetchDevice(deviceId); // Refresh device data
       setIsAssigningClient(false);
     } catch (error) {
@@ -263,25 +264,20 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
     // The metrics subscription will provide live updates
     console.log(`[DeviceDetail] ${activeTab} tab active, requesting 500ms metrics interval`);
 
-    // Request 1-second interval metrics from the agent (matches Windows Task Manager)
-    window.api.devices.setMetricsInterval(deviceId, 500).catch(err => {
-      console.log('Failed to set metrics interval:', err);
-    });
+    // In web mode, metrics interval is controlled by backend - no client-side interval setting needed
+    // The websocket subscription handles real-time updates
 
-    // Cleanup: reset to default interval (5000ms) when leaving the tab
+    // Cleanup: no-op in web mode
     return () => {
-      console.log(`[DeviceDetail] Leaving ${activeTab} tab, resetting to normal interval`);
-      window.api.devices.setMetricsInterval(deviceId, 5000).catch(err => {
-        console.log('Failed to reset metrics interval:', err);
-      });
+      console.log(`[DeviceDetail] Leaving ${activeTab} tab`);
     };
   }, [activeTab, deviceId]);
   // Fetch command history when history tab is active
   useEffect(() => {
     if (activeTab === 'history' && deviceId) {
       setHistoryLoading(true);
-      window.api.commands.getHistory(deviceId)
-        .then(setCommandHistory)
+      commandsService.getHistory(deviceId)
+        .then((history) => setCommandHistory(history as Command[]))
         .catch(console.error)
         .finally(() => setHistoryLoading(false));
     }
@@ -291,7 +287,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
   const handleSaveName = async () => {
     if (!selectedDevice || !editedName.trim()) return;
     try {
-      await window.api.devices.update(selectedDevice.id, { displayName: editedName.trim() });
+      await devicesService.update(selectedDevice.id, { displayName: editedName.trim() });
       await fetchDevice(deviceId); // Refresh device data
       setIsEditingName(false);
     } catch (error) {
@@ -357,7 +353,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
     setCommandOutput(null);
 
     try {
-      const result = await window.api.commands.execute(deviceId, command, commandType);
+      const result = await commandsService.execute(deviceId, command, commandType) as { output?: string };
       setCommandOutput(result.output || 'Command executed successfully');
     } catch (error: unknown) {
       setCommandOutput(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useThemeStore } from '../stores/themeStore';
 import { useDeviceStore } from '../stores/deviceStore';
 import { PasskeyManager } from '../components/PasskeyManager';
+import { settings as settingsService, server as serverService, portal as portalService, backend as backendService, clients as clientsService } from '../services';
 
 interface Settings {
   serverPort: number;
@@ -160,19 +161,15 @@ export function Settings() {
     setLoading(true);
     try {
       const [settingsData, infoData, backendConfig] = await Promise.all([
-        window.api.settings.get(),
-        window.api.server?.getInfo() || Promise.resolve({ port: 0 }),
-        window.api.backend?.getConfig?.().catch(() => ({ url: '', isConfigured: false, isAuthenticated: false })) || Promise.resolve({ url: '', isConfigured: false, isAuthenticated: false }),
+        settingsService.get(),
+        serverService.getInfo(),
+        backendService.getConfig().catch(() => ({ url: '', isConfigured: false, isAuthenticated: false })),
       ]);
-      setSettings(settingsData);
+      setSettings(settingsData as Settings);
       setServerInfo(infoData as ServerInfo);
       if (backendConfig.url) {
         setBackendUrl(backendConfig.url);
         setBackendConnected(backendConfig.isAuthenticated || false);
-      }
-      if (backendConfig.apiKey) {
-        setBackendApiKey(backendConfig.apiKey);
-        setBackendAuthMode('apikey');
       }
     } catch (error) {
       console.error('Failed to load settings:', error);
@@ -184,18 +181,19 @@ export function Settings() {
   const loadPortalData = async () => {
     try {
       const [portalData, tenantsData, clientsData] = await Promise.all([
-        window.api.portal?.getSettings().catch(() => null) || Promise.resolve(null),
-        window.api.portal?.getClientTenants().catch(() => []) || Promise.resolve([]),
-        window.api.clients.list().catch(() => []),
+        portalService.getSettings().catch(() => null),
+        portalService.getClientTenants().catch(() => []),
+        clientsService.list().catch(() => []),
       ]);
 
       if (portalData) {
+        const data = portalData as { azureAd?: { clientId: string; clientSecret: string; redirectUri: string }; email?: { enabled: boolean } };
         setPortalSettings({
-          azureAd: portalData.azureAd || { clientId: '', clientSecret: '', redirectUri: '' },
-          email: portalData.email || { enabled: false }
+          azureAd: data.azureAd || { clientId: '', clientSecret: '', redirectUri: '' },
+          email: data.email || { enabled: false }
         });
       }
-      setClientTenants(tenantsData || []);
+      setClientTenants((tenantsData || []) as ClientTenant[]);
       setClients(clientsData || []);
     } catch (error) {
       console.error('Failed to load portal settings:', error);
@@ -205,8 +203,7 @@ export function Settings() {
   const handleSavePortalSettings = async () => {
     setSavingPortal(true);
     try {
-      if (!window.api.portal) throw new Error('Portal API not available');
-      await window.api.portal.updateSettings(portalSettings);
+      await portalService.updateSettings(portalSettings);
       alert('Portal settings saved successfully');
     } catch (error: unknown) {
       alert(`Error saving portal settings: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -228,8 +225,7 @@ export function Settings() {
     }
 
     try {
-      if (!window.api.portal) throw new Error('Portal API not available');
-      await window.api.portal.createClientTenant(newTenant);
+      await portalService.createClientTenant(newTenant);
       setNewTenant({ clientId: '', tenantId: '', tenantName: '' });
       setShowAddTenant(false);
       loadPortalData();
@@ -242,8 +238,7 @@ export function Settings() {
     if (!confirm('Are you sure you want to remove this tenant mapping?')) return;
 
     try {
-      if (!window.api.portal) throw new Error('Portal API not available');
-      await window.api.portal.deleteClientTenant(id);
+      await portalService.deleteClientTenant(id);
       loadPortalData();
     } catch (error: unknown) {
       alert(`Error deleting tenant mapping: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -272,27 +267,26 @@ export function Settings() {
     setBackendError('');
 
     try {
-      if (!window.api.backend) throw new Error('Backend API not available');
-      await window.api.backend.setUrl(backendUrl);
+      await backendService.setUrl(backendUrl);
 
       if (backendAuthMode === 'apikey') {
-        await window.api.backend.setApiKey(backendApiKey);
-        const result = await window.api.backend.testConnection();
+        await backendService.setApiKey(backendApiKey);
+        const result = await backendService.testConnection();
         if (result.success) {
           setBackendConnected(true);
           alert('Successfully connected with API key');
         } else {
-          setBackendError(result.error || 'Connection failed - invalid API key');
+          setBackendError('Connection failed - invalid API key');
           setBackendConnected(false);
         }
       } else {
-        const result = await window.api.backend.authenticate();
+        const result = await backendService.authenticate();
         if (result.success) {
           setBackendConnected(true);
           setBackendPassword('');
           alert('Successfully connected to external backend');
         } else {
-          setBackendError(result.error || 'Authentication failed');
+          setBackendError('Authentication failed');
           setBackendConnected(false);
         }
       }
@@ -308,7 +302,7 @@ export function Settings() {
     if (!settings) return;
     setSaving(true);
     try {
-      await window.api.settings.update(settings);
+      await settingsService.update(settings);
       alert('Settings saved successfully');
     } catch (error: unknown) {
       alert(`Error saving settings: ${error instanceof Error ? error.message : 'Unknown error'}`);

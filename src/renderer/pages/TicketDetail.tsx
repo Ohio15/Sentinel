@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useTicketStore, Ticket, TicketComment } from '../stores/ticketStore';
 import { SLADetails, CategorySelector, TagManager, TicketLinks } from '../components/tickets';
+import { categories as categoriesService, tags as tagsService, links as linksService, tickets as ticketsService } from '../services';
 
 interface Category {
   id: string;
@@ -74,20 +75,20 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
   const loadEnhancements = async () => {
     try {
       // Load categories
-      const cats = window.api.categories ? await window.api.categories.list() : [];
-      setCategories(cats);
+      const cats = await categoriesService.list();
+      setCategories(cats as Category[]);
 
       // Load available tags
-      const tags = window.api.tags ? await window.api.tags.list() : [];
-      setAvailableTags(tags);
+      const tags = await tagsService.list();
+      setAvailableTags(tags as TicketTag[]);
 
       // Load ticket's assigned tags
-      const assignments = window.api.tags ? await window.api.tags.getAssignments(ticketId) : [];
-      setSelectedTags(assignments);
+      const assignments = await tagsService.getAssignments(ticketId);
+      setSelectedTags(assignments as TicketTag[]);
 
       // Load ticket links
-      const links = window.api.links ? await window.api.links.list(ticketId) : [];
-      setTicketLinks(links);
+      const links = await linksService.list(ticketId);
+      setTicketLinks(links as TicketLink[]);
     } catch (error) {
       console.error('Failed to load enhancements:', error);
     }
@@ -131,43 +132,37 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
   const handleTagsChange = async (tags: TicketTag[]) => {
     setSelectedTags(tags);
     try {
-      if (window.api.tags) {
-        await window.api.tags.assign(ticketId, tags.map((t) => t.id));
-      }
+      await tagsService.assign(ticketId, tags.map((t) => t.id));
     } catch (error) {
       console.error('Failed to update tags:', error);
     }
   };
 
   const handleCreateTag = async (name: string): Promise<TicketTag> => {
-    if (!window.api.tags) throw new Error('Tags API not available');
-    const newTag = await window.api.tags.create({ name, color: '#6B7280' });
+    const newTag = await tagsService.create({ name, color: '#6B7280' }) as TicketTag;
     setAvailableTags((prev) => [...prev, newTag]);
     return newTag;
   };
 
   const handleAddLink = async (targetTicketId: string, linkType: TicketLink['linkType']) => {
-    if (!window.api.links) return;
-    await window.api.links.create({
-      sourceTicketId: ticketId,
-      targetTicketId,
-      linkType,
-      createdBy: 'Admin'
+    await linksService.create({
+      sourceId: ticketId,
+      targetId: targetTicketId,
+      type: linkType
     });
     // Reload links
-    const links = await window.api.links.list(ticketId);
-    setTicketLinks(links);
+    const links = await linksService.list(ticketId);
+    setTicketLinks(links as TicketLink[]);
   };
 
   const handleRemoveLink = async (linkId: string) => {
-    if (!window.api.links) return;
-    await window.api.links.delete(linkId);
+    await linksService.delete(linkId);
     setTicketLinks((prev) => prev.filter((l) => l.id !== linkId));
   };
 
   const searchTicketsForLink = async (query: string) => {
     // Use the ticket search to find tickets
-    const result = await window.api.tickets.list();
+    const result = await ticketsService.list();
     return result
       .filter((t: Ticket) =>
         t.id !== ticketId &&

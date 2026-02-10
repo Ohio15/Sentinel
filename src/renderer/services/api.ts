@@ -1,8 +1,7 @@
 /**
  * API Service for Web mode
- * In Electron mode, this is not used - window.api handles all calls via IPC
  */
-import { isWeb, getApiBaseUrl } from './env';
+import { getApiBaseUrl } from './env';
 
 interface ApiError {
   message: string;
@@ -90,6 +89,16 @@ class ApiService {
 
   private delete<T>(endpoint: string): Promise<T> {
     return this.request<T>('DELETE', endpoint);
+  }
+
+  // Public request method for service adapters
+  public async makeRequest<T>(
+    method: string,
+    endpoint: string,
+    data?: unknown,
+    params?: Record<string, string>
+  ): Promise<T> {
+    return this.request<T>(method, endpoint, data, params);
   }
 
   // Auth endpoints
@@ -539,6 +548,6 @@ class ApiService {
   }
 }
 
-// Only create instance if in web mode
-export const api = isWeb ? new ApiService() : null;
+// Create API service instance
+export const api = new ApiService();
 export default api;

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useTicketStore, Ticket, TicketFilters } from '../stores/ticketStore';
 import { useDeviceStore, Device } from '../stores/deviceStore';
 import { SLABadge, CategoryBadge, TicketViewSwitcher } from '../components/tickets';
+import { categories as categoriesService } from '../services';
 
 interface Category {
   id: string;
@@ -44,9 +45,8 @@ export function Tickets({ onTicketSelect, onViewChange }: TicketsProps) {
 
   const loadCategories = async () => {
     try {
-      if (!window.api.categories) return;
-      const cats = await window.api.categories.list();
-      setCategories(cats);
+      const cats = await categoriesService.list();
+      setCategories(cats as Category[]);
     } catch (error) {
       console.error('Failed to load categories:', error);
     }

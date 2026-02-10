@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { devices as devicesService, events, isElectron } from '../services';
+import { devices as devicesService, events } from '../services';
 
 export interface GPUInfo {
   name: string;

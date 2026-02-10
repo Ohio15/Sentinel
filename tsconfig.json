@@ -34,6 +34,5 @@
       "@/*": ["src/renderer/*"]
     }
   },
-  "include": ["src/renderer"],
-  "references": [{ "path": "./tsconfig.main.json" }]
+  "include": ["src/renderer"]
 }

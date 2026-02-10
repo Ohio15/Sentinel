@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { HashRouter, BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { Dashboard } from './pages/Dashboard';
@@ -24,9 +24,7 @@ import { useDeviceStore } from './stores/deviceStore';
 import { useAlertStore } from './stores/alertStore';
 import { useClientStore } from './stores/clientStore';
 import { useAuthStore } from './stores/authStore';
-import { UpdateNotification } from './components/UpdateNotification';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { isElectron, isWeb } from './services/env';
 import { Loader2 } from 'lucide-react';
 
 type Page = 'dashboard' | 'devices' | 'device-detail' | 'alerts' | 'scripts' | 'certificates' | 'settings' | 'tickets' | 'ticket-detail' | 'tickets-kanban' | 'tickets-calendar' | 'tickets-analytics' | 'knowledge-base' | 'clients';
@@ -36,10 +34,9 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     // checkAuth has internal flag to prevent duplicate calls
-    if (isWeb) { checkAuth(); }
+    checkAuth();
   }, []); // Empty deps - checkAuth guards against duplicate calls internally
 
-  if (isElectron) return <>{children}</>;
   if (isLoading) return (<div className="min-h-screen bg-background flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>);
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   return <>{children}</>;
@@ -104,23 +101,11 @@ function MainLayout() {
         <ErrorBoundary><Header /></ErrorBoundary>
         <main className="flex-1 overflow-auto p-6">{renderPage()}</main>
       </div>
-      {isElectron && <UpdateNotification />}
     </div>
   );
 }
 
-function ElectronApp() {
-  return (
-    <HashRouter>
-      <Routes>
-        <Route path="/popout/performance/:deviceId" element={<PopOutPerformance />} />
-        <Route path="/*" element={<MainLayout />} />
-      </Routes>
-    </HashRouter>
-  );
-}
-
-function WebApp() {
+function App() {
   return (
     <BrowserRouter>
       <Routes>
@@ -133,7 +118,5 @@ function WebApp() {
     </BrowserRouter>
   );
 }
-
-function App() { return isElectron ? <ElectronApp /> : <WebApp />; }
 
 export default App;
