@@ -160,6 +160,7 @@ func (m *JWTManager) loadKeysLocked(ctx context.Context) error {
 	defer rows.Close()
 
 	m.activeKeys = make([]JWTKey, 0)
+	m.signingKey = nil // Reset to pick up new active key
 
 	for rows.Next() {
 		var key JWTKey
