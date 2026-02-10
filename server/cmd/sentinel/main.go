@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -14,6 +15,7 @@ import (
 	"github.com/sentinel/server/internal/alerting"
 	"github.com/sentinel/server/internal/api"
 	"github.com/sentinel/server/internal/constants"
+	"github.com/sentinel/server/internal/credentials"
 	grpcserver "github.com/sentinel/server/internal/grpc"
 	pb "github.com/sentinel/server/internal/grpc/dataplane"
 	"github.com/sentinel/server/internal/metrics"
@@ -164,6 +166,40 @@ func main() {
 		grpcServer = grpcserver.NewDataPlaneServer(db, bulkInserter)
 	}
 
+	// Initialize credential management services
+	var jwtManager *credentials.JWTManager
+	var apiKeyManager *credentials.APIKeyManager
+
+	// Derive master encryption key from JWT secret (or use dedicated MASTER_KEY env var)
+	masterKeySource := os.Getenv("CREDENTIAL_MASTER_KEY")
+	if masterKeySource == "" {
+		masterKeySource = cfg.JWTSecret // Fallback to JWT secret for key derivation
+	}
+	masterKey := sha256.Sum256([]byte(masterKeySource))
+
+	// Initialize JWT Manager with dual-key rotation support
+	jwtManager, err = credentials.NewJWTManager(db.Pool(), masterKey[:], cfg.JWTSecret)
+	if err != nil {
+		log.Printf("Warning: Failed to initialize JWT Manager: %v", err)
+		log.Println("Falling back to static JWT secret (no rotation support)")
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := jwtManager.Initialize(ctx); err != nil {
+			log.Printf("Warning: Failed to initialize JWT keys: %v", err)
+			jwtManager = nil // Disable managed JWT
+		} else {
+			log.Println("JWT Manager initialized with dual-key rotation support")
+		}
+		cancel()
+	}
+
+	// Initialize API Key Manager
+	if jwtManager != nil {
+		encryptor, _ := credentials.NewKeyEncryptor(masterKey[:])
+		apiKeyManager = credentials.NewAPIKeyManager(db.Pool(), encryptor)
+		log.Println("API Key Manager initialized")
+	}
+
 	// Create services container for dependency injection
 	services := &api.Services{
 		Config:          cfg,
@@ -175,6 +211,8 @@ func main() {
 		PushService:     pushService,
 		PKI:             pkiService,
 		MetricsRecorder: grpcServer, // gRPC server implements MetricsRecorder interface
+		JWTManager:      jwtManager,
+		APIKeyManager:   apiKeyManager,
 	}
 
 	// Initialize API router with all services
