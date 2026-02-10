@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useTicketStore, Ticket, TicketFilters } from '../stores/ticketStore';
 import { useDeviceStore, Device } from '../stores/deviceStore';
+import { useAuthStore } from '../stores/authStore';
 import { SLABadge, CategoryBadge, TicketViewSwitcher } from '../components/tickets';
 import { categories as categoriesService } from '../services';
 
@@ -32,10 +33,21 @@ export function Tickets({ onTicketSelect, onViewChange }: TicketsProps) {
     createTicket,
   } = useTicketStore();
 
+  const { token } = useAuthStore();
+
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
+
+  const openSupportPortal = () => {
+    // Open portal with auth token so user doesn't need to re-authenticate
+    const portalUrl = new URL('https://sentinelrmm.us:4443/portal');
+    if (token) {
+      portalUrl.searchParams.set('token', token);
+    }
+    window.open(portalUrl.toString(), '_blank', 'noopener,noreferrer');
+  };
 
   useEffect(() => {
     fetchTickets();
@@ -135,15 +147,13 @@ export function Tickets({ onTicketSelect, onViewChange }: TicketsProps) {
           <TicketViewSwitcher useRouting={false} currentView="table" onChange={onViewChange} />
         </div>
         <div className="flex items-center gap-2">
-          <a
-            href="https://sentinelrmm.us:4443/portal"
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            onClick={openSupportPortal}
             className="btn btn-secondary flex items-center gap-2"
           >
             <GlobeAltIcon className="w-5 h-5" />
             Support Portal
-          </a>
+          </button>
           <button
             onClick={() => setShowCreateModal(true)}
             className="btn btn-primary flex items-center gap-2"

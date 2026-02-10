@@ -13,6 +13,10 @@ cd /d %LOCAL_PATH%
 call npm run build:web
 if errorlevel 1 goto :error
 
+echo === Copying portal files to build output ===
+if not exist "%LOCAL_PATH%\dist\web\portal" mkdir "%LOCAL_PATH%\dist\web\portal"
+copy /Y "%LOCAL_PATH%\src\portal\*" "%LOCAL_PATH%\dist\web\portal\"
+
 echo === Cleaning old assets on remote ===
 ssh %REMOTE_HOST% "cd /d %REMOTE_PATH%/dist/web/assets && del /Q *.js *.css 2>nul || echo No old assets"
 
