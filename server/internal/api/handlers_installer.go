@@ -41,7 +41,7 @@ func generateInstallerDownloadHandler(services *Services) gin.HandlerFunc {
 		if platform == "" {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error":             "platform parameter is required",
-				"supported_values":  []string{"windows", "linux-deb", "linux-rpm", "macos"},
+				"supported_values":  []string{"windows", "linux-deb", "linux-rpm", "macos", "synology"},
 			})
 			return
 		}
@@ -55,11 +55,12 @@ func generateInstallerDownloadHandler(services *Services) gin.HandlerFunc {
 			"linux-deb": true,
 			"linux-rpm": true,
 			"macos":     true,
+			"synology":  true,
 		}
 		if !validPlatforms[platform] {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error":            "invalid platform",
-				"supported_values": []string{"windows", "linux-deb", "linux-rpm", "macos"},
+				"supported_values": []string{"windows", "linux-deb", "linux-rpm", "macos", "synology"},
 			})
 			return
 		}
@@ -183,6 +184,15 @@ func generateInstallerDownloadHandler(services *Services) gin.HandlerFunc {
 			filename = fmt.Sprintf("sentinel-agent-%s.pkg", arch)
 			contentType = "application/octet-stream"
 			log.Printf("[Installer] macOS PKG config injection not yet implemented - returning base package")
+
+		case "synology":
+			// TODO: For Synology SPK packages, configuration injection requires modifying
+			// the package contents (adding a config file inside). For now, return the
+			// base package with instructions to configure via command-line.
+			outputData = installerData
+			filename = fmt.Sprintf("sentinel-agent-%s.spk", arch)
+			contentType = "application/octet-stream"
+			log.Printf("[Installer] Synology SPK config injection not yet implemented - returning base package")
 
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Unsupported platform"})
@@ -325,6 +335,9 @@ func getBaseInstallerPath(platform, arch string) string {
 	case "macos":
 		baseName = "sentinel-agent-base-" + arch
 		extension = ".pkg"
+	case "synology":
+		baseName = "sentinel-agent-base-" + arch
+		extension = ".spk"
 	default:
 		return ""
 	}
