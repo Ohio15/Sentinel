@@ -214,11 +214,49 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
       const baseUrl = window.location.origin;
       const downloadUrl = `${baseUrl}/api/agent/installer?platform=${encodeURIComponent(platform)}&arch=${encodeURIComponent(arch)}`;
 
-      // Open download in a new tab/window
-      window.open(downloadUrl, '_blank');
+      // Get auth token from localStorage
+      const token = localStorage.getItem('token');
+      if (!token) {
+        throw new Error('Not authenticated. Please log in again.');
+      }
+
+      // Fetch with auth header
+      const response = await fetch(downloadUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Download failed: ${response.status}`);
+      }
+
+      // Get filename from Content-Disposition header or generate one
+      const contentDisposition = response.headers.get('Content-Disposition');
+      let filename = `sentinel-agent-${platform}-${arch}`;
+      if (contentDisposition) {
+        const match = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+        if (match && match[1]) {
+          filename = match[1].replace(/['"]/g, '');
+        }
+      }
+
+      // Create blob and trigger download
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
       setDownloadResult({
         type: 'success',
-        message: 'Installer download started'
+        message: 'Installer downloaded successfully'
       });
     } catch (error: any) {
       setDownloadResult({
