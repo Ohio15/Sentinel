@@ -158,7 +158,7 @@ func beginPasskeyAuthenticationHandler(services *Services, waService *WebAuthnSe
 	return func(c *gin.Context) {
 		ctx := c.Request.Context()
 
-		// Get all users with passkeys for discoverable credential login
+		// Check if any passkeys exist (just for the error message)
 		users, err := getUsersWithPasskeys(ctx, services.DB)
 		if err != nil {
 			log.Printf("[WEBAUTHN] Error getting users with passkeys: %v", err)
@@ -171,22 +171,10 @@ func beginPasskeyAuthenticationHandler(services *Services, waService *WebAuthnSe
 			return
 		}
 
-		// Collect all credentials for all users
-		var allowedCredentials []protocol.CredentialDescriptor
-		for _, user := range users {
-			for _, cred := range user.Credentials {
-				allowedCredentials = append(allowedCredentials, protocol.CredentialDescriptor{
-					Type:         protocol.PublicKeyCredentialType,
-					CredentialID: cred.ID,
-					Transport:    cred.Transport,
-				})
-			}
-		}
-
-		// Begin authentication - using discoverable credentials
-		options, sessionData, err := waService.webauthn.BeginDiscoverableLogin(
-			webauthn.WithAllowedCredentials(allowedCredentials),
-		)
+		// Begin authentication - using discoverable credentials WITHOUT allowCredentials
+		// This enables cross-device auth where any passkey can respond
+		// The authenticator (phone, security key, etc.) presents its stored credentials
+		options, sessionData, err := waService.webauthn.BeginDiscoverableLogin()
 		if err != nil {
 			log.Printf("[WEBAUTHN] BeginDiscoverableLogin error: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start authentication"})
