@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Service identifier -->
+    <key>Label</key>
+    <string>com.sentinel.watchdog</string>
+
+    <!-- Program to run -->
+    <key>Program</key>
+    <string>/usr/local/bin/sentinel-watchdog</string>
+
+    <!-- Program arguments -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/sentinel-watchdog</string>
+        <string>--config</string>
+        <string>/etc/sentinel/config.json</string>
+        <string>--watch</string>
+        <string>sentinel-agent</string>
+    </array>
+
+    <!-- Run at system startup -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Keep the service running always -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Throttle restarts: wait 5 seconds between restart attempts -->
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+
+    <!-- Working directory -->
+    <key>WorkingDirectory</key>
+    <string>/var/lib/sentinel</string>
+
+    <!-- Standard output log -->
+    <key>StandardOutPath</key>
+    <string>/var/log/sentinel/watchdog.log</string>
+
+    <!-- Standard error log -->
+    <key>StandardErrorPath</key>
+    <string>/var/log/sentinel/watchdog-error.log</string>
+
+    <!-- Environment variables -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>SENTINEL_CONFIG_PATH</key>
+        <string>/etc/sentinel/config.json</string>
+        <key>SENTINEL_LOG_PATH</key>
+        <string>/var/log/sentinel</string>
+        <key>SENTINEL_AGENT_PATH</key>
+        <string>/usr/local/bin/sentinel-agent</string>
+    </dict>
+
+    <!-- Run as root -->
+    <key>UserName</key>
+    <string>root</string>
+
+    <!-- Nice value (higher priority than agent to ensure it can manage agent) -->
+    <key>Nice</key>
+    <integer>-5</integer>
+
+    <!-- Process type -->
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!-- Start watchdog before agent (lower priority = starts first) -->
+    <key>LaunchOnlyOnce</key>
+    <false/>
+
+    <!-- Soft resource limits -->
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>1024</integer>
+    </dict>
+</dict>
+</plist>

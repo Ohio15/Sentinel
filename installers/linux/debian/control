@@ -1,0 +1,15 @@
+Package: sentinel-agent
+Version: %%VERSION%%
+Section: admin
+Priority: optional
+Architecture: amd64
+Maintainer: Sentinel RMM <support@sentinelrmm.us>
+Homepage: https://sentinelrmm.us
+Description: Sentinel RMM Agent
+ Sentinel is a remote monitoring and management (RMM) agent that provides
+ system monitoring, remote access, and automated maintenance capabilities.
+ .
+ This package includes:
+  - sentinel-agent: Main RMM agent daemon
+  - sentinel-watchdog: Process monitor to ensure agent availability
+Depends: systemd, ca-certificates

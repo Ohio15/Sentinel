@@ -1,0 +1,140 @@
+#!/bin/bash
+#
+# Sentinel RMM Agent - Post-installation Script
+# Runs after package installation to configure and start services
+#
+
+set -e
+
+LOG_FILE="/var/log/sentinel-install.log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+echo "=============================================="
+echo "  Sentinel RMM Agent - Post-installation"
+echo "  $(date)"
+echo "=============================================="
+
+# Create required directories
+echo "[1/6] Creating directories..."
+mkdir -p /etc/sentinel
+mkdir -p /var/log/sentinel
+mkdir -p /var/lib/sentinel
+
+# Set directory permissions
+echo "[2/6] Setting permissions..."
+chmod 755 /etc/sentinel
+chmod 755 /var/log/sentinel
+chmod 755 /var/lib/sentinel
+
+# Ensure binaries are executable
+chmod 755 /usr/local/bin/sentinel-agent
+chmod 755 /usr/local/bin/sentinel-watchdog
+
+# Set LaunchDaemon permissions
+chmod 644 /Library/LaunchDaemons/com.sentinel.agent.plist
+chmod 644 /Library/LaunchDaemons/com.sentinel.watchdog.plist
+chown root:wheel /Library/LaunchDaemons/com.sentinel.agent.plist
+chown root:wheel /Library/LaunchDaemons/com.sentinel.watchdog.plist
+
+# Handle configuration
+echo "[3/6] Configuring agent..."
+CONFIG_FILE="/etc/sentinel/config.json"
+TEMPLATE_FILE="/etc/sentinel/config.json.template"
+
+if [[ -f "$CONFIG_FILE" ]]; then
+    echo "  - Existing configuration found, preserving it."
+elif [[ -f "$TEMPLATE_FILE" ]]; then
+    # Check for environment variables or installer parameters
+    if [[ -n "$SENTINEL_SERVER_URL" ]]; then
+        echo "  - Creating configuration from environment variables..."
+        sed -e "s|%%SERVER_URL%%|${SENTINEL_SERVER_URL:-https://sentinelrmm.us}|g" \
+            -e "s|%%GRPC_ENDPOINT%%|${SENTINEL_GRPC_ENDPOINT:-sentinelrmm.us:50051}|g" \
+            -e "s|%%ENROLLMENT_TOKEN%%|${SENTINEL_ENROLLMENT_TOKEN:-}|g" \
+            -e "s|%%ORGANIZATION_ID%%|${SENTINEL_ORGANIZATION_ID:-}|g" \
+            "$TEMPLATE_FILE" > "$CONFIG_FILE"
+    else
+        echo "  - No configuration found. Please configure manually:"
+        echo "    Edit /etc/sentinel/config.json with your server details."
+        cp "$TEMPLATE_FILE" "$CONFIG_FILE"
+    fi
+    chmod 600 "$CONFIG_FILE"
+fi
+
+# Verify binaries
+echo "[4/6] Verifying installation..."
+if [[ -x /usr/local/bin/sentinel-agent ]]; then
+    echo "  - Agent binary: OK"
+else
+    echo "  - ERROR: Agent binary not executable"
+    exit 1
+fi
+
+if [[ -x /usr/local/bin/sentinel-watchdog ]]; then
+    echo "  - Watchdog binary: OK"
+else
+    echo "  - ERROR: Watchdog binary not executable"
+    exit 1
+fi
+
+# Load LaunchDaemons
+echo "[5/6] Loading services..."
+
+# Load watchdog first (it manages the agent)
+echo "  - Loading watchdog service..."
+launchctl load /Library/LaunchDaemons/com.sentinel.watchdog.plist
+
+# Load agent service
+echo "  - Loading agent service..."
+launchctl load /Library/LaunchDaemons/com.sentinel.agent.plist
+
+# Verify services are running
+echo "[6/6] Verifying services..."
+sleep 2
+
+AGENT_RUNNING=0
+WATCHDOG_RUNNING=0
+
+if launchctl list | grep -q "com.sentinel.agent"; then
+    echo "  - Agent service: LOADED"
+    AGENT_RUNNING=1
+else
+    echo "  - WARNING: Agent service not loaded"
+fi
+
+if launchctl list | grep -q "com.sentinel.watchdog"; then
+    echo "  - Watchdog service: LOADED"
+    WATCHDOG_RUNNING=1
+else
+    echo "  - WARNING: Watchdog service not loaded"
+fi
+
+echo ""
+echo "=============================================="
+echo "  Installation Complete!"
+echo "=============================================="
+echo ""
+echo "Installation paths:"
+echo "  - Binaries:    /usr/local/bin/sentinel-agent"
+echo "                 /usr/local/bin/sentinel-watchdog"
+echo "  - Config:      /etc/sentinel/config.json"
+echo "  - Logs:        /var/log/sentinel/"
+echo "  - Services:    /Library/LaunchDaemons/com.sentinel.*.plist"
+echo ""
+
+if [[ -f "$CONFIG_FILE" ]] && grep -q "%%SERVER_URL%%" "$CONFIG_FILE"; then
+    echo "IMPORTANT: Configuration required!"
+    echo "  Edit /etc/sentinel/config.json with your server details."
+    echo "  Then restart services with:"
+    echo "    sudo launchctl unload /Library/LaunchDaemons/com.sentinel.agent.plist"
+    echo "    sudo launchctl load /Library/LaunchDaemons/com.sentinel.agent.plist"
+    echo ""
+fi
+
+echo "To check service status:"
+echo "  launchctl list | grep sentinel"
+echo ""
+echo "To view logs:"
+echo "  tail -f /var/log/sentinel/agent.log"
+echo ""
+
+exit 0

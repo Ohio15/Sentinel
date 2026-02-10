@@ -1,0 +1,41 @@
+#!/bin/bash
+# Sentinel Agent pre-removal script
+# This script runs before package files are removed
+
+set -e
+
+case "$1" in
+    remove|upgrade|deconfigure)
+        # Stop services if they are running
+        if systemctl is-active --quiet sentinel-watchdog.service 2>/dev/null; then
+            echo "Stopping sentinel-watchdog service..."
+            systemctl stop sentinel-watchdog.service || true
+        fi
+
+        if systemctl is-active --quiet sentinel-agent.service 2>/dev/null; then
+            echo "Stopping sentinel-agent service..."
+            systemctl stop sentinel-agent.service || true
+        fi
+
+        # Disable services
+        if systemctl is-enabled --quiet sentinel-watchdog.service 2>/dev/null; then
+            echo "Disabling sentinel-watchdog service..."
+            systemctl disable sentinel-watchdog.service || true
+        fi
+
+        if systemctl is-enabled --quiet sentinel-agent.service 2>/dev/null; then
+            echo "Disabling sentinel-agent service..."
+            systemctl disable sentinel-agent.service || true
+        fi
+        ;;
+
+    failed-upgrade)
+        ;;
+
+    *)
+        echo "prerm called with unknown argument: $1" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

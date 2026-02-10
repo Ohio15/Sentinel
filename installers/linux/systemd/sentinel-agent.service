@@ -1,0 +1,28 @@
+[Unit]
+Description=Sentinel RMM Agent
+Documentation=https://sentinelrmm.us/docs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sentinel
+Group=sentinel
+ExecStart=/usr/local/bin/sentinel-agent
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/sentinel/agent.log
+StandardError=append:/var/log/sentinel/agent-error.log
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/log/sentinel /etc/sentinel
+
+# Environment
+Environment=SENTINEL_CONFIG=/etc/sentinel/config.json
+
+[Install]
+WantedBy=multi-user.target

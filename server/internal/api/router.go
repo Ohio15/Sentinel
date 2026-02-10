@@ -428,6 +428,10 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			// Agent Installers (authenticated users can view)
 			protected.GET("/agents/installers", listAgentInstallersHandler(services))
 
+			// Agent Installer Generation (generates installer with embedded config)
+			// GET /api/agent/installer?platform=windows&arch=amd64
+			protected.GET("/agent/installer", generateInstallerDownloadHandler(services))
+
 			// Agent Version Management
 			protected.GET("/agents/versions", listAgentVersionsHandler(services))
 			protected.GET("/devices/:id/version-history", getDeviceVersionHistoryHandler(services))

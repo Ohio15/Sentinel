@@ -1,0 +1,102 @@
+#!/bin/bash
+# Sentinel Agent post-installation script
+# This script runs after package files are installed
+
+set -e
+
+SENTINEL_USER="sentinel"
+SENTINEL_GROUP="sentinel"
+CONFIG_DIR="/etc/sentinel"
+LOG_DIR="/var/log/sentinel"
+CONFIG_FILE="${CONFIG_DIR}/config.json"
+
+case "$1" in
+    configure)
+        # Create sentinel group if it doesn't exist
+        if ! getent group "${SENTINEL_GROUP}" >/dev/null 2>&1; then
+            groupadd --system "${SENTINEL_GROUP}"
+            echo "Created system group: ${SENTINEL_GROUP}"
+        fi
+
+        # Create sentinel user if it doesn't exist
+        if ! getent passwd "${SENTINEL_USER}" >/dev/null 2>&1; then
+            useradd --system \
+                --gid "${SENTINEL_GROUP}" \
+                --home-dir "${CONFIG_DIR}" \
+                --no-create-home \
+                --shell /usr/sbin/nologin \
+                "${SENTINEL_USER}"
+            echo "Created system user: ${SENTINEL_USER}"
+        fi
+
+        # Create configuration directory
+        if [ ! -d "${CONFIG_DIR}" ]; then
+            mkdir -p "${CONFIG_DIR}"
+            echo "Created directory: ${CONFIG_DIR}"
+        fi
+
+        # Create log directory
+        if [ ! -d "${LOG_DIR}" ]; then
+            mkdir -p "${LOG_DIR}"
+            echo "Created directory: ${LOG_DIR}"
+        fi
+
+        # Create default config file if it doesn't exist
+        if [ ! -f "${CONFIG_FILE}" ]; then
+            cat > "${CONFIG_FILE}" << 'EOFCONFIG'
+{
+  "server_url": "%%SERVER_URL%%",
+  "grpc_endpoint": "%%GRPC_ENDPOINT%%",
+  "enrollment_token": "%%ENROLLMENT_TOKEN%%",
+  "organization_id": "%%ORGANIZATION_ID%%"
+}
+EOFCONFIG
+            echo "Created default config: ${CONFIG_FILE}"
+            echo "NOTE: Edit ${CONFIG_FILE} with your server details before starting the agent"
+        fi
+
+        # Set ownership and permissions
+        chown -R "${SENTINEL_USER}:${SENTINEL_GROUP}" "${CONFIG_DIR}"
+        chown -R "${SENTINEL_USER}:${SENTINEL_GROUP}" "${LOG_DIR}"
+        chmod 750 "${CONFIG_DIR}"
+        chmod 750 "${LOG_DIR}"
+        chmod 640 "${CONFIG_FILE}"
+
+        # Set binary permissions
+        chmod 755 /usr/local/bin/sentinel-agent
+        chmod 755 /usr/local/bin/sentinel-watchdog
+
+        # Reload systemd to pick up new service files
+        systemctl daemon-reload
+
+        # Enable services to start on boot
+        systemctl enable sentinel-agent.service
+        systemctl enable sentinel-watchdog.service
+
+        echo ""
+        echo "=============================================="
+        echo "Sentinel Agent installed successfully!"
+        echo "=============================================="
+        echo ""
+        echo "Next steps:"
+        echo "  1. Edit /etc/sentinel/config.json with your server details"
+        echo "  2. Start the services:"
+        echo "     sudo systemctl start sentinel-agent"
+        echo "     sudo systemctl start sentinel-watchdog"
+        echo ""
+        echo "View logs:"
+        echo "  sudo journalctl -u sentinel-agent -f"
+        echo "  sudo journalctl -u sentinel-watchdog -f"
+        echo ""
+        ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+
+    *)
+        echo "postinst called with unknown argument: $1" >&2
+        exit 1
+        ;;
+esac
+
+exit 0
