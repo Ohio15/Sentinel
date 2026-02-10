@@ -78,6 +78,10 @@ var
   OldAgentPath: String;
   OldWatchdogPath: String;
   InstallationFailed: Boolean;
+  // Progress tracking
+  TotalInstallSteps: Integer;
+  CurrentInstallStep: Integer;
+  FileExtractionComplete: Boolean;
 
 // Generate unique reference ID for error tracking
 function GenerateRefID: String;
@@ -132,6 +136,52 @@ begin
   SaveStringToFile(TempLog, LogLine + #13#10, True);
 end;
 
+// ============================================================================
+// Progress Tracking Functions
+// ============================================================================
+
+// Update the installation progress bar and status text
+procedure UpdateInstallProgress(StepNumber: Integer; StatusText: String);
+var
+  ProgressPercent: Integer;
+begin
+  CurrentInstallStep := StepNumber;
+
+  // Calculate progress: file extraction is 0-60%, post-install is 60-100%
+  if FileExtractionComplete then
+    ProgressPercent := 60 + ((StepNumber * 40) div TotalInstallSteps)
+  else
+    ProgressPercent := (StepNumber * 60) div TotalInstallSteps;
+
+  // Clamp to 100%
+  if ProgressPercent > 100 then
+    ProgressPercent := 100;
+
+  // Update the wizard progress gauge
+  WizardForm.ProgressGauge.Position := (ProgressPercent * WizardForm.ProgressGauge.Max) div 100;
+
+  // Update status label
+  WizardForm.StatusLabel.Caption := StatusText;
+
+  // Force UI update
+  WizardForm.Refresh;
+
+  WriteLog('Progress [' + IntToStr(ProgressPercent) + '%]: ' + StatusText);
+end;
+
+// Called during file extraction to track progress
+procedure CurInstallProgressChanged(CurProgress, MaxProgress: Integer);
+var
+  Percent: Integer;
+begin
+  // Calculate percentage of file extraction (0-60% of total)
+  if MaxProgress > 0 then
+  begin
+    Percent := (CurProgress * 60) div MaxProgress;
+    WizardForm.ProgressGauge.Position := (Percent * WizardForm.ProgressGauge.Max) div 100;
+  end;
+end;
+
 // Show error with reference ID - keeps window open
 procedure ShowInstallError(ErrorMsg: String);
 var
@@ -169,31 +219,59 @@ function ReadConfigViaPowerShell: String;
 var
   ResultCode: Integer;
   TempConfigPath: String;
+  TempScriptPath: String;
   ConfigContent: AnsiString;
   PSScript: String;
 begin
   Result := '';
   TempConfigPath := ExpandConstant('{tmp}\extracted-config.json');
+  TempScriptPath := ExpandConstant('{tmp}\extract-config.ps1');
 
   WriteLog('Attempting to extract embedded config via PowerShell');
+  WriteLog('Installer path: ' + ExpandConstant('{srcexe}'));
 
   // PowerShell script to find and extract config after marker
+  // Uses byte-level search to avoid encoding issues with binary EXE data
   PSScript :=
-    '$marker = "---SENTINEL-CONFIG---"; ' +
-    '$installerPath = "' + ExpandConstant('{srcexe}') + '"; ' +
-    'try { ' +
-    '  $bytes = [System.IO.File]::ReadAllBytes($installerPath); ' +
-    '  $text = [System.Text.Encoding]::UTF8.GetString($bytes); ' +
-    '  $idx = $text.LastIndexOf($marker); ' +
-    '  if ($idx -gt 0) { ' +
-    '    $config = $text.Substring($idx + $marker.Length).Trim(); ' +
-    '    $config | Out-File -FilePath "' + TempConfigPath + '" -Encoding UTF8 -NoNewline; ' +
-    '    exit 0; ' +
-    '  } else { exit 1; }' +
-    '} catch { exit 2; }';
+    '$ErrorActionPreference = "Stop"' + #13#10 +
+    '$marker = [System.Text.Encoding]::UTF8.GetBytes("---SENTINEL-CONFIG---")' + #13#10 +
+    '$installerPath = "' + ExpandConstant('{srcexe}') + '"' + #13#10 +
+    '$outputPath = "' + TempConfigPath + '"' + #13#10 +
+    'try {' + #13#10 +
+    '  $bytes = [System.IO.File]::ReadAllBytes($installerPath)' + #13#10 +
+    '  # Search from end of file for marker (more efficient)' + #13#10 +
+    '  $markerLen = $marker.Length' + #13#10 +
+    '  $found = -1' + #13#10 +
+    '  for ($i = $bytes.Length - $markerLen - 1; $i -ge [Math]::Max(0, $bytes.Length - 10000); $i--) {' + #13#10 +
+    '    $match = $true' + #13#10 +
+    '    for ($j = 0; $j -lt $markerLen; $j++) {' + #13#10 +
+    '      if ($bytes[$i + $j] -ne $marker[$j]) { $match = $false; break }' + #13#10 +
+    '    }' + #13#10 +
+    '    if ($match) { $found = $i; break }' + #13#10 +
+    '  }' + #13#10 +
+    '  if ($found -gt 0) {' + #13#10 +
+    '    $configStart = $found + $markerLen' + #13#10 +
+    '    $configBytes = $bytes[$configStart..($bytes.Length-1)]' + #13#10 +
+    '    $config = [System.Text.Encoding]::UTF8.GetString($configBytes).Trim()' + #13#10 +
+    '    # Validate it looks like JSON' + #13#10 +
+    '    if ($config.StartsWith("{") -and $config.Contains("server_url")) {' + #13#10 +
+    '      [System.IO.File]::WriteAllText($outputPath, $config)' + #13#10 +
+    '      exit 0' + #13#10 +
+    '    } else {' + #13#10 +
+    '      Write-Host "Config does not look like valid JSON: $config"' + #13#10 +
+    '      exit 3' + #13#10 +
+    '    }' + #13#10 +
+    '  } else { exit 1 }' + #13#10 +
+    '} catch {' + #13#10 +
+    '  Write-Host "Error: $_"' + #13#10 +
+    '  exit 2' + #13#10 +
+    '}';
+
+  // Write script to file to avoid command-line escaping issues
+  SaveStringToFile(TempScriptPath, PSScript, False);
 
   if Exec('powershell.exe',
-          '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "' + PSScript + '"',
+          '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + TempScriptPath + '"',
           '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
   begin
     WriteLog('PowerShell exit code: ' + IntToStr(ResultCode));
@@ -203,17 +281,23 @@ begin
       begin
         Result := String(ConfigContent);
         WriteLog('Successfully extracted embedded config: ' + IntToStr(Length(Result)) + ' chars');
+        WriteLog('Config preview: ' + Copy(Result, 1, 100) + '...');
       end;
     end
     else if ResultCode = 1 then
-      WriteLog('No embedded config marker found in installer')
+      WriteLog('No embedded config marker found in installer (searched last 10KB)')
     else if ResultCode = 2 then
-      WriteLog('PowerShell error reading installer file');
+      WriteLog('PowerShell error reading installer file')
+    else if ResultCode = 3 then
+      WriteLog('Config marker found but content is not valid JSON');
   end
   else
   begin
     WriteLog('PowerShell execution failed to start');
   end;
+
+  // Cleanup script file
+  DeleteFile(TempScriptPath);
 end;
 
 // Check if services exist (upgrade scenario)
@@ -297,6 +381,31 @@ begin
   WriteLog('Force termination completed');
 end;
 
+// Check if a service is currently running
+function IsServiceRunning(ServiceName: String): Boolean;
+var
+  ResultCode: Integer;
+  TempFile: String;
+  QueryOutput: AnsiString;
+begin
+  Result := False;
+  TempFile := ExpandConstant('{tmp}\sc-query-' + ServiceName + '.txt');
+
+  // Query service and redirect output to file
+  if Exec('cmd.exe', '/C sc.exe query "' + ServiceName + '" > "' + TempFile + '" 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    if FileExists(TempFile) then
+    begin
+      if LoadStringFromFile(TempFile, QueryOutput) then
+      begin
+        // Check if output contains "RUNNING"
+        Result := (Pos('RUNNING', String(QueryOutput)) > 0);
+      end;
+      DeleteFile(TempFile);
+    end;
+  end;
+end;
+
 // Start a Windows service with verification
 function StartService(ServiceName: String): Boolean;
 var
@@ -310,24 +419,31 @@ begin
   begin
     WriteLog('Start command result: ' + IntToStr(ResultCode));
 
-    // Verify service started
+    // Verify service started by checking status
     RetryCount := 0;
     while RetryCount < 10 do
     begin
       Sleep(1000);
-      if Exec('sc.exe', 'query "' + ServiceName + '" | find "RUNNING"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+      if IsServiceRunning(ServiceName) then
       begin
-        if ResultCode = 0 then
-        begin
-          WriteLog('Service started and running');
-          Result := True;
-          Exit;
-        end;
+        WriteLog('Service started and running');
+        Result := True;
+        Exit;
       end;
       RetryCount := RetryCount + 1;
+      WriteLog('Waiting for service to start... (' + IntToStr(RetryCount) + '/10)');
     end;
 
-    WriteLog('Service may not be running after start command');
+    // One final check - the service might have started but we missed it
+    if IsServiceRunning(ServiceName) then
+    begin
+      WriteLog('Service confirmed running after extended wait');
+      Result := True;
+    end
+    else
+    begin
+      WriteLog('Service may not be running after start command');
+    end;
   end
   else
   begin
@@ -511,6 +627,13 @@ begin
   Result := True;
   InstallationFailed := False;
   ServicesWereStopped := False;
+  FileExtractionComplete := False;
+
+  // Initialize progress tracking
+  // Post-install steps: verify files, write config, remove old services,
+  // create agent service, create watchdog service, start agent, start watchdog
+  TotalInstallSteps := 7;
+  CurrentInstallStep := 0;
 
   // Generate reference ID
   RefID := GenerateRefID;
@@ -522,7 +645,7 @@ begin
   WriteLog('Sentinel Agent Installer v{#MyAppVersion}');
   WriteLog('Reference ID: ' + RefID);
   WriteLog('Installer: ' + ExpandConstant('{srcexe}'));
-  WriteLog('Target: ' + ExpandConstant('{app}'));
+  WriteLog('Default target: ' + ExpandConstant('{autopf}\Sentinel'));
   WriteLog('========================================');
 
   // Check for existing installation
@@ -619,8 +742,11 @@ var
   AgentPath, WatchdogPath: String;
   AgentCreated, WatchdogCreated: Boolean;
 begin
+  // Mark file extraction complete when entering post-install
   if CurStep = ssPostInstall then
   begin
+    FileExtractionComplete := True;
+
     WriteLog('========================================');
     WriteLog('POST-INSTALL');
     WriteLog('========================================');
@@ -631,7 +757,9 @@ begin
     WriteLog('Agent path: ' + AgentPath);
     WriteLog('Watchdog path: ' + WatchdogPath);
 
-    // Verify files were extracted
+    // Step 1: Verify files were extracted
+    UpdateInstallProgress(1, 'Verifying extracted files...');
+
     if not FileExists(AgentPath) then
     begin
       WriteLog('CRITICAL: Agent executable not found after extraction!');
@@ -652,7 +780,9 @@ begin
 
     WriteLog('Both executables verified present');
 
-    // Write config file
+    // Step 2: Write config file
+    UpdateInstallProgress(2, 'Writing configuration...');
+
     if ConfigData <> '' then
     begin
       if not WriteConfigFile(ConfigData) then
@@ -668,16 +798,23 @@ begin
                         'The agent may need manual configuration via config.json');
     end;
 
-    // Delete existing services if upgrading (to recreate with new paths)
+    // Step 3: Delete existing services if upgrading
     if IsUpgrade then
     begin
+      UpdateInstallProgress(3, 'Removing old services...');
       WriteLog('Removing old service registrations...');
       DeleteService('SentinelWatchdog');
       DeleteService('SentinelAgent');
       Sleep(1000);
+    end
+    else
+    begin
+      UpdateInstallProgress(3, 'Preparing services...');
+      Sleep(200);
     end;
 
-    // Create Sentinel Agent service
+    // Step 4: Create Sentinel Agent service
+    UpdateInstallProgress(4, 'Creating Sentinel Agent service...');
     WriteLog('Creating SentinelAgent service...');
     AgentCreated := CreateService('SentinelAgent',
                                   'Sentinel Agent',
@@ -691,7 +828,8 @@ begin
       Exit;
     end;
 
-    // Create Sentinel Watchdog service
+    // Step 5: Create Sentinel Watchdog service
+    UpdateInstallProgress(5, 'Creating Sentinel Watchdog service...');
     WriteLog('Creating SentinelWatchdog service...');
     WatchdogCreated := CreateService('SentinelWatchdog',
                                      'Sentinel Watchdog',
@@ -703,9 +841,9 @@ begin
                         'The agent will run without watchdog protection.');
     end;
 
-    // Start services
+    // Step 6: Start Sentinel Agent service
+    UpdateInstallProgress(6, 'Starting Sentinel Agent...');
     WriteLog('Starting services...');
-    Sleep(1000);
 
     if not StartService('SentinelAgent') then
     begin
@@ -714,14 +852,22 @@ begin
                         'You may need to start it manually from services.msc');
     end;
 
-    Sleep(500);
+    // Step 7: Start Watchdog service
     if WatchdogCreated then
     begin
+      UpdateInstallProgress(7, 'Starting Sentinel Watchdog...');
       if not StartService('SentinelWatchdog') then
       begin
         WriteLog('WARNING: Failed to start Sentinel Watchdog service');
       end;
+    end
+    else
+    begin
+      UpdateInstallProgress(7, 'Finalizing installation...');
     end;
+
+    // Final: Complete
+    UpdateInstallProgress(7, 'Installation complete!');
 
     WriteLog('========================================');
     WriteLog('INSTALLATION COMPLETED');
