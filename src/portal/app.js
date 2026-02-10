@@ -55,6 +55,7 @@ let tickets = [];
 let currentTicket = null;
 let eventSource = null;
 let pendingAttachments = [];
+let adminToken = null; // Admin JWT token for SSO from main app
 
 // DOM Elements
 const loginPage = document.getElementById('loginPage');
@@ -73,8 +74,18 @@ const newTicketForm = document.getElementById('newTicketForm');
 
 // Initialize app on page load
 document.addEventListener('DOMContentLoaded', async () => {
-  // Check for error in URL params (OAuth callback errors)
   const urlParams = new URLSearchParams(window.location.search);
+
+  // Check for token in URL (passed from main Sentinel app for SSO)
+  const token = urlParams.get('token');
+  if (token) {
+    // Store the token for API calls
+    localStorage.setItem('sentinel-admin-token', token);
+    // Clean up URL to remove token
+    window.history.replaceState({}, document.title, '/portal');
+  }
+
+  // Check for error in URL params (OAuth callback errors)
   const error = urlParams.get('error');
   if (error) {
     showError(decodeURIComponent(error));
@@ -82,14 +93,49 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.history.replaceState({}, document.title, '/portal');
   }
 
-  // Check if user is authenticated
+  // Check if user is authenticated (try admin token first, then portal session)
   await checkAuth();
 });
 
 /**
  * Check authentication status
+ * First tries admin token SSO (from main Sentinel app), then portal session
  */
 async function checkAuth() {
+  // Check for admin token passed from main app
+  const storedToken = localStorage.getItem('sentinel-admin-token');
+  if (storedToken) {
+    try {
+      // Validate the admin token against the main API
+      const response = await fetch('/api/auth/me', {
+        headers: {
+          'Authorization': `Bearer ${storedToken}`
+        }
+      });
+
+      if (response.ok) {
+        const user = await response.json();
+        adminToken = storedToken;
+        currentUser = {
+          id: user.id,
+          email: user.email,
+          name: user.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : user.username,
+          isAdmin: true
+        };
+        showAuthenticatedUI();
+        await loadTickets();
+        return;
+      } else {
+        // Token is invalid, clear it
+        localStorage.removeItem('sentinel-admin-token');
+      }
+    } catch (error) {
+      console.error('Admin token validation failed:', error);
+      localStorage.removeItem('sentinel-admin-token');
+    }
+  }
+
+  // Fall back to portal session auth (Azure AD)
   try {
     const response = await fetch('/portal/auth/me', {
       credentials: 'include'
@@ -202,13 +248,20 @@ function login() {
 async function logout() {
   disconnectSSE();
 
-  try {
-    await fetch('/portal/auth/logout', {
-      method: 'POST',
-      credentials: 'include'
-    });
-  } catch (error) {
-    console.error('Logout error:', error);
+  // Clear admin token if present
+  if (adminToken) {
+    localStorage.removeItem('sentinel-admin-token');
+    adminToken = null;
+  } else {
+    // Portal session logout
+    try {
+      await fetch('/portal/auth/logout', {
+        method: 'POST',
+        credentials: 'include'
+      });
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
   }
 
   currentUser = null;
@@ -301,9 +354,8 @@ async function showTicketDetail(ticketId) {
   ticketDetail.innerHTML = '<div class="loading">Loading ticket...</div>';
 
   try {
-    const response = await fetch(`/portal/api/tickets/${ticketId}`, {
-      credentials: 'include'
-    });
+    const apiPath = getApiPath(`/portal/api/tickets/${ticketId}`);
+    const response = await fetch(apiPath, getFetchOptions());
 
     if (!response.ok) {
       throw new Error('Failed to load ticket');
@@ -311,22 +363,75 @@ async function showTicketDetail(ticketId) {
 
     currentTicket = await response.json();
 
-    // Load attachments
-    const attachmentsResponse = await fetch(`/portal/api/tickets/${ticketId}/attachments`, {
-      credentials: 'include'
-    });
-    if (attachmentsResponse.ok) {
-      currentTicket.attachments = await attachmentsResponse.json();
+    // Load attachments (skip for admin mode as main API may not have this endpoint)
+    if (!adminToken) {
+      const attachmentsResponse = await fetch(`/portal/api/tickets/${ticketId}/attachments`, {
+        credentials: 'include'
+      });
+      if (attachmentsResponse.ok) {
+        currentTicket.attachments = await attachmentsResponse.json();
+      }
+    }
+
+    // Load comments for ticket (main API uses different structure)
+    if (adminToken) {
+      try {
+        const commentsResponse = await fetch(`/api/tickets/${ticketId}/comments`, getFetchOptions());
+        if (commentsResponse.ok) {
+          currentTicket.comments = await commentsResponse.json();
+        }
+      } catch (e) {
+        console.error('Failed to load comments:', e);
+      }
     }
 
     renderTicketDetail();
 
-    // Connect SSE for real-time updates
-    connectSSE(ticketId);
+    // Connect SSE for real-time updates (only for portal mode)
+    if (!adminToken) {
+      connectSSE(ticketId);
+    }
   } catch (error) {
     console.error('Failed to load ticket:', error);
     ticketDetail.innerHTML = '<div class="error-message">Failed to load ticket. Please try again.</div>';
   }
+}
+
+/**
+ * Helper function to get fetch options with appropriate auth
+ */
+function getFetchOptions(options = {}) {
+  const opts = { ...options };
+  if (adminToken) {
+    opts.headers = {
+      ...opts.headers,
+      'Authorization': `Bearer ${adminToken}`
+    };
+  } else {
+    opts.credentials = 'include';
+  }
+  return opts;
+}
+
+/**
+ * Get the API base path based on auth mode
+ */
+function getApiPath(portalPath) {
+  // When in admin mode, use the main API; otherwise use portal API
+  if (adminToken) {
+    // Map portal paths to main API paths
+    const mappings = {
+      '/portal/api/tickets': '/api/tickets',
+      '/portal/api/kb/': '/api/kb/'
+    };
+    for (const [portal, main] of Object.entries(mappings)) {
+      if (portalPath.startsWith(portal)) {
+        return portalPath.replace(portal, main);
+      }
+    }
+    return portalPath.replace('/portal/api/', '/api/');
+  }
+  return portalPath;
 }
 
 /**
@@ -336,9 +441,8 @@ async function loadTickets() {
   ticketsList.innerHTML = '<div class="loading">Loading tickets...</div>';
 
   try {
-    const response = await fetch('/portal/api/tickets', {
-      credentials: 'include'
-    });
+    const apiPath = getApiPath('/portal/api/tickets');
+    const response = await fetch(apiPath, getFetchOptions());
 
     if (!response.ok) {
       throw new Error('Failed to load tickets');
@@ -620,24 +724,39 @@ async function saveEditComment(commentId) {
   }
 
   try {
-    const response = await fetch(`/portal/api/tickets/${currentTicket.id}/comments/${commentId}`, {
-      method: 'PATCH',
+    // Use the main API endpoint for comment updates
+    const apiPath = adminToken
+      ? `/api/tickets/comments/${commentId}`
+      : `/portal/api/tickets/${currentTicket.id}/comments/${commentId}`;
+
+    const fetchOpts = getFetchOptions({
+      method: 'PUT',
       headers: {
         'Content-Type': 'application/json'
       },
-      credentials: 'include',
       body: JSON.stringify({ content: newContent })
     });
+
+    const response = await fetch(apiPath, fetchOpts);
 
     if (!response.ok) {
       const error = await response.json();
       throw new Error(error.error || 'Failed to edit comment');
     }
 
-    // Update will come via SSE, but also update locally for immediate feedback
+    // Update locally for immediate feedback
     const contentEl = document.getElementById(`comment-content-${commentId}`);
     if (contentEl) {
       contentEl.textContent = newContent;
+    }
+
+    // Update in current ticket comments array
+    if (currentTicket.comments) {
+      const idx = currentTicket.comments.findIndex(c => c.id === commentId);
+      if (idx !== -1) {
+        currentTicket.comments[idx].content = newContent;
+        currentTicket.comments[idx].editedAt = new Date().toISOString();
+      }
     }
   } catch (error) {
     console.error('Failed to edit comment:', error);
@@ -913,14 +1032,16 @@ async function submitTicket(event) {
   };
 
   try {
-    const response = await fetch('/portal/api/tickets', {
+    const apiPath = getApiPath('/portal/api/tickets');
+    const fetchOpts = getFetchOptions({
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      credentials: 'include',
       body: JSON.stringify(ticketData)
     });
+
+    const response = await fetch(apiPath, fetchOpts);
 
     if (!response.ok) {
       const error = await response.json();
@@ -960,14 +1081,16 @@ async function submitComment() {
     // First, submit the comment
     let commentId = null;
     if (content) {
-      const response = await fetch(`/portal/api/tickets/${currentTicket.id}/comments`, {
+      const apiPath = getApiPath(`/portal/api/tickets/${currentTicket.id}/comments`);
+      const fetchOpts = getFetchOptions({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        credentials: 'include',
         body: JSON.stringify({ content })
       });
+
+      const response = await fetch(apiPath, fetchOpts);
 
       if (!response.ok) {
         const error = await response.json();
@@ -976,10 +1099,25 @@ async function submitComment() {
 
       const comment = await response.json();
       commentId = comment.id;
+
+      // In admin mode, we need to manually add the comment to the ticket since no SSE
+      if (adminToken) {
+        if (!currentTicket.comments) currentTicket.comments = [];
+        currentTicket.comments.push({
+          ...comment,
+          authorName: currentUser?.name || 'Admin',
+          authorEmail: currentUser?.email
+        });
+        const container = document.getElementById('commentsContainer');
+        if (container) {
+          container.innerHTML = renderComments(currentTicket.comments);
+          scrollToBottomOfComments();
+        }
+      }
     }
 
-    // Then upload attachments if any
-    if (pendingAttachments.length > 0) {
+    // Then upload attachments if any (skip in admin mode for now)
+    if (pendingAttachments.length > 0 && !adminToken) {
       const formData = new FormData();
       pendingAttachments.forEach(file => {
         formData.append('files', file);
@@ -1176,9 +1314,9 @@ async function loadTicketsWithFilters() {
     params.append('page', currentPage);
     params.append('limit', pageSize);
 
-    const response = await fetch(`/portal/api/tickets/search?${params.toString()}`, {
-      credentials: 'include'
-    });
+    // In admin mode, just use the main tickets endpoint with filters
+    const basePath = adminToken ? '/api/tickets' : '/portal/api/tickets/search';
+    const response = await fetch(`${basePath}?${params.toString()}`, getFetchOptions());
 
     if (!response.ok) {
       // Fall back to regular tickets endpoint
@@ -1341,9 +1479,8 @@ async function loadKBCategories() {
   const container = document.getElementById('kbCategories');
 
   try {
-    const response = await fetch('/portal/api/kb/categories', {
-      credentials: 'include'
-    });
+    const apiPath = getApiPath('/portal/api/kb/categories');
+    const response = await fetch(apiPath, getFetchOptions());
 
     if (!response.ok) throw new Error('Failed to load categories');
 
@@ -1415,14 +1552,12 @@ async function loadKBArticles(categoryId = null) {
   document.getElementById('kbArticles').style.display = 'block';
 
   try {
-    let url = '/portal/api/kb/articles';
+    let url = getApiPath('/portal/api/kb/articles');
     if (categoryId) {
       url += `?categoryId=${categoryId}`;
     }
 
-    const response = await fetch(url, {
-      credentials: 'include'
-    });
+    const response = await fetch(url, getFetchOptions());
 
     if (!response.ok) throw new Error('Failed to load articles');
 
