@@ -3,6 +3,7 @@ package api
 import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/sentinel/server/internal/credentials"
 	"github.com/sentinel/server/internal/metrics"
 	"github.com/sentinel/server/internal/pki"
 	"github.com/sentinel/server/internal/push"
@@ -41,4 +42,6 @@ type Services struct {
 	PushService     *push.Service
 	PKI             *pki.PKI
 	MetricsRecorder MetricsRecorder // For controlling metrics recording per device
+	JWTManager      *credentials.JWTManager    // Managed JWT secret rotation
+	APIKeyManager   *credentials.APIKeyManager // Managed API key system
 }
