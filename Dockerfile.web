@@ -5,9 +5,8 @@ WORKDIR /app
 
 # Copy package files from root
 COPY package*.json ./
-COPY vite.web.config.ts ./
+COPY vite.config.ts ./
 COPY tsconfig.json ./
-COPY tsconfig.main.json ./
 COPY tailwind.config.js ./
 COPY postcss.config.js ./
 
