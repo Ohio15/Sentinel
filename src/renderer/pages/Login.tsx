@@ -330,13 +330,22 @@ export function Login() {
             <p className="text-gray-300 mb-2">
               {authMethod === 'passkey-device'
                 ? 'Complete authentication on your device...'
-                : 'Scan the QR code with your phone...'}
+                : 'Look for the QR code option...'}
             </p>
             <p className="text-sm text-gray-500">
               {authMethod === 'passkey-device'
                 ? 'Enter your PIN or use biometric to confirm'
-                : 'Use your phone\'s camera to scan, then authenticate with your passkey'}
+                : 'If you see a PIN prompt, look for "Use a different device" or "Use your phone" option'}
             </p>
+            {authMethod === 'passkey-phone' && (
+              <div className="mt-4 p-3 bg-blue-900/20 border border-blue-800/50 rounded-lg text-left">
+                <p className="text-xs text-blue-300 font-medium mb-1">Tip: Using 1Password?</p>
+                <p className="text-xs text-blue-200/70">
+                  In the browser dialog, click the small link that says "Use a phone or tablet"
+                  or "Use a different device" to show the QR code.
+                </p>
+              </div>
+            )}
           </>
         ) : passkeyError ? (
           <>
