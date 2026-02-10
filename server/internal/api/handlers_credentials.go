@@ -87,9 +87,14 @@ func rotateJWTSecretHandler(services *Services) gin.HandlerFunc {
 			return
 		}
 
-		userID, err := uuid.Parse(c.GetString("userId"))
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		userIDValue, exists := c.Get("userId")
+		if !exists {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "User ID not found in context"})
+			return
+		}
+		userID, ok := userIDValue.(uuid.UUID)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID type"})
 			return
 		}
 
@@ -162,9 +167,14 @@ func createAPIKeyHandler(services *Services) gin.HandlerFunc {
 			return
 		}
 
-		userID, err := uuid.Parse(c.GetString("userId"))
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		userIDValue, exists := c.Get("userId")
+		if !exists {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "User ID not found in context"})
+			return
+		}
+		userID, ok := userIDValue.(uuid.UUID)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID type"})
 			return
 		}
 		req.CreatedBy = userID
@@ -202,9 +212,14 @@ func revokeAPIKeyHandler(services *Services) gin.HandlerFunc {
 			return
 		}
 
-		userID, err := uuid.Parse(c.GetString("userId"))
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		userIDValue, exists := c.Get("userId")
+		if !exists {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "User ID not found in context"})
+			return
+		}
+		userID, ok := userIDValue.(uuid.UUID)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID type"})
 			return
 		}
 
@@ -362,7 +377,8 @@ func updateRotationScheduleHandler(services *Services) gin.HandlerFunc {
 			return
 		}
 
-		userID, _ := uuid.Parse(c.GetString("userId"))
+		userIDValue, _ := c.Get("userId")
+		userID, _ := userIDValue.(uuid.UUID)
 
 		// Build update query dynamically
 		query := "UPDATE credential_rotation_schedule SET updated_at = NOW(), updated_by = $1"
