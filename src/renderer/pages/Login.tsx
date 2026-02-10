@@ -96,6 +96,36 @@ export function Login() {
     try {
       await login(identifier, password);
       toast.success('Welcome back!');
+
+      // Check if user has passkeys set up, if not suggest adding one
+      if (passkeySupported) {
+        try {
+          const passkeys = await api!.getPasskeys();
+          if (!passkeys || passkeys.length === 0) {
+            // Delay the suggestion toast so it doesn't overlap with welcome
+            setTimeout(() => {
+              toast((t) => (
+                <div className="flex items-center gap-3">
+                  <Fingerprint className="w-5 h-5 text-primary flex-shrink-0" />
+                  <div>
+                    <p className="font-medium">Enable faster sign-in</p>
+                    <p className="text-sm text-gray-400">Set up a passkey in Settings → Security</p>
+                  </div>
+                  <button
+                    onClick={() => toast.dismiss(t.id)}
+                    className="text-gray-400 hover:text-white"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ), { duration: 8000 });
+            }, 1500);
+          }
+        } catch {
+          // Silently fail - don't block login for passkey check
+        }
+      }
+
       navigate('/');
     } catch {
       // Error is handled by the store
@@ -201,6 +231,41 @@ export function Login() {
             </button>
           </form>
 
+          {/* Auth methods info */}
+          <div className="mt-6 pt-4 border-t border-gray-800">
+            <p className="text-xs text-gray-500 mb-3 text-center">Available sign-in methods</p>
+            <div className="flex items-center justify-center gap-4">
+              <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                </svg>
+                <span>Password</span>
+              </div>
+              {passkeySupported && (
+                <>
+                  <span className="text-gray-700">•</span>
+                  <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                    <Fingerprint className="w-4 h-4" />
+                    <span>Passkey</span>
+                  </div>
+                  <span className="text-gray-700">•</span>
+                  <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                    </svg>
+                    <span>Phone (QR)</span>
+                  </div>
+                </>
+              )}
+            </div>
+            {passkeySupported && (
+              <p className="text-xs text-gray-600 text-center mt-2">
+                Use a passkey from this device or scan QR with your phone
+              </p>
+            )}
+          </div>
+
+          {/* Invitation sign up */}
           <div className="mt-4 text-center">
             <p className="text-sm text-gray-400">
               Have an invitation?{' '}
