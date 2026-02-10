@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useThemeStore } from '../stores/themeStore';
 import { useDeviceStore } from '../stores/deviceStore';
 import { PasskeyManager } from '../components/PasskeyManager';
+import { CredentialManager } from '../components/CredentialManager';
 import { settings as settingsService, server as serverService, portal as portalService, backend as backendService, clients as clientsService } from '../services';
 
 interface Settings {
@@ -419,6 +420,7 @@ export function Settings() {
       {/* Security Tab */}
       {activeTab === 'security' && (
         <div className="space-y-6">
+          <CredentialManager />
           <PasskeyManager />
         </div>
       )}
