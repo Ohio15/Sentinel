@@ -72,6 +72,18 @@ cp "${SCRIPT_DIR}/systemd/sentinel-agent.service" "${PACKAGE_DIR}/etc/systemd/sy
 cp "${SCRIPT_DIR}/systemd/sentinel-watchdog.service" "${PACKAGE_DIR}/etc/systemd/system/"
 chmod 644 "${PACKAGE_DIR}/etc/systemd/system/"*.service
 
+# Create config directory and template config
+mkdir -p "${PACKAGE_DIR}/etc/sentinel"
+cat > "${PACKAGE_DIR}/etc/sentinel/config.json" << 'CONFIGEOF'
+{
+  "server_url": "%%SERVER_URL%%",
+  "grpc_endpoint": "%%GRPC_ENDPOINT%%",
+  "enrollment_token": "%%ENROLLMENT_TOKEN%%",
+  "organization_id": "%%ORGANIZATION_ID%%"
+}
+CONFIGEOF
+chmod 640 "${PACKAGE_DIR}/etc/sentinel/config.json"
+
 # Process control file with version
 sed "s/%%VERSION%%/${VERSION}/g" "${SCRIPT_DIR}/debian/control" > "${PACKAGE_DIR}/DEBIAN/control"
 
