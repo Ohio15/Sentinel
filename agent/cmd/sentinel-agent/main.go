@@ -1719,12 +1719,22 @@ func (a *Agent) handleForceUpdate(msg *client.Message) error {
 }
 
 func (a *Agent) handlePowerAction(msg *client.Message) error {
-	data, ok := msg.Data.(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("invalid power action message format")
+	// Check both Data and Payload fields (server may send in either)
+	var data map[string]interface{}
+	if d, ok := msg.Data.(map[string]interface{}); ok {
+		data = d
+	} else if p, ok := msg.Payload.(map[string]interface{}); ok {
+		data = p
+	}
+	if data == nil {
+		return fmt.Errorf("invalid power action message format: no data")
 	}
 
 	action, _ := data["action"].(string)
+	if action == "" {
+		return fmt.Errorf("invalid power action message format: no action specified")
+	}
+
 	log.Printf("[Power] Received power action: %s", action)
 
 	switch action {
