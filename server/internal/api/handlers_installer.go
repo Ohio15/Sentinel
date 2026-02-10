@@ -412,13 +412,12 @@ func logInstallerDownload(c *gin.Context, services *Services, platform, arch str
 	ctx := c.Request.Context()
 
 	// Try to log to database (don't fail if this fails)
+	// Uses existing agent_downloads table schema
 	_, err := services.DB.Pool().Exec(ctx, `
 		INSERT INTO agent_downloads (
-			organization_id, platform, architecture,
-			ip_address, user_agent, downloaded_by, downloaded_at
-		) VALUES ($1, $2, $3, $4, $5, $6, NOW())
-	`, constants.CurrentOrganizationID, platform, arch,
-		c.ClientIP(), c.Request.UserAgent(), userID)
+			platform, architecture, ip_address, user_agent
+		) VALUES ($1, $2, $3, $4)
+	`, platform, arch, c.ClientIP(), c.Request.UserAgent())
 
 	if err != nil {
 		// Table might not exist yet, just log
