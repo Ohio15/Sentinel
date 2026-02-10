@@ -1,10 +1,13 @@
 /**
  * Login Page - Web mode only
- * In Electron mode, this page is not used (auth is handled by main process)
+ * Provides user-selectable authentication methods:
+ * 1. Password - Traditional username/password
+ * 2. This Device - Passkey with PIN/biometric on current device
+ * 3. Phone - Scan QR code with phone's passkey
  */
 import { useState, useEffect, FormEvent } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Loader2, Fingerprint } from 'lucide-react';
+import { Loader2, Fingerprint, Smartphone, Key, ArrowLeft } from 'lucide-react';
 import { browserSupportsWebAuthn, startAuthentication } from '@simplewebauthn/browser';
 import { useAuthStore } from '../stores/authStore';
 import { Input } from '../components/ui';
@@ -12,9 +15,12 @@ import { api } from '../services/api';
 import { connection } from '../services';
 import toast from 'react-hot-toast';
 
+type AuthMethod = 'select' | 'password' | 'passkey-device' | 'passkey-phone';
+
 export function Login() {
   const navigate = useNavigate();
   const { login, isLoading, error, clearError } = useAuthStore();
+  const [authMethod, setAuthMethod] = useState<AuthMethod>('select');
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [passkeySupported, setPasskeySupported] = useState(false);
@@ -28,7 +34,7 @@ export function Login() {
     }
   }, []);
 
-  const handlePasskeyLogin = async () => {
+  const handlePasskeyLogin = async (preferHybrid: boolean = false) => {
     setPasskeyLoading(true);
     setPasskeyError(null);
     clearError();
@@ -39,10 +45,17 @@ export function Login() {
       const { sessionId, options } = beginResponse;
 
       // go-webauthn returns { publicKey: { ... } }, but @simplewebauthn/browser expects just the publicKey contents
-      const publicKeyOptions = (options as { publicKey?: unknown })?.publicKey || options;
+      const publicKeyOptions = (options as { publicKey?: Record<string, unknown> })?.publicKey || options;
 
-      // Step 2: Prompt user for biometric authentication
-      const authResponse = await startAuthentication(publicKeyOptions as Parameters<typeof startAuthentication>[0]);
+      // Add hints for preferred transport method
+      const authOptions = {
+        ...publicKeyOptions,
+        // For phone/QR, hint that we prefer hybrid (cross-device) transport
+        ...(preferHybrid && { hints: ['hybrid'] }),
+      } as Parameters<typeof startAuthentication>[0];
+
+      // Step 2: Prompt user for authentication
+      const authResponse = await startAuthentication(authOptions);
 
       // Step 3: Complete authentication
       const result = await api!.finishPasskeyAuthentication({
@@ -81,6 +94,8 @@ export function Login() {
         setPasskeyError('Authentication was cancelled');
       } else if (error.name === 'InvalidStateError') {
         setPasskeyError('Invalid passkey state');
+      } else if (error.name === 'NotSupportedError') {
+        setPasskeyError('This authentication method is not supported on your device');
       } else {
         setPasskeyError(error.message || 'Passkey authentication failed');
       }
@@ -102,14 +117,13 @@ export function Login() {
         try {
           const passkeys = await api!.getPasskeys();
           if (!passkeys || passkeys.length === 0) {
-            // Delay the suggestion toast so it doesn't overlap with welcome
             setTimeout(() => {
               toast((t) => (
                 <div className="flex items-center gap-3">
                   <Fingerprint className="w-5 h-5 text-primary flex-shrink-0" />
                   <div>
                     <p className="font-medium">Enable faster sign-in</p>
-                    <p className="text-sm text-gray-400">Set up a passkey in Settings → Security</p>
+                    <p className="text-sm text-gray-400">Set up a passkey in Settings</p>
                   </div>
                   <button
                     onClick={() => toast.dismiss(t.id)}
@@ -122,7 +136,7 @@ export function Login() {
             }, 1500);
           }
         } catch {
-          // Silently fail - don't block login for passkey check
+          // Silently fail
         }
       }
 
@@ -131,6 +145,219 @@ export function Login() {
       // Error is handled by the store
     }
   };
+
+  const handleBack = () => {
+    setAuthMethod('select');
+    setPasskeyError(null);
+    clearError();
+  };
+
+  // Method selection screen
+  const renderMethodSelection = () => (
+    <div className="space-y-3">
+      <h2 className="text-xl font-semibold text-white mb-6 text-center">Choose sign-in method</h2>
+
+      {/* Password option */}
+      <button
+        type="button"
+        onClick={() => setAuthMethod('password')}
+        className="w-full flex items-center gap-4 p-4 bg-gray-800 hover:bg-gray-750 border border-gray-700 hover:border-gray-600 rounded-lg transition-all group"
+      >
+        <div className="p-2.5 bg-gray-700 rounded-lg group-hover:bg-gray-600 transition-colors">
+          <Key className="w-5 h-5 text-gray-300" />
+        </div>
+        <div className="text-left">
+          <p className="font-medium text-white">Password</p>
+          <p className="text-sm text-gray-400">Sign in with username and password</p>
+        </div>
+      </button>
+
+      {/* Passkey - This Device */}
+      {passkeySupported && (
+        <button
+          type="button"
+          onClick={() => {
+            setAuthMethod('passkey-device');
+            handlePasskeyLogin(false);
+          }}
+          disabled={passkeyLoading}
+          className="w-full flex items-center gap-4 p-4 bg-gray-800 hover:bg-gray-750 border border-gray-700 hover:border-gray-600 rounded-lg transition-all group disabled:opacity-50"
+        >
+          <div className="p-2.5 bg-primary/20 rounded-lg group-hover:bg-primary/30 transition-colors">
+            <Fingerprint className="w-5 h-5 text-primary" />
+          </div>
+          <div className="text-left flex-1">
+            <p className="font-medium text-white">This Device</p>
+            <p className="text-sm text-gray-400">Use PIN or biometric on this device</p>
+          </div>
+          {passkeyLoading && authMethod === 'passkey-device' && (
+            <Loader2 className="w-5 h-5 animate-spin text-primary" />
+          )}
+        </button>
+      )}
+
+      {/* Passkey - Phone QR */}
+      {passkeySupported && (
+        <button
+          type="button"
+          onClick={() => {
+            setAuthMethod('passkey-phone');
+            handlePasskeyLogin(true);
+          }}
+          disabled={passkeyLoading}
+          className="w-full flex items-center gap-4 p-4 bg-gray-800 hover:bg-gray-750 border border-gray-700 hover:border-gray-600 rounded-lg transition-all group disabled:opacity-50"
+        >
+          <div className="p-2.5 bg-blue-500/20 rounded-lg group-hover:bg-blue-500/30 transition-colors">
+            <Smartphone className="w-5 h-5 text-blue-400" />
+          </div>
+          <div className="text-left flex-1">
+            <p className="font-medium text-white">Phone</p>
+            <p className="text-sm text-gray-400">Scan QR code with your phone's passkey</p>
+          </div>
+          {passkeyLoading && authMethod === 'passkey-phone' && (
+            <Loader2 className="w-5 h-5 animate-spin text-blue-400" />
+          )}
+        </button>
+      )}
+
+      {/* Error display */}
+      {passkeyError && (
+        <div className="p-3 bg-red-900/50 border border-red-700 rounded-lg">
+          <p className="text-sm text-red-300">{passkeyError}</p>
+        </div>
+      )}
+
+      {/* Passkey info */}
+      {passkeySupported && (
+        <div className="mt-4 p-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+          <p className="text-xs text-gray-500">
+            <strong className="text-gray-400">This Device</strong> uses the passkey stored on this computer.
+            <br />
+            <strong className="text-gray-400">Phone</strong> uses the passkey stored on your mobile device.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+
+  // Password form
+  const renderPasswordForm = () => (
+    <>
+      <div className="flex items-center gap-3 mb-6">
+        <button
+          type="button"
+          onClick={handleBack}
+          className="p-1.5 hover:bg-gray-800 rounded-lg transition-colors"
+        >
+          <ArrowLeft className="w-5 h-5 text-gray-400" />
+        </button>
+        <h2 className="text-xl font-semibold text-white">Sign in with password</h2>
+      </div>
+
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <Input
+          label="Username or Email"
+          type="text"
+          value={identifier}
+          onChange={(e) => setIdentifier(e.target.value)}
+          placeholder="username or email"
+          required
+          autoComplete="username"
+          autoFocus
+        />
+
+        <Input
+          label="Password"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="Enter your password"
+          required
+          autoComplete="current-password"
+        />
+
+        {error && (
+          <div className="p-3 bg-red-900/50 border border-red-700 rounded-lg">
+            <p className="text-sm text-red-300">{error}</p>
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={isLoading}
+          className="w-full flex items-center justify-center gap-2 bg-primary text-white py-2.5 rounded-lg font-medium hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {isLoading ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Signing in...
+            </>
+          ) : (
+            'Sign in'
+          )}
+        </button>
+      </form>
+    </>
+  );
+
+  // Passkey loading/waiting screen
+  const renderPasskeyWaiting = () => (
+    <>
+      <div className="flex items-center gap-3 mb-6">
+        <button
+          type="button"
+          onClick={handleBack}
+          disabled={passkeyLoading}
+          className="p-1.5 hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-50"
+        >
+          <ArrowLeft className="w-5 h-5 text-gray-400" />
+        </button>
+        <h2 className="text-xl font-semibold text-white">
+          {authMethod === 'passkey-device' ? 'Authenticate with this device' : 'Scan with your phone'}
+        </h2>
+      </div>
+
+      <div className="text-center py-8">
+        {passkeyLoading ? (
+          <>
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-gray-800 rounded-full mb-4">
+              {authMethod === 'passkey-device' ? (
+                <Fingerprint className="w-8 h-8 text-primary animate-pulse" />
+              ) : (
+                <Smartphone className="w-8 h-8 text-blue-400 animate-pulse" />
+              )}
+            </div>
+            <p className="text-gray-300 mb-2">
+              {authMethod === 'passkey-device'
+                ? 'Complete authentication on your device...'
+                : 'Scan the QR code with your phone...'}
+            </p>
+            <p className="text-sm text-gray-500">
+              {authMethod === 'passkey-device'
+                ? 'Enter your PIN or use biometric to confirm'
+                : 'Use your phone\'s camera to scan, then authenticate with your passkey'}
+            </p>
+          </>
+        ) : passkeyError ? (
+          <>
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-red-900/30 rounded-full mb-4">
+              <svg className="w-8 h-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </div>
+            <p className="text-red-300 mb-4">{passkeyError}</p>
+            <button
+              type="button"
+              onClick={() => handlePasskeyLogin(authMethod === 'passkey-phone')}
+              className="px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-700 transition-colors"
+            >
+              Try again
+            </button>
+          </>
+        ) : null}
+      </div>
+    </>
+  );
 
   return (
     <div className="min-h-screen bg-black flex items-center justify-center p-4 dark">
@@ -144,129 +371,14 @@ export function Login() {
           <p className="text-gray-400 mt-2">Remote Monitoring & Management</p>
         </div>
 
-        {/* Login form */}
+        {/* Login card */}
         <div className="bg-gray-900 rounded-xl shadow-lg border border-gray-800 p-6">
-          <h2 className="text-xl font-semibold text-white mb-6">Sign in to your account</h2>
-
-          {/* Passkey login button */}
-          {passkeySupported && (
-            <>
-              <button
-                type="button"
-                onClick={handlePasskeyLogin}
-                disabled={passkeyLoading || isLoading}
-                className="w-full flex items-center justify-center gap-3 bg-gray-800 text-white py-3 rounded-lg font-medium hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed border border-gray-700"
-              >
-                {passkeyLoading ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    Authenticating...
-                  </>
-                ) : (
-                  <>
-                    <Fingerprint className="w-5 h-5" />
-                    Sign in with Passkey
-                  </>
-                )}
-              </button>
-
-              {passkeyError && (
-                <div className="mt-3 p-3 bg-red-900/50 border border-red-700 rounded-lg">
-                  <p className="text-sm text-red-300">{passkeyError}</p>
-                </div>
-              )}
-
-              <div className="relative my-6">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-gray-700"></div>
-                </div>
-                <div className="relative flex justify-center text-sm">
-                  <span className="px-2 bg-gray-900 text-gray-400">or continue with password</span>
-                </div>
-              </div>
-            </>
-          )}
-
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <Input
-              label="Username or Email"
-              type="text"
-              value={identifier}
-              onChange={(e) => setIdentifier(e.target.value)}
-              placeholder="username or email"
-              required
-              autoComplete="username"
-              autoFocus
-            />
-
-            <Input
-              label="Password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter your password"
-              required
-              autoComplete="current-password"
-            />
-
-            {error && (
-              <div className="p-3 bg-red-900/50 border border-red-700 rounded-lg">
-                <p className="text-sm text-red-300">{error}</p>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full flex items-center justify-center gap-2 bg-primary text-white py-2.5 rounded-lg font-medium hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Signing in...
-                </>
-              ) : (
-                'Sign in'
-              )}
-            </button>
-          </form>
-
-          {/* Auth methods info */}
-          <div className="mt-6 pt-4 border-t border-gray-800">
-            <p className="text-xs text-gray-500 mb-3 text-center">Available sign-in methods</p>
-            <div className="flex items-center justify-center gap-4">
-              <div className="flex items-center gap-1.5 text-xs text-gray-400">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-                </svg>
-                <span>Password</span>
-              </div>
-              {passkeySupported && (
-                <>
-                  <span className="text-gray-700">•</span>
-                  <div className="flex items-center gap-1.5 text-xs text-gray-400">
-                    <Fingerprint className="w-4 h-4" />
-                    <span>Passkey</span>
-                  </div>
-                  <span className="text-gray-700">•</span>
-                  <div className="flex items-center gap-1.5 text-xs text-gray-400">
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                    </svg>
-                    <span>Phone (QR)</span>
-                  </div>
-                </>
-              )}
-            </div>
-            {passkeySupported && (
-              <p className="text-xs text-gray-600 text-center mt-2">
-                Use a passkey from this device or scan QR with your phone
-              </p>
-            )}
-          </div>
+          {authMethod === 'select' && renderMethodSelection()}
+          {authMethod === 'password' && renderPasswordForm()}
+          {(authMethod === 'passkey-device' || authMethod === 'passkey-phone') && renderPasskeyWaiting()}
 
           {/* Invitation sign up */}
-          <div className="mt-4 text-center">
+          <div className="mt-6 pt-4 border-t border-gray-800 text-center">
             <p className="text-sm text-gray-400">
               Have an invitation?{' '}
               <Link to="/register" className="text-primary hover:text-primary-hover transition-colors">
