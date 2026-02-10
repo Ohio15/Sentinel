@@ -266,17 +266,6 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			bootstrap.GET("/openh264", downloadBootstrapOpenH264Handler(services))
 		}
 
-		// Enrollment Tokens (public - no auth required for self-hosted setups)
-		enrollmentTokens := api.Group("/enrollment-tokens")
-		{
-			enrollmentTokens.GET("", listEnrollmentTokensHandler(services))
-			enrollmentTokens.POST("", createEnrollmentTokenHandler(services))
-			enrollmentTokens.GET("/:id", getEnrollmentTokenHandler(services))
-			enrollmentTokens.PUT("/:id", updateEnrollmentTokenHandler(services))
-			enrollmentTokens.DELETE("/:id", deleteEnrollmentTokenHandler(services))
-			enrollmentTokens.POST("/:id/regenerate", regenerateEnrollmentTokenHandler(services))
-		}
-
 		// Protected routes (require JWT)
 		protected := api.Group("")
 		protected.Use(middleware.AuthOrAPIKeyMiddleware(services.Config.JWTSecret, services.Config.APIKey))
@@ -414,6 +403,9 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			protected.GET("/settings", getSettingsHandler(services))
 			protected.PUT("/settings", middleware.RequireRole("admin"), updateSettingsHandler(services))
 
+			// Credential Management (admin only)
+			RegisterCredentialRoutes(protected, services)
+
 			// Users (admin only)
 			protected.GET("/users", middleware.RequireRole("admin"), listUsersHandler(services))
 			protected.POST("/users", middleware.RequireRole("admin"), createUserHandler(services))
@@ -424,6 +416,14 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			protected.GET("/invitations", middleware.RequireRole("admin"), listInvitationsHandler(services))
 			protected.POST("/invitations", middleware.RequireRole("admin"), createInvitationHandler(services))
 			protected.DELETE("/invitations/:id", middleware.RequireRole("admin"), deleteInvitationHandler(services))
+
+			// Enrollment Tokens (admin only - SECURITY: moved from public routes)
+			protected.GET("/enrollment-tokens", middleware.RequireRole("admin"), listEnrollmentTokensHandler(services))
+			protected.POST("/enrollment-tokens", middleware.RequireRole("admin"), createEnrollmentTokenHandler(services))
+			protected.GET("/enrollment-tokens/:id", middleware.RequireRole("admin"), getEnrollmentTokenHandler(services))
+			protected.PUT("/enrollment-tokens/:id", middleware.RequireRole("admin"), updateEnrollmentTokenHandler(services))
+			protected.DELETE("/enrollment-tokens/:id", middleware.RequireRole("admin"), deleteEnrollmentTokenHandler(services))
+			protected.POST("/enrollment-tokens/:id/regenerate", middleware.RequireRole("admin"), regenerateEnrollmentTokenHandler(services))
 
 			// Agent Installers (authenticated users can view)
 			protected.GET("/agents/installers", listAgentInstallersHandler(services))
