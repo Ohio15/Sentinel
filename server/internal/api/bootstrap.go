@@ -650,8 +650,16 @@ func generateConfiguredInstallerHandler(services *Services) gin.HandlerFunc {
 			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
 			c.Data(http.StatusOK, "application/x-sh", []byte(script))
 
+		case "synology":
+			// For Synology NAS, use a specialized script for DSM
+			script := generateSynologyInstaller(serverURL, enrollmentToken)
+			c.Header("Content-Disposition", "attachment; filename=sentinel-synology-install.sh")
+			c.Header("Content-Type", "application/x-sh")
+			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+			c.Data(http.StatusOK, "application/x-sh", []byte(script))
+
 		default:
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid platform. Supported: windows, linux, macos"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid platform. Supported: windows, linux, macos, synology"})
 			return
 		}
 	}
@@ -1017,6 +1025,243 @@ if systemctl is-active --quiet sentinel-agent; then
     exit 0
 else
     echo -e "${RED}[!] Service failed to start. Check logs: journalctl -u sentinel-agent${NC}"
+    exit 1
+fi
+`, serverURL, token)
+}
+
+// generateSynologyInstaller creates a bash script optimized for Synology NAS devices
+func generateSynologyInstaller(serverURL, token string) string {
+	return fmt.Sprintf(`#!/bin/bash
+# Sentinel Agent Installer for Synology NAS
+# This script installs the Sentinel RMM agent on Synology DSM
+# Supports DSM 6.x and 7.x on ARM and Intel platforms
+
+set -e
+
+# Configuration (pre-embedded from server)
+SERVER="%s"
+TOKEN="%s"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# Check if running on Synology
+if [ ! -f /etc/synoinfo.conf ]; then
+    echo -e "${RED}[!] This script is designed for Synology NAS devices.${NC}"
+    echo -e "${YELLOW}    For standard Linux, please use the Linux installer.${NC}"
+    exit 1
+fi
+
+# Check if running as root
+if [ "$EUID" -ne 0 ]; then
+    echo -e "${YELLOW}Requesting root privileges...${NC}"
+    exec sudo "$0" "$@"
+    exit $?
+fi
+
+echo ""
+echo -e "${CYAN}  ____             _   _            _ ${NC}"
+echo -e "${CYAN} / ___|  ___ _ __ | |_(_)_ __   ___| |${NC}"
+echo -e "${CYAN} \\___ \\ / _ \\ '_ \\| __| | '_ \\ / _ \\ |${NC}"
+echo -e "${CYAN}  ___) |  __/ | | | |_| | | | |  __/ |${NC}"
+echo -e "${CYAN} |____/ \\___|_| |_|\\__|_|_| |_|\\___|_|${NC}"
+echo ""
+echo -e "${CYAN}       Synology NAS Agent Installer${NC}"
+echo ""
+
+# Get Synology info
+DSM_VERSION=$(cat /etc.defaults/VERSION 2>/dev/null | grep productversion | cut -d'"' -f2 || echo "Unknown")
+MODEL=$(cat /etc/synoinfo.conf 2>/dev/null | grep upnpmodelname | cut -d'"' -f2 || echo "Unknown")
+echo -e "${GREEN}[+]${NC} Detected Synology: $MODEL running DSM $DSM_VERSION"
+echo -e "      Server: $SERVER"
+
+# Detect architecture
+ARCH=$(uname -m)
+case $ARCH in
+    x86_64)
+        ARCH="amd64"
+        ;;
+    aarch64)
+        ARCH="arm64"
+        ;;
+    armv7l|armv7)
+        ARCH="arm"
+        ;;
+    *)
+        echo -e "${RED}[!] Unsupported architecture: $ARCH${NC}"
+        echo -e "${YELLOW}    Supported: x86_64, aarch64, armv7${NC}"
+        exit 1
+        ;;
+esac
+echo -e "${GREEN}[+]${NC} Architecture: $ARCH"
+
+# Installation paths for Synology
+# Use /volume1/@appstore for package-like installation
+# Fallback to /opt/sentinel if volume1 doesn't exist
+if [ -d "/volume1" ]; then
+    INSTALL_DIR="/volume1/@appstore/SentinelAgent"
+else
+    INSTALL_DIR="/opt/sentinel"
+fi
+
+CONFIG_DIR="/var/packages/SentinelAgent/etc"
+LOG_DIR="/var/log/sentinel"
+
+echo -e "${YELLOW}[*]${NC} Installing to: $INSTALL_DIR"
+
+# Create directories
+mkdir -p "$INSTALL_DIR"
+mkdir -p "$CONFIG_DIR"
+mkdir -p "$LOG_DIR"
+
+# Stop existing service if running
+if [ -f "/usr/local/etc/rc.d/sentinel-agent.sh" ]; then
+    echo -e "${YELLOW}[*]${NC} Stopping existing agent..."
+    /usr/local/etc/rc.d/sentinel-agent.sh stop 2>/dev/null || true
+fi
+
+# Download agent binary
+echo -e "${YELLOW}[*]${NC} Downloading Sentinel Agent..."
+DOWNLOAD_URL="$SERVER/api/bootstrap/agent?platform=linux&arch=$ARCH&token=$TOKEN"
+
+if command -v curl &> /dev/null; then
+    HTTP_CODE=$(curl -sSL -w "%%{http_code}" "$DOWNLOAD_URL" -o "$INSTALL_DIR/sentinel-agent")
+    if [ "$HTTP_CODE" != "200" ]; then
+        echo -e "${RED}[!] Download failed with HTTP $HTTP_CODE${NC}"
+        rm -f "$INSTALL_DIR/sentinel-agent"
+        exit 1
+    fi
+elif command -v wget &> /dev/null; then
+    wget -q "$DOWNLOAD_URL" -O "$INSTALL_DIR/sentinel-agent"
+else
+    echo -e "${RED}[!] Neither curl nor wget found.${NC}"
+    exit 1
+fi
+
+chmod +x "$INSTALL_DIR/sentinel-agent"
+echo -e "${GREEN}[+]${NC} Downloaded agent"
+
+# Create configuration file
+echo -e "${YELLOW}[*]${NC} Creating configuration..."
+cat > "$CONFIG_DIR/config.json" << EOF
+{
+    "server_url": "$SERVER",
+    "enrollment_token": "$TOKEN",
+    "log_path": "$LOG_DIR",
+    "device_type": "nas"
+}
+EOF
+chmod 600 "$CONFIG_DIR/config.json"
+
+# Create startup script for Synology (rc.d style)
+echo -e "${YELLOW}[*]${NC} Creating startup script..."
+cat > /usr/local/etc/rc.d/sentinel-agent.sh << 'RCEOF'
+#!/bin/sh
+# Sentinel Agent startup script for Synology DSM
+
+DAEMON="$INSTALL_DIR/sentinel-agent"
+PIDFILE="/var/run/sentinel-agent.pid"
+LOGFILE="$LOG_DIR/agent.log"
+
+start() {
+    if [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then
+        echo "Sentinel Agent is already running"
+        return 1
+    fi
+    echo "Starting Sentinel Agent..."
+    nohup "$DAEMON" --server="$SERVER" >> "$LOGFILE" 2>&1 &
+    echo $! > "$PIDFILE"
+    sleep 2
+    if kill -0 $(cat "$PIDFILE") 2>/dev/null; then
+        echo "Sentinel Agent started (PID: $(cat $PIDFILE))"
+    else
+        echo "Failed to start Sentinel Agent"
+        rm -f "$PIDFILE"
+        return 1
+    fi
+}
+
+stop() {
+    if [ ! -f "$PIDFILE" ]; then
+        echo "Sentinel Agent is not running"
+        return 1
+    fi
+    echo "Stopping Sentinel Agent..."
+    kill $(cat "$PIDFILE") 2>/dev/null
+    rm -f "$PIDFILE"
+    echo "Sentinel Agent stopped"
+}
+
+status() {
+    if [ -f "$PIDFILE" ] && kill -0 $(cat "$PIDFILE") 2>/dev/null; then
+        echo "Sentinel Agent is running (PID: $(cat $PIDFILE))"
+        return 0
+    else
+        echo "Sentinel Agent is not running"
+        return 1
+    fi
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart)
+        stop
+        sleep 2
+        start
+        ;;
+    status)
+        status
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
+RCEOF
+
+# Replace variables in the rc script
+sed -i "s|\$INSTALL_DIR|$INSTALL_DIR|g" /usr/local/etc/rc.d/sentinel-agent.sh
+sed -i "s|\$LOG_DIR|$LOG_DIR|g" /usr/local/etc/rc.d/sentinel-agent.sh
+sed -i "s|\$SERVER|$SERVER|g" /usr/local/etc/rc.d/sentinel-agent.sh
+
+chmod +x /usr/local/etc/rc.d/sentinel-agent.sh
+
+# Start the agent
+echo -e "${YELLOW}[*]${NC} Starting Sentinel Agent..."
+/usr/local/etc/rc.d/sentinel-agent.sh start
+
+# Verify
+sleep 3
+if /usr/local/etc/rc.d/sentinel-agent.sh status > /dev/null 2>&1; then
+    echo ""
+    echo -e "${GREEN}  ================================================================${NC}"
+    echo -e "${GREEN}  =     SYNOLOGY INSTALLATION COMPLETED SUCCESSFULLY            =${NC}"
+    echo -e "${GREEN}  ================================================================${NC}"
+    echo ""
+    echo "  The Sentinel Agent is now running on your Synology NAS."
+    echo ""
+    echo "  Management commands:"
+    echo "    Start:   /usr/local/etc/rc.d/sentinel-agent.sh start"
+    echo "    Stop:    /usr/local/etc/rc.d/sentinel-agent.sh stop"
+    echo "    Status:  /usr/local/etc/rc.d/sentinel-agent.sh status"
+    echo ""
+    echo "  Logs: $LOG_DIR/agent.log"
+    echo ""
+    echo -e "${YELLOW}  Note: The agent will automatically start on NAS reboot.${NC}"
+    echo ""
+    exit 0
+else
+    echo -e "${RED}[!] Agent failed to start. Check logs: $LOG_DIR/agent.log${NC}"
     exit 1
 fi
 `, serverURL, token)
