@@ -1,0 +1,39 @@
+#!/bin/sh
+
+PACKAGE_NAME="sentinel-agent"
+INSTALL_DIR="/var/packages/${PACKAGE_NAME}/target"
+CONFIG_DIR="/etc/sentinel"
+
+echo "Running post-installation script..."
+
+# Create config directory if it doesn't exist
+if [ ! -d "$CONFIG_DIR" ]; then
+    mkdir -p "$CONFIG_DIR"
+    chmod 750 "$CONFIG_DIR"
+fi
+
+# Copy default config if none exists
+if [ ! -f "${CONFIG_DIR}/config.json" ]; then
+    if [ -f "${INSTALL_DIR}/config.json" ]; then
+        cp "${INSTALL_DIR}/config.json" "${CONFIG_DIR}/config.json"
+        chmod 640 "${CONFIG_DIR}/config.json"
+        echo "Configuration file installed to ${CONFIG_DIR}/config.json"
+    fi
+fi
+
+# Set correct permissions on binaries
+chmod 755 "${INSTALL_DIR}/sentinel-agent"
+if [ -f "${INSTALL_DIR}/sentinel-watchdog" ]; then
+    chmod 755 "${INSTALL_DIR}/sentinel-watchdog"
+fi
+
+# Create log directory
+mkdir -p /var/log
+touch /var/log/sentinel-agent.log
+chmod 640 /var/log/sentinel-agent.log
+
+echo "Sentinel Agent installed successfully"
+echo "Edit ${CONFIG_DIR}/config.json to configure the agent"
+echo "Start the package from Package Center or run: synopkg start sentinel-agent"
+
+exit 0
