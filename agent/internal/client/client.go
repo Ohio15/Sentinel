@@ -739,6 +739,12 @@ func (c *Client) readLoop(ctx context.Context) {
 			continue
 		}
 
+		// Normalize message: server sends data in Payload, handlers expect Data
+		// Copy Payload to Data if Data is nil to ensure handlers work correctly
+		if msg.Data == nil && msg.Payload != nil {
+			msg.Data = msg.Payload
+		}
+
 		// Handle authentication response
 		if msg.Type == MsgTypeAuthResponse {
 			// Server sends success/error inside Payload field
