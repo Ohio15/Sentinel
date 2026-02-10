@@ -1029,13 +1029,52 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
           {/* Installation Notes */}
           <div className="card p-6">
             <h2 className="text-lg font-semibold text-text-primary mb-4">Installation Notes</h2>
+
+            {/* Platform Use Cases */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+              <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                <h3 className="font-medium text-blue-700 dark:text-blue-300 mb-2">Windows (.exe)</h3>
+                <ul className="text-sm text-blue-600 dark:text-blue-400 space-y-1">
+                  <li>• <strong>x64</strong> - Most Windows PCs, servers, and VMs</li>
+                  <li>• <strong>ARM64</strong> - Surface Pro X, Windows on ARM devices</li>
+                </ul>
+              </div>
+
+              <div className="p-3 bg-orange-50 dark:bg-orange-900/20 rounded-lg">
+                <h3 className="font-medium text-orange-700 dark:text-orange-300 mb-2">Linux (.deb / .rpm)</h3>
+                <ul className="text-sm text-orange-600 dark:text-orange-400 space-y-1">
+                  <li>• <strong>.deb</strong> - Ubuntu, Debian, Linux Mint, Pop!_OS</li>
+                  <li>• <strong>.rpm</strong> - RHEL, CentOS, Fedora, Rocky Linux, AlmaLinux</li>
+                </ul>
+              </div>
+
+              <div className="p-3 bg-gray-100 dark:bg-gray-800 rounded-lg">
+                <h3 className="font-medium text-gray-700 dark:text-gray-300 mb-2">macOS (.pkg)</h3>
+                <ul className="text-sm text-gray-600 dark:text-gray-400 space-y-1">
+                  <li>• <strong>Intel</strong> - MacBooks/iMacs before 2020</li>
+                  <li>• <strong>Apple Silicon</strong> - M1/M2/M3 Macs (2020+)</li>
+                </ul>
+              </div>
+
+              <div className="p-3 bg-teal-50 dark:bg-teal-900/20 rounded-lg">
+                <h3 className="font-medium text-teal-700 dark:text-teal-300 mb-2">Synology (.spk)</h3>
+                <ul className="text-sm text-teal-600 dark:text-teal-400 space-y-1">
+                  <li>• <strong>x64</strong> - DS920+, DS1621+, most desktop NAS</li>
+                  <li>• <strong>ARM64</strong> - DS220j, DS420j, entry-level NAS</li>
+                </ul>
+              </div>
+            </div>
+
+            {/* General Notes */}
+            <h3 className="font-medium text-text-primary mb-2">General</h3>
             <ul className="list-disc list-inside space-y-2 text-sm text-text-secondary">
-              <li>The agent will automatically connect to this server once installed</li>
+              <li>Installers include your enrollment token - just download and run</li>
               <li>Agents run as a system service and start automatically on boot</li>
               <li>Make sure port {serverInfo.port} is accessible from the target machine</li>
-              <li>For Windows, run the command in Command Prompt or PowerShell as Administrator</li>
-              <li>For Linux/macOS, make the binary executable first: <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">chmod +x sentinel-agent</code></li>
-              <li>Linux/macOS require sudo privileges for installation</li>
+              <li>Windows: Right-click the installer and select "Run as administrator"</li>
+              <li>Linux: Install with <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">sudo dpkg -i *.deb</code> or <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">sudo rpm -i *.rpm</code></li>
+              <li>macOS: Double-click the .pkg and follow the installer prompts</li>
+              <li>Synology: Open Package Center → Manual Install → Browse to .spk file</li>
             </ul>
           </div>
             </>
