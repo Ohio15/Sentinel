@@ -273,9 +273,9 @@ func getRotationHistoryHandler(services *Services) gin.HandlerFunc {
 		credType := c.Query("type") // Optional filter by credential type
 
 		query := `
-			SELECT id, credential_type, action, old_version, new_version,
-			       status, initiated_at, completed_at, failure_reason,
-			       affected_sessions, affected_agents, grace_period_hours,
+			SELECT crl.id, crl.credential_type, crl.action, crl.old_version, crl.new_version,
+			       crl.status, crl.initiated_at, crl.completed_at, crl.failure_reason,
+			       crl.affected_sessions, crl.affected_agents, crl.grace_period_hours,
 			       u.email as initiated_by_email
 			FROM credential_rotation_log crl
 			LEFT JOIN users u ON crl.initiated_by = u.id
