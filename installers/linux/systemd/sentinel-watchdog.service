@@ -1,0 +1,21 @@
+[Unit]
+Description=Sentinel RMM Watchdog
+Documentation=https://sentinelrmm.us/docs
+After=network-online.target sentinel-agent.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/sentinel-watchdog
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/sentinel/watchdog.log
+StandardError=append:/var/log/sentinel/watchdog-error.log
+
+# Environment
+Environment=SENTINEL_CONFIG=/etc/sentinel/config.json
+
+[Install]
+WantedBy=multi-user.target

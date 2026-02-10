@@ -205,6 +205,32 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
     }
   };
 
+  const handleDownloadInstaller = async (platform: string, arch: string) => {
+    const downloadKey = `${platform}-${arch}`;
+    setDownloadingPlatform(downloadKey);
+    setDownloadResult(null);
+
+    try {
+      const baseUrl = window.location.origin;
+      const downloadUrl = `${baseUrl}/api/agent/installer?platform=${encodeURIComponent(platform)}&arch=${encodeURIComponent(arch)}`;
+
+      // Open download in a new tab/window
+      window.open(downloadUrl, '_blank');
+      setDownloadResult({
+        type: 'success',
+        message: 'Installer download started'
+      });
+    } catch (error: any) {
+      setDownloadResult({
+        type: 'error',
+        message: error.message || 'Failed to download installer'
+      });
+    } finally {
+      setDownloadingPlatform(null);
+      setTimeout(() => setDownloadResult(null), 5000);
+    }
+  };
+
   // Installation Links functions
   const fetchLinks = async () => {
     setLinksLoading(true);
@@ -811,11 +837,11 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
 
           {installationSubTab === 'download' && (
             <>
-          {/* Agent Downloads */}
+          {/* Direct Download */}
           <div className="card p-6">
-            <h2 className="text-lg font-semibold text-text-primary mb-4">Download Agent Installer</h2>
-            <p className="text-sm text-text-secondary mb-4">
-              Download a pre-configured installer with server URL and enrollment token embedded. Just run it!
+            <h2 className="text-lg font-semibold text-text-primary mb-2">Direct Download</h2>
+            <p className="text-sm text-text-secondary mb-6">
+              Download a pre-configured installer for your platform
             </p>
 
             {/* Download Result Toast */}
@@ -844,63 +870,118 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
               </div>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <button
-                onClick={() => handleDownloadConfigured('windows')}
-                disabled={downloadingPlatform !== null}
-                className="flex items-center gap-3 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors border border-border disabled:opacity-50 disabled:cursor-not-allowed text-left"
-              >
-                <WindowsIcon className="w-5 h-5 text-blue-500" />
-                <div className="flex-1">
-                  <p className="font-medium text-text-primary">Windows</p>
-                  <p className="text-xs text-text-secondary">
-                    {downloadingPlatform === 'windows' ? 'Downloading...' : 'SentinelAgent-Setup.exe'}
-                  </p>
+            <div className="space-y-6">
+              {/* Windows */}
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <WindowsIcon className="w-5 h-5 text-blue-500" />
+                  <h3 className="font-medium text-text-primary">Windows</h3>
                 </div>
-                {downloadingPlatform === 'windows' ? <SpinnerIcon /> : <DownloadIcon />}
-              </button>
-              <button
-                onClick={() => handleDownloadConfigured('macos')}
-                disabled={downloadingPlatform !== null}
-                className="flex items-center gap-3 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors border border-border disabled:opacity-50 disabled:cursor-not-allowed text-left"
-              >
-                <AppleIcon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-                <div className="flex-1">
-                  <p className="font-medium text-text-primary">macOS</p>
-                  <p className="text-xs text-text-secondary">
-                    {downloadingPlatform === 'macos' ? 'Saving...' : 'sentinel-install.sh'}
-                  </p>
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    onClick={() => handleDownloadInstaller('windows', 'amd64')}
+                    disabled={downloadingPlatform !== null}
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {downloadingPlatform === 'windows-amd64' ? (
+                      <SpinnerIcon />
+                    ) : (
+                      <DownloadIcon />
+                    )}
+                    <span className="text-sm font-medium">Windows x64 .exe</span>
+                  </button>
+                  <button
+                    onClick={() => handleDownloadInstaller('windows', 'arm64')}
+                    disabled={downloadingPlatform !== null}
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {downloadingPlatform === 'windows-arm64' ? (
+                      <SpinnerIcon />
+                    ) : (
+                      <DownloadIcon />
+                    )}
+                    <span className="text-sm font-medium">Windows ARM64 .exe</span>
+                  </button>
                 </div>
-                {downloadingPlatform === 'macos' ? <SpinnerIcon /> : <DownloadIcon />}
-              </button>
-              <button
-                onClick={() => handleDownloadConfigured('linux')}
-                disabled={downloadingPlatform !== null}
-                className="flex items-center gap-3 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors border border-border disabled:opacity-50 disabled:cursor-not-allowed text-left"
-              >
-                <LinuxIcon className="w-5 h-5 text-orange-500" />
-                <div className="flex-1">
-                  <p className="font-medium text-text-primary">Linux</p>
-                  <p className="text-xs text-text-secondary">
-                    {downloadingPlatform === 'linux' ? 'Saving...' : 'sentinel-install.sh'}
-                  </p>
+              </div>
+
+              {/* Linux */}
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <LinuxIcon className="w-5 h-5 text-orange-500" />
+                  <h3 className="font-medium text-text-primary">Linux</h3>
                 </div>
-                {downloadingPlatform === 'linux' ? <SpinnerIcon /> : <DownloadIcon />}
-              </button>
-              <button
-                onClick={() => handleDownloadConfigured('synology')}
-                disabled={downloadingPlatform !== null}
-                className="flex items-center gap-3 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors border border-border disabled:opacity-50 disabled:cursor-not-allowed text-left"
-              >
-                <SynologyIcon className="w-5 h-5 text-teal-500" />
-                <div className="flex-1">
-                  <p className="font-medium text-text-primary">Synology NAS</p>
-                  <p className="text-xs text-text-secondary">
-                    {downloadingPlatform === 'synology' ? 'Saving...' : 'sentinel-install.sh'}
-                  </p>
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    onClick={() => handleDownloadInstaller('linux-deb', 'amd64')}
+                    disabled={downloadingPlatform !== null}
+                    className="flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {downloadingPlatform === 'linux-deb-amd64' ? (
+                      <SpinnerIcon />
+                    ) : (
+                      <DownloadIcon />
+                    )}
+                    <span className="text-sm font-medium">Debian/Ubuntu .deb</span>
+                  </button>
+                  <button
+                    onClick={() => handleDownloadInstaller('linux-rpm', 'amd64')}
+                    disabled={downloadingPlatform !== null}
+                    className="flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {downloadingPlatform === 'linux-rpm-amd64' ? (
+                      <SpinnerIcon />
+                    ) : (
+                      <DownloadIcon />
+                    )}
+                    <span className="text-sm font-medium">RHEL/CentOS .rpm</span>
+                  </button>
                 </div>
-                {downloadingPlatform === 'synology' ? <SpinnerIcon /> : <DownloadIcon />}
-              </button>
+              </div>
+
+              {/* macOS */}
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <AppleIcon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+                  <h3 className="font-medium text-text-primary">macOS</h3>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    onClick={() => handleDownloadInstaller('macos', 'amd64')}
+                    disabled={downloadingPlatform !== null}
+                    className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-800 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {downloadingPlatform === 'macos-amd64' ? (
+                      <SpinnerIcon />
+                    ) : (
+                      <DownloadIcon />
+                    )}
+                    <span className="text-sm font-medium">macOS Intel .pkg</span>
+                  </button>
+                  <button
+                    onClick={() => handleDownloadInstaller('macos', 'arm64')}
+                    disabled={downloadingPlatform !== null}
+                    className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-800 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {downloadingPlatform === 'macos-arm64' ? (
+                      <SpinnerIcon />
+                    ) : (
+                      <DownloadIcon />
+                    )}
+                    <span className="text-sm font-medium">macOS Apple Silicon .pkg</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Note */}
+            <div className="mt-6 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+              <div className="flex items-start gap-2">
+                <InfoIcon className="w-5 h-5 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" />
+                <p className="text-sm text-blue-700 dark:text-blue-300">
+                  Installers include your enrollment token and server configuration. Just download and run.
+                </p>
+              </div>
             </div>
           </div>
 

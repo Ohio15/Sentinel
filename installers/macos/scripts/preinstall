@@ -1,0 +1,50 @@
+#!/bin/bash
+#
+# Sentinel RMM Agent - Pre-installation Script
+# Runs before package installation to prepare the system
+#
+
+set -e
+
+LOG_FILE="/var/log/sentinel-install.log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+echo "=============================================="
+echo "  Sentinel RMM Agent - Pre-installation"
+echo "  $(date)"
+echo "=============================================="
+
+# Stop existing services if running
+echo "[1/3] Stopping existing services..."
+
+if launchctl list | grep -q "com.sentinel.agent"; then
+    echo "  - Unloading existing agent service..."
+    launchctl unload /Library/LaunchDaemons/com.sentinel.agent.plist 2>/dev/null || true
+fi
+
+if launchctl list | grep -q "com.sentinel.watchdog"; then
+    echo "  - Unloading existing watchdog service..."
+    launchctl unload /Library/LaunchDaemons/com.sentinel.watchdog.plist 2>/dev/null || true
+fi
+
+# Give services time to stop gracefully
+sleep 2
+
+# Kill any remaining processes
+echo "[2/3] Stopping any remaining processes..."
+pkill -9 sentinel-agent 2>/dev/null || true
+pkill -9 sentinel-watchdog 2>/dev/null || true
+
+# Backup existing configuration if present
+echo "[3/3] Backing up existing configuration..."
+if [[ -f /etc/sentinel/config.json ]]; then
+    BACKUP_FILE="/etc/sentinel/config.json.backup.$(date +%Y%m%d%H%M%S)"
+    cp /etc/sentinel/config.json "$BACKUP_FILE"
+    echo "  - Configuration backed up to: $BACKUP_FILE"
+fi
+
+echo ""
+echo "Pre-installation complete."
+echo ""
+
+exit 0

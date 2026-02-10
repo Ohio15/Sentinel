@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-size: 12px;
+            line-height: 1.5;
+            color: #333;
+            margin: 20px;
+        }
+        h1 {
+            font-size: 18px;
+            color: #1a1a1a;
+            margin-bottom: 15px;
+        }
+        h2 {
+            font-size: 14px;
+            color: #1a1a1a;
+            margin-top: 20px;
+            margin-bottom: 10px;
+        }
+        p {
+            margin-bottom: 10px;
+        }
+        .success {
+            color: #28a745;
+            font-weight: bold;
+        }
+        code {
+            background-color: #f0f0f0;
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-family: "SF Mono", Monaco, monospace;
+            font-size: 11px;
+        }
+        .command-box {
+            background-color: #1a1a1a;
+            color: #fff;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-family: "SF Mono", Monaco, monospace;
+            font-size: 11px;
+        }
+        .note {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 10px;
+            margin: 15px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1 class="success">Installation Successful!</h1>
+
+    <p>The Sentinel RMM Agent has been installed and the services are now running.</p>
+
+    <h2>Next Steps</h2>
+
+    <div class="note">
+        <strong>Important:</strong> If this is a fresh installation, you need to configure the agent with your server details.
+    </div>
+
+    <p>Edit the configuration file:</p>
+    <div class="command-box">
+        sudo nano /etc/sentinel/config.json
+    </div>
+
+    <p>Then restart the services:</p>
+    <div class="command-box">
+        sudo launchctl unload /Library/LaunchDaemons/com.sentinel.agent.plist<br>
+        sudo launchctl load /Library/LaunchDaemons/com.sentinel.agent.plist
+    </div>
+
+    <h2>Useful Commands</h2>
+
+    <p>Check service status:</p>
+    <div class="command-box">
+        launchctl list | grep sentinel
+    </div>
+
+    <p>View agent logs:</p>
+    <div class="command-box">
+        tail -f /var/log/sentinel/agent.log
+    </div>
+
+    <p>To uninstall, run:</p>
+    <div class="command-box">
+        sudo /usr/local/bin/sentinel-uninstall.sh
+    </div>
+
+    <p style="margin-top: 20px;">Click <strong>Close</strong> to exit the installer.</p>
+</body>
+</html>

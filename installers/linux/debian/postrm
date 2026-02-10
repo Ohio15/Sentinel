@@ -1,0 +1,69 @@
+#!/bin/bash
+# Sentinel Agent post-removal script
+# This script runs after package files are removed
+
+set -e
+
+SENTINEL_USER="sentinel"
+SENTINEL_GROUP="sentinel"
+CONFIG_DIR="/etc/sentinel"
+LOG_DIR="/var/log/sentinel"
+
+case "$1" in
+    remove)
+        # Remove systemd service files
+        rm -f /etc/systemd/system/sentinel-agent.service
+        rm -f /etc/systemd/system/sentinel-watchdog.service
+
+        # Reload systemd
+        systemctl daemon-reload
+
+        echo "Sentinel Agent removed. Configuration and logs preserved."
+        echo "To completely remove, run: sudo apt purge sentinel-agent"
+        ;;
+
+    purge)
+        # Remove systemd service files
+        rm -f /etc/systemd/system/sentinel-agent.service
+        rm -f /etc/systemd/system/sentinel-watchdog.service
+
+        # Reload systemd
+        systemctl daemon-reload
+
+        # Remove configuration directory
+        if [ -d "${CONFIG_DIR}" ]; then
+            rm -rf "${CONFIG_DIR}"
+            echo "Removed configuration directory: ${CONFIG_DIR}"
+        fi
+
+        # Remove log directory
+        if [ -d "${LOG_DIR}" ]; then
+            rm -rf "${LOG_DIR}"
+            echo "Removed log directory: ${LOG_DIR}"
+        fi
+
+        # Remove sentinel user
+        if getent passwd "${SENTINEL_USER}" >/dev/null 2>&1; then
+            userdel "${SENTINEL_USER}" 2>/dev/null || true
+            echo "Removed user: ${SENTINEL_USER}"
+        fi
+
+        # Remove sentinel group
+        if getent group "${SENTINEL_GROUP}" >/dev/null 2>&1; then
+            groupdel "${SENTINEL_GROUP}" 2>/dev/null || true
+            echo "Removed group: ${SENTINEL_GROUP}"
+        fi
+
+        echo "Sentinel Agent completely removed."
+        ;;
+
+    upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        ;;
+
+    *)
+        echo "postrm called with unknown argument: $1" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

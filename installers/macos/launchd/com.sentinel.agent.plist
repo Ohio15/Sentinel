@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Service identifier -->
+    <key>Label</key>
+    <string>com.sentinel.agent</string>
+
+    <!-- Program to run -->
+    <key>Program</key>
+    <string>/usr/local/bin/sentinel-agent</string>
+
+    <!-- Program arguments (if needed) -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/sentinel-agent</string>
+        <string>--config</string>
+        <string>/etc/sentinel/config.json</string>
+    </array>
+
+    <!-- Run at system startup -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Keep the service running -->
+    <key>KeepAlive</key>
+    <dict>
+        <!-- Restart if crashes -->
+        <key>SuccessfulExit</key>
+        <false/>
+        <!-- Restart if killed -->
+        <key>Crashed</key>
+        <true/>
+    </dict>
+
+    <!-- Throttle restarts: wait 10 seconds between restart attempts -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Working directory -->
+    <key>WorkingDirectory</key>
+    <string>/var/lib/sentinel</string>
+
+    <!-- Standard output log -->
+    <key>StandardOutPath</key>
+    <string>/var/log/sentinel/agent.log</string>
+
+    <!-- Standard error log -->
+    <key>StandardErrorPath</key>
+    <string>/var/log/sentinel/agent-error.log</string>
+
+    <!-- Environment variables -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>SENTINEL_CONFIG_PATH</key>
+        <string>/etc/sentinel/config.json</string>
+        <key>SENTINEL_LOG_PATH</key>
+        <string>/var/log/sentinel</string>
+    </dict>
+
+    <!-- Run as root (required for system monitoring) -->
+    <key>UserName</key>
+    <string>root</string>
+
+    <!-- Nice value (priority) -->
+    <key>Nice</key>
+    <integer>0</integer>
+
+    <!-- Process type for resource management -->
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!-- Soft resource limits -->
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>4096</integer>
+    </dict>
+
+    <!-- Hard resource limits -->
+    <key>HardResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>8192</integer>
+    </dict>
+</dict>
+</plist>

@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>Sentinel RMM Agent</title>
+    <organization>com.sentinel</organization>
+    <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+
+    <!-- Minimum macOS version requirement -->
+    <os-version min="10.14"/>
+
+    <!-- Require admin privileges -->
+    <options customize="never" require-scripts="true" rootVolumeOnly="true" hostArchitectures="x86_64,arm64"/>
+
+    <!-- Welcome screen -->
+    <welcome file="welcome.html" mime-type="text/html"/>
+
+    <!-- License (optional - uncomment if you have a license file) -->
+    <!-- <license file="license.html" mime-type="text/html"/> -->
+
+    <!-- Conclusion screen -->
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+
+    <!-- Background image (optional) -->
+    <!-- <background file="background.png" alignment="bottomleft" scaling="none"/> -->
+
+    <!-- Installation choices -->
+    <choices-outline>
+        <line choice="default">
+            <line choice="com.sentinel.agent"/>
+        </line>
+    </choices-outline>
+
+    <choice id="default"/>
+
+    <choice id="com.sentinel.agent"
+            visible="false"
+            title="Sentinel RMM Agent"
+            description="Remote monitoring and management agent">
+        <pkg-ref id="com.sentinel.agent"/>
+    </choice>
+
+    <!-- Package reference -->
+    <pkg-ref id="com.sentinel.agent"
+             version="0"
+             onConclusion="none">SentinelAgent-component.pkg</pkg-ref>
+
+    <!-- Installation check script -->
+    <installation-check script="installationCheck()"/>
+    <script>
+        function installationCheck() {
+            // Check if running on macOS
+            if (system.compareVersions(system.version.ProductVersion, '10.14') < 0) {
+                my.result.title = 'Unsupported macOS Version';
+                my.result.message = 'Sentinel RMM Agent requires macOS 10.14 (Mojave) or later.';
+                my.result.type = 'Fatal';
+                return false;
+            }
+            return true;
+        }
+    </script>
+
+    <!-- Volume check -->
+    <volume-check script="volumeCheck()"/>
+    <script>
+        function volumeCheck() {
+            // Require installation on the boot volume only
+            if (my.target.systemVersion.ProductVersion === undefined) {
+                my.result.title = 'Invalid Volume';
+                my.result.message = 'Sentinel RMM Agent must be installed on the system volume.';
+                my.result.type = 'Fatal';
+                return false;
+            }
+            return true;
+        }
+    </script>
+</installer-gui-script>
