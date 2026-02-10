@@ -1,13 +1,18 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { LogOut } from 'lucide-react';
 import { useAlertStore } from '../../stores/alertStore';
 import { useDeviceStore } from '../../stores/deviceStore';
+import { useAuthStore } from '../../stores/authStore';
 import { ClientSelector } from '../ClientSelector';
 import { connection } from '../../services';
 
 export function Header() {
+  const navigate = useNavigate();
   const [isConnected, setIsConnected] = useState(false);
   const { alerts } = useAlertStore();
   const { devices } = useDeviceStore();
+  const { user, logout } = useAuthStore();
   const openAlerts = alerts.filter(a => a.status === 'open').length;
 
   // Derive online count from device store - single source of truth
@@ -22,6 +27,11 @@ export function Header() {
     const interval = setInterval(checkConnection, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
 
   return (
     <header className="h-16 bg-surface border-b border-border flex items-center justify-between px-6">
@@ -55,6 +65,24 @@ export function Header() {
         {/* Time */}
         <div className="text-sm text-text-secondary">
           <Clock />
+        </div>
+
+        <div className="h-4 w-px bg-border" />
+
+        {/* User & Logout */}
+        <div className="flex items-center gap-3">
+          {user && (
+            <span className="text-sm text-text-secondary">
+              {user.firstName || user.username}
+            </span>
+          )}
+          <button
+            onClick={handleLogout}
+            title="Sign out"
+            className="p-2 text-text-secondary hover:text-danger hover:bg-danger/10 rounded-lg transition-colors"
+          >
+            <LogOut className="w-5 h-5" />
+          </button>
         </div>
       </div>
     </header>
