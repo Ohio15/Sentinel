@@ -109,23 +109,23 @@ export function CredentialManager() {
       setError(null);
 
       const [statusRes, keysRes, historyRes] = await Promise.all([
-        api.get('/credentials/status'),
-        api.get('/credentials/api-keys').catch(() => ({ data: [] })),
-        api.get('/credentials/rotation-history?limit=20').catch(() => ({ data: [] })),
+        api.makeRequest<{ jwt_secret?: JWTStatus; api_key?: APIKeyStatus; schedules?: RotationSchedule[] }>('GET', '/credentials/status'),
+        api.makeRequest<APIKey[]>('GET', '/credentials/api-keys').catch(() => []),
+        api.makeRequest<RotationLog[]>('GET', '/credentials/rotation-history?limit=20').catch(() => []),
       ]);
 
-      if (statusRes.data.jwt_secret) {
-        setJwtStatus(statusRes.data.jwt_secret);
+      if (statusRes?.jwt_secret) {
+        setJwtStatus(statusRes.jwt_secret);
       }
-      if (statusRes.data.api_key) {
-        setApiKeyStatus(statusRes.data.api_key);
+      if (statusRes?.api_key) {
+        setApiKeyStatus(statusRes.api_key);
       }
-      if (statusRes.data.schedules) {
-        setSchedules(statusRes.data.schedules || []);
+      if (statusRes?.schedules) {
+        setSchedules(statusRes.schedules || []);
       }
 
-      setApiKeys(keysRes.data || []);
-      setRotationHistory(historyRes.data || []);
+      setApiKeys(keysRes || []);
+      setRotationHistory(historyRes || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load credential status');
     } finally {
@@ -142,11 +142,11 @@ export function CredentialManager() {
       setRotating(true);
       setRotationResult(null);
 
-      const response = await api.post('/credentials/jwt/rotate');
+      const response = await api.makeRequest<{ newVersion: number; gracePeriodEnds: string }>('POST', '/credentials/jwt/rotate');
 
       setRotationResult({
         success: true,
-        message: `Rotated to version ${response.data.newVersion}. Grace period ends ${new Date(response.data.gracePeriodEnds).toLocaleString()}`,
+        message: `Rotated to version ${response.newVersion}. Grace period ends ${new Date(response.gracePeriodEnds).toLocaleString()}`,
       });
 
       // Reload status
@@ -174,17 +174,17 @@ export function CredentialManager() {
     try {
       setCreatingKey(true);
 
-      const response = await api.post('/credentials/api-keys', {
+      const response = await api.makeRequest<APIKeyWithSecret>('POST', '/credentials/api-keys', {
         name: newKeyName.trim(),
         description: newKeyDescription.trim(),
         permissions: newKeyPermissions,
       });
 
-      setNewKeyResult(response.data);
+      setNewKeyResult(response);
 
       // Reload keys
-      const keysRes = await api.get('/credentials/api-keys');
-      setApiKeys(keysRes.data || []);
+      const keysRes = await api.makeRequest<APIKey[]>('GET', '/credentials/api-keys');
+      setApiKeys(keysRes || []);
 
       // Reset form
       setNewKeyName('');
@@ -203,13 +203,11 @@ export function CredentialManager() {
     }
 
     try {
-      await api.delete(`/credentials/api-keys/${keyId}`, {
-        data: { reason: 'Manual revocation from UI' },
-      });
+      await api.makeRequest('DELETE', `/credentials/api-keys/${keyId}`);
 
       // Reload keys
-      const keysRes = await api.get('/credentials/api-keys');
-      setApiKeys(keysRes.data || []);
+      const keysRes = await api.makeRequest<APIKey[]>('GET', '/credentials/api-keys');
+      setApiKeys(keysRes || []);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to revoke API key');
     }
