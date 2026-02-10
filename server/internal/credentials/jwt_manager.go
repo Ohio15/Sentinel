@@ -322,13 +322,24 @@ func (m *JWTManager) Rotate(ctx context.Context, initiatedBy uuid.UUID) (*Rotati
 	}
 	defer m.rotationMu.Unlock()
 
+	// Get current version to calculate new version for log entry
+	var currentVersion int
+	err := m.db.QueryRow(ctx, `
+		SELECT COALESCE(MAX(version), 0) FROM credential_keys
+		WHERE credential_type = 'jwt_secret'
+	`).Scan(&currentVersion)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get current version: %w", err)
+	}
+	expectedNewVersion := currentVersion + 1
+
 	// Start rotation log entry
 	logID := uuid.New()
-	_, err := m.db.Exec(ctx, `
+	_, err = m.db.Exec(ctx, `
 		INSERT INTO credential_rotation_log (
-			id, credential_type, action, initiated_by, status
-		) VALUES ($1, 'jwt_secret', 'rotate', $2, 'in_progress')
-	`, logID, initiatedBy)
+			id, credential_type, action, initiated_by, status, old_version, new_version
+		) VALUES ($1, 'jwt_secret', 'rotate', $2, 'in_progress', $3, $4)
+	`, logID, initiatedBy, currentVersion, expectedNewVersion)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create rotation log: %w", err)
 	}
