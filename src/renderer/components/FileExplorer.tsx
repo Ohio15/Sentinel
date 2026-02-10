@@ -1,4 +1,5 @@
 import React, { useState, useEffect, memo, useRef } from 'react';
+import { files as filesService, events } from '../services';
 
 interface FileEntry {
   name: string;
@@ -47,7 +48,8 @@ export const FileExplorer = memo(function FileExplorer({ deviceId, isOnline, isA
       loadDrives();
     }
 
-    const unsub = window.api.files.onProgress((progress) => {
+    const unsub = events.on('file_progress', (data: unknown) => {
+      const progress = data as { deviceId: string; filename: string; percentage: number };
       if (progress.deviceId === deviceId) {
         setTransferProgress({
           filename: progress.filename,
@@ -67,8 +69,9 @@ export const FileExplorer = memo(function FileExplorer({ deviceId, isOnline, isA
     setLoading(true);
     setError(null);
     try {
-      console.log('[FileExplorer] Calling window.api.files.drives...');
-      const driveList = await window.api.files.drives(deviceId);
+      console.log('[FileExplorer] Calling filesService.list for root...');
+      // Get drives by listing root - in web mode we may not have a separate drives endpoint
+      const driveList = await filesService.list(deviceId, '/') as unknown as DriveInfo[];
       console.log('[FileExplorer] Got drives:', driveList);
       setDrives(driveList);
       setViewMode('drives');
@@ -85,7 +88,7 @@ export const FileExplorer = memo(function FileExplorer({ deviceId, isOnline, isA
     setLoading(true);
     setError(null);
     try {
-      const entries = await window.api.files.list(deviceId, path);
+      const entries = await filesService.list(deviceId, path) as FileEntry[];
       setFiles(entries);
       setCurrentPath(path);
       setViewMode('files');
@@ -135,9 +138,8 @@ export const FileExplorer = memo(function FileExplorer({ deviceId, isOnline, isA
 
   const handleDownload = async (file: FileEntry) => {
     try {
-      const localPath = `${file.name}`;
-      await window.api.files.download(deviceId, file.path, localPath);
-      alert('File downloaded successfully');
+      await filesService.download(deviceId, file.path);
+      alert('File download initiated');
     } catch (err: unknown) {
       alert(`Download failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }

@@ -2,29 +2,25 @@ import React, { useState, useEffect } from 'react';
 import { useAlertStore } from '../../stores/alertStore';
 import { useDeviceStore } from '../../stores/deviceStore';
 import { ClientSelector } from '../ClientSelector';
+import { connection } from '../../services';
 
 export function Header() {
-  const [port, setPort] = useState<number | null>(null);
+  const [isConnected, setIsConnected] = useState(false);
   const { alerts } = useAlertStore();
   const { devices } = useDeviceStore();
   const openAlerts = alerts.filter(a => a.status === 'open').length;
-  
+
   // Derive online count from device store - single source of truth
   const onlineCount = devices.filter(d => d.status === 'online').length;
 
   useEffect(() => {
-    // Fetch port once on mount - it rarely changes
-    const loadPort = async () => {
-      try {
-        if (window.api?.server?.getInfo) {
-          const info = await window.api.server.getInfo();
-          setPort(info.port);
-        }
-      } catch (error) {
-        console.error('Failed to load server port:', error);
-      }
+    // Check WebSocket connection status periodically
+    const checkConnection = () => {
+      setIsConnected(connection.isConnected);
     };
-    loadPort();
+    checkConnection();
+    const interval = setInterval(checkConnection, 5000);
+    return () => clearInterval(interval);
   }, []);
 
   return (
@@ -34,9 +30,9 @@ export function Header() {
         <ClientSelector />
         <div className="h-4 w-px bg-border" />
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 bg-success rounded-full animate-pulse" />
+          <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-success animate-pulse' : 'bg-warning'}`} />
           <span className="text-sm text-text-secondary">
-            Port {port || '...'}
+            {isConnected ? 'Connected' : 'Connecting...'}
           </span>
         </div>
         <div className="h-4 w-px bg-border" />

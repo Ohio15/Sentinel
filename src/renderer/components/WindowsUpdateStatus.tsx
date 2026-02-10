@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { updates as updatesService } from '../services';
 
 interface PendingUpdateInfo {
   title: string;
@@ -35,7 +36,7 @@ export function WindowsUpdateStatus({ deviceId, osType }: WindowsUpdateStatusPro
     async function fetchUpdateStatus() {
       try {
         setLoading(true);
-        const status = await window.api.updates.getDevice(deviceId);
+        const status = await updatesService.getDevice(deviceId) as DeviceUpdateStatus;
         setUpdateStatus(status);
       } catch (error) {
         console.error('Failed to fetch update status:', error);
@@ -47,9 +48,10 @@ export function WindowsUpdateStatus({ deviceId, osType }: WindowsUpdateStatusPro
     fetchUpdateStatus();
 
     // Subscribe to real-time update status changes
-    const unsubscribe = window.api.updates.onStatus((data: DeviceUpdateStatus) => {
-      if (data.deviceId === deviceId) {
-        setUpdateStatus(data);
+    const unsubscribe = updatesService.onStatus((data: unknown) => {
+      const status = data as DeviceUpdateStatus;
+      if (status.deviceId === deviceId) {
+        setUpdateStatus(status);
       }
     });
 

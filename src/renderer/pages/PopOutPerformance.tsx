@@ -3,16 +3,13 @@ import { useParams } from 'react-router-dom';
 import { PerformanceView } from '../components/PerformanceView';
 import { useDeviceStore } from '../stores/deviceStore';
 import { shallow } from 'zustand/shallow';
-import { isElectron, isWeb } from '../services/env';
 
 interface PopOutPerformanceProps {
-  // When used as pop-out in Electron, the windowId is passed from main process
   windowId?: string;
 }
 
 export function PopOutPerformance({ windowId }: PopOutPerformanceProps) {
   const { deviceId } = useParams<{ deviceId: string }>();
-  const [popOutId, setPopOutId] = useState<string | null>(windowId || null);
   const [isReattaching, setIsReattaching] = useState(false);
 
   // Get device info from store
@@ -32,79 +29,37 @@ export function PopOutPerformance({ windowId }: PopOutPerformanceProps) {
     }
   }, [deviceId, fetchDevice]);
 
-  // Request high-frequency metrics for performance monitoring
-  useEffect(() => {
-    if (!deviceId) return;
-
-    if (isElectron && window.api?.devices?.setMetricsInterval) {
-      console.log('[PopOutPerformance] Requesting 500ms metrics interval');
-      window.api.devices.setMetricsInterval(deviceId, 500).catch(err => {
-        console.log('Failed to set metrics interval:', err);
-      });
-
-      return () => {
-        console.log('[PopOutPerformance] Resetting to normal interval');
-        window.api.devices.setMetricsInterval(deviceId, 5000).catch(err => {
-          console.log('Failed to reset metrics interval:', err);
-        });
-      };
-    }
-  }, [deviceId]);
-
-  // Get current pop-out window ID from URL hash or IPC
-  useEffect(() => {
-    if (isElectron && !popOutId) {
-      // In Electron pop-out window, try to find this window's ID
-      window.api?.popOut?.list?.().then((windows: Array<{ id: string; deviceId: string }>) => {
-        const thisWindow = windows.find(w => w.deviceId === deviceId);
-        if (thisWindow) {
-          setPopOutId(thisWindow.id);
-        }
-      }).catch(console.error);
-    }
-  }, [deviceId, popOutId]);
-
   // Handle re-attach button click
   const handleReattach = useCallback(async () => {
     setIsReattaching(true);
 
     try {
-      if (isElectron && popOutId && window.api?.popOut?.reattach) {
-        // Electron mode: use IPC to reattach
-        await window.api.popOut.reattach(popOutId);
-        // Window will be closed by the main process
-      } else if (isWeb) {
-        // Web mode: notify opener and close window
-        if (window.opener) {
-          // Send message to opener window
-          window.opener.postMessage(
-            { type: 'popout:reattach', deviceId, tab: 'performance' },
-            window.location.origin
-          );
-        }
-        // Store reattach request in localStorage for cross-tab communication
-        localStorage.setItem('popout:reattach', JSON.stringify({
-          deviceId,
-          tab: 'performance',
-          timestamp: Date.now(),
-        }));
-        // Close this window
-        window.close();
+      // Notify opener and close window
+      if (window.opener) {
+        // Send message to opener window
+        window.opener.postMessage(
+          { type: 'popout:reattach', deviceId, tab: 'performance' },
+          window.location.origin
+        );
       }
+      // Store reattach request in localStorage for cross-tab communication
+      localStorage.setItem('popout:reattach', JSON.stringify({
+        deviceId,
+        tab: 'performance',
+        timestamp: Date.now(),
+      }));
+      // Close this window
+      window.close();
     } catch (error) {
       console.error('Failed to reattach:', error);
       setIsReattaching(false);
     }
-  }, [deviceId, popOutId]);
+  }, [deviceId]);
 
   // Handle window close
   const handleClose = useCallback(() => {
-    if (isElectron && popOutId && window.api?.popOut?.close) {
-      window.api.popOut.close(popOutId);
-    } else {
-      window.close();
-    }
-  }, [popOutId]);
+    window.close();
+  }, []);
 
   if (!deviceId) {
     return (

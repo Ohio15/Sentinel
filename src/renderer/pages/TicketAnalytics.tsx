@@ -27,6 +27,7 @@ import {
   Calendar,
   RefreshCw
 } from 'lucide-react';
+import { analytics as analyticsService } from '../services';
 
 interface AnalyticsData {
   byStatus: { status: string; count: number }[];
@@ -87,14 +88,10 @@ export function TicketAnalytics({ onViewChange }: TicketAnalyticsProps) {
   const loadAnalytics = async () => {
     setLoading(true);
     try {
-      if (!window.api.analytics) {
-        console.error('Analytics API not available');
-        return;
-      }
-      const data = await window.api.analytics.tickets({
-        days: parseInt(dateRange)
-      });
-      setAnalytics(data);
+      const endDate = new Date().toISOString();
+      const startDate = new Date(Date.now() - parseInt(dateRange) * 24 * 60 * 60 * 1000).toISOString();
+      const data = await analyticsService.tickets({ startDate, endDate });
+      setAnalytics(data as AnalyticsData);
     } catch (error) {
       console.error('Failed to load analytics:', error);
     } finally {

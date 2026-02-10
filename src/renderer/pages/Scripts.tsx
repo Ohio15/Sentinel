@@ -1,6 +1,7 @@
 import { Device, useDeviceStore } from '../stores/deviceStore';
 import { useClientStore } from '../stores/clientStore';
 import React, { useState, useEffect } from 'react';
+import { scripts as scriptsService } from '../services';
 
 interface Script {
   id: string;
@@ -19,16 +20,29 @@ export function Scripts() {
   const [showModal, setShowModal] = useState(false);
   const [editingScript, setEditingScript] = useState<Script | null>(null);
   const [selectedScript, setSelectedScript] = useState<Script | null>(null);
+  const [osFilter, setOsFilter] = useState<string>('all');
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     loadScripts();
   }, []);
 
+  // Filter scripts by OS and search term
+  const filteredScripts = scripts.filter(script => {
+    const matchesOS = osFilter === 'all' ||
+      script.osTypes.length === 0 ||
+      script.osTypes.some(os => os.toLowerCase() === osFilter.toLowerCase());
+    const matchesSearch = !searchTerm ||
+      script.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      script.description?.toLowerCase().includes(searchTerm.toLowerCase());
+    return matchesOS && matchesSearch;
+  });
+
   const loadScripts = async () => {
     setLoading(true);
     try {
-      const data = await window.api.scripts.list();
-      setScripts(data);
+      const data = await scriptsService.list();
+      setScripts(data as Script[]);
     } catch (error) {
       console.error('Failed to load scripts:', error);
     } finally {
@@ -48,7 +62,7 @@ export function Scripts() {
 
   const handleDelete = async (id: string) => {
     if (confirm('Are you sure you want to delete this script?')) {
-      await window.api.scripts.delete(id);
+      await scriptsService.delete(id);
       setScripts(scripts.filter(s => s.id !== id));
       if (selectedScript?.id === id) {
         setSelectedScript(null);
@@ -58,11 +72,11 @@ export function Scripts() {
 
   const handleSave = async (script: Partial<Script>) => {
     if (editingScript) {
-      const updated = await window.api.scripts.update(editingScript.id, script);
-      setScripts(scripts.map(s => s.id === editingScript.id ? updated : s));
+      const updated = await scriptsService.update(editingScript.id, script);
+      setScripts(scripts.map(s => s.id === editingScript.id ? (updated as Script) : s));
     } else {
-      const created = await window.api.scripts.create(script);
-      setScripts([...scripts, created]);
+      const created = await scriptsService.create(script as { name: string; language: string; content: string; osTypes: string[] });
+      setScripts([...scripts, created as Script]);
     }
     setShowModal(false);
   };
@@ -80,29 +94,64 @@ export function Scripts() {
         {/* Script List */}
         <div className="lg:col-span-1">
           <div className="card">
-            <div className="p-4 border-b border-border">
+            <div className="p-4 border-b border-border space-y-3">
               <h2 className="font-semibold text-text-primary">Script Library</h2>
+              {/* Search */}
+              <input
+                type="text"
+                placeholder="Search scripts..."
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                className="input text-sm w-full"
+              />
+              {/* OS Filter */}
+              <div className="flex gap-1">
+                {['all', 'windows', 'linux', 'macos'].map(os => (
+                  <button
+                    key={os}
+                    onClick={() => setOsFilter(os)}
+                    className={`px-3 py-1 text-xs rounded-full transition-colors ${
+                      osFilter === os
+                        ? 'bg-primary text-white'
+                        : 'bg-gray-100 dark:bg-slate-700 text-text-secondary hover:bg-gray-200 dark:hover:bg-slate-600'
+                    }`}
+                  >
+                    {os === 'all' ? 'All' : os === 'macos' ? 'macOS' : os.charAt(0).toUpperCase() + os.slice(1)}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="divide-y divide-border max-h-[calc(100vh-280px)] overflow-auto">
+            <div className="divide-y divide-border max-h-[calc(100vh-380px)] overflow-auto">
               {loading ? (
                 <p className="p-4 text-text-secondary">Loading scripts...</p>
-              ) : scripts.length === 0 ? (
-                <p className="p-4 text-text-secondary">No scripts yet. Create your first script!</p>
+              ) : filteredScripts.length === 0 ? (
+                <p className="p-4 text-text-secondary">
+                  {scripts.length === 0 ? 'No scripts yet. Create your first script!' : 'No scripts match the filter.'}
+                </p>
               ) : (
-                scripts.map(script => (
+                filteredScripts.map(script => (
                   <button
                     key={script.id}
                     onClick={() => setSelectedScript(script)}
-                    className={`w-full text-left p-4 hover:bg-gray-50 transition-colors ${
-                      selectedScript?.id === script.id ? 'bg-primary-light' : ''
+                    className={`w-full text-left p-4 hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors ${
+                      selectedScript?.id === script.id ? 'bg-primary-light dark:bg-primary/20' : ''
                     }`}
                   >
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
                         <p className="font-medium text-text-primary truncate">{script.name}</p>
                         <p className="text-sm text-text-secondary truncate">
                           {script.description || 'No description'}
                         </p>
+                        <div className="flex gap-1 mt-1.5">
+                          {script.osTypes.length > 0 ? (
+                            script.osTypes.map(os => (
+                              <OsBadge key={os} os={os} />
+                            ))
+                          ) : (
+                            <span className="text-xs text-text-secondary">All OS</span>
+                          )}
+                        </div>
                       </div>
                       <LanguageBadge language={script.language} />
                     </div>
@@ -132,9 +181,23 @@ export function Scripts() {
                 </div>
               </div>
               <div className="p-4">
-                <div className="flex items-center gap-4 mb-4 text-sm text-text-secondary">
-                  <span>Language: <LanguageBadge language={selectedScript.language} /></span>
-                  <span>OS: {selectedScript.osTypes.length > 0 ? selectedScript.osTypes.join(', ') : 'All'}</span>
+                <div className="flex flex-wrap items-center gap-4 mb-4 text-sm text-text-secondary">
+                  <div className="flex items-center gap-1.5">
+                    <span>Language:</span>
+                    <LanguageBadge language={selectedScript.language} />
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span>Target OS:</span>
+                    {selectedScript.osTypes.length > 0 ? (
+                      <div className="flex gap-1">
+                        {selectedScript.osTypes.map(os => (
+                          <OsBadge key={os} os={os} />
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded">All</span>
+                    )}
+                  </div>
                   <span>Updated: {new Date(selectedScript.updatedAt).toLocaleDateString()}</span>
                 </div>
                 <pre className="bg-gray-900 text-gray-100 p-4 rounded-lg text-sm overflow-auto max-h-[calc(100vh-500px)] min-h-[200px] font-mono">
@@ -167,14 +230,37 @@ export function Scripts() {
 
 function LanguageBadge({ language }: { language: string }) {
   const colors: Record<string, string> = {
-    powershell: 'bg-blue-100 text-blue-600',
-    bash: 'bg-green-100 text-green-600',
-    python: 'bg-yellow-100 text-yellow-600',
+    powershell: 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400',
+    bash: 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400',
+    python: 'bg-yellow-100 text-yellow-600 dark:bg-yellow-900/30 dark:text-yellow-400',
   };
 
   return (
-    <span className={`badge ${colors[language] || 'bg-gray-100 text-gray-600'}`}>
+    <span className={`badge text-xs ${colors[language] || 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>
       {language}
+    </span>
+  );
+}
+
+function OsBadge({ os }: { os: string }) {
+  const osLower = os.toLowerCase();
+  const colors: Record<string, string> = {
+    windows: 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400',
+    linux: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
+    macos: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300',
+  };
+
+  const icons: Record<string, string> = {
+    windows: '\uD83E\uDE9F', // Windows logo approximation
+    linux: '\uD83D\uDC27',   // Penguin
+    macos: '\uD83C\uDF4E',   // Apple
+  };
+
+  const displayName = osLower === 'macos' ? 'macOS' : os.charAt(0).toUpperCase() + os.slice(1).toLowerCase();
+
+  return (
+    <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs ${colors[osLower] || 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>
+      {displayName}
     </span>
   );
 }
@@ -200,7 +286,7 @@ function ExecuteScriptForm({ scriptId }: { scriptId: string }) {
 
     setExecuting(true);
     try {
-      await window.api.scripts.execute(scriptId, selectedDevices);
+      await scriptsService.run(scriptId, selectedDevices);
       alert('Script execution started');
     } catch (error: unknown) {
       alert(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);

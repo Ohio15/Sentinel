@@ -9,6 +9,7 @@
  */
 import { create } from 'zustand';
 import wsService from '../services/websocket';
+import { terminal as terminalService } from '../services';
 
 type ConnectionState = 'connected' | 'disconnected' | 'reconnecting';
 
@@ -67,7 +68,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     const session = get().sessions.get(deviceId);
     if (session) {
       // Close the actual terminal
-      window.api.terminal.close(session.sessionId).catch(() => {});
+      terminalService.close(session.sessionId).catch(() => {});
 
       // Unregister from websocket session recovery
       if (wsService) {
@@ -191,24 +192,15 @@ export function setupTerminalHandler() {
   console.log('[TerminalStore] Setting up global terminal data handler');
 
   // Handle terminal output
-  window.api.terminal.onData((data: string, sessionId?: string) => {
+  terminalService.onData((data: string) => {
     const { sessions, addOutput } = useTerminalStore.getState();
 
-    // If sessionId provided, only send to matching session
-    if (sessionId) {
-      sessions.forEach((session, deviceId) => {
-        if (session.connected && session.sessionId === sessionId) {
-          addOutput(deviceId, data);
-        }
-      });
-    } else {
-      // Fallback: broadcast to all connected sessions (legacy behavior)
-      sessions.forEach((session, deviceId) => {
-        if (session.connected) {
-          addOutput(deviceId, data);
-        }
-      });
-    }
+    // Broadcast to all connected sessions
+    sessions.forEach((session, deviceId) => {
+      if (session.connected) {
+        addOutput(deviceId, data);
+      }
+    });
   });
 
   // Handle websocket connection state changes (for web mode)
@@ -229,7 +221,7 @@ export function setupTerminalHandler() {
           if (queue.length > 0) {
             console.log(`[TerminalStore] Flushing ${queue.length} queued inputs for ${deviceId}`);
             queue.forEach((input) => {
-              window.api.terminal.write(session.sessionId, input).catch((err: Error) => {
+              terminalService.send(session.sessionId, input).catch((err: Error) => {
                 console.error('[TerminalStore] Failed to flush input:', err);
               });
             });

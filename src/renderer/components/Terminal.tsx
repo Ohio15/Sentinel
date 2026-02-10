@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback, memo } from 'react';
 import { useTerminalStore, setupTerminalHandler } from '../stores/terminalStore';
+import { terminal as terminalService } from '../services';
 
 interface TerminalProps {
   deviceId: string;
@@ -40,7 +41,7 @@ export const Terminal = memo(function Terminal({ deviceId, isOnline }: TerminalP
     setConnecting(true);
     try {
       console.log('[Terminal] Starting session for device:', deviceId);
-      const result = await window.api.terminal.start(deviceId);
+      const result = await terminalService.start(deviceId);
       console.log('[Terminal] Session started:', result.sessionId);
       createSession(deviceId, result.sessionId);
       inputRef.current?.focus();
@@ -64,7 +65,7 @@ export const Terminal = memo(function Terminal({ deviceId, isOnline }: TerminalP
     if (!sessionId || !input.trim()) return;
 
     addOutput(deviceId, '$ ' + input + '\n');
-    await window.api.terminal.send(sessionId, input + '\n');
+    await terminalService.send(sessionId, input + '\n');
     setInput('');
   };
 

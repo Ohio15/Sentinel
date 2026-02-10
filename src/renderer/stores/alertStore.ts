@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { alerts as alertsService } from '../services';
 
 export interface Alert {
   id: string;
@@ -52,8 +53,8 @@ export const useAlertStore = create<AlertState>((set, get) => ({
   fetchAlerts: async () => {
     set({ loading: true, error: null });
     try {
-      const alerts = await window.api.alerts.list();
-      set({ alerts, loading: false });
+      const alerts = await alertsService.list();
+      set({ alerts: alerts as Alert[], loading: false });
     } catch (error: unknown) {
       set({ error: error instanceof Error ? error.message : 'Unknown error', loading: false });
     }
@@ -61,7 +62,7 @@ export const useAlertStore = create<AlertState>((set, get) => ({
 
   acknowledgeAlert: async (id: string) => {
     try {
-      await window.api.alerts.acknowledge(id);
+      await alertsService.acknowledge(id);
       const { alerts } = get();
       set({
         alerts: alerts.map(a =>
@@ -75,7 +76,7 @@ export const useAlertStore = create<AlertState>((set, get) => ({
 
   resolveAlert: async (id: string) => {
     try {
-      await window.api.alerts.resolve(id);
+      await alertsService.resolve(id);
       const { alerts } = get();
       set({
         alerts: alerts.map(a =>
@@ -89,8 +90,8 @@ export const useAlertStore = create<AlertState>((set, get) => ({
 
   fetchRules: async () => {
     try {
-      const rules = await window.api.alerts.getRules();
-      set({ rules });
+      const rules = await alertsService.getRules();
+      set({ rules: rules as AlertRule[] });
     } catch (error: unknown) {
       set({ error: error instanceof Error ? error.message : 'Unknown error' });
     }
@@ -98,9 +99,9 @@ export const useAlertStore = create<AlertState>((set, get) => ({
 
   createRule: async (rule) => {
     try {
-      const newRule = await window.api.alerts.createRule(rule);
+      const newRule = await alertsService.createRule(rule as any);
       const { rules } = get();
-      set({ rules: [...rules, newRule] });
+      set({ rules: [...rules, newRule as AlertRule] });
     } catch (error: unknown) {
       set({ error: error instanceof Error ? error.message : 'Unknown error' });
     }
@@ -108,9 +109,9 @@ export const useAlertStore = create<AlertState>((set, get) => ({
 
   updateRule: async (id: string, rule) => {
     try {
-      const updatedRule = await window.api.alerts.updateRule(id, rule);
+      const updatedRule = await alertsService.updateRule(id, rule);
       const { rules } = get();
-      set({ rules: rules.map(r => r.id === id ? updatedRule : r) });
+      set({ rules: rules.map(r => r.id === id ? updatedRule as AlertRule : r) });
     } catch (error: unknown) {
       set({ error: error instanceof Error ? error.message : 'Unknown error' });
     }
@@ -118,7 +119,7 @@ export const useAlertStore = create<AlertState>((set, get) => ({
 
   deleteRule: async (id: string) => {
     try {
-      await window.api.alerts.deleteRule(id);
+      await alertsService.deleteRule(id);
       const { rules } = get();
       set({ rules: rules.filter(r => r.id !== id) });
     } catch (error: unknown) {
@@ -127,9 +128,9 @@ export const useAlertStore = create<AlertState>((set, get) => ({
   },
 
   subscribeToAlerts: () => {
-    const unsub = window.api.alerts.onNew((alert: Alert) => {
+    const unsub = alertsService.onNew((alert) => {
       const { alerts } = get();
-      set({ alerts: [alert, ...alerts] });
+      set({ alerts: [alert as Alert, ...alerts] });
     });
 
     return unsub;

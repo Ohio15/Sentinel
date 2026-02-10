@@ -16,6 +16,7 @@ import {
   ThumbsDown,
   ExternalLink
 } from 'lucide-react';
+import { kb as kbService } from '../services';
 
 interface KBCategory {
   id: string;
@@ -71,16 +72,12 @@ export function KnowledgeBase() {
   const loadData = async () => {
     setLoading(true);
     try {
-      if (!window.api.kb) {
-        console.error('KB API not available');
-        return;
-      }
       const [cats, arts] = await Promise.all([
-        window.api.kb.categories.list(),
-        window.api.kb.articles.list()
+        kbService.categories.list(),
+        kbService.articles.list()
       ]);
-      setCategories(cats);
-      setArticles(arts);
+      setCategories(cats as KBCategory[]);
+      setArticles(arts as KBArticle[]);
     } catch (error) {
       console.error('Failed to load KB data:', error);
     } finally {
@@ -107,8 +104,7 @@ export function KnowledgeBase() {
 
   const handleCreateArticle = async (data: Partial<KBArticle>) => {
     try {
-      if (!window.api.kb) return;
-      await window.api.kb.articles.create(data);
+      await kbService.articles.create(data as { title: string; content: string });
       await loadData();
       setShowArticleModal(false);
       setEditingArticle(null);
@@ -119,8 +115,7 @@ export function KnowledgeBase() {
 
   const handleUpdateArticle = async (id: string, data: Partial<KBArticle>) => {
     try {
-      if (!window.api.kb) return;
-      await window.api.kb.articles.update(id, data);
+      await kbService.articles.update(id, data);
       await loadData();
       setShowArticleModal(false);
       setEditingArticle(null);
@@ -130,9 +125,9 @@ export function KnowledgeBase() {
   };
 
   const handleDeleteArticle = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this article?') || !window.api.kb) return;
+    if (!confirm('Are you sure you want to delete this article?')) return;
     try {
-      await window.api.kb.articles.delete(id);
+      await kbService.articles.delete(id);
       await loadData();
     } catch (error) {
       console.error('Failed to delete article:', error);
@@ -141,8 +136,7 @@ export function KnowledgeBase() {
 
   const handleToggleFeatured = async (article: KBArticle) => {
     try {
-      if (!window.api.kb) return;
-      await window.api.kb.articles.update(article.id, { isFeatured: !article.isFeatured });
+      await kbService.articles.update(article.id, { isFeatured: !article.isFeatured });
       await loadData();
     } catch (error) {
       console.error('Failed to toggle featured:', error);
@@ -151,8 +145,7 @@ export function KnowledgeBase() {
 
   const handleTogglePinned = async (article: KBArticle) => {
     try {
-      if (!window.api.kb) return;
-      await window.api.kb.articles.update(article.id, { isPinned: !article.isPinned });
+      await kbService.articles.update(article.id, { isPinned: !article.isPinned });
       await loadData();
     } catch (error) {
       console.error('Failed to toggle pinned:', error);
@@ -161,10 +154,8 @@ export function KnowledgeBase() {
 
   const handlePublishArticle = async (article: KBArticle) => {
     try {
-      if (!window.api.kb) return;
-      await window.api.kb.articles.update(article.id, {
-        status: 'published',
-        publishedAt: new Date().toISOString()
+      await kbService.articles.update(article.id, {
+        isPublished: true
       });
       await loadData();
     } catch (error) {
@@ -477,11 +468,10 @@ export function KnowledgeBase() {
           }}
           onSave={async (data) => {
             try {
-              if (!window.api.kb) return;
               if (editingCategory) {
-                await window.api.kb.categories.update(editingCategory.id, data);
+                await kbService.categories.update(editingCategory.id, data);
               } else {
-                await window.api.kb.categories.create(data);
+                await kbService.categories.create(data as { name: string });
               }
               await loadData();
               setShowCategoryModal(false);

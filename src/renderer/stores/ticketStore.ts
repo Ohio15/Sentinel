@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { tickets as ticketsService } from '../services';
 
 export interface Ticket {
   id: string;
@@ -125,8 +126,8 @@ export const useTicketStore = create<TicketState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const appliedFilters = filters || get().filters;
-      const tickets = await window.api.tickets.list(appliedFilters);
-      set({ tickets, loading: false });
+      const tickets = await ticketsService.list(appliedFilters);
+      set({ tickets: tickets as Ticket[], loading: false });
     } catch (error: unknown) {
       set({ error: error instanceof Error ? error.message : 'Unknown error', loading: false });
     }
@@ -135,8 +136,8 @@ export const useTicketStore = create<TicketState>((set, get) => ({
   fetchTicket: async (id: string) => {
     set({ loading: true, error: null });
     try {
-      const ticket = await window.api.tickets.get(id);
-      set({ selectedTicket: ticket, loading: false });
+      const ticket = await ticketsService.get(id);
+      set({ selectedTicket: ticket as Ticket, loading: false });
       // Also fetch comments and activity
       if (ticket) {
         get().fetchComments(id);
@@ -150,12 +151,12 @@ export const useTicketStore = create<TicketState>((set, get) => ({
   createTicket: async (ticket: Partial<Ticket>) => {
     set({ loading: true, error: null });
     try {
-      const newTicket = await window.api.tickets.create(ticket as any);
+      const newTicket = await ticketsService.create(ticket);
       set((state) => ({
-        tickets: [newTicket, ...state.tickets],
+        tickets: [newTicket as Ticket, ...state.tickets],
         loading: false,
       }));
-      return newTicket;
+      return newTicket as Ticket;
     } catch (error: unknown) {
       set({ error: error instanceof Error ? error.message : 'Unknown error', loading: false });
       throw error;
@@ -165,13 +166,13 @@ export const useTicketStore = create<TicketState>((set, get) => ({
   updateTicket: async (id: string, updates: Partial<Ticket> & { actorName?: string }) => {
     set({ loading: true, error: null });
     try {
-      const updatedTicket = await window.api.tickets.update(id, updates);
+      const updatedTicket = await ticketsService.update(id, updates);
       set((state) => ({
-        tickets: state.tickets.map((t) => (t.id === id ? updatedTicket : t)),
-        selectedTicket: state.selectedTicket?.id === id ? updatedTicket : state.selectedTicket,
+        tickets: state.tickets.map((t) => (t.id === id ? updatedTicket as Ticket : t)),
+        selectedTicket: state.selectedTicket?.id === id ? updatedTicket as Ticket : state.selectedTicket,
         loading: false,
       }));
-      return updatedTicket;
+      return updatedTicket as Ticket;
     } catch (error: unknown) {
       set({ error: error instanceof Error ? error.message : 'Unknown error', loading: false });
       throw error;
@@ -181,7 +182,7 @@ export const useTicketStore = create<TicketState>((set, get) => ({
   deleteTicket: async (id: string) => {
     set({ loading: true, error: null });
     try {
-      await window.api.tickets.delete(id);
+      await ticketsService.delete(id);
       set((state) => ({
         tickets: state.tickets.filter((t) => t.id !== id),
         selectedTicket: state.selectedTicket?.id === id ? null : state.selectedTicket,
@@ -195,8 +196,8 @@ export const useTicketStore = create<TicketState>((set, get) => ({
 
   fetchComments: async (ticketId: string) => {
     try {
-      const comments = await window.api.tickets.getComments(ticketId);
-      set({ ticketComments: comments });
+      const comments = await ticketsService.getComments(ticketId);
+      set({ ticketComments: comments as TicketComment[] });
     } catch (error: unknown) {
       console.error('Failed to fetch comments:', error);
     }
@@ -204,11 +205,11 @@ export const useTicketStore = create<TicketState>((set, get) => ({
 
   addComment: async (comment: Omit<TicketComment, 'id' | 'createdAt'>) => {
     try {
-      const newComment = await window.api.tickets.addComment(comment);
+      const newComment = await ticketsService.addComment(comment);
       set((state) => ({
-        ticketComments: [...state.ticketComments, newComment],
+        ticketComments: [...state.ticketComments, newComment as TicketComment],
       }));
-      return newComment;
+      return newComment as TicketComment;
     } catch (error: unknown) {
       throw error;
     }
@@ -216,8 +217,8 @@ export const useTicketStore = create<TicketState>((set, get) => ({
 
   fetchActivity: async (ticketId: string) => {
     try {
-      const activity = await window.api.tickets.getActivity(ticketId);
-      set({ ticketActivity: activity });
+      const activity = await ticketsService.getActivity(ticketId);
+      set({ ticketActivity: activity as TicketActivity[] });
     } catch (error: unknown) {
       console.error('Failed to fetch activity:', error);
     }
@@ -225,8 +226,8 @@ export const useTicketStore = create<TicketState>((set, get) => ({
 
   fetchStats: async () => {
     try {
-      const stats = await window.api.tickets.getStats();
-      set({ stats });
+      const stats = await ticketsService.getStats();
+      set({ stats: stats as TicketStats });
     } catch (error: unknown) {
       console.error('Failed to fetch stats:', error);
     }
@@ -234,8 +235,8 @@ export const useTicketStore = create<TicketState>((set, get) => ({
 
   fetchTemplates: async () => {
     try {
-      const templates = await window.api.tickets.getTemplates();
-      set({ templates });
+      const templates = await ticketsService.getTemplates();
+      set({ templates: templates as TicketTemplate[] });
     } catch (error: unknown) {
       console.error('Failed to fetch templates:', error);
     }

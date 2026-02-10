@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { browserSupportsWebAuthn, startRegistration } from '@simplewebauthn/browser';
+import { passkeys as passkeysService } from '../services';
 
 interface Passkey {
   id: string;
@@ -89,7 +90,7 @@ export function PasskeyManager() {
   const loadPasskeys = async () => {
     setLoading(true);
     try {
-      const data = await window.api.passkeys?.list() || [];
+      const data = await passkeysService.list();
       setPasskeys(data);
       setError(null);
     } catch (err) {
@@ -107,7 +108,7 @@ export function PasskeyManager() {
 
     try {
       // Step 1: Begin registration
-      const beginResponse = await window.api.passkeys?.beginRegistration();
+      const beginResponse = await passkeysService.beginRegistration();
       if (!beginResponse) throw new Error('Failed to start registration');
 
       const { sessionId, options } = beginResponse;
@@ -118,7 +119,7 @@ export function PasskeyManager() {
       const registrationResponse = await startRegistration(publicKeyOptions);
 
       // Step 3: Complete registration
-      await window.api.passkeys?.finishRegistration({
+      await passkeysService.finishRegistration({
         sessionId,
         response: registrationResponse,
         name: `Passkey ${new Date().toLocaleDateString()}`,
@@ -143,7 +144,7 @@ export function PasskeyManager() {
     if (!window.confirm(`Delete "${name}"? This cannot be undone.`)) return;
 
     try {
-      await window.api.passkeys?.delete(id);
+      await passkeysService.delete(id);
       loadPasskeys();
     } catch (err) {
       alert('Failed to delete passkey');
@@ -159,7 +160,7 @@ export function PasskeyManager() {
     if (!editingId || !editName.trim()) return;
 
     try {
-      await window.api.passkeys?.rename(editingId, editName.trim());
+      await passkeysService.rename(editingId, editName.trim());
       setEditingId(null);
       loadPasskeys();
     } catch (err) {

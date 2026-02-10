@@ -1,4 +1,5 @@
-﻿import { create } from 'zustand';
+import { create } from 'zustand';
+import { certs as certsService } from '../services';
 
 export interface CertificateInfo {
   name: string;
@@ -51,16 +52,11 @@ export const useCertificateStore = create<CertificateState>((set, get) => ({
   fetchCertificates: async () => {
     set({ loading: true, error: null });
     try {
-      if (!window.api.certs) {
-        set({ loading: false });
-        return;
-      }
-      const result = await window.api.certs.list();
-      // listCertificates returns { certificates, certsDir, caCertHash }
+      const result = await certsService.list();
       const certificates = result?.certificates || [];
       const caCertHash = result?.caCertHash || null;
       set({
-        certificates,
+        certificates: certificates as CertificateInfo[],
         currentCertHash: caCertHash,
         loading: false,
       });
@@ -71,9 +67,8 @@ export const useCertificateStore = create<CertificateState>((set, get) => ({
 
   fetchAgentStatuses: async () => {
     try {
-      if (!window.api.certs) return;
-      const agentStatuses = await window.api.certs.getAgentStatus();
-      set({ agentStatuses });
+      const agentStatuses = await certsService.getAgentStatus();
+      set({ agentStatuses: agentStatuses as AgentCertStatus[] });
     } catch (error: unknown) {
       console.error('Failed to fetch agent cert statuses:', error);
     }
@@ -82,8 +77,7 @@ export const useCertificateStore = create<CertificateState>((set, get) => ({
   renewCertificates: async () => {
     set({ renewing: true, error: null });
     try {
-      if (!window.api.certs) throw new Error('Certs API not available');
-      const result = await window.api.certs.renew();
+      const result = await certsService.renew();
       if (!result.success) {
         throw new Error(result.error || 'Failed to renew certificates');
       }
@@ -99,8 +93,7 @@ export const useCertificateStore = create<CertificateState>((set, get) => ({
   distributeCertificates: async () => {
     set({ distributing: true, error: null });
     try {
-      if (!window.api.certs) throw new Error('Certs API not available');
-      const result = await window.api.certs.distribute();
+      const result = await certsService.distribute();
       // Update will come via event subscription
       set({ distributing: false });
       return result;
@@ -111,14 +104,13 @@ export const useCertificateStore = create<CertificateState>((set, get) => ({
   },
 
   subscribeToEvents: () => {
-    if (!window.api.certs) return () => {};
-    const unsubDistributed = window.api.certs.onDistributed((result: any) => {
+    const unsubDistributed = certsService.onDistributed((result: any) => {
       console.log('[Certs] Distribution result:', result);
       // Refresh agent statuses after distribution
       get().fetchAgentStatuses();
     });
 
-    const unsubConfirmed = window.api.certs.onAgentConfirmed((data: any) => {
+    const unsubConfirmed = certsService.onAgentConfirmed((data: any) => {
       console.log('[Certs] Agent confirmed:', data);
       // Update the specific agent's status
       set((state) => ({

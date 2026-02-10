@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { clients as clientsService } from '../services';
 
 export interface Client {
   id: string;
@@ -43,8 +44,8 @@ export const useClientStore = create<ClientState>()(
       fetchClients: async () => {
         set({ loading: true, error: null });
         try {
-          const clients = await window.api.clients.list();
-          set({ clients, loading: false });
+          const clients = await clientsService.list();
+          set({ clients: clients as Client[], loading: false });
         } catch (error: unknown) {
           set({ error: error instanceof Error ? error.message : 'Unknown error', loading: false });
         }
@@ -56,10 +57,10 @@ export const useClientStore = create<ClientState>()(
 
       createClient: async (client) => {
         try {
-          const newClient = await window.api.clients.create(client);
+          const newClient = await clientsService.create(client);
           const { clients } = get();
-          set({ clients: [...clients, newClient] });
-          return newClient;
+          set({ clients: [...clients, newClient as Client] });
+          return newClient as Client;
         } catch (error: unknown) {
           set({ error: error instanceof Error ? error.message : 'Unknown error' });
           throw error;
@@ -68,14 +69,14 @@ export const useClientStore = create<ClientState>()(
 
       updateClient: async (id, updates) => {
         try {
-          const updatedClient = await window.api.clients.update(id, updates);
+          const updatedClient = await clientsService.update(id, updates);
           if (updatedClient) {
             const { clients } = get();
             set({
-              clients: clients.map(c => c.id === id ? updatedClient : c)
+              clients: clients.map(c => c.id === id ? updatedClient as Client : c)
             });
           }
-          return updatedClient;
+          return updatedClient as Client | null;
         } catch (error: unknown) {
           set({ error: error instanceof Error ? error.message : 'Unknown error' });
           throw error;
@@ -84,7 +85,7 @@ export const useClientStore = create<ClientState>()(
 
       deleteClient: async (id) => {
         try {
-          await window.api.clients.delete(id);
+          await clientsService.delete(id);
           const { clients, currentClientId } = get();
           set({
             clients: clients.filter(c => c.id !== id),

@@ -1,11 +1,8 @@
 /**
- * Auth Store - Unified authentication for Electron and Web modes
- *
- * In Electron mode: Authentication is handled by the main process
- * In Web mode: Uses HTTP API for auth, stores token in localStorage
+ * Auth Store - Authentication for Web mode
+ * Uses HTTP API for auth, stores token in localStorage
  */
 import { create } from 'zustand';
-import { isElectron, isWeb } from '../services/env';
 import { auth, connection } from '../services';
 import { api } from '../services/api';
 
@@ -38,8 +35,8 @@ interface AuthState {
   _scheduleTokenRefresh: (expiresIn: number) => void;
 }
 
-// Check for force clear parameter in web mode
-if (isWeb && window.location.search.includes('clear')) {
+// Check for force clear parameter
+if (window.location.search.includes('clear')) {
   console.log('[AuthStore] Force clear requested');
   localStorage.removeItem('token');
   localStorage.removeItem('user');
@@ -49,10 +46,6 @@ if (isWeb && window.location.search.includes('clear')) {
 
 // Initialize auth state from localStorage synchronously to prevent flash redirect
 function getInitialAuthState(): { token: string | null; refreshToken: string | null; tokenExpiresAt: number | null; isAuthenticated: boolean; isLoading: boolean } {
-  if (isElectron) {
-    return { token: null, refreshToken: null, tokenExpiresAt: null, isAuthenticated: true, isLoading: false };
-  }
-
   const token = localStorage.getItem('token');
   const refreshToken = localStorage.getItem('refreshToken');
   const tokenExpiresAt = localStorage.getItem('tokenExpiresAt');
@@ -136,7 +129,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
     try {
       console.log(`[AuthStore] Refreshing access token (attempt ${state._refreshAttempts + 1}/2)...`);
-      const response = await api!.refreshToken(state.refreshToken);
+      const response = await api.refreshToken(state.refreshToken);
       const { token: newToken, expiresIn } = response;
 
       const expiresAt = Date.now() + (expiresIn * 1000);
@@ -166,10 +159,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   },
 
   login: async (identifier: string, password: string) => {
-    if (isElectron) {
-      return;
-    }
-
     set({ isLoading: true, error: null });
     try {
       console.log('[AuthStore] Logging in...');
@@ -216,10 +205,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   },
 
   logout: () => {
-    if (isElectron) {
-      return;
-    }
-
     // Clear refresh timer
     const state = get();
     if (state._refreshTimer) {
@@ -259,11 +244,6 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     }
 
     console.log('[AuthStore] checkAuth called');
-
-    if (isElectron) {
-      set({ isAuthenticated: true, isLoading: false, _authChecked: true });
-      return;
-    }
 
     const token = localStorage.getItem('token');
     const refreshToken = localStorage.getItem('refreshToken');

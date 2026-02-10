@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useDeviceStore, Device } from '../stores/deviceStore';
 import { useClientStore } from '../stores/clientStore';
 import { api } from '../services/api';
-import { isElectron } from '../services/env';
+import { server as serverService, agent as agentService } from '../services';
 import { format } from 'date-fns';
 
 interface DevicesProps {
@@ -142,8 +142,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
 
   const loadServerInfo = async () => {
     try {
-      if (!window.api.server) return;
-      const info = await window.api.server.getInfo();
+      const info = await serverService.getInfo();
       setServerInfo(info);
     } catch (error) {
       console.error('Failed to load server info:', error);
@@ -161,23 +160,13 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
     setDownloadResult(null);
 
     try {
-      if (!window.api.agent) throw new Error('Agent API not available');
-      const result = await window.api.agent.download(platform);
-
-      if (result.canceled) {
-        setDownloadResult(null);
-      } else if (result.success) {
-        const sizeMB = result.size ? (result.size / 1024 / 1024).toFixed(1) : '?';
+      const result = await agentService.download(platform);
+      // In web mode, open the download URL in a new tab
+      if (result.url) {
+        window.open(result.url, '_blank');
         setDownloadResult({
           type: 'success',
-          message: result.installCommand
-            ? `Installer saved (${sizeMB} MB). Install command: ${result.installCommand}`
-            : `Installer saved (${sizeMB} MB). Double-click to install.`
-        });
-      } else {
-        setDownloadResult({
-          type: 'error',
-          message: result.error || 'Download failed'
+          message: 'Download started in new tab'
         });
       }
     } catch (error) {
@@ -191,27 +180,19 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
     }
   };
 
-  
+
   const handleDownloadConfigured = async (platform: string) => {
     setDownloadingPlatform(platform);
     setDownloadResult(null);
 
     try {
-      if (!window.api.agent) throw new Error('Agent API not available');
-      const result = await window.api.agent.downloadConfigured(platform);
-
-      if (result.canceled) {
-        setDownloadResult(null);
-      } else if (result.success) {
-        const sizeMB = result.size ? (result.size / 1024 / 1024).toFixed(1) : '?';
+      const result = await agentService.downloadConfigured(platform);
+      // In web mode, open the download URL in a new tab
+      if (result.url) {
+        window.open(result.url, '_blank');
         setDownloadResult({
           type: 'success',
-          message: `Pre-configured installer saved (${sizeMB} KB). ${result.note || ''}`
-        });
-      } else {
-        setDownloadResult({
-          type: 'error',
-          message: result.error || 'Failed to generate installer'
+          message: 'Pre-configured installer download started'
         });
       }
     } catch (error: any) {
@@ -228,24 +209,12 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
   const fetchLinks = async () => {
     setLinksLoading(true);
     try {
-      let response: any;
-      if (isElectron) {
-        response = await window.api.agentLinks.list({
-          status: linkFilter || undefined,
-          search: linkSearch || undefined,
-          page: linkPage,
-          pageSize: 20,
-        });
-      } else if (api) {
-        response = await api.getAgentLinks({
-          status: linkFilter || undefined,
-          search: linkSearch || undefined,
-          page: linkPage,
-          pageSize: 20,
-        });
-      } else {
-        return;
-      }
+      const response = await api.getAgentLinks({
+        status: linkFilter || undefined,
+        search: linkSearch || undefined,
+        page: linkPage,
+        pageSize: 20,
+      });
       setLinks((response?.links || []) as AgentLink[]);
       setLinkTotalPages(response?.totalPages || 1);
     } catch (err) {
@@ -257,14 +226,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
 
   const fetchLinkStats = async () => {
     try {
-      let data: LinkStats;
-      if (isElectron) {
-        data = await window.api.agentLinks.stats() as LinkStats;
-      } else if (api) {
-        data = await api.getAgentLinkStats() as LinkStats;
-      } else {
-        return;
-      }
+      const data = await api.getAgentLinkStats() as LinkStats;
       setLinkStats(data);
     } catch (err) {
       console.error('Failed to fetch stats:', err);
@@ -273,10 +235,8 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
 
   const handleCreateLink = async () => {
     if (!linkFormData.deviceName || !linkFormData.userEmail) return;
-    if (!isElectron && !api) return;
     setCreatingLink(true);
     try {
-      let result: any;
       const linkData = {
         deviceName: linkFormData.deviceName,
         userEmail: linkFormData.userEmail,
@@ -285,11 +245,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
         expiresInHours: linkFormData.expiresInHours,
         sendEmail: linkFormData.sendEmail,
       };
-      if (isElectron) {
-        result = await window.api.agentLinks.create(linkData);
-      } else {
-        result = await api!.createAgentLink(linkData);
-      }
+      const result = await api.createAgentLink(linkData);
       setCreateLinkResult(result);
       fetchLinks();
       fetchLinkStats();
@@ -302,13 +258,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
 
   const handleResendEmail = async (linkId: string) => {
     try {
-      if (isElectron) {
-        await window.api.agentLinks.resendEmail(linkId);
-      } else if (api) {
-        await api.resendAgentLinkEmail(linkId);
-      } else {
-        return;
-      }
+      await api.resendAgentLinkEmail(linkId);
       alert('Email resent successfully');
       fetchLinks();
     } catch (err) {
@@ -318,13 +268,8 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
 
   const handleRevokeLink = async (linkId: string) => {
     if (!confirm('Are you sure you want to revoke this installation link?')) return;
-    if (!isElectron && !api) return;
     try {
-      if (isElectron) {
-        await window.api.agentLinks.revoke(linkId);
-      } else {
-        await api!.revokeAgentLink(linkId);
-      }
+      await api.revokeAgentLink(linkId);
       fetchLinks();
       fetchLinkStats();
     } catch (err) {
@@ -334,13 +279,8 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
 
   const handleDeleteLink = async (linkId: string) => {
     if (!confirm('Are you sure you want to permanently delete this installation link? This cannot be undone.')) return;
-    if (!isElectron && !api) return;
     try {
-      if (isElectron) {
-        await window.api.agentLinks.delete(linkId);
-      } else {
-        await api!.deleteAgentLink(linkId);
-      }
+      await api.deleteAgentLink(linkId);
       fetchLinks();
       fetchLinkStats();
     } catch (err) {
@@ -350,14 +290,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
 
   const handleViewLinkDetails = async (link: AgentLink) => {
     try {
-      let details: AgentLink;
-      if (isElectron) {
-        details = await window.api.agentLinks.get(link.id) as AgentLink;
-      } else if (api) {
-        details = await api.getAgentLink(link.id) as AgentLink;
-      } else {
-        return;
-      }
+      const details = await api.getAgentLink(link.id) as AgentLink;
       setSelectedLink(details);
       setShowDetailModal(true);
     } catch (err) {
