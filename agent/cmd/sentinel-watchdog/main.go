@@ -40,15 +40,19 @@ const (
 	updateVerifyInterval   = 2 * time.Second  // How often to check agent version during verification
 
 	// Health check constants for auto-rollback
-	healthCheckInterval   = 10 * time.Second // How often to check agent health after update
-	healthCheckDuration   = 60 * time.Second // How long to monitor health after update
-	maxAgentMemoryMB      = 500              // Maximum memory usage before triggering rollback
-	maxCrashesPerMinute   = 2                // Maximum crashes before triggering rollback
-	healthStatusTimeout   = 15 * time.Second // Time to wait for agent to write health status
+	// NOTE: These are intentionally lenient to avoid false rollbacks from:
+	// - Network disconnects causing brief service restarts
+	// - Windows SCM auto-recovery restarts counting as "crashes"
+	// - Normal reconnection behavior during network instability
+	healthCheckInterval   = 10 * time.Second  // How often to check agent health after update
+	healthCheckDuration   = 120 * time.Second // How long to monitor health after update (2 min)
+	maxAgentMemoryMB      = 500               // Maximum memory usage before triggering rollback
+	maxCrashesPerMinute   = 5                 // Maximum crashes before triggering rollback (lenient)
+	healthStatusTimeout   = 30 * time.Second  // Time to wait for agent to write health status
 )
 
 var (
-	Version = "1.72.2"
+	Version = "1.72.3"
 	elog    debug.Log
 	isDebug = false
 )

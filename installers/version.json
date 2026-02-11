@@ -1,7 +1,7 @@
 {
-    "version":  "1.72.2",
+    "version":  "1.72.3",
     "releaseDate":  "2026-02-11",
-    "changelog":  "Fix WebSocket ping timeout causing agent disconnections",
+    "changelog":  "Fix watchdog rollback sensitivity causing update failures",
     "platforms":  [
                       "windows",
                       "linux",
