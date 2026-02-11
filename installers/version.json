@@ -1,7 +1,7 @@
 {
-    "version":  "1.72.7",
+    "version":  "1.72.8",
     "releaseDate":  "2026-02-11",
-    "changelog":  "Fix: rebuild binaries with correct 30s ping timeout",
+    "changelog":  "Reduce ping interval to 10s to fix connection drops",
     "platforms":  [
                       "windows",
                       "linux",
