@@ -54,7 +54,7 @@ const (
 )
 
 var (
-	Version = "1.72.4"
+	Version = "1.72.5"
 	elog    debug.Log
 	isDebug = false
 )
@@ -731,10 +731,22 @@ func (ws *watchdogService) updateChecker() {
 		case <-ticker.C:
 			ws.mu.Lock()
 			inProgress := ws.updateInProgress
+			selfUpdateInProgress := ws.selfUpdateInProgress
 			ws.mu.Unlock()
 
-			if inProgress {
+			if inProgress || selfUpdateInProgress {
 				continue
+			}
+
+			// CRITICAL: Check for pending watchdog self-update FIRST
+			// If there's a watchdog update pending, defer agent update until watchdog is updated
+			// This ensures the new watchdog (with lenient settings) handles the agent update
+			if ws.selfUpdater != nil {
+				watchdogRequest, _ := ws.selfUpdater.CheckForPendingUpdate()
+				if watchdogRequest != nil && watchdogRequest.Version != Version {
+					logMessage(fmt.Sprintf("Deferring agent update - watchdog self-update pending to v%s (current: %s)", watchdogRequest.Version, Version))
+					continue
+				}
 			}
 
 			request, err := ipc.ReadUpdateRequest()
@@ -760,8 +772,9 @@ func (ws *watchdogService) updateChecker() {
 
 // watchdogUpdateChecker periodically checks for pending watchdog self-update requests
 func (ws *watchdogService) watchdogUpdateChecker() {
-	// Wait a bit before starting to allow system to stabilize
-	time.Sleep(10 * time.Second)
+	// Short delay to allow system to stabilize
+	// NOTE: Reduced from 10s to 2s to ensure watchdog updates before agent updates
+	time.Sleep(2 * time.Second)
 
 	ticker := time.NewTicker(updateCheckInterval)
 	defer ticker.Stop()
