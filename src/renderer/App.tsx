@@ -20,6 +20,7 @@ import { Login } from './pages/Login';
 import { Register } from './pages/Register';
 import InstallationPortal from './pages/InstallationPortal';
 import { PopOutPerformance } from './pages/PopOutPerformance';
+import { SmartAppBanner } from './components/SmartAppBanner';
 import { useDeviceStore } from './stores/deviceStore';
 import { useAlertStore } from './stores/alertStore';
 import { useClientStore } from './stores/clientStore';
@@ -107,15 +108,21 @@ function MainLayout() {
 
 function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
-        <Route path="/install/:downloadToken" element={<InstallationPortal />} />
-        <Route path="/popout/performance/:deviceId" element={<RequireAuth><PopOutPerformance /></RequireAuth>} />
-        <Route path="/*" element={<RequireAuth><MainLayout /></RequireAuth>} />
-      </Routes>
-    </BrowserRouter>
+    <>
+      <SmartAppBanner
+        androidPackage="com.sentinel.rmm"
+        expoProjectUrl="https://expo.dev/@sentinel/sentinel-mobile"
+      />
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          <Route path="/install/:downloadToken" element={<InstallationPortal />} />
+          <Route path="/popout/performance/:deviceId" element={<RequireAuth><PopOutPerformance /></RequireAuth>} />
+          <Route path="/*" element={<RequireAuth><MainLayout /></RequireAuth>} />
+        </Routes>
+      </BrowserRouter>
+    </>
   );
 }
 

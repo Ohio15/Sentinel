@@ -1,7 +1,7 @@
 {
-    "version":  "1.72.0",
-    "releaseDate":  "2026-02-07",
-    "changelog":  "Add power management detection (Wake-on-LAN, Intel AMT/vPro)",
+    "version":  "1.72.1",
+    "releaseDate":  "2026-02-11",
+    "changelog":  "Fix WebSocket ping timeout causing agent disconnections",
     "platforms":  [
                       "windows",
                       "linux",

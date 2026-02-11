@@ -42,13 +42,11 @@
         "expo-notifications",
         {
           "icon": "./assets/notification-icon.png",
-          "color": "#10b981",
-          "sounds": [
-            "./assets/notification.wav"
-          ]
+          "color": "#10b981"
         }
       ],
-      "expo-font"
+      "expo-font",
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true
