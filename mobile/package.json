@@ -12,11 +12,12 @@
     "test": "jest"
   },
   "dependencies": {
-    "@expo/vector-icons": "^14.0.0",
-    "@react-navigation/native": "^6.1.9",
+    "@expo/vector-icons": "~14.0.4",
+    "@react-navigation/native": "^7.0.14",
     "@tanstack/react-query": "^5.17.0",
     "date-fns": "^3.0.0",
     "expo": "~52.0.0",
+    "expo-asset": "~11.0.5",
     "expo-constants": "~17.0.0",
     "expo-font": "~13.0.4",
     "expo-linking": "~7.0.0",
@@ -26,19 +27,19 @@
     "expo-splash-screen": "~0.29.0",
     "expo-status-bar": "~2.0.0",
     "react": "18.3.1",
-    "react-native": "0.76.2",
+    "react-native": "0.76.9",
     "react-native-gesture-handler": "~2.20.0",
     "react-native-paper": "^5.12.3",
     "react-native-reanimated": "~3.16.0",
     "react-native-safe-area-context": "4.12.0",
-    "react-native-screens": "~4.1.0",
+    "react-native-screens": "~4.4.0",
     "zustand": "^4.4.7"
   },
   "devDependencies": {
     "@babel/core": "^7.24.0",
     "@types/react": "~18.3.0",
-    "typescript": "~5.3.0",
-    "eslint": "^8.57.0"
+    "eslint": "^8.57.0",
+    "typescript": "~5.3.0"
   },
   "private": true
 }

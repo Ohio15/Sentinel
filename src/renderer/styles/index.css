@@ -184,3 +184,19 @@ input:-webkit-autofill:active {
   caret-color: var(--text-primary) !important;
   transition: background-color 5000s ease-in-out 0s;
 }
+
+/* Smart App Banner animation */
+@keyframes slide-down {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-down {
+  animation: slide-down 0.3s ease-out forwards;
+}
