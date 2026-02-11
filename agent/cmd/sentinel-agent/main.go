@@ -36,7 +36,7 @@ import (
 	"github.com/sentinel/agent/internal/peripheral"
 )
 
-var Version = "1.72.2"
+var Version = "1.72.3"
 
 const ServiceName = "SentinelAgent"
 
