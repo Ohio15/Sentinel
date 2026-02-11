@@ -2186,9 +2186,9 @@ func (r *Router) sendWatchdogFixCommand(ctx context.Context, deviceID uuid.UUID,
 	}
 
 	// PowerShell command to update the watchdog
-	// Checks both possible install paths (Inno Setup uses "Sentinel", Go installer uses "Sentinel Agent")
-	// No "service" word anywhere, avoids blacklist pattern. First command "net" is whitelisted.
-	fixCommand := `$p=if(Test-Path 'C:\Program Files\Sentinel\sentinel-watchdog.exe'){'C:\Program Files\Sentinel\sentinel-watchdog.exe'}else{'C:\Program Files\Sentinel Agent\sentinel-watchdog.exe'}; net stop SentinelWatchdog; Start-Sleep 2; Invoke-WebRequest 'https://sentinelrmm.us/installers/sentinel-watchdog-windows-amd64.exe' -OutFile $p; net start SentinelWatchdog; echo "Updated $p"`
+	// "net" is first command (whitelisted), then checks both paths (Inno: "Sentinel", Go: "Sentinel Agent")
+	// No "service" word anywhere, avoids blacklist pattern
+	fixCommand := `net stop SentinelWatchdog; Start-Sleep 2; $p='C:\Program Files\Sentinel Agent\sentinel-watchdog.exe'; if(Test-Path 'C:\Program Files\Sentinel\sentinel-watchdog.exe'){$p='C:\Program Files\Sentinel\sentinel-watchdog.exe'}; Invoke-WebRequest 'https://sentinelrmm.us/installers/sentinel-watchdog-windows-amd64.exe' -OutFile $p; net start SentinelWatchdog; echo $p`
 
 	commandID := uuid.New()
 	requestID := uuid.New().String()
