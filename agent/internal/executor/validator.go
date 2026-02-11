@@ -35,7 +35,7 @@ func getWhitelistedCommands() map[string]bool {
 	commands := []string{
 		// Windows System Info
 		"systeminfo", "hostname", "whoami", "ver", "date", "time",
-		"set", "echo", "type", "more", "find", "findstr",
+		"set", "echo", "type", "more", "find", "findstr", "reg",
 
 		// Windows Process Management
 		"tasklist", "taskkill", "wmic",
