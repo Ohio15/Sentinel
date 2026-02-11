@@ -487,6 +487,14 @@ func (c *Client) ReadPump(ctx context.Context, handler func([]byte)) {
 		c.conn.SetReadDeadline(time.Now().Add(pongWait))
 		return nil
 	})
+	// Explicitly handle pings from clients - send pong response
+	c.conn.SetPingHandler(func(message string) error {
+		if c.isAgent {
+			log.Printf("[Ping] Received ping from agent, sending pong")
+		}
+		c.conn.SetReadDeadline(time.Now().Add(pongWait))
+		return c.conn.WriteControl(websocket.PongMessage, []byte(message), time.Now().Add(writeWait))
+	})
 
 	for {
 		select {
