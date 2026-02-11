@@ -423,6 +423,17 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 
 		// Update last seen (and agent version if provided)
 		if heartbeat.AgentVersion != "" {
+			// Check for version rollback before updating
+			var previousVersion string
+			var hostname string
+			if err := r.db.Pool().QueryRow(ctx, "SELECT COALESCE(agent_version, ''), COALESCE(hostname, '') FROM devices WHERE id = $1", deviceID).Scan(&previousVersion, &hostname); err == nil {
+				// Detect rollback: if previous version is newer than current, it's a rollback
+				if previousVersion != "" && isNewerVersion(previousVersion, heartbeat.AgentVersion) {
+					log.Printf("ALERT: Agent rollback detected on %s (%s): %s -> %s", hostname, agentID, previousVersion, heartbeat.AgentVersion)
+					r.createAgentRollbackAlert(ctx, deviceID, hostname, previousVersion, heartbeat.AgentVersion)
+				}
+			}
+
 			if _, err := r.db.Pool().Exec(ctx, "UPDATE devices SET last_seen = NOW(), agent_version = $1 WHERE id = $2 AND organization_id = $3", heartbeat.AgentVersion, deviceID, constants.CurrentOrganizationID); err != nil {
 				log.Printf("Error updating device %s last_seen with version: %v", deviceID, err)
 			}
@@ -2112,4 +2123,50 @@ func (r *Router) autoDistributeCertificate(client *ws.Client, agentID string, ag
 	}
 
 	log.Printf("[AutoCert] CA certificate sent to agent %s", agentID)
+}
+
+// createAgentRollbackAlert creates a critical alert when an agent version rolls back
+func (r *Router) createAgentRollbackAlert(ctx context.Context, deviceID uuid.UUID, hostname, previousVersion, currentVersion string) {
+	alertID := uuid.New()
+	title := "Agent Update Rolled Back"
+	message := fmt.Sprintf("Agent on %s rolled back from version %s to %s. This may indicate an update failure or compatibility issue.", hostname, previousVersion, currentVersion)
+
+	// Check if there's already an open rollback alert for this device
+	var existingCount int
+	if err := r.db.Pool().QueryRow(ctx, `
+		SELECT COUNT(*) FROM alerts
+		WHERE device_id = $1 AND title = $2 AND status = 'open'
+	`, deviceID, title).Scan(&existingCount); err == nil && existingCount > 0 {
+		// Already have an open rollback alert for this device
+		return
+	}
+
+	// Create the alert
+	if _, err := r.db.Pool().Exec(ctx, `
+		INSERT INTO alerts (id, device_id, severity, title, message, status, created_at)
+		VALUES ($1, $2, 'critical', $3, $4, 'open', NOW())
+	`, alertID, deviceID, title, message); err != nil {
+		log.Printf("Error creating rollback alert for device %s: %v", deviceID, err)
+		return
+	}
+
+	log.Printf("Created rollback alert for device %s: %s -> %s", hostname, previousVersion, currentVersion)
+
+	// Broadcast the alert to dashboards
+	if r.hub != nil {
+		alertMsg, _ := json.Marshal(map[string]interface{}{
+			"type": "new_alert",
+			"alert": map[string]interface{}{
+				"id":        alertID,
+				"deviceId":  deviceID,
+				"hostname":  hostname,
+				"severity":  "critical",
+				"title":     title,
+				"message":   message,
+				"status":    "open",
+				"createdAt": time.Now(),
+			},
+		})
+		r.hub.BroadcastToDashboards(alertMsg)
+	}
 }
