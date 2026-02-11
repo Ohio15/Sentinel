@@ -1,5 +1,5 @@
 {
-    "version":  "1.72.1",
+    "version":  "1.72.2",
     "releaseDate":  "2026-02-11",
     "changelog":  "Fix WebSocket ping timeout causing agent disconnections",
     "platforms":  [
