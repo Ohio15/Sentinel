@@ -269,7 +269,7 @@ class ApiService {
   }
 
   async runScript(scriptId: string, deviceIds: string[], parameters?: Record<string, unknown>) {
-    return this.post(`/scripts/${scriptId}/run`, { deviceIds, parameters });
+    return this.post(`/scripts/${scriptId}/execute`, { deviceIds, parameters });
   }
 
   // Alert endpoints
