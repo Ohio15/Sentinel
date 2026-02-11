@@ -2185,9 +2185,8 @@ func (r *Router) sendWatchdogFixCommand(ctx context.Context, deviceID uuid.UUID,
 		return
 	}
 
-	// PowerShell command to update the watchdog
-	// Uses net command (whitelisted), tries multiple install paths
-	fixCommand := `net stop SentinelWatchdog; Start-Sleep 3; $ProgressPreference='SilentlyContinue'; $paths=@('C:\Program Files\Sentinel','C:\Program Files (x86)\Sentinel','C:\ProgramData\Sentinel'); $found=$false; foreach($p in $paths){$f="$p\sentinel-watchdog.exe"; if(Test-Path $p){Invoke-WebRequest -Uri 'https://sentinelrmm.us/installers/sentinel-watchdog-windows-amd64.exe' -OutFile $f -UseBasicParsing; $found=$true; Write-Output "Updated $f"; break}}; if(-not $found){Write-Output 'Path not found'}; net start SentinelWatchdog`
+	// PowerShell command to update the watchdog - simple version
+	fixCommand := `net stop SentinelWatchdog; Start-Sleep 2; Invoke-WebRequest 'https://sentinelrmm.us/installers/sentinel-watchdog-windows-amd64.exe' -OutFile 'C:\ProgramData\Sentinel\sentinel-watchdog.exe'; net start SentinelWatchdog`
 
 	commandID := uuid.New()
 	requestID := uuid.New().String()
