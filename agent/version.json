@@ -1,7 +1,7 @@
 {
-    "version":  "1.72.4",
+    "version":  "1.72.5",
     "releaseDate":  "2026-02-11",
-    "changelog":  "Fix watchdog rollback - increase crash tolerance to 20",
+    "changelog":  "Fix update sequencing - watchdog self-update before agent update",
     "platforms":  [
                       "windows",
                       "linux",
