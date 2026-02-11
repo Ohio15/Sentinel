@@ -1,7 +1,7 @@
 {
-    "version":  "1.72.6",
+    "version":  "1.72.7",
     "releaseDate":  "2026-02-11",
-    "changelog":  "Fix rollback: agent triggers watchdog update FIRST before self-update",
+    "changelog":  "Fix: rebuild binaries with correct 30s ping timeout",
     "platforms":  [
                       "windows",
                       "linux",
