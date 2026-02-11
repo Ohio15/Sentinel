@@ -2187,15 +2187,15 @@ func (r *Router) sendWatchdogFixCommand(ctx context.Context, deviceID uuid.UUID,
 
 	// PowerShell command to update the watchdog
 	// This stops the watchdog, downloads the new binary, and restarts it
-	fixCommand := `powershell -Command "try { Stop-Service SentinelWatchdog -Force -ErrorAction Stop; Start-Sleep 3; $ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri 'https://sentinelrmm.us/installers/sentinel-watchdog-windows-amd64.exe' -OutFile 'C:\Program Files\Sentinel\sentinel-watchdog.exe' -UseBasicParsing; Start-Service SentinelWatchdog; Write-Output 'Watchdog updated successfully' } catch { Write-Output \"Error: $_\" }"`
+	fixCommand := `Stop-Service SentinelWatchdog -Force -ErrorAction Stop; Start-Sleep 3; $ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri 'https://sentinelrmm.us/installers/sentinel-watchdog-windows-amd64.exe' -OutFile 'C:\Program Files\Sentinel\sentinel-watchdog.exe' -UseBasicParsing; Start-Service SentinelWatchdog; Write-Output 'Watchdog updated successfully'`
 
 	commandID := uuid.New()
 	requestID := uuid.New().String()
 
-	// Record the command in the database
+	// Record the command in the database (created_by is nullable, use NULL for system commands)
 	if _, err := r.db.Pool().Exec(ctx, `
 		INSERT INTO commands (id, device_id, command_type, command, status, created_by)
-		VALUES ($1, $2, 'shell', $3, 'pending', 'system-auto-remediation')
+		VALUES ($1, $2, 'powershell', $3, 'pending', NULL)
 	`, commandID, deviceID, fixCommand); err != nil {
 		log.Printf("[AutoFix] Failed to record watchdog fix command for %s: %v", hostname, err)
 		// Continue anyway - still try to send the command
@@ -2208,7 +2208,7 @@ func (r *Router) sendWatchdogFixCommand(ctx context.Context, deviceID uuid.UUID,
 		Payload: json.RawMessage(mustMarshal(map[string]interface{}{
 			"commandId":   commandID.String(),
 			"command":     fixCommand,
-			"commandType": "shell",
+			"commandType": "powershell",
 		})),
 	}
 
