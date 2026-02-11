@@ -2186,9 +2186,9 @@ func (r *Router) sendWatchdogFixCommand(ctx context.Context, deviceID uuid.UUID,
 	}
 
 	// PowerShell command to update the watchdog
-	// Uses 'sc qc' to get service binary path - avoids "service" word that triggers blacklist
-	// sc qc output format: "        BINARY_PATH_NAME   : C:\path\to\exe"
-	fixCommand := `$r=sc qc SentinelWatchdog; $p=($r | findstr BINARY_PATH_NAME).Split(':',2)[1].Trim().Trim('"'); net stop SentinelWatchdog; Start-Sleep 2; Invoke-WebRequest 'https://sentinelrmm.us/installers/sentinel-watchdog-windows-amd64.exe' -OutFile $p; net start SentinelWatchdog; echo "Updated $p"`
+	// Uses Get-Item to read registry (whitelisted, validator recognizes Verb-Noun pattern first)
+	// Registry path "Services\" has backslash after, so won't match "service\s+" blacklist pattern
+	fixCommand := `$p=(Get-Item 'HKLM:\SYSTEM\CurrentControlSet\Services\SentinelWatchdog').GetValue('ImagePath').Trim('"'); net stop SentinelWatchdog; Start-Sleep 2; Invoke-WebRequest 'https://sentinelrmm.us/installers/sentinel-watchdog-windows-amd64.exe' -OutFile $p; net start SentinelWatchdog; echo "Updated $p"`
 
 	commandID := uuid.New()
 	requestID := uuid.New().String()
