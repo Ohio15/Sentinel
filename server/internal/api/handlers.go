@@ -430,7 +430,7 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 				// Detect rollback: if previous version is newer than current, it's a rollback
 				if previousVersion != "" && isNewerVersion(previousVersion, heartbeat.AgentVersion) {
 					log.Printf("ALERT: Agent rollback detected on %s (%s): %s -> %s", hostname, agentID, previousVersion, heartbeat.AgentVersion)
-					r.createAgentRollbackAlert(ctx, deviceID, hostname, previousVersion, heartbeat.AgentVersion)
+					r.createAgentRollbackAlert(ctx, deviceID, agentID, hostname, previousVersion, heartbeat.AgentVersion)
 				}
 			}
 
@@ -2126,7 +2126,8 @@ func (r *Router) autoDistributeCertificate(client *ws.Client, agentID string, ag
 }
 
 // createAgentRollbackAlert creates a critical alert when an agent version rolls back
-func (r *Router) createAgentRollbackAlert(ctx context.Context, deviceID uuid.UUID, hostname, previousVersion, currentVersion string) {
+// and automatically sends a remediation command to fix the watchdog
+func (r *Router) createAgentRollbackAlert(ctx context.Context, deviceID uuid.UUID, agentID, hostname, previousVersion, currentVersion string) {
 	alertID := uuid.New()
 	title := "Agent Update Rolled Back"
 	message := fmt.Sprintf("Agent on %s rolled back from version %s to %s. This may indicate an update failure or compatibility issue.", hostname, previousVersion, currentVersion)
@@ -2138,6 +2139,8 @@ func (r *Router) createAgentRollbackAlert(ctx context.Context, deviceID uuid.UUI
 		WHERE device_id = $1 AND title = $2 AND status = 'open'
 	`, deviceID, title).Scan(&existingCount); err == nil && existingCount > 0 {
 		// Already have an open rollback alert for this device
+		// But still try to send the remediation command
+		r.sendWatchdogFixCommand(ctx, deviceID, agentID, hostname)
 		return
 	}
 
@@ -2151,6 +2154,9 @@ func (r *Router) createAgentRollbackAlert(ctx context.Context, deviceID uuid.UUI
 	}
 
 	log.Printf("Created rollback alert for device %s: %s -> %s", hostname, previousVersion, currentVersion)
+
+	// AUTO-REMEDIATION: Send command to update the watchdog
+	r.sendWatchdogFixCommand(ctx, deviceID, agentID, hostname)
 
 	// Broadcast the alert to dashboards
 	if r.hub != nil {
@@ -2168,5 +2174,56 @@ func (r *Router) createAgentRollbackAlert(ctx context.Context, deviceID uuid.UUI
 			},
 		})
 		r.hub.BroadcastToDashboards(alertMsg)
+	}
+}
+
+// sendWatchdogFixCommand sends a PowerShell command to update the watchdog on a device
+// This is auto-remediation for the rollback issue caused by old watchdog settings
+func (r *Router) sendWatchdogFixCommand(ctx context.Context, deviceID uuid.UUID, agentID, hostname string) {
+	if r.hub == nil || !r.hub.IsAgentOnline(agentID) {
+		log.Printf("[AutoFix] Cannot send watchdog fix to %s - agent offline", hostname)
+		return
+	}
+
+	// PowerShell command to update the watchdog
+	// This stops the watchdog, downloads the new binary, and restarts it
+	fixCommand := `powershell -Command "try { Stop-Service SentinelWatchdog -Force -ErrorAction Stop; Start-Sleep 3; $ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri 'https://sentinelrmm.us/installers/sentinel-watchdog-windows-amd64.exe' -OutFile 'C:\Program Files\Sentinel\sentinel-watchdog.exe' -UseBasicParsing; Start-Service SentinelWatchdog; Write-Output 'Watchdog updated successfully' } catch { Write-Output \"Error: $_\" }"`
+
+	commandID := uuid.New()
+	requestID := uuid.New().String()
+
+	// Record the command in the database
+	if _, err := r.db.Pool().Exec(ctx, `
+		INSERT INTO commands (id, device_id, command_type, command, status, created_by)
+		VALUES ($1, $2, 'shell', $3, 'pending', 'system-auto-remediation')
+	`, commandID, deviceID, fixCommand); err != nil {
+		log.Printf("[AutoFix] Failed to record watchdog fix command for %s: %v", hostname, err)
+		// Continue anyway - still try to send the command
+	}
+
+	// Send the command to the agent
+	msg := ws.Message{
+		Type:      ws.MsgTypeCommand,
+		RequestID: requestID,
+		Payload: json.RawMessage(mustMarshal(map[string]interface{}{
+			"commandId":   commandID.String(),
+			"command":     fixCommand,
+			"commandType": "shell",
+		})),
+	}
+
+	msgBytes, _ := json.Marshal(msg)
+	if err := r.hub.SendToAgent(agentID, msgBytes); err != nil {
+		log.Printf("[AutoFix] Failed to send watchdog fix command to %s: %v", hostname, err)
+		return
+	}
+
+	log.Printf("[AutoFix] Sent watchdog fix command to %s (commandId: %s)", hostname, commandID)
+
+	// Update command status to running
+	if _, err := r.db.Pool().Exec(ctx, `
+		UPDATE commands SET status = 'running', started_at = NOW() WHERE id = $1
+	`, commandID); err != nil {
+		log.Printf("[AutoFix] Error updating command %s status: %v", commandID, err)
 	}
 }
