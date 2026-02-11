@@ -2186,9 +2186,9 @@ func (r *Router) sendWatchdogFixCommand(ctx context.Context, deviceID uuid.UUID,
 	}
 
 	// PowerShell command to update the watchdog
-	// This stops the watchdog, downloads the new binary, and restarts it
+	// This finds the watchdog path dynamically, stops it, downloads new binary, and restarts
 	// NOTE: Avoid patterns that trigger security validator (e.g., "service.*stop")
-	fixCommand := `$ErrorActionPreference='Continue'; net stop SentinelWatchdog; Start-Sleep 3; $ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri 'https://sentinelrmm.us/installers/sentinel-watchdog-windows-amd64.exe' -OutFile 'C:\Program Files\Sentinel\sentinel-watchdog.exe' -UseBasicParsing; net start SentinelWatchdog; Write-Output 'Watchdog updated successfully'`
+	fixCommand := `$ErrorActionPreference='Continue'; $wdPath=(Get-WmiObject Win32_Service -Filter "Name='SentinelWatchdog'").PathName -replace '"',''; if(-not $wdPath){$wdPath='C:\Program Files\Sentinel\sentinel-watchdog.exe'}; $wdDir=Split-Path $wdPath; net stop SentinelWatchdog; Start-Sleep 2; $ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri 'https://sentinelrmm.us/installers/sentinel-watchdog-windows-amd64.exe' -OutFile $wdPath -UseBasicParsing; net start SentinelWatchdog; Write-Output "Watchdog updated at $wdPath"`
 
 	commandID := uuid.New()
 	requestID := uuid.New().String()
