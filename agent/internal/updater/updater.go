@@ -541,6 +541,34 @@ func (u *Updater) checkAndUpdate(ctx context.Context) {
 	log.Println("Checking for updates...")
 	u.updateStatus(StatePending, "Checking for updates...", 0)
 
+	// CRITICAL: Check if watchdog needs updating FIRST
+	// This ensures the new watchdog (with lenient crash detection) is running
+	// before we update the agent, preventing false rollbacks
+	if runtime.GOOS == "windows" {
+		watchdogResult, err := u.CheckForWatchdogUpdate(ctx)
+		if err != nil {
+			log.Printf("Warning: Watchdog update check failed: %v", err)
+			// Continue with agent update - watchdog check is best-effort
+		} else if watchdogResult != nil && watchdogResult.Available {
+			log.Printf("Watchdog update available: v%s -> v%s", watchdogResult.CurrentVersion, watchdogResult.LatestVersion)
+			log.Println("Triggering watchdog update FIRST to prevent rollback issues")
+
+			if err := u.TriggerWatchdogUpdate(ctx); err != nil {
+				log.Printf("Warning: Failed to trigger watchdog update: %v", err)
+				// Continue with agent update
+			} else {
+				// Successfully triggered watchdog update
+				// STOP HERE and let watchdog update itself first
+				// Next update cycle will proceed with agent update
+				log.Println("Watchdog update triggered - deferring agent update until watchdog is updated")
+				u.updateStatus(StateIdle, "Waiting for watchdog update", 0)
+				return
+			}
+		} else {
+			log.Printf("Watchdog is up to date (v%s)", watchdogResult.CurrentVersion)
+		}
+	}
+
 	result, err := u.CheckForUpdate(ctx)
 	if err != nil {
 		log.Printf("Update check failed: %v", err)
