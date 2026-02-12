@@ -456,25 +456,61 @@ func (u *Updater) applyUpdateUnix(currentExe, downloadPath string) error {
 	u.updateStatus(StateRestarting, "Installing update...", 50)
 	backupPath := currentExe + ".old"
 
+	// Set executable permissions on downloaded file
 	if err := os.Chmod(downloadPath, 0755); err != nil {
 		return fmt.Errorf("failed to set executable permissions: %w", err)
 	}
 
+	// Remove old backup if exists
 	os.Remove(backupPath)
+
+	// Backup current binary
 	if err := os.Rename(currentExe, backupPath); err != nil {
 		return fmt.Errorf("failed to backup current binary: %w", err)
 	}
+
+	// Install new binary
 	if err := os.Rename(downloadPath, currentExe); err != nil {
 		os.Rename(backupPath, currentExe)
 		return fmt.Errorf("failed to install new binary: %w", err)
 	}
 
-	cmd := exec.Command("systemctl", "restart", "sentinel-agent")
-	if err := cmd.Start(); err != nil {
-		log.Printf("Failed to restart via systemctl: %v", err)
+	// Re-apply executable permissions after move (some filesystems may not preserve)
+	if err := os.Chmod(currentExe, 0755); err != nil {
+		log.Printf("Warning: failed to re-apply permissions after move: %v", err)
 	}
 
-	log.Printf("Update applied, agent will restart shortly")
+	// Restart the service and wait for completion
+	log.Printf("Restarting service via systemctl...")
+	cmd := exec.Command("systemctl", "restart", "sentinel-agent")
+
+	// Use Run() instead of Start() to wait for completion and get error
+	if err := cmd.Run(); err != nil {
+		log.Printf("systemctl restart failed: %v, attempting rollback", err)
+		// Rollback: restore backup
+		if rbErr := os.Rename(backupPath, currentExe); rbErr != nil {
+			log.Printf("CRITICAL: Rollback also failed: %v", rbErr)
+		} else {
+			log.Printf("Rollback successful, restored previous binary")
+		}
+		return fmt.Errorf("failed to restart service: %w", err)
+	}
+
+	// Verify service is running after restart
+	time.Sleep(2 * time.Second) // Give service time to start
+	verifyCmd := exec.Command("systemctl", "is-active", "--quiet", "sentinel-agent")
+	if err := verifyCmd.Run(); err != nil {
+		log.Printf("Service not running after restart, attempting rollback")
+		// Rollback
+		if rbErr := os.Rename(backupPath, currentExe); rbErr != nil {
+			log.Printf("CRITICAL: Rollback failed: %v", rbErr)
+		}
+		// Try to start with old binary
+		exec.Command("systemctl", "restart", "sentinel-agent").Run()
+		return fmt.Errorf("service failed to start after update")
+	}
+
+	log.Printf("Update applied successfully, service is running")
 	return nil
 }
 
@@ -555,15 +591,18 @@ func (u *Updater) checkAndUpdate(ctx context.Context) {
 
 			if err := u.TriggerWatchdogUpdate(ctx); err != nil {
 				log.Printf("Warning: Failed to trigger watchdog update: %v", err)
-				// Continue with agent update
-			} else {
-				// Successfully triggered watchdog update
-				// STOP HERE and let watchdog update itself first
-				// Next update cycle will proceed with agent update
-				log.Println("Watchdog update triggered - deferring agent update until watchdog is updated")
-				u.updateStatus(StateIdle, "Waiting for watchdog update", 0)
+				// IMPORTANT: Still defer agent update even on failure
+				// Old watchdog may not properly orchestrate new agent update
+				log.Println("Deferring agent update - watchdog must be updated first (will retry)")
+				u.updateStatus(StateIdle, "Waiting for watchdog update (retry pending)", 0)
 				return
 			}
+			// Successfully triggered watchdog update
+			// STOP HERE and let watchdog update itself first
+			// Next update cycle will proceed with agent update
+			log.Println("Watchdog update triggered - deferring agent update until watchdog is updated")
+			u.updateStatus(StateIdle, "Waiting for watchdog update", 0)
+			return
 		} else {
 			log.Printf("Watchdog is up to date (v%s)", watchdogResult.CurrentVersion)
 		}
@@ -866,8 +905,8 @@ func (u *Updater) TriggerWatchdogUpdate(ctx context.Context) error {
 
 	log.Printf("[Updater] Watchdog update request written for v%s", result.VersionInfo.Version)
 
-	// Signal the watchdog via named pipe
-	client, err := ipc.ConnectPipeWithTimeout(5 * time.Second)
+	// Signal the watchdog via named pipe (15s timeout for slow/busy systems)
+	client, err := ipc.ConnectPipeWithTimeout(15 * time.Second)
 	if err != nil {
 		log.Printf("[Updater] Could not signal watchdog via pipe (will poll): %v", err)
 	} else {
@@ -910,7 +949,7 @@ func (u *Updater) CheckAndReportUpdateResult(ctx context.Context) {
 	}
 }
 
-// reportUpdateResult sends the update result to the server
+// reportUpdateResult sends the update result to the server with retry logic
 func (u *Updater) reportUpdateResult(ctx context.Context, status *ipc.UpdateStatus) {
 	if u.deviceID == "" || u.serverURL == "" {
 		return
@@ -934,23 +973,49 @@ func (u *Updater) reportUpdateResult(ctx context.Context, status *ipc.UpdateStat
 	}
 
 	url := fmt.Sprintf("%s/api/agent/update/result", u.serverURL)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonData))
-	if err != nil {
-		log.Printf("Failed to create update result request: %v", err)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := u.httpClient.Do(req)
-	if err != nil {
-		log.Printf("Failed to report update result: %v", err)
-		return
-	}
-	defer resp.Body.Close()
+	// Retry with exponential backoff (3 attempts: 0s, 5s, 15s)
+	maxRetries := 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(attempt*5) * time.Second
+			log.Printf("Retrying update result report in %v (attempt %d/%d)", backoff, attempt+1, maxRetries)
+			select {
+			case <-ctx.Done():
+				log.Printf("Context cancelled, stopping update result report")
+				return
+			case <-time.After(backoff):
+			}
+		}
 
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		log.Printf("Update result reported successfully")
-	} else {
-		log.Printf("Server returned status %d for update result", resp.StatusCode)
+		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonData))
+		if err != nil {
+			log.Printf("Failed to create update result request: %v", err)
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := u.httpClient.Do(req)
+		if err != nil {
+			log.Printf("Failed to report update result (attempt %d/%d): %v", attempt+1, maxRetries, err)
+			continue
+		}
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			resp.Body.Close()
+			log.Printf("Update result reported successfully")
+			return
+		}
+
+		resp.Body.Close()
+		log.Printf("Server returned status %d for update result (attempt %d/%d)", resp.StatusCode, attempt+1, maxRetries)
+
+		// Don't retry on client errors (4xx)
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			log.Printf("Client error, not retrying")
+			return
+		}
 	}
+
+	log.Printf("Failed to report update result after %d attempts", maxRetries)
 }
