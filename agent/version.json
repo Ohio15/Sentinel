@@ -1,7 +1,7 @@
 {
-    "version":  "1.72.8",
-    "releaseDate":  "2026-02-11",
-    "changelog":  "Reduce ping interval to 10s to fix connection drops",
+    "version":  "1.72.9",
+    "releaseDate":  "2026-02-12",
+    "changelog":  "USB file transfer monitoring - track files copied to USB drives",
     "platforms":  [
                       "windows",
                       "linux",

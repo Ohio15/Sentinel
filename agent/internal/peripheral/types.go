@@ -87,12 +87,23 @@ type USBDevice struct {
 	IsEncrypted bool `json:"isEncrypted"`
 }
 
+// FileTransfer represents a file written to a USB drive
+type FileTransfer struct {
+	FileName     string    `json:"fileName"`
+	FilePath     string    `json:"filePath"`     // Relative path on USB
+	FileSize     int64     `json:"fileSize"`
+	TransferTime time.Time `json:"transferTime"`
+	Operation    string    `json:"operation"`    // write, rename, copy
+}
+
 // DeviceEvent represents a peripheral connection/disconnection event
 type DeviceEvent struct {
-	EventType   string     `json:"eventType"` // connected, disconnected, changed
-	Device      *USBDevice `json:"device"`
-	Timestamp   time.Time  `json:"timestamp"`
-	PreviousState *USBDevice `json:"previousState,omitempty"` // For change events
+	EventType     string         `json:"eventType"` // connected, disconnected, changed
+	Device        *USBDevice     `json:"device"`
+	Timestamp     time.Time      `json:"timestamp"`
+	PreviousState *USBDevice     `json:"previousState,omitempty"` // For change events
+	SessionID     string         `json:"sessionId,omitempty"`     // Unique session ID for USB connection
+	FileTransfers []FileTransfer `json:"fileTransfers,omitempty"` // Files transferred during session (on disconnect)
 }
 
 // PeripheralInventory contains all connected peripherals

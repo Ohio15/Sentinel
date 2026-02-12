@@ -1,6 +1,12 @@
 import { create } from 'zustand';
 import { alerts as alertsService } from '../services';
 
+export interface AlertMetadata {
+  sessionId?: string;
+  fileCount?: number;
+  usbDeviceId?: string;
+}
+
 export interface Alert {
   id: string;
   deviceId: string;
@@ -13,6 +19,7 @@ export interface Alert {
   createdAt: string;
   acknowledgedAt?: string;
   resolvedAt?: string;
+  metadata?: AlertMetadata;
 }
 
 export interface AlertRule {

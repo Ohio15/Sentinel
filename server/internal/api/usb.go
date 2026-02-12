@@ -94,6 +94,10 @@ func RegisterUSBRoutes(rg *gin.RouterGroup, db *pgxpool.Pool) {
 		usb.GET("/events", listUSBEventsHandler(db))
 		usb.GET("/events/:deviceId", getUSBEventsForDevice(db))
 
+		// File transfers
+		usb.GET("/transfers/:alertId", getFileTransfersForAlert(db))
+		usb.GET("/transfers/session/:sessionId", getFileTransfersForSession(db))
+
 		// Policy management
 		usb.GET("/policies", listUSBPoliciesHandler(db))
 		usb.POST("/policies", createUSBPolicyHandler(db))
@@ -885,6 +889,145 @@ func requestUSBScanHandler(db *pgxpool.Pool) gin.HandlerFunc {
 			"message": "USB scan requested - feature requires WebSocket integration",
 		})
 	}
+}
+
+// getFileTransfersForAlert retrieves file transfers for a specific alert
+func getFileTransfersForAlert(db *pgxpool.Pool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		alertID, err := uuid.Parse(c.Param("alertId"))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid alert ID"})
+			return
+		}
+
+		// First, get the session ID from the alert metadata
+		var metadata json.RawMessage
+		err = db.QueryRow(c.Request.Context(), `
+			SELECT COALESCE(metadata, '{}'::jsonb) FROM alerts WHERE id = $1
+		`, alertID).Scan(&metadata)
+
+		if err != nil {
+			log.Printf("Failed to get alert metadata: %v", err)
+			c.JSON(http.StatusNotFound, gin.H{"error": "Alert not found"})
+			return
+		}
+
+		// Parse metadata to get session ID
+		var meta struct {
+			SessionID   string `json:"sessionId"`
+			FileCount   int    `json:"fileCount"`
+			USBDeviceID string `json:"usbDeviceId"`
+		}
+		if err := json.Unmarshal(metadata, &meta); err != nil || meta.SessionID == "" {
+			c.JSON(http.StatusOK, gin.H{
+				"alertId":   alertID,
+				"transfers": []map[string]interface{}{},
+				"count":     0,
+				"message":   "No file transfers recorded for this alert",
+			})
+			return
+		}
+
+		sessionUUID, err := uuid.Parse(meta.SessionID)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"alertId":   alertID,
+				"transfers": []map[string]interface{}{},
+				"count":     0,
+				"message":   "Invalid session ID in alert metadata",
+			})
+			return
+		}
+
+		// Query file transfers for this session
+		transfers := queryFileTransfers(c, db, sessionUUID)
+
+		c.JSON(http.StatusOK, gin.H{
+			"alertId":     alertID,
+			"sessionId":   meta.SessionID,
+			"usbDeviceId": meta.USBDeviceID,
+			"transfers":   transfers,
+			"count":       len(transfers),
+		})
+	}
+}
+
+// getFileTransfersForSession retrieves file transfers for a specific session
+func getFileTransfersForSession(db *pgxpool.Pool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		sessionID, err := uuid.Parse(c.Param("sessionId"))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid session ID"})
+			return
+		}
+
+		transfers := queryFileTransfers(c, db, sessionID)
+
+		c.JSON(http.StatusOK, gin.H{
+			"sessionId": sessionID,
+			"transfers": transfers,
+			"count":     len(transfers),
+		})
+	}
+}
+
+// queryFileTransfers queries file transfers for a given session ID
+func queryFileTransfers(c *gin.Context, db *pgxpool.Pool, sessionID uuid.UUID) []map[string]interface{} {
+	query := `
+		SELECT
+			id, device_id, usb_device_id, session_id,
+			file_name, file_path, file_size, transfer_time, operation,
+			created_at
+		FROM usb_file_transfers
+		WHERE session_id = $1
+		ORDER BY transfer_time ASC
+		LIMIT 1000
+	`
+
+	rows, err := db.Query(c.Request.Context(), query, sessionID)
+	if err != nil {
+		log.Printf("Failed to query file transfers: %v", err)
+		return []map[string]interface{}{}
+	}
+	defer rows.Close()
+
+	transfers := []map[string]interface{}{}
+	for rows.Next() {
+		var (
+			id, deviceID, sessID uuid.UUID
+			usbDeviceID          string
+			fileName             string
+			filePath             sql.NullString
+			fileSize             int64
+			transferTime         time.Time
+			operation            string
+			createdAt            time.Time
+		)
+
+		if err := rows.Scan(
+			&id, &deviceID, &usbDeviceID, &sessID,
+			&fileName, &filePath, &fileSize, &transferTime, &operation,
+			&createdAt,
+		); err != nil {
+			log.Printf("Failed to scan file transfer row: %v", err)
+			continue
+		}
+
+		transfers = append(transfers, map[string]interface{}{
+			"id":           id,
+			"deviceId":     deviceID,
+			"usbDeviceId":  usbDeviceID,
+			"sessionId":    sessID,
+			"fileName":     fileName,
+			"filePath":     nullString(filePath),
+			"fileSize":     fileSize,
+			"transferTime": transferTime,
+			"operation":    operation,
+			"createdAt":    createdAt,
+		})
+	}
+
+	return transfers
 }
 
 // Helper functions

@@ -681,6 +681,10 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 		// Agent reports full list of connected USB devices
 		r.handleUSBDeviceList(ctx, deviceID, message)
 
+	case ws.MsgTypeUSBSessionComplete:
+		// Agent reports USB session with file transfers
+		r.handleUSBSessionComplete(ctx, deviceID, message)
+
 	default:
 		log.Printf("[Agent] Unhandled message type from %s: %s", agentID, msg.Type)
 	}
@@ -985,6 +989,98 @@ func (r *Router) checkUSBDeviceApproval(ctx context.Context, deviceID uuid.UUID,
 	}
 
 	return count > 0
+}
+
+// handleUSBSessionComplete processes USB session complete with file transfers
+func (r *Router) handleUSBSessionComplete(ctx context.Context, deviceID uuid.UUID, message []byte) {
+	var sessionMsg struct {
+		Data struct {
+			SessionID      string `json:"sessionId"`
+			USBDeviceID    string `json:"usbDeviceId"`
+			DisconnectTime string `json:"disconnectTime"`
+			FileCount      int    `json:"fileCount"`
+			FileTransfers  []struct {
+				FileName     string `json:"fileName"`
+				FilePath     string `json:"filePath"`
+				FileSize     int64  `json:"fileSize"`
+				TransferTime string `json:"transferTime"`
+				Operation    string `json:"operation"`
+			} `json:"fileTransfers"`
+		} `json:"data"`
+	}
+
+	if err := json.Unmarshal(message, &sessionMsg); err != nil {
+		log.Printf("[USB] Failed to parse USB session complete: %v", err)
+		return
+	}
+
+	data := sessionMsg.Data
+	log.Printf("[USB] Session %s complete for device %s: %d file transfers",
+		data.SessionID, deviceID, data.FileCount)
+
+	// Parse session ID
+	sessionUUID, err := uuid.Parse(data.SessionID)
+	if err != nil {
+		log.Printf("[USB] Invalid session ID: %v", err)
+		return
+	}
+
+	// Insert file transfers into database
+	for _, transfer := range data.FileTransfers {
+		transferTime, _ := time.Parse(time.RFC3339, transfer.TransferTime)
+		if transferTime.IsZero() {
+			transferTime = time.Now()
+		}
+
+		_, err := r.db.Pool().Exec(ctx, `
+			INSERT INTO usb_file_transfers (
+				device_id, usb_device_id, session_id,
+				file_name, file_path, file_size, transfer_time, operation
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`,
+			deviceID, data.USBDeviceID, sessionUUID,
+			transfer.FileName, transfer.FilePath, transfer.FileSize,
+			transferTime, transfer.Operation,
+		)
+		if err != nil {
+			log.Printf("[USB] Failed to insert file transfer record: %v", err)
+		}
+	}
+
+	// Update the most recent USB alert for this device with sessionId in metadata
+	if data.FileCount > 0 {
+		metadata := map[string]interface{}{
+			"sessionId":   data.SessionID,
+			"fileCount":   data.FileCount,
+			"usbDeviceId": data.USBDeviceID,
+		}
+		metadataJSON, _ := json.Marshal(metadata)
+
+		// Find the most recent USB-related alert for this device and update its metadata
+		_, err := r.db.Pool().Exec(ctx, `
+			UPDATE alerts
+			SET metadata = $1
+			WHERE device_id = $2
+			AND title LIKE '%USB%'
+			AND status != 'resolved'
+			AND created_at > NOW() - INTERVAL '1 hour'
+			AND (metadata IS NULL OR metadata = '{}'::jsonb)
+		`, metadataJSON, deviceID)
+		if err != nil {
+			log.Printf("[USB] Failed to update alert metadata: %v", err)
+		}
+	}
+
+	// Broadcast to dashboards
+	broadcastMsg, _ := json.Marshal(map[string]interface{}{
+		"type":           ws.MsgTypeUSBSessionComplete,
+		"deviceId":       deviceID,
+		"sessionId":      data.SessionID,
+		"usbDeviceId":    data.USBDeviceID,
+		"fileCount":      data.FileCount,
+		"disconnectTime": data.DisconnectTime,
+	})
+	r.hub.BroadcastToDashboards(broadcastMsg)
 }
 
 func (r *Router) handleDashboardWebSocket(c *gin.Context) {

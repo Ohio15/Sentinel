@@ -76,10 +76,11 @@ const (
 	MsgTypePowerAction = "power_action"
 
 	// USB/Peripheral device messages
-	MsgTypeUSBDeviceEvent   = "usb_device_event"   // Report USB device events
-	MsgTypeUSBDeviceList    = "usb_device_list"    // Report full USB device list
-	MsgTypeUSBDeviceRequest = "usb_device_request" // Server requests device scan
-	MsgTypeUSBPolicyUpdate  = "usb_policy_update"  // Receive policy updates
+	MsgTypeUSBDeviceEvent      = "usb_device_event"      // Report USB device events
+	MsgTypeUSBDeviceList       = "usb_device_list"       // Report full USB device list
+	MsgTypeUSBDeviceRequest    = "usb_device_request"    // Server requests device scan
+	MsgTypeUSBPolicyUpdate     = "usb_policy_update"     // Receive policy updates
+	MsgTypeUSBSessionComplete  = "usb_session_complete"  // USB session ended with file transfers
 )
 
 // Message represents a WebSocket message
@@ -172,8 +173,8 @@ func New(cfg *config.Config, version string) *Client {
 		done:           make(chan struct{}),
 		sendQueue:      make(chan []byte, 1024),
 		version:        version,
-		pingInterval:   30 * time.Second,
-		pongTimeout:    30 * time.Second,
+		pingInterval:   5 * time.Second,
+		pongTimeout:    5 * time.Second,
 		healthPollRate: 250 * time.Millisecond,
 		httpClient: &http.Client{
 			Timeout: 2 * time.Second,
