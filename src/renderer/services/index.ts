@@ -824,11 +824,15 @@ export const portal = {
   },
 };
 
+// Declare the version injected by Vite at build time
+declare const __APP_VERSION__: string;
+
 // Server info service (for web mode, returns minimal info)
 export const server = {
   async getInfo(): Promise<{ port: number; version: string }> {
     // In web mode, port is not relevant - return 443 (HTTPS)
-    return { port: 443, version: '1.72.0' };
+    // Version is injected from package.json at build time via Vite define
+    return { port: 443, version: typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0' };
   },
 };
 
