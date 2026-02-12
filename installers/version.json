@@ -1,7 +1,7 @@
 {
-    "version":  "1.72.9",
+    "version":  "1.73.0",
     "releaseDate":  "2026-02-12",
-    "changelog":  "USB file transfer monitoring - track files copied to USB drives",
+    "changelog":  "Fix agent auto-update mechanism - Linux restart verification, increased timeouts, retry logic",
     "platforms":  [
                       "windows",
                       "linux",

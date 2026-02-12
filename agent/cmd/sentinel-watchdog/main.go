@@ -54,7 +54,7 @@ const (
 )
 
 var (
-	Version = "1.72.9"
+	Version = "1.73.0"
 	elog    debug.Log
 	isDebug = false
 )
@@ -1039,8 +1039,8 @@ func (ws *watchdogService) stopAgentService() error {
 		return fmt.Errorf("failed to send stop control: %w", err)
 	}
 
-	// Wait for service to stop
-	deadline := time.Now().Add(30 * time.Second)
+	// Wait for service to stop (60s to allow for graceful shutdown)
+	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		status, err = s.Query()
 		if err != nil {
@@ -1073,8 +1073,8 @@ func (ws *watchdogService) startAgentService() error {
 		return fmt.Errorf("failed to start service: %w", err)
 	}
 
-	// Wait for service to start
-	deadline := time.Now().Add(30 * time.Second)
+	// Wait for service to start (60s to allow for slow startup/initialization)
+	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		status, err := s.Query()
 		if err != nil {
