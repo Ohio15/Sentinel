@@ -1,7 +1,8 @@
 ﻿import React from 'react';
 
-// Version from package.json - web mode has no updater
-const APP_VERSION = '1.72.0';
+// Version injected from package.json at build time via Vite define
+declare const __APP_VERSION__: string;
+const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '0.0.0';
 
 interface SidebarProps {
   currentPage: string;
