@@ -6,22 +6,34 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/sentinel/agent/internal/filewatcher"
 )
 
 // EventCallback is called when a USB device event occurs
 type EventCallback func(event *DeviceEvent)
 
+// usbSession tracks an active USB mass storage session
+type usbSession struct {
+	sessionID string
+	deviceID  string
+	watcher   filewatcher.Watcher
+	startTime time.Time
+}
+
 // Manager manages peripheral device monitoring
 type Manager struct {
-	detector      USBDetector
-	callback      EventCallback
-	pollInterval  time.Duration
-	lastDevices   map[string]*USBDevice
-	mu            sync.RWMutex
-	ctx           context.Context
-	cancel        context.CancelFunc
-	running       bool
-	initialScan   bool
+	detector       USBDetector
+	callback       EventCallback
+	pollInterval   time.Duration
+	lastDevices    map[string]*USBDevice
+	activeSessions map[string]*usbSession // keyed by device ID
+	mu             sync.RWMutex
+	ctx            context.Context
+	cancel         context.CancelFunc
+	running        bool
+	initialScan    bool
 }
 
 // NewManager creates a new peripheral manager
@@ -34,13 +46,14 @@ func NewManager(callback EventCallback) *Manager {
 	detector = newPlatformDetector()
 
 	return &Manager{
-		detector:     detector,
-		callback:     callback,
-		pollInterval: 5 * time.Second,
-		lastDevices:  make(map[string]*USBDevice),
-		ctx:          ctx,
-		cancel:       cancel,
-		initialScan:  true,
+		detector:       detector,
+		callback:       callback,
+		pollInterval:   5 * time.Second,
+		lastDevices:    make(map[string]*USBDevice),
+		activeSessions: make(map[string]*usbSession),
+		ctx:            ctx,
+		cancel:         cancel,
+		initialScan:    true,
 	}
 }
 
@@ -87,6 +100,11 @@ func (m *Manager) Stop() {
 
 	m.running = false
 	m.cancel()
+
+	// Stop all active file watchers
+	for deviceID := range m.activeSessions {
+		m.stopFileWatcher(deviceID)
+	}
 
 	if m.detector != nil {
 		m.detector.StopMonitoring()
@@ -205,10 +223,19 @@ func (m *Manager) performScan() {
 			}
 		} else {
 			// New device connected
+			sessionID := ""
+
+			// Start file watcher for mass storage devices with drive letter
+			if current.DeviceClass == ClassMassStorage && current.DriveLetter != "" {
+				sessionID = uuid.New().String()
+				m.startFileWatcher(current, sessionID)
+			}
+
 			event := &DeviceEvent{
 				EventType: "connected",
 				Device:    current,
 				Timestamp: time.Now(),
+				SessionID: sessionID,
 			}
 			if !m.initialScan && m.callback != nil {
 				go m.callback(event)
@@ -226,10 +253,20 @@ func (m *Manager) performScan() {
 			prev.IsConnected = false
 			prev.DisconnectionTime = &disconnectTime
 
+			// Stop file watcher and collect transfers
+			var fileTransfers []FileTransfer
+			sessionID := ""
+			if session, ok := m.activeSessions[id]; ok {
+				sessionID = session.sessionID
+				fileTransfers = m.stopFileWatcher(id)
+			}
+
 			event := &DeviceEvent{
-				EventType: "disconnected",
-				Device:    prev,
-				Timestamp: disconnectTime,
+				EventType:     "disconnected",
+				Device:        prev,
+				Timestamp:     disconnectTime,
+				SessionID:     sessionID,
+				FileTransfers: fileTransfers,
 			}
 			if !m.initialScan && m.callback != nil {
 				go m.callback(event)
@@ -256,6 +293,14 @@ func (m *Manager) handleEvent(event *DeviceEvent) {
 	switch event.EventType {
 	case "connected":
 		m.lastDevices[event.Device.DeviceID] = event.Device
+
+		// Start file watcher for mass storage devices with drive letter
+		if event.Device.DeviceClass == ClassMassStorage && event.Device.DriveLetter != "" {
+			sessionID := uuid.New().String()
+			m.startFileWatcher(event.Device, sessionID)
+			event.SessionID = sessionID
+		}
+
 		log.Printf("[Peripheral] USB device connected (real-time): %s (%s %s)",
 			event.Device.DeviceID, event.Device.Manufacturer, event.Device.ProductName)
 
@@ -266,6 +311,13 @@ func (m *Manager) handleEvent(event *DeviceEvent) {
 			prev.DisconnectionTime = &disconnectTime
 			event.Device = prev
 		}
+
+		// Stop file watcher and collect transfers
+		if session, ok := m.activeSessions[event.Device.DeviceID]; ok {
+			event.SessionID = session.sessionID
+			event.FileTransfers = m.stopFileWatcher(event.Device.DeviceID)
+		}
+
 		delete(m.lastDevices, event.Device.DeviceID)
 		log.Printf("[Peripheral] USB device disconnected (real-time): %s",
 			event.Device.DeviceID)
@@ -274,6 +326,76 @@ func (m *Manager) handleEvent(event *DeviceEvent) {
 	if m.callback != nil {
 		go m.callback(event)
 	}
+}
+
+// startFileWatcher starts monitoring files on a USB mass storage device
+// Must be called with m.mu held
+func (m *Manager) startFileWatcher(device *USBDevice, sessionID string) {
+	if device.DriveLetter == "" {
+		return
+	}
+
+	// Build the path (e.g., "E:\")
+	watchPath := device.DriveLetter
+	if !hasTrailingSlash(watchPath) {
+		watchPath += "\\"
+	}
+
+	watcher := filewatcher.NewWithDefaults(watchPath)
+	if err := watcher.Start(m.ctx); err != nil {
+		log.Printf("[Peripheral] Failed to start file watcher for %s: %v", watchPath, err)
+		return
+	}
+
+	m.activeSessions[device.DeviceID] = &usbSession{
+		sessionID: sessionID,
+		deviceID:  device.DeviceID,
+		watcher:   watcher,
+		startTime: time.Now(),
+	}
+
+	log.Printf("[Peripheral] Started file watcher for USB device %s at %s (session: %s)",
+		device.DeviceID, watchPath, sessionID)
+}
+
+// stopFileWatcher stops monitoring a USB device and returns accumulated file transfers
+// Must be called with m.mu held
+func (m *Manager) stopFileWatcher(deviceID string) []FileTransfer {
+	session, exists := m.activeSessions[deviceID]
+	if !exists {
+		return nil
+	}
+
+	// Stop the watcher and get file transfers
+	watcherTransfers := session.watcher.Stop()
+
+	// Convert filewatcher.FileTransfer to peripheral.FileTransfer
+	transfers := make([]FileTransfer, len(watcherTransfers))
+	for i, t := range watcherTransfers {
+		transfers[i] = FileTransfer{
+			FileName:     t.FileName,
+			FilePath:     t.FilePath,
+			FileSize:     t.FileSize,
+			TransferTime: t.TransferTime,
+			Operation:    t.Operation,
+		}
+	}
+
+	delete(m.activeSessions, deviceID)
+
+	log.Printf("[Peripheral] Stopped file watcher for device %s (session: %s, files: %d)",
+		deviceID, session.sessionID, len(transfers))
+
+	return transfers
+}
+
+// hasTrailingSlash checks if a path ends with a slash
+func hasTrailingSlash(path string) bool {
+	if len(path) == 0 {
+		return false
+	}
+	lastChar := path[len(path)-1]
+	return lastChar == '/' || lastChar == '\\'
 }
 
 // hasDeviceChanged checks if a device's properties have changed

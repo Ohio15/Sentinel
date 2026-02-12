@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAlertStore, Alert, AlertRule } from '../stores/alertStore';
 import { useDeviceStore } from '../stores/deviceStore';
 import { useClientStore } from '../stores/clientStore';
+import { usb, FileTransfer } from '../services';
 
 export function Alerts() {
   const {
@@ -233,10 +234,47 @@ function AlertCard({
   onAcknowledge: () => void;
   onResolve: () => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const [transfers, setTransfers] = useState<FileTransfer[]>([]);
+  const [loadingTransfers, setLoadingTransfers] = useState(false);
+
   const severityColors = {
     info: 'border-l-blue-500',
     warning: 'border-l-warning',
     critical: 'border-l-danger',
+  };
+
+  // Check if this is a USB alert with file transfers
+  const hasFileTransfers = alert.metadata?.sessionId && alert.metadata?.fileCount && alert.metadata.fileCount > 0;
+  const isUSBAlert = alert.title?.toLowerCase().includes('usb');
+
+  const loadTransfers = async () => {
+    if (!alert.metadata?.sessionId) return;
+
+    setLoadingTransfers(true);
+    try {
+      const result = await usb.getFileTransfersForAlert(alert.id);
+      setTransfers(result.transfers || []);
+    } catch (error) {
+      console.error('Failed to load file transfers:', error);
+    } finally {
+      setLoadingTransfers(false);
+    }
+  };
+
+  const handleToggleExpand = () => {
+    if (!expanded && transfers.length === 0) {
+      loadTransfers();
+    }
+    setExpanded(!expanded);
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
 
   return (
@@ -246,6 +284,11 @@ function AlertCard({
           <div className="flex items-center gap-2 mb-1">
             <SeverityBadge severity={alert.severity} />
             <StatusBadge status={alert.status} />
+            {hasFileTransfers && (
+              <span className="badge bg-purple-100 text-purple-600">
+                {alert.metadata?.fileCount} file{alert.metadata?.fileCount !== 1 ? 's' : ''} transferred
+              </span>
+            )}
           </div>
           <h3 className="font-medium text-text-primary">{alert.title}</h3>
           <p className="text-sm text-text-secondary mt-1">{alert.message}</p>
@@ -253,6 +296,59 @@ function AlertCard({
             <span>Device: {alert.deviceName}</span>
             <span>Created: {new Date(alert.createdAt).toLocaleString()}</span>
           </div>
+
+          {/* File Transfers Expand Button */}
+          {(hasFileTransfers || (isUSBAlert && alert.metadata?.sessionId)) && (
+            <button
+              onClick={handleToggleExpand}
+              className="mt-3 text-sm text-primary hover:text-primary-dark flex items-center gap-1"
+            >
+              <span className={`transition-transform ${expanded ? 'rotate-90' : ''}`}>▶</span>
+              {expanded ? 'Hide' : 'View'} File Transfers
+            </button>
+          )}
+
+          {/* File Transfers Table */}
+          {expanded && (
+            <div className="mt-3 border-t border-border pt-3">
+              {loadingTransfers ? (
+                <p className="text-sm text-text-secondary">Loading file transfers...</p>
+              ) : transfers.length === 0 ? (
+                <p className="text-sm text-text-secondary">No file transfers recorded</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-text-secondary">
+                        <th className="py-1 pr-4">File Name</th>
+                        <th className="py-1 pr-4">Path</th>
+                        <th className="py-1 pr-4">Size</th>
+                        <th className="py-1">Time</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {transfers.map((transfer) => (
+                        <tr key={transfer.id} className="border-t border-border/50">
+                          <td className="py-2 pr-4 text-text-primary font-medium">
+                            {transfer.fileName}
+                          </td>
+                          <td className="py-2 pr-4 text-text-secondary text-xs">
+                            {transfer.filePath}
+                          </td>
+                          <td className="py-2 pr-4 text-text-secondary">
+                            {formatFileSize(transfer.fileSize)}
+                          </td>
+                          <td className="py-2 text-text-secondary text-xs">
+                            {new Date(transfer.transferTime).toLocaleTimeString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
         </div>
         {alert.status === 'open' && (
           <div className="flex gap-2">

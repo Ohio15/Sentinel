@@ -25,6 +25,11 @@ const (
 	MsgTypeRDPSessionEnded      = "rdp_session_ended"
 )
 
+// USB file transfer message types
+const (
+	MsgTypeUSBSessionComplete = "usb_session_complete" // Agent sends USB session with file transfers
+)
+
 // Mobile device message types
 const (
 	MsgTypeMobileMetrics    = "mobile_metrics"

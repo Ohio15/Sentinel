@@ -36,7 +36,7 @@ import (
 	"github.com/sentinel/agent/internal/peripheral"
 )
 
-var Version = "1.72.8"
+var Version = "1.72.9"
 
 const ServiceName = "SentinelAgent"
 
@@ -1926,43 +1926,82 @@ func (a *Agent) handleUSBDeviceEvent(event *peripheral.DeviceEvent) {
 	log.Printf("[USB] Sending %s event for device: %s (%s %s)",
 		event.EventType, event.Device.DeviceID, event.Device.Manufacturer, event.Device.ProductName)
 
+	// Build device data
+	deviceData := map[string]interface{}{
+		"deviceId":       event.Device.DeviceID,
+		"instancePath":   event.Device.InstancePath,
+		"vendorId":       event.Device.VendorID,
+		"productId":      event.Device.ProductID,
+		"serialNumber":   event.Device.SerialNumber,
+		"manufacturer":   event.Device.Manufacturer,
+		"productName":    event.Device.ProductName,
+		"deviceClass":    string(event.Device.DeviceClass),
+		"classCode":      event.Device.ClassCode,
+		"subclassCode":   event.Device.SubclassCode,
+		"protocolCode":   event.Device.ProtocolCode,
+		"busNumber":      event.Device.BusNumber,
+		"portNumber":     event.Device.PortNumber,
+		"deviceSpeed":    event.Device.DeviceSpeed,
+		"parentDevice":   event.Device.ParentDevice,
+		"driveLetter":    event.Device.DriveLetter,
+		"mountPoint":     event.Device.MountPoint,
+		"volumeLabel":    event.Device.VolumeLabel,
+		"fileSystem":     event.Device.FileSystem,
+		"totalSize":      event.Device.TotalSize,
+		"freeSpace":      event.Device.FreeSpace,
+		"isConnected":    event.Device.IsConnected,
+		"connectionTime": event.Device.ConnectionTime.Format(time.RFC3339),
+		"isRemovable":    event.Device.IsRemovable,
+		"isBootable":     event.Device.IsBootable,
+		"isEncrypted":    event.Device.IsEncrypted,
+	}
+
+	// Build event data
+	eventData := map[string]interface{}{
+		"eventType":    event.EventType,
+		"device":       deviceData,
+		"timestamp":    event.Timestamp.Format(time.RFC3339),
+		"securityRisk": peripheral.ClassifySecurityRisk(event.Device),
+	}
+
+	// Add session ID if present
+	if event.SessionID != "" {
+		eventData["sessionId"] = event.SessionID
+	}
+
 	// Send event to server
 	a.client.SendJSON(map[string]interface{}{
 		"type": client.MsgTypeUSBDeviceEvent,
-		"data": map[string]interface{}{
-			"eventType": event.EventType,
-			"device": map[string]interface{}{
-				"deviceId":       event.Device.DeviceID,
-				"instancePath":   event.Device.InstancePath,
-				"vendorId":       event.Device.VendorID,
-				"productId":      event.Device.ProductID,
-				"serialNumber":   event.Device.SerialNumber,
-				"manufacturer":   event.Device.Manufacturer,
-				"productName":    event.Device.ProductName,
-				"deviceClass":    string(event.Device.DeviceClass),
-				"classCode":      event.Device.ClassCode,
-				"subclassCode":   event.Device.SubclassCode,
-				"protocolCode":   event.Device.ProtocolCode,
-				"busNumber":      event.Device.BusNumber,
-				"portNumber":     event.Device.PortNumber,
-				"deviceSpeed":    event.Device.DeviceSpeed,
-				"parentDevice":   event.Device.ParentDevice,
-				"driveLetter":    event.Device.DriveLetter,
-				"mountPoint":     event.Device.MountPoint,
-				"volumeLabel":    event.Device.VolumeLabel,
-				"fileSystem":     event.Device.FileSystem,
-				"totalSize":      event.Device.TotalSize,
-				"freeSpace":      event.Device.FreeSpace,
-				"isConnected":    event.Device.IsConnected,
-				"connectionTime": event.Device.ConnectionTime.Format(time.RFC3339),
-				"isRemovable":    event.Device.IsRemovable,
-				"isBootable":     event.Device.IsBootable,
-				"isEncrypted":    event.Device.IsEncrypted,
-			},
-			"timestamp":    event.Timestamp.Format(time.RFC3339),
-			"securityRisk": peripheral.ClassifySecurityRisk(event.Device),
-		},
+		"data": eventData,
 	})
+
+	// If this is a disconnect event with file transfers, send a session complete message
+	if event.EventType == "disconnected" && len(event.FileTransfers) > 0 {
+		log.Printf("[USB] Session %s completed with %d file transfers", event.SessionID, len(event.FileTransfers))
+
+		// Convert file transfers to serializable format
+		transfers := make([]map[string]interface{}, len(event.FileTransfers))
+		for i, t := range event.FileTransfers {
+			transfers[i] = map[string]interface{}{
+				"fileName":     t.FileName,
+				"filePath":     t.FilePath,
+				"fileSize":     t.FileSize,
+				"transferTime": t.TransferTime.Format(time.RFC3339),
+				"operation":    t.Operation,
+			}
+		}
+
+		a.client.SendJSON(map[string]interface{}{
+			"type": client.MsgTypeUSBSessionComplete,
+			"data": map[string]interface{}{
+				"sessionId":        event.SessionID,
+				"usbDeviceId":      event.Device.DeviceID,
+				"disconnectTime":   event.Timestamp.Format(time.RFC3339),
+				"fileTransfers":    transfers,
+				"fileCount":        len(transfers),
+			},
+		})
+	}
 }
 
 // handleUSBDeviceRequest handles requests from the server to scan USB devices

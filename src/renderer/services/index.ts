@@ -139,6 +139,31 @@ export const alerts = {
   },
 };
 
+// USB File Transfer Types
+export interface FileTransfer {
+  id: string;
+  deviceId: string;
+  usbDeviceId: string;
+  sessionId: string;
+  fileName: string;
+  filePath: string;
+  fileSize: number;
+  transferTime: string;
+  operation: string;
+  createdAt: string;
+}
+
+// USB Service
+export const usb = {
+  async getFileTransfersForAlert(alertId: string): Promise<{ transfers: FileTransfer[]; count: number }> {
+    return api!.makeRequest<{ transfers: FileTransfer[]; count: number }>('GET', `/usb/transfers/${alertId}`);
+  },
+
+  async getFileTransfersForSession(sessionId: string): Promise<{ transfers: FileTransfer[]; count: number }> {
+    return api!.makeRequest<{ transfers: FileTransfer[]; count: number }>('GET', `/usb/transfers/session/${sessionId}`);
+  },
+};
+
 // Terminal Service
 export const terminal = {
   async start(deviceId: string): Promise<{ sessionId: string }> {
