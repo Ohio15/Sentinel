@@ -34,6 +34,26 @@ const (
 	StateRolledBack  = "rolled_back"
 )
 
+// Resilient Update Architecture Constants
+// Based on industry best practices from Datto RMM, Tactical RMM, NinjaRMM
+const (
+	// Layer 2: Agent Independent Polling
+	// Runs even when WebSocket/primary communication is broken
+	DefaultPollInterval     = 30 * time.Minute // Base polling interval
+	MinPollInterval         = 5 * time.Minute  // Minimum interval (aggressive mode)
+	MaxPollInterval         = 2 * time.Hour    // Maximum interval (backoff ceiling)
+	PollJitterPercent       = 20               // Randomization to prevent thundering herd
+
+	// Retry and backoff settings
+	DefaultMaxRetries       = 5                // More retries for resilience
+	DefaultRetryDelay       = 10 * time.Second
+	DefaultMaxRetryDelay    = 5 * time.Minute
+
+	// Health check thresholds
+	ConsecutiveFailuresForAggressive = 3  // Switch to aggressive polling after N failures
+	ConsecutiveSuccessesForNormal    = 2  // Return to normal polling after N successes
+)
+
 type VersionInfo struct {
 	Version     string `json:"version"`
 	Platform    string `json:"platform"`
@@ -89,6 +109,7 @@ type UpdateStatus struct {
 
 type Updater struct {
 	serverURL      string
+	fallbackURLs   []string // Fallback server URLs for resilience
 	currentVersion string
 	deviceID       string
 	httpClient     *http.Client
@@ -100,6 +121,14 @@ type Updater struct {
 	isUpdating     bool
 	status         UpdateStatus
 	forceCheck     chan struct{}
+
+	// Adaptive polling state
+	pollMu                sync.Mutex
+	consecutiveFailures   int
+	consecutiveSuccesses  int
+	currentPollInterval   time.Duration
+	lastSuccessfulCheck   time.Time
+	lastServerContact     time.Time // Track any successful server communication
 }
 
 func New(serverURL, currentVersion string) *Updater {
@@ -117,16 +146,97 @@ func New(serverURL, currentVersion string) *Updater {
 	}
 
 	return &Updater{
-		serverURL:      serverURL,
-		currentVersion: currentVersion,
-		httpClient:     httpClient,
-		checkInterval:  1 * time.Hour,
-		maxRetries:     3,
-		retryDelay:     5 * time.Second,
-		maxRetryDelay:  2 * time.Minute,
-		forceCheck:     make(chan struct{}, 1),
-		status:         UpdateStatus{State: StateIdle, CurrentVersion: currentVersion},
+		serverURL:           serverURL,
+		fallbackURLs:        []string{}, // Can be configured via SetFallbackURLs
+		currentVersion:      currentVersion,
+		httpClient:          httpClient,
+		checkInterval:       DefaultPollInterval,
+		currentPollInterval: DefaultPollInterval,
+		maxRetries:          DefaultMaxRetries,
+		retryDelay:          DefaultRetryDelay,
+		maxRetryDelay:       DefaultMaxRetryDelay,
+		forceCheck:          make(chan struct{}, 1),
+		status:              UpdateStatus{State: StateIdle, CurrentVersion: currentVersion},
+		lastSuccessfulCheck: time.Now(), // Assume healthy on startup
+		lastServerContact:   time.Now(),
 	}
+}
+
+// SetFallbackURLs configures backup server URLs for resilience
+func (u *Updater) SetFallbackURLs(urls []string) {
+	u.fallbackURLs = urls
+	log.Printf("[Updater] Configured %d fallback URLs", len(urls))
+}
+
+// NotifyServerContact should be called whenever any successful server communication occurs
+// This helps the updater know if the primary channel (WebSocket) is working
+func (u *Updater) NotifyServerContact() {
+	u.pollMu.Lock()
+	u.lastServerContact = time.Now()
+	u.pollMu.Unlock()
+}
+
+// getNextPollInterval returns the next polling interval with adaptive adjustment and jitter
+func (u *Updater) getNextPollInterval() time.Duration {
+	u.pollMu.Lock()
+	defer u.pollMu.Unlock()
+
+	// Add jitter to prevent thundering herd (±20%)
+	jitter := time.Duration(float64(u.currentPollInterval) * float64(PollJitterPercent) / 100)
+	randomJitter := time.Duration(os.Getpid()%int(jitter.Seconds()+1)) * time.Second
+	if os.Getpid()%2 == 0 {
+		randomJitter = -randomJitter
+	}
+
+	interval := u.currentPollInterval + randomJitter
+	if interval < MinPollInterval {
+		interval = MinPollInterval
+	}
+
+	return interval
+}
+
+// recordPollSuccess adjusts polling interval on successful check
+func (u *Updater) recordPollSuccess() {
+	u.pollMu.Lock()
+	defer u.pollMu.Unlock()
+
+	u.consecutiveFailures = 0
+	u.consecutiveSuccesses++
+	u.lastSuccessfulCheck = time.Now()
+
+	// Return to normal polling after consecutive successes
+	if u.consecutiveSuccesses >= ConsecutiveSuccessesForNormal && u.currentPollInterval < DefaultPollInterval {
+		u.currentPollInterval = DefaultPollInterval
+		log.Printf("[Updater] Returning to normal polling interval: %v", u.currentPollInterval)
+	}
+}
+
+// recordPollFailure adjusts polling interval on failed check
+func (u *Updater) recordPollFailure() {
+	u.pollMu.Lock()
+	defer u.pollMu.Unlock()
+
+	u.consecutiveSuccesses = 0
+	u.consecutiveFailures++
+
+	// Switch to aggressive polling after consecutive failures
+	if u.consecutiveFailures >= ConsecutiveFailuresForAggressive {
+		u.currentPollInterval = MinPollInterval
+		log.Printf("[Updater] Switching to aggressive polling due to %d consecutive failures: %v",
+			u.consecutiveFailures, u.currentPollInterval)
+	}
+}
+
+// shouldPollAggressively returns true if we haven't had server contact recently
+func (u *Updater) shouldPollAggressively() bool {
+	u.pollMu.Lock()
+	defer u.pollMu.Unlock()
+
+	// If no server contact (including WebSocket heartbeats) for 2x the poll interval,
+	// something might be wrong with primary communication
+	threshold := 2 * DefaultPollInterval
+	return time.Since(u.lastServerContact) > threshold
 }
 
 func (u *Updater) SetDeviceID(deviceID string)             { u.deviceID = deviceID }
@@ -515,11 +625,12 @@ func (u *Updater) applyUpdateUnix(currentExe, downloadPath string) error {
 }
 
 func (u *Updater) RunUpdateLoop(ctx context.Context) {
-	// Initial check on startup after a brief delay
+	// Initial check on startup after a brief delay with jitter
 	// This catches updates that happened while agent was offline
-	// Subsequent updates are handled via heartbeat ack notifications
 	initialDelay := 30*time.Second + time.Duration(os.Getpid()%30)*time.Second
-	log.Printf("Update checker: initial check in %v (subsequent updates via heartbeat)", initialDelay)
+	log.Printf("[Updater] Resilient update loop starting: initial check in %v, base interval %v",
+		initialDelay, u.checkInterval)
+	log.Printf("[Updater] Defense layers: WebSocket push + Independent HTTP polling + Adaptive intervals")
 
 	select {
 	case <-ctx.Done():
@@ -527,27 +638,83 @@ func (u *Updater) RunUpdateLoop(ctx context.Context) {
 	case <-time.After(initialDelay):
 	}
 
-	u.checkAndUpdate(ctx)
+	// Initial check
+	if err := u.checkAndUpdateWithFallback(ctx); err != nil {
+		log.Printf("[Updater] Initial check failed: %v", err)
+		u.recordPollFailure()
+	} else {
+		u.recordPollSuccess()
+	}
 
-	// Only handle force checks now - periodic checks removed
-	// Updates are now notified via heartbeat ack from server
+	// Adaptive polling loop
+	// This provides application-level control independent of:
+	// - WebSocket state
+	// - OS service managers (systemd, launchd, Windows SCM)
+	// - Network interruptions
 	for {
+		// Calculate next interval based on adaptive state
+		nextInterval := u.getNextPollInterval()
+
+		// Check if we should be more aggressive due to lost server contact
+		if u.shouldPollAggressively() {
+			nextInterval = MinPollInterval
+			log.Printf("[Updater] No recent server contact, using aggressive polling: %v", nextInterval)
+		}
+
 		select {
 		case <-ctx.Done():
+			log.Println("[Updater] Update loop stopping")
 			return
+
 		case <-u.forceCheck:
-			log.Println("Forced update check triggered")
-			u.checkAndUpdate(ctx)
+			log.Println("[Updater] Forced update check triggered (server notification)")
+			if err := u.checkAndUpdateWithFallback(ctx); err != nil {
+				log.Printf("[Updater] Forced check failed: %v", err)
+			} else {
+				u.recordPollSuccess()
+			}
+
+		case <-time.After(nextInterval):
+			log.Printf("[Updater] Independent polling check (interval was %v)", nextInterval)
+			if err := u.checkAndUpdateWithFallback(ctx); err != nil {
+				log.Printf("[Updater] Poll check failed: %v", err)
+				u.recordPollFailure()
+			} else {
+				u.recordPollSuccess()
+			}
 		}
 	}
 }
 
-func (u *Updater) checkAndUpdate(ctx context.Context) {
+// checkAndUpdateWithFallback tries the primary server, then fallback URLs
+func (u *Updater) checkAndUpdateWithFallback(ctx context.Context) error {
+	// Try primary server first
+	err := u.checkAndUpdateFromURL(ctx, u.serverURL)
+	if err == nil {
+		return nil
+	}
+
+	log.Printf("[Updater] Primary server failed: %v, trying fallbacks...", err)
+
+	// Try fallback URLs
+	for i, fallbackURL := range u.fallbackURLs {
+		log.Printf("[Updater] Trying fallback %d: %s", i+1, fallbackURL)
+		if err := u.checkAndUpdateFromURL(ctx, fallbackURL); err == nil {
+			log.Printf("[Updater] Fallback %d succeeded", i+1)
+			return nil
+		}
+		log.Printf("[Updater] Fallback %d failed: %v", i+1, err)
+	}
+
+	return fmt.Errorf("all servers failed, primary error: %w", err)
+}
+
+// checkAndUpdateFromURL checks a specific server URL for updates
+func (u *Updater) checkAndUpdateFromURL(ctx context.Context, serverURL string) error {
 	u.updateMu.Lock()
 	if u.isUpdating {
 		u.updateMu.Unlock()
-		log.Println("Update already in progress, skipping check")
-		return
+		return nil // Not an error, just skip
 	}
 	u.isUpdating = true
 	u.updateMu.Unlock()
@@ -558,75 +725,51 @@ func (u *Updater) checkAndUpdate(ctx context.Context) {
 		u.updateMu.Unlock()
 	}()
 
-	// Check if watchdog is already handling an update (update-request.json exists)
+	// Check if watchdog is already handling an update
 	existingRequest, err := ipc.ReadUpdateRequest()
 	if err == nil && existingRequest != nil {
-		log.Printf("Update request already exists for v%s, watchdog will handle it", existingRequest.Version)
-		return
+		log.Printf("[Updater] Update request already exists for v%s, watchdog will handle it", existingRequest.Version)
+		return nil
 	}
 
-	// Also check if there's a pending/applying status from watchdog
+	// Check if there's a pending/applying status from watchdog
 	existingStatus, err := ipc.ReadUpdateStatus()
 	if err == nil && existingStatus != nil {
 		if existingStatus.State == ipc.StatePending || existingStatus.State == ipc.StateApplying {
-			log.Printf("Update already in state %s by watchdog, skipping", existingStatus.State)
-			return
+			log.Printf("[Updater] Update already in state %s by watchdog, skipping", existingStatus.State)
+			return nil
 		}
 	}
 
-	log.Println("Checking for updates...")
 	u.updateStatus(StatePending, "Checking for updates...", 0)
 
-	// CRITICAL: Check if watchdog needs updating FIRST
-	// This ensures the new watchdog (with lenient crash detection) is running
-	// before we update the agent, preventing false rollbacks
+	// On Windows, check watchdog updates first
 	if runtime.GOOS == "windows" {
-		watchdogResult, err := u.CheckForWatchdogUpdate(ctx)
-		if err != nil {
-			log.Printf("Warning: Watchdog update check failed: %v", err)
-			// Continue with agent update - watchdog check is best-effort
-		} else if watchdogResult != nil && watchdogResult.Available {
-			log.Printf("Watchdog update available: v%s -> v%s", watchdogResult.CurrentVersion, watchdogResult.LatestVersion)
-			log.Println("Triggering watchdog update FIRST to prevent rollback issues")
-
-			if err := u.TriggerWatchdogUpdate(ctx); err != nil {
-				log.Printf("Warning: Failed to trigger watchdog update: %v", err)
-				// IMPORTANT: Still defer agent update even on failure
-				// Old watchdog may not properly orchestrate new agent update
-				log.Println("Deferring agent update - watchdog must be updated first (will retry)")
-				u.updateStatus(StateIdle, "Waiting for watchdog update (retry pending)", 0)
-				return
-			}
-			// Successfully triggered watchdog update
-			// STOP HERE and let watchdog update itself first
-			// Next update cycle will proceed with agent update
-			log.Println("Watchdog update triggered - deferring agent update until watchdog is updated")
-			u.updateStatus(StateIdle, "Waiting for watchdog update", 0)
-			return
-		} else {
-			log.Printf("Watchdog is up to date (v%s)", watchdogResult.CurrentVersion)
+		if err := u.checkAndTriggerWatchdogUpdate(ctx, serverURL); err != nil {
+			// Watchdog update check failed or in progress, defer agent update
+			return nil
 		}
 	}
 
-	result, err := u.CheckForUpdate(ctx)
+	// Check for agent update
+	result, err := u.checkForUpdateFromURL(ctx, serverURL)
 	if err != nil {
-		log.Printf("Update check failed: %v", err)
 		u.updateStatus(StateIdle, "", 0)
-		return
+		return fmt.Errorf("update check failed: %w", err)
 	}
 
 	if !result.Available {
-		log.Printf("No update available (current: v%s)", u.currentVersion)
+		log.Printf("[Updater] No update available (current: v%s)", u.currentVersion)
 		u.updateStatus(StateIdle, "Up to date", 0)
-		return
+		return nil
 	}
 
-	log.Printf("Update available: v%s -> v%s", u.currentVersion, result.LatestVersion)
+	log.Printf("[Updater] Update available: v%s -> v%s", u.currentVersion, result.LatestVersion)
 
 	if result.VersionInfo == nil {
-		log.Printf("No version info in response")
+		log.Printf("[Updater] No version info in response")
 		u.updateStatus(StateIdle, "No version info", 0)
-		return
+		return nil
 	}
 
 	u.status.TargetVersion = result.LatestVersion
@@ -634,19 +777,79 @@ func (u *Updater) checkAndUpdate(ctx context.Context) {
 
 	downloadPath, err := u.DownloadUpdate(ctx, result.VersionInfo)
 	if err != nil {
-		log.Printf("Failed to download update: %v", err)
+		log.Printf("[Updater] Failed to download update: %v", err)
 		u.updateStatus(StateFailed, fmt.Sprintf("Download failed: %v", err), 0)
 		u.reportStatus(ctx)
-		return
+		return fmt.Errorf("download failed: %w", err)
 	}
 
 	if err := u.ApplyUpdate(ctx, downloadPath, result.VersionInfo); err != nil {
-		log.Printf("Failed to apply update: %v", err)
+		log.Printf("[Updater] Failed to apply update: %v", err)
 		u.updateStatus(StateFailed, fmt.Sprintf("Apply failed: %v", err), 0)
 		u.reportStatus(ctx)
 		os.Remove(downloadPath)
-		return
+		return fmt.Errorf("apply failed: %w", err)
 	}
+
+	return nil
+}
+
+// checkForUpdateFromURL checks a specific server for updates
+func (u *Updater) checkForUpdateFromURL(ctx context.Context, serverURL string) (*UpdateResult, error) {
+	url := fmt.Sprintf("%s/api/agent/version?platform=%s&arch=%s&current=%s",
+		serverURL, runtime.GOOS, runtime.GOARCH, u.currentVersion)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := u.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("version check failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("version check returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result UpdateResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	result.CurrentVersion = u.currentVersion
+	return &result, nil
+}
+
+// checkAndTriggerWatchdogUpdate checks for watchdog update and returns error if agent update should be deferred
+func (u *Updater) checkAndTriggerWatchdogUpdate(ctx context.Context, serverURL string) error {
+	watchdogResult, err := u.CheckForWatchdogUpdate(ctx)
+	if err != nil {
+		log.Printf("[Updater] Warning: Watchdog update check failed: %v", err)
+		return nil // Continue with agent update
+	}
+
+	if watchdogResult != nil && watchdogResult.Available {
+		log.Printf("[Updater] Watchdog update available: v%s -> v%s",
+			watchdogResult.CurrentVersion, watchdogResult.LatestVersion)
+		log.Println("[Updater] Triggering watchdog update FIRST to prevent rollback issues")
+
+		if err := u.TriggerWatchdogUpdate(ctx); err != nil {
+			log.Printf("[Updater] Warning: Failed to trigger watchdog update: %v", err)
+			log.Println("[Updater] Deferring agent update - watchdog must be updated first")
+			u.updateStatus(StateIdle, "Waiting for watchdog update", 0)
+			return fmt.Errorf("watchdog update in progress")
+		}
+
+		log.Println("[Updater] Watchdog update triggered - deferring agent update")
+		u.updateStatus(StateIdle, "Waiting for watchdog update", 0)
+		return fmt.Errorf("watchdog update triggered")
+	}
+
+	return nil
 }
 
 func (u *Updater) updateStatus(state, message string, progress int) {
@@ -1018,4 +1221,300 @@ func (u *Updater) reportUpdateResult(ctx context.Context, status *ipc.UpdateStat
 	}
 
 	log.Printf("Failed to report update result after %d attempts", maxRetries)
+}
+
+// ============================================================================
+// Layer 4: Bootstrap Recovery Task
+// ============================================================================
+// This creates a scheduled task/cron job that runs independently of both
+// the agent and watchdog. It's the last line of defense - if everything
+// else fails, this can recover the agent from scratch.
+
+const (
+	BootstrapTaskName     = "SentinelBootstrapRecovery"
+	BootstrapCheckInterval = 6 // hours
+)
+
+// InstallBootstrapRecoveryTask installs a scheduled task that can recover
+// the agent even if both agent and watchdog are completely dead.
+// This is Layer 4 of the resilient update architecture.
+func (u *Updater) InstallBootstrapRecoveryTask(serverURL string) error {
+	if runtime.GOOS == "windows" {
+		return u.installBootstrapTaskWindows(serverURL)
+	} else if runtime.GOOS == "linux" {
+		return u.installBootstrapTaskLinux(serverURL)
+	}
+	// macOS: launchd plist would go here
+	log.Printf("[Bootstrap] Bootstrap recovery task not implemented for %s", runtime.GOOS)
+	return nil
+}
+
+// installBootstrapTaskWindows creates a Windows scheduled task for bootstrap recovery
+func (u *Updater) installBootstrapTaskWindows(serverURL string) error {
+	// PowerShell script that checks agent health and recovers if needed
+	scriptContent := fmt.Sprintf(`# Sentinel Bootstrap Recovery Script
+# This script runs every %d hours to ensure agent availability
+# Layer 4: Last resort recovery - independent of agent and watchdog
+
+$ErrorActionPreference = 'Continue'
+$LogFile = "$env:ProgramData\Sentinel\bootstrap-recovery.log"
+
+function Write-Log($msg) {
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    "$timestamp - $msg" | Out-File -Append -FilePath $LogFile
+}
+
+Write-Log "Bootstrap recovery check starting..."
+
+# Check 1: Is the watchdog service running?
+$watchdog = Get-Service -Name "SentinelWatchdog" -ErrorAction SilentlyContinue
+$agent = Get-Service -Name "SentinelAgent" -ErrorAction SilentlyContinue
+
+if ($watchdog -and $watchdog.Status -eq "Running") {
+    Write-Log "Watchdog is running - system healthy"
+
+    # Check if agent is also running
+    if ($agent -and $agent.Status -eq "Running") {
+        Write-Log "Agent is also running - all good"
+        exit 0
+    } else {
+        Write-Log "Agent not running but watchdog is - watchdog will recover it"
+        exit 0
+    }
+}
+
+Write-Log "WARNING: Watchdog not running - initiating bootstrap recovery"
+
+# Check 2: Try to start the watchdog first
+if ($watchdog) {
+    Write-Log "Attempting to start watchdog service..."
+    try {
+        Start-Service -Name "SentinelWatchdog" -ErrorAction Stop
+        Start-Sleep -Seconds 5
+        $watchdog = Get-Service -Name "SentinelWatchdog"
+        if ($watchdog.Status -eq "Running") {
+            Write-Log "Watchdog started successfully"
+            exit 0
+        }
+    } catch {
+        Write-Log "Failed to start watchdog: $_"
+    }
+}
+
+# Check 3: Try to start agent directly
+if ($agent) {
+    Write-Log "Attempting to start agent service..."
+    try {
+        Start-Service -Name "SentinelAgent" -ErrorAction Stop
+        Start-Sleep -Seconds 5
+        $agent = Get-Service -Name "SentinelAgent"
+        if ($agent.Status -eq "Running") {
+            Write-Log "Agent started successfully"
+            exit 0
+        }
+    } catch {
+        Write-Log "Failed to start agent: $_"
+    }
+}
+
+Write-Log "CRITICAL: Both services failed to start - attempting fresh download"
+
+# Layer 4 Nuclear Option: Download fresh agent from server
+$serverUrl = "%s"
+$downloadUrl = "$serverUrl/api/agent/update/download?platform=windows&arch=amd64"
+$tempPath = "$env:TEMP\sentinel-bootstrap-recovery.exe"
+$installPath = "C:\Program Files\Sentinel"
+
+Write-Log "Downloading fresh agent from $downloadUrl"
+
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+    # Try download with certificate validation disabled (self-signed certs)
+    $webClient = New-Object System.Net.WebClient
+    [System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
+    $webClient.DownloadFile($downloadUrl, $tempPath)
+
+    if (Test-Path $tempPath) {
+        $fileSize = (Get-Item $tempPath).Length
+        Write-Log "Downloaded $fileSize bytes"
+
+        if ($fileSize -gt 1000000) {  # At least 1MB
+            # Stop any running services
+            Stop-Service -Name "SentinelAgent" -Force -ErrorAction SilentlyContinue
+            Stop-Service -Name "SentinelWatchdog" -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 3
+
+            # Replace agent binary
+            $agentPath = "$installPath\sentinel-agent.exe"
+            if (Test-Path $agentPath) {
+                Copy-Item $agentPath "$agentPath.backup" -Force -ErrorAction SilentlyContinue
+            }
+            Copy-Item $tempPath $agentPath -Force
+
+            # Start services
+            Start-Service -Name "SentinelWatchdog" -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+            Start-Service -Name "SentinelAgent" -ErrorAction SilentlyContinue
+
+            Write-Log "Bootstrap recovery completed - services restarted"
+        } else {
+            Write-Log "Downloaded file too small, aborting"
+        }
+
+        Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
+    }
+} catch {
+    Write-Log "Bootstrap recovery failed: $_"
+}
+`, BootstrapCheckInterval, serverURL)
+
+	// Save the script
+	scriptDir := filepath.Join(os.Getenv("ProgramData"), "Sentinel")
+	os.MkdirAll(scriptDir, 0755)
+	scriptPath := filepath.Join(scriptDir, "bootstrap-recovery.ps1")
+
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0644); err != nil {
+		return fmt.Errorf("failed to write bootstrap script: %w", err)
+	}
+
+	// Create the scheduled task
+	// Delete existing task first
+	exec.Command("schtasks", "/delete", "/tn", BootstrapTaskName, "/f").Run()
+
+	// Create new task that runs every N hours
+	taskCmd := fmt.Sprintf(
+		`schtasks /create /tn "%s" /tr "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File \"%s\"" /sc HOURLY /mo %d /ru SYSTEM /f /rl HIGHEST`,
+		BootstrapTaskName, scriptPath, BootstrapCheckInterval,
+	)
+
+	cmd := exec.Command("cmd", "/C", taskCmd)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to create scheduled task: %w - %s", err, string(output))
+	}
+
+	log.Printf("[Bootstrap] Windows bootstrap recovery task installed (runs every %d hours)", BootstrapCheckInterval)
+	return nil
+}
+
+// installBootstrapTaskLinux creates a cron job for bootstrap recovery on Linux
+func (u *Updater) installBootstrapTaskLinux(serverURL string) error {
+	// Bash script for Linux bootstrap recovery
+	scriptContent := fmt.Sprintf(`#!/bin/bash
+# Sentinel Bootstrap Recovery Script
+# This script runs every %d hours to ensure agent availability
+# Layer 4: Last resort recovery - independent of agent and watchdog
+
+LOG_FILE="/var/log/sentinel-bootstrap-recovery.log"
+SERVER_URL="%s"
+
+log() {
+    echo "$(date '+%%Y-%%m-%%d %%H:%%M:%%S') - $1" >> "$LOG_FILE"
+}
+
+log "Bootstrap recovery check starting..."
+
+# Check if agent service is running
+if systemctl is-active --quiet SentinelAgent 2>/dev/null; then
+    log "Agent service is running - system healthy"
+    exit 0
+fi
+
+# Alternative check: sentinel-agent service name
+if systemctl is-active --quiet sentinel-agent 2>/dev/null; then
+    log "Agent service (sentinel-agent) is running - system healthy"
+    exit 0
+fi
+
+log "WARNING: Agent service not running - attempting recovery"
+
+# Try to start the service
+log "Attempting to start agent service..."
+if systemctl start SentinelAgent 2>/dev/null || systemctl start sentinel-agent 2>/dev/null; then
+    sleep 5
+    if systemctl is-active --quiet SentinelAgent 2>/dev/null || systemctl is-active --quiet sentinel-agent 2>/dev/null; then
+        log "Agent started successfully"
+        exit 0
+    fi
+fi
+
+log "CRITICAL: Service failed to start - attempting fresh download"
+
+# Download fresh agent
+DOWNLOAD_URL="${SERVER_URL}/api/agent/update/download?platform=linux&arch=amd64"
+TEMP_PATH="/tmp/sentinel-bootstrap-recovery"
+INSTALL_PATH="/usr/local/bin/sentinel-agent"
+
+log "Downloading fresh agent from $DOWNLOAD_URL"
+
+if curl -sk -o "$TEMP_PATH" "$DOWNLOAD_URL"; then
+    FILE_SIZE=$(stat -c%%s "$TEMP_PATH" 2>/dev/null || stat -f%%z "$TEMP_PATH" 2>/dev/null)
+    log "Downloaded $FILE_SIZE bytes"
+
+    if [ "$FILE_SIZE" -gt 1000000 ]; then
+        # Stop service
+        systemctl stop SentinelAgent 2>/dev/null
+        systemctl stop sentinel-agent 2>/dev/null
+        sleep 2
+
+        # Backup and replace
+        [ -f "$INSTALL_PATH" ] && cp "$INSTALL_PATH" "${INSTALL_PATH}.backup"
+        cp "$TEMP_PATH" "$INSTALL_PATH"
+        chmod +x "$INSTALL_PATH"
+
+        # Start service
+        systemctl start SentinelAgent 2>/dev/null || systemctl start sentinel-agent 2>/dev/null
+
+        log "Bootstrap recovery completed - service restarted"
+    else
+        log "Downloaded file too small, aborting"
+    fi
+
+    rm -f "$TEMP_PATH"
+else
+    log "Download failed"
+fi
+`, BootstrapCheckInterval, serverURL)
+
+	// Save the script
+	scriptPath := "/usr/local/bin/sentinel-bootstrap-recovery.sh"
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
+		// Try alternative location
+		scriptPath = "/opt/sentinel/bootstrap-recovery.sh"
+		os.MkdirAll("/opt/sentinel", 0755)
+		if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
+			return fmt.Errorf("failed to write bootstrap script: %w", err)
+		}
+	}
+
+	// Create cron job
+	cronEntry := fmt.Sprintf("0 */%d * * * root %s\n", BootstrapCheckInterval, scriptPath)
+	cronPath := "/etc/cron.d/sentinel-bootstrap"
+
+	if err := os.WriteFile(cronPath, []byte(cronEntry), 0644); err != nil {
+		return fmt.Errorf("failed to write cron job: %w", err)
+	}
+
+	log.Printf("[Bootstrap] Linux bootstrap recovery cron job installed (runs every %d hours)", BootstrapCheckInterval)
+	return nil
+}
+
+// RemoveBootstrapRecoveryTask removes the bootstrap recovery scheduled task
+func (u *Updater) RemoveBootstrapRecoveryTask() error {
+	if runtime.GOOS == "windows" {
+		cmd := exec.Command("schtasks", "/delete", "/tn", BootstrapTaskName, "/f")
+		cmd.Run() // Ignore errors
+
+		// Also remove the script
+		scriptPath := filepath.Join(os.Getenv("ProgramData"), "Sentinel", "bootstrap-recovery.ps1")
+		os.Remove(scriptPath)
+	} else if runtime.GOOS == "linux" {
+		os.Remove("/etc/cron.d/sentinel-bootstrap")
+		os.Remove("/usr/local/bin/sentinel-bootstrap-recovery.sh")
+		os.Remove("/opt/sentinel/bootstrap-recovery.sh")
+	}
+
+	log.Println("[Bootstrap] Bootstrap recovery task removed")
+	return nil
 }

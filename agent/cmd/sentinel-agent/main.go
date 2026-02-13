@@ -36,7 +36,7 @@ import (
 	"github.com/sentinel/agent/internal/peripheral"
 )
 
-var Version = "1.74.0"
+var Version = "1.75.0"
 
 const ServiceName = "SentinelAgent"
 
@@ -284,9 +284,13 @@ func NewAgent(cfg *config.Config) *Agent {
 
 	ft := filetransfer.New(nil)
 
-	// Create updater for autonomous updates
+	// Create updater for autonomous updates with resilient architecture
+	// Layer 1: WebSocket push (existing)
+	// Layer 2: Agent independent HTTP polling (30 min default, adaptive)
+	// Layer 3: Watchdog independent polling (Windows, 15 min)
+	// Layer 4: Bootstrap recovery task (6 hours, last resort)
 	agentUpdater := updater.New(cfg.ServerURL, Version)
-	agentUpdater.SetCheckInterval(1 * time.Hour) // Check for updates hourly
+	// Note: Updater now uses adaptive polling with sensible defaults
 
 	// Create protection manager
 	exePath, _ := os.Executable()
@@ -357,6 +361,13 @@ func (a *Agent) Start() error {
 	// Check for and report any completed update result
 	a.updater.SetDeviceID(a.cfg.DeviceID)
 	a.updater.CheckAndReportUpdateResult(a.ctx)
+
+	// Install bootstrap recovery task (Layer 4 - last resort recovery)
+	// This runs independently every 6 hours and can recover the agent
+	// even if both agent and watchdog are completely dead
+	if err := a.updater.InstallBootstrapRecoveryTask(a.cfg.ServerURL); err != nil {
+		log.Printf("Warning: Could not install bootstrap recovery task: %v", err)
+	}
 
 	// Enable protection mechanisms when running as service
 	if protection.IsRunningAsService() {
@@ -1025,6 +1036,10 @@ func (a *Agent) handlePing(msg *client.Message) error {
 }
 
 func (a *Agent) handleHeartbeatAck(msg *client.Message) error {
+	// Notify updater of successful server communication
+	// This enables adaptive polling - if WebSocket is healthy, polling can be less aggressive
+	a.updater.NotifyServerContact()
+
 	// Check if server indicated an update is available
 	// Server sends update info in 'payload' field, not 'data'
 	payloadData := msg.Payload
