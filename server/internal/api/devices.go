@@ -508,10 +508,18 @@ func (r *Router) executeCommand(c *gin.Context) {
 	commandID := uuid.New()
 	requestID := uuid.New().String()
 
+	// Handle API key auth (uuid.Nil) - set created_by to NULL
+	var createdBy interface{}
+	if userID == uuid.Nil {
+		createdBy = nil
+	} else {
+		createdBy = userID
+	}
+
 	_, err = r.db.Pool().Exec(ctx, `
 		INSERT INTO commands (id, device_id, command_type, command, status, created_by)
 		VALUES ($1, $2, $3, $4, 'pending', $5)
-	`, commandID, id, req.CommandType, req.Command, userID)
+	`, commandID, id, req.CommandType, req.Command, createdBy)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create command"})
 		return
