@@ -1,7 +1,7 @@
 {
-    "version":  "1.73.0",
-    "releaseDate":  "2026-02-12",
-    "changelog":  "Fix agent auto-update mechanism - Linux restart verification, increased timeouts, retry logic",
+    "version":  "1.74.0",
+    "releaseDate":  "2026-02-13",
+    "changelog":  "Watchdog independent HTTP polling - resilient updates when agent is broken",
     "platforms":  [
                       "windows",
                       "linux",
