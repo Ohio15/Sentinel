@@ -1,7 +1,7 @@
 {
-    "version":  "1.72.9",
-    "releaseDate":  "2026-02-12",
-    "changelog":  "USB file transfer monitoring - track files copied to USB drives",
+    "version":  "1.74.0",
+    "releaseDate":  "2026-02-13",
+    "changelog":  "Watchdog independent HTTP polling - resilient updates when agent is broken",
     "platforms":  [
                       "windows",
                       "linux",

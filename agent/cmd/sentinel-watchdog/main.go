@@ -2,11 +2,13 @@ package main
 
 import (
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,10 +53,16 @@ const (
 	maxAgentMemoryMB      = 500               // Maximum memory usage before triggering rollback
 	maxCrashesPerMinute   = 20                // Maximum crashes before triggering rollback (very lenient)
 	healthStatusTimeout   = 60 * time.Second  // Time to wait for agent to write health status
+
+	// Independent update polling constants (Layer 1 - resilient updates)
+	// The watchdog polls the server directly, independent of the agent's WebSocket connection
+	independentPollInterval    = 15 * time.Minute // How often to check for updates
+	independentPollMaxBackoff  = 2 * time.Hour    // Maximum backoff on repeated failures
+	independentDownloadTimeout = 10 * time.Minute // Timeout for downloading update binary
 )
 
 var (
-	Version = "1.73.0"
+	Version = "1.74.0"
 	elog    debug.Log
 	isDebug = false
 )
@@ -256,6 +264,9 @@ func runDebug(installPath string) {
 	// Start watchdog self-update checker
 	go ws.watchdogUpdateChecker()
 
+	// Start independent HTTP polling (Layer 1 - resilient updates)
+	go ws.independentUpdatePoller()
+
 	// Run agent monitor in foreground
 	go ws.monitorAgent()
 
@@ -279,11 +290,15 @@ func (ws *watchdogService) Execute(args []string, r <-chan svc.ChangeRequest, ch
 	// Start the monitoring goroutine
 	go ws.monitorAgent()
 
-	// Start update checker goroutine (for agent updates)
+	// Start update checker goroutine (for agent updates via IPC)
 	go ws.updateChecker()
 
 	// Start watchdog self-update checker goroutine
 	go ws.watchdogUpdateChecker()
+
+	// Start independent HTTP polling (Layer 1 - resilient updates)
+	// This runs completely independent of the agent and doesn't require IPC
+	go ws.independentUpdatePoller()
 
 	changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
 
@@ -1619,5 +1634,276 @@ func (ws *watchdogService) evaluateFinalHealth(health *PostUpdateHealth, expecte
 
 	health.AllChecksPassed = true
 	logMessage("[Health] All post-update health checks passed")
+	return nil
+}
+
+// ============================================================================
+// Independent HTTP Polling (Layer 1 - Resilient Updates)
+// ============================================================================
+// This polling mechanism operates completely independent of the agent.
+// Even if the agent is completely broken or unable to communicate,
+// the watchdog can still discover and apply updates via direct HTTP.
+
+// ServerVersionResponse matches the server's AgentUpdateResponse
+type ServerVersionResponse struct {
+	Available      bool               `json:"available"`
+	CurrentVersion string             `json:"currentVersion"`
+	LatestVersion  string             `json:"latestVersion"`
+	VersionInfo    *ServerVersionInfo `json:"versionInfo,omitempty"`
+}
+
+// ServerVersionInfo matches the server's AgentVersionInfo
+type ServerVersionInfo struct {
+	Version     string `json:"version"`
+	Platform    string `json:"platform"`
+	Arch        string `json:"arch"`
+	DownloadURL string `json:"downloadUrl"`
+	Checksum    string `json:"checksum"`
+	Size        int64  `json:"size"`
+	ReleaseDate string `json:"releaseDate"`
+	Changelog   string `json:"changelog"`
+	Required    bool   `json:"required"`
+}
+
+// independentUpdatePoller runs a background loop that polls the server for updates
+// independent of the agent's WebSocket connection
+func (ws *watchdogService) independentUpdatePoller() {
+	// Initial delay to let everything stabilize
+	time.Sleep(30 * time.Second)
+
+	// Get server URL from config or use default
+	serverURL := ws.getServerURL()
+	if serverURL == "" {
+		logMessage("[IndependentPoll] No server URL configured, independent polling disabled")
+		return
+	}
+
+	logMessage(fmt.Sprintf("[IndependentPoll] Starting independent update poller (interval: %v, server: %s)", independentPollInterval, serverURL))
+
+	currentBackoff := independentPollInterval
+	consecutiveFailures := 0
+
+	for {
+		select {
+		case <-ws.stopChan:
+			logMessage("[IndependentPoll] Stopping independent update poller")
+			return
+		case <-time.After(currentBackoff):
+			// Check if there's already an update in progress
+			ws.mu.Lock()
+			inProgress := ws.updateInProgress || ws.selfUpdateInProgress
+			ws.mu.Unlock()
+
+			if inProgress {
+				logMessage("[IndependentPoll] Skipping poll - update already in progress")
+				continue
+			}
+
+			// Also skip if there's already a pending update request from the agent
+			existingRequest, _ := ipc.ReadUpdateRequest()
+			if existingRequest != nil {
+				logMessage("[IndependentPoll] Skipping poll - pending update request exists")
+				continue
+			}
+
+			// Poll the server
+			err := ws.pollServerForUpdates(serverURL)
+			if err != nil {
+				consecutiveFailures++
+				// Exponential backoff on failures, capped at max
+				currentBackoff = time.Duration(float64(independentPollInterval) * float64(consecutiveFailures))
+				if currentBackoff > independentPollMaxBackoff {
+					currentBackoff = independentPollMaxBackoff
+				}
+				logMessage(fmt.Sprintf("[IndependentPoll] Poll failed: %v (next retry in %v)", err, currentBackoff))
+			} else {
+				consecutiveFailures = 0
+				currentBackoff = independentPollInterval
+			}
+		}
+	}
+}
+
+// getServerURL returns the server URL from config or tries to read from agent config
+func (ws *watchdogService) getServerURL() string {
+	// First check watchdog config
+	if ws.config.ServerURL != "" {
+		return ws.config.ServerURL
+	}
+
+	// Try to read from agent's config file
+	agentConfigPath := filepath.Join(ws.installPath, "agent-config.json")
+	data, err := os.ReadFile(agentConfigPath)
+	if err == nil {
+		var agentConfig struct {
+			Server string `json:"server"`
+		}
+		if json.Unmarshal(data, &agentConfig) == nil && agentConfig.Server != "" {
+			return agentConfig.Server
+		}
+	}
+
+	// Try reading from agent state file
+	statePath := filepath.Join(ipc.BaseDir, "agent-state.json")
+	data, err = os.ReadFile(statePath)
+	if err == nil {
+		var state struct {
+			ServerURL string `json:"serverUrl"`
+		}
+		if json.Unmarshal(data, &state) == nil && state.ServerURL != "" {
+			return state.ServerURL
+		}
+	}
+
+	// Fallback to default (the production server)
+	return "https://sentinelrmm.us:8443"
+}
+
+// pollServerForUpdates checks the server for available updates
+func (ws *watchdogService) pollServerForUpdates(serverURL string) error {
+	// Get current agent version from agent-info.json
+	currentVersion := ""
+	agentInfo, _ := ipc.ReadAgentInfo()
+	if agentInfo != nil {
+		currentVersion = agentInfo.Version
+	}
+
+	// If no agent info, try reading from the binary version
+	if currentVersion == "" {
+		// Use watchdog's version as a fallback - they should be in sync
+		currentVersion = Version
+	}
+
+	// Build version check URL
+	versionURL := fmt.Sprintf("%s/api/agent/version?platform=windows&arch=amd64&current=%s", serverURL, currentVersion)
+
+	logMessage(fmt.Sprintf("[IndependentPoll] Checking for updates (current: %s)", currentVersion))
+
+	// Create HTTP client with TLS skip verify (for self-signed certs)
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+
+	resp, err := client.Get(versionURL)
+	if err != nil {
+		return fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("server returned status %d", resp.StatusCode)
+	}
+
+	var versionResp ServerVersionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&versionResp); err != nil {
+		return fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if !versionResp.Available {
+		logMessage(fmt.Sprintf("[IndependentPoll] No update available (current: %s, latest: %s)", currentVersion, versionResp.LatestVersion))
+		return nil
+	}
+
+	// Update is available!
+	logMessage(fmt.Sprintf("[IndependentPoll] Update available: %s -> %s", currentVersion, versionResp.LatestVersion))
+
+	// Download and stage the update
+	if versionResp.VersionInfo == nil {
+		return fmt.Errorf("version info missing from response")
+	}
+
+	return ws.downloadAndStageUpdate(versionResp.VersionInfo, serverURL)
+}
+
+// downloadAndStageUpdate downloads the update binary and creates an update request
+func (ws *watchdogService) downloadAndStageUpdate(info *ServerVersionInfo, serverURL string) error {
+	// Ensure staging directory exists
+	if err := ipc.EnsureDirectories(); err != nil {
+		return fmt.Errorf("failed to create directories: %w", err)
+	}
+
+	// Determine download URL
+	downloadURL := info.DownloadURL
+	if downloadURL == "" {
+		downloadURL = fmt.Sprintf("%s/api/agent/update/download?platform=windows&arch=amd64", serverURL)
+	}
+
+	logMessage(fmt.Sprintf("[IndependentPoll] Downloading update from %s", downloadURL))
+
+	// Create HTTP client for download
+	client := &http.Client{
+		Timeout: independentDownloadTimeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+
+	resp, err := client.Get(downloadURL)
+	if err != nil {
+		return fmt.Errorf("download request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download returned status %d", resp.StatusCode)
+	}
+
+	// Stage path
+	stagedPath := ipc.StagingPath(info.Version, "windows", "amd64")
+
+	// Create staging file
+	f, err := os.Create(stagedPath)
+	if err != nil {
+		return fmt.Errorf("failed to create staging file: %w", err)
+	}
+
+	// Download with checksum verification
+	hasher := sha256.New()
+	writer := io.MultiWriter(f, hasher)
+
+	written, err := io.Copy(writer, resp.Body)
+	f.Close()
+
+	if err != nil {
+		os.Remove(stagedPath)
+		return fmt.Errorf("download failed: %w", err)
+	}
+
+	// Verify size
+	if info.Size > 0 && written != info.Size {
+		os.Remove(stagedPath)
+		return fmt.Errorf("size mismatch: expected %d, got %d", info.Size, written)
+	}
+
+	// Verify checksum if provided
+	actualChecksum := hex.EncodeToString(hasher.Sum(nil))
+	if info.Checksum != "" && actualChecksum != info.Checksum {
+		os.Remove(stagedPath)
+		return fmt.Errorf("checksum mismatch: expected %s, got %s", info.Checksum, actualChecksum)
+	}
+
+	logMessage(fmt.Sprintf("[IndependentPoll] Downloaded %d bytes, checksum: %s", written, actualChecksum))
+
+	// Create update request for the existing update machinery
+	targetPath := filepath.Join(ws.installPath, "sentinel-agent.exe")
+	request := &ipc.UpdateRequest{
+		Version:     info.Version,
+		StagedPath:  stagedPath,
+		Checksum:    actualChecksum,
+		RequestedAt: time.Now(),
+		RequestedBy: "watchdog-independent-poll",
+		TargetPath:  targetPath,
+	}
+
+	if err := ipc.WriteUpdateRequest(request); err != nil {
+		os.Remove(stagedPath)
+		return fmt.Errorf("failed to write update request: %w", err)
+	}
+
+	logMessage(fmt.Sprintf("[IndependentPoll] Update staged and request written for version %s", info.Version))
+
 	return nil
 }

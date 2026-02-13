@@ -1,88 +1,147 @@
 #!/usr/bin/env python3
 """
-Remote Agent Recovery - Sends a PowerShell command to update a Windows agent
+Remote Agent Recovery - Two-step approach:
+1. Upload a batch file to the agent
+2. Execute the batch file to perform recovery
+
 Usage: python3 send-recovery-command.py <device_id>
 """
 import json
 import sys
 import urllib.request
 import ssl
+import base64
+import time
 
 API_KEY = "REDACTED_API_KEY"
 BASE_URL = "https://localhost"
 
-# PowerShell script that creates a scheduled task for recovery
-PS_SCRIPT = r'''
-$script = @'
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-$url = "https://sentinelrmm.us:8443/api/agent/update/download?platform=windows&arch=amd64"
-$tmp = "$env:TEMP\sentinel-update.exe"
-$agent = "C:\Program Files\Sentinel\sentinel-agent.exe"
-try {
-    Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -TimeoutSec 180
-    Stop-Service SentinelWatchdog -Force -ErrorAction SilentlyContinue
-    Stop-Service SentinelAgent -Force -ErrorAction SilentlyContinue
-    Start-Sleep 3
-    Copy-Item $tmp $agent -Force
-    Remove-Item $tmp -Force -ErrorAction SilentlyContinue
-    Start-Service SentinelWatchdog
-    Start-Service SentinelAgent
-} catch {
-    Start-Service SentinelAgent -ErrorAction SilentlyContinue
-}
-schtasks /delete /tn SentinelRecovery /f 2>$null
-'@
-$enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
-$time = (Get-Date).AddSeconds(30).ToString("HH:mm")
-schtasks /delete /tn SentinelRecovery /f 2>$null
-schtasks /create /tn SentinelRecovery /tr "powershell -ep bypass -enc $enc" /sc once /st $time /ru SYSTEM /f /rl HIGHEST
-Write-Output "Recovery scheduled for $time"
-'''
+# Batch file content for recovery
+BATCH_CONTENT = r"""@echo off
+cd /d %TEMP%
+curl -k -o sa.exe https://sentinelrmm.us:8443/api/agent/update/download?platform=windows^&arch=amd64
+if not exist sa.exe exit /b 1
+sc stop SentinelWatchdog
+sc stop SentinelAgent
+ping -n 5 127.0.0.1 > nul
+taskkill /F /IM sentinel-watchdog.exe 2>nul
+taskkill /F /IM sentinel-agent.exe 2>nul
+ping -n 3 127.0.0.1 > nul
+copy /Y sa.exe "C:\Program Files\Sentinel\sentinel-agent.exe"
+del sa.exe
+sc start SentinelWatchdog
+sc start SentinelAgent
+del "%~f0"
+"""
 
-def send_recovery_command(device_id):
-    url = f"{BASE_URL}/api/devices/{device_id}/commands"
-
-    data = json.dumps({
-        "command": PS_SCRIPT,
-        "commandType": "powershell"
-    }).encode('utf-8')
-
-    # Create SSL context that doesn't verify (for localhost)
+def make_request(url, data, method="POST"):
+    """Make an API request"""
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
 
     req = urllib.request.Request(
         url,
-        data=data,
+        data=json.dumps(data).encode('utf-8') if data else None,
         headers={
             "X-API-Key": API_KEY,
             "Content-Type": "application/json"
         },
-        method="POST"
+        method=method
     )
 
     try:
         with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
-            result = response.read().decode('utf-8')
-            print(f"Status: {response.status}")
-            print(f"Response: {result}")
-            return True
+            return response.status, response.read().decode('utf-8')
     except urllib.error.HTTPError as e:
-        print(f"HTTP Error: {e.code}")
-        print(f"Response: {e.read().decode('utf-8')}")
-        return False
+        return e.code, e.read().decode('utf-8')
     except Exception as e:
-        print(f"Error: {e}")
+        return 0, str(e)
+
+def send_websocket_message(device_id, msg_type, payload):
+    """Send a WebSocket message via the command API"""
+    # We need to use the file upload endpoint or similar
+    # For now, use a direct hub message if available
+    pass
+
+def upload_file(device_id, remote_path, content):
+    """Upload a file to the agent using the upload_file message"""
+    # The agent's handleUploadFile expects:
+    # - remotePath: destination path
+    # - data: base64 encoded file content
+    # - append: boolean
+
+    # Need to send this via WebSocket, not REST API
+    # Let's try a different approach - use the command to create the file
+    pass
+
+def execute_recovery(device_id):
+    print(f"Step 1: Creating recovery batch file on agent...")
+
+    # Use echo commands to create the batch file
+    # Split into smaller chunks to avoid length issues
+    lines = BATCH_CONTENT.strip().split('\n')
+
+    # First create the file with the first line
+    create_cmd = f'echo {lines[0]} > %TEMP%\\recovery.bat'
+
+    status, response = make_request(
+        f"{BASE_URL}/api/devices/{device_id}/commands",
+        {"command": create_cmd, "commandType": "shell"}
+    )
+    print(f"  Create file: {status} - {response[:200] if len(response) > 200 else response}")
+
+    if status != 200:
         return False
+
+    time.sleep(1)
+
+    # Append remaining lines
+    for line in lines[1:]:
+        if line.strip():
+            # Escape special characters
+            escaped_line = line.replace('^', '^^').replace('&', '^&').replace('|', '^|').replace('<', '^<').replace('>', '^>').replace('%', '%%')
+            append_cmd = f'echo {escaped_line} >> %TEMP%\\recovery.bat'
+            status, response = make_request(
+                f"{BASE_URL}/api/devices/{device_id}/commands",
+                {"command": append_cmd, "commandType": "shell"}
+            )
+            if status != 200:
+                print(f"  Warning: Failed to append line: {response[:100]}")
+            time.sleep(0.5)
+
+    print(f"Step 2: Executing recovery batch file...")
+
+    # Create a scheduled task to run the batch file
+    exec_cmd = r'schtasks /create /tn SR /tr "%TEMP%\recovery.bat" /sc once /st 00:00 /ru SYSTEM /f /rl HIGHEST'
+    status, response = make_request(
+        f"{BASE_URL}/api/devices/{device_id}/commands",
+        {"command": exec_cmd, "commandType": "shell"}
+    )
+    print(f"  Create task: {status} - {response[:200] if len(response) > 200 else response}")
+
+    if status != 200:
+        return False
+
+    time.sleep(1)
+
+    # Run the scheduled task
+    run_cmd = 'schtasks /run /tn SR'
+    status, response = make_request(
+        f"{BASE_URL}/api/devices/{device_id}/commands",
+        {"command": run_cmd, "commandType": "shell"}
+    )
+    print(f"  Run task: {status} - {response[:200] if len(response) > 200 else response}")
+
+    return status == 200
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python3 send-recovery-command.py <device_id>")
-        print("Example: python3 send-recovery-command.py 3d762e83-0bea-4b39-b2c7-2e50427c7fdf")
         sys.exit(1)
 
     device_id = sys.argv[1]
-    print(f"Sending recovery command to device {device_id}...")
-    success = send_recovery_command(device_id)
+    print(f"Starting recovery for device {device_id}...")
+    success = execute_recovery(device_id)
+    print(f"\nRecovery {'initiated' if success else 'failed'}")
     sys.exit(0 if success else 1)
