@@ -1,7 +1,7 @@
 {
-    "version":  "1.74.0",
+    "version":  "1.75.0",
     "releaseDate":  "2026-02-13",
-    "changelog":  "Watchdog independent HTTP polling - resilient updates when agent is broken",
+    "changelog":  "Resilient 4-layer update architecture: WebSocket push, agent HTTP polling, watchdog polling, bootstrap recovery",
     "platforms":  [
                       "windows",
                       "linux",
