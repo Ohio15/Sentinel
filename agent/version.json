@@ -1,7 +1,7 @@
 {
-    "version":  "1.75.0",
-    "releaseDate":  "2026-02-13",
-    "changelog":  "Watchdog independent HTTP polling - resilient updates when agent is broken",
+    "version":  "1.75.1",
+    "releaseDate":  "2026-02-16",
+    "changelog":  "Fix dashboard WebSocket auth, add missing command/script handlers, clean Traefik config",
     "platforms":  [
                       "windows",
                       "linux",

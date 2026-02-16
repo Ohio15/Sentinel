@@ -44,7 +44,17 @@ func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
 			tokenString = c.Query("token")
 		}
 
+		// Debug logging for WebSocket auth failures
+		isWS := strings.Contains(c.Request.URL.Path, "/ws/")
+		if isWS {
+			log.Printf("[AUTH-WS] Path=%s Query=%s HasHeader=%v TokenLen=%d ClientIP=%s",
+				c.Request.URL.Path, c.Request.URL.RawQuery, authHeader != "", len(tokenString), c.ClientIP())
+		}
+
 		if tokenString == "" {
+			if isWS {
+				log.Printf("[AUTH-WS] REJECTED: No token found for %s from %s", c.Request.URL.Path, c.ClientIP())
+			}
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization required"})
 			c.Abort()
 			return
@@ -60,6 +70,9 @@ func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
 		})
 
 		if err != nil {
+			if isWS {
+				log.Printf("[AUTH-WS] REJECTED: Invalid token for %s from %s: %v", c.Request.URL.Path, c.ClientIP(), err)
+			}
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
 			c.Abort()
 			return
