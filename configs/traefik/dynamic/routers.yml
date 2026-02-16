@@ -20,6 +20,16 @@ http:
         - rateLimit
       priority: 10
 
+    # WebSocket routes for agents (port 443 fallback for older agents)
+    ws-agent-443:
+      rule: "Host(`sentinelrmm.us`) && (PathPrefix(`/ws/agent`) || PathPrefix(`/ws`))"
+      entryPoints:
+        - websecure
+      service: backend
+      tls:
+        certResolver: letsencrypt
+      priority: 12
+
     # WebSocket routes for dashboard
     ws-dashboard:
       rule: "Host(`sentinelrmm.us`) && PathPrefix(`/ws/dashboard`)"
@@ -66,6 +76,14 @@ http:
         - securityHeaders
         - rateLimit
       priority: 10
+
+    ws-agent-local:
+      rule: "Host(`localhost`) && (PathPrefix(`/ws/agent`) || PathPrefix(`/ws`))"
+      entryPoints:
+        - websecure
+      service: backend
+      tls: {}
+      priority: 12
 
     ws-dashboard-local:
       rule: "Host(`localhost`) && PathPrefix(`/ws/dashboard`)"

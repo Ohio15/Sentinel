@@ -285,5 +285,50 @@ func (r *Router) handleDashboardMessage(userID uuid.UUID, message []byte) {
 			},
 		})
 		r.hub.SendToAgent(agentID, agentMsg)
+
+	case ws.MsgTypeCommand:
+		// Forward command execution to agent
+		var cmdPayload struct {
+			Command     string `json:"command"`
+			CommandType string `json:"commandType"`
+			CommandID   string `json:"commandId"`
+		}
+		json.Unmarshal(msg.Payload, &cmdPayload)
+		log.Printf("[Dashboard] Forwarding execute_command to agent %s: type=%s", agentID, cmdPayload.CommandType)
+		agentMsg, _ := json.Marshal(map[string]interface{}{
+			"type":      ws.MsgTypeCommand,
+			"requestId": msg.RequestID,
+			"data": map[string]interface{}{
+				"command":     cmdPayload.Command,
+				"commandType": cmdPayload.CommandType,
+				"commandId":   cmdPayload.CommandID,
+			},
+		})
+		r.hub.SendToAgent(agentID, agentMsg)
+
+	case ws.MsgTypeScript:
+		// Forward script execution to agent
+		var scriptPayload struct {
+			ScriptID string `json:"scriptId"`
+			Language string `json:"language"`
+			Content  string `json:"content"`
+			Name     string `json:"name"`
+		}
+		json.Unmarshal(msg.Payload, &scriptPayload)
+		log.Printf("[Dashboard] Forwarding execute_script to agent %s: script=%s", agentID, scriptPayload.Name)
+		agentMsg, _ := json.Marshal(map[string]interface{}{
+			"type":      ws.MsgTypeScript,
+			"requestId": msg.RequestID,
+			"data": map[string]interface{}{
+				"scriptId": scriptPayload.ScriptID,
+				"language": scriptPayload.Language,
+				"content":  scriptPayload.Content,
+				"name":     scriptPayload.Name,
+			},
+		})
+		r.hub.SendToAgent(agentID, agentMsg)
+
+	default:
+		log.Printf("[Dashboard] Unknown message type: %s from user %s", msg.Type, userID)
 	}
 }
