@@ -212,7 +212,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
 
     try {
       const baseUrl = window.location.origin;
-      const downloadUrl = `${baseUrl}/api/agent/installer?platform=${encodeURIComponent(platform)}&arch=${encodeURIComponent(arch)}`;
+      const downloadUrl = `${baseUrl}/api/agents/installer?platform=${encodeURIComponent(platform)}&arch=${encodeURIComponent(arch)}`;
 
       // Get auth token from localStorage
       const token = localStorage.getItem('token');
