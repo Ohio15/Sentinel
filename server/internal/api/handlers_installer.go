@@ -1,9 +1,12 @@
 package api
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -186,13 +189,9 @@ func generateInstallerDownloadHandler(services *Services) gin.HandlerFunc {
 			log.Printf("[Installer] macOS PKG config injection not yet implemented - returning base package")
 
 		case "synology":
-			// TODO: For Synology SPK packages, configuration injection requires modifying
-			// the package contents (adding a config file inside). For now, return the
-			// base package with instructions to configure via command-line.
-			outputData = installerData
+			outputData, err = injectConfigSynology(installerData, config)
 			filename = fmt.Sprintf("sentinel-agent-%s.spk", arch)
 			contentType = "application/octet-stream"
-			log.Printf("[Installer] Synology SPK config injection not yet implemented - returning base package")
 
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Unsupported platform"})
@@ -410,6 +409,140 @@ func injectConfigWindows(installerData []byte, config InstallerConfig) ([]byte, 
 
 	log.Printf("[Installer] Windows: Appended config marker with %d bytes of config", len(configJSON))
 	return result, nil
+}
+
+// injectConfigSynology replaces placeholder values in the config.json inside an SPK package.
+// SPK structure: outer tar containing INFO, package.tgz, and scripts/.
+// package.tgz is a gzipped tar containing binaries and config.json.
+func injectConfigSynology(spkData []byte, config InstallerConfig) ([]byte, error) {
+	// Build the agent-compatible config JSON (field names match agent Config struct)
+	agentConfig := map[string]interface{}{
+		"server_url":       config.ServerURL,
+		"grpc_address":     config.GRPCEndpoint,
+		"enrollment_token": config.EnrollmentToken,
+	}
+	configJSON, err := json.MarshalIndent(agentConfig, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal agent config: %w", err)
+	}
+	configJSON = append(configJSON, '\n')
+
+	// Parse the outer SPK tar
+	spkReader := tar.NewReader(bytes.NewReader(spkData))
+	var spkBuf bytes.Buffer
+	spkWriter := tar.NewWriter(&spkBuf)
+
+	for {
+		header, err := spkReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to read SPK tar entry: %w", err)
+		}
+
+		entryData, err := io.ReadAll(spkReader)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read SPK entry %s: %w", header.Name, err)
+		}
+
+		if header.Name == "package.tgz" {
+			// Rewrite package.tgz with injected config
+			entryData, err = rewritePackageTgz(entryData, configJSON)
+			if err != nil {
+				return nil, fmt.Errorf("failed to rewrite package.tgz: %w", err)
+			}
+			header.Size = int64(len(entryData))
+		}
+
+		if err := spkWriter.WriteHeader(header); err != nil {
+			return nil, fmt.Errorf("failed to write SPK header %s: %w", header.Name, err)
+		}
+		if _, err := spkWriter.Write(entryData); err != nil {
+			return nil, fmt.Errorf("failed to write SPK entry %s: %w", header.Name, err)
+		}
+	}
+
+	if err := spkWriter.Close(); err != nil {
+		return nil, fmt.Errorf("failed to finalize SPK tar: %w", err)
+	}
+
+	log.Printf("[Installer] Synology SPK: Injected config (%d bytes) into package.tgz", len(configJSON))
+	return spkBuf.Bytes(), nil
+}
+
+// rewritePackageTgz unpacks a gzipped tar, replaces config.json, and repacks it.
+func rewritePackageTgz(tgzData, configJSON []byte) ([]byte, error) {
+	// Decompress
+	gzReader, err := gzip.NewReader(bytes.NewReader(tgzData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to open gzip: %w", err)
+	}
+	defer gzReader.Close()
+
+	tarReader := tar.NewReader(gzReader)
+
+	// Repack into new tgz
+	var outBuf bytes.Buffer
+	gzWriter := gzip.NewWriter(&outBuf)
+	tarWriter := tar.NewWriter(gzWriter)
+
+	configReplaced := false
+
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to read package.tgz entry: %w", err)
+		}
+
+		entryData, err := io.ReadAll(tarReader)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read entry %s: %w", header.Name, err)
+		}
+
+		// Replace config.json content (handle both ./config.json and config.json)
+		baseName := filepath.Base(header.Name)
+		if baseName == "config.json" {
+			entryData = configJSON
+			header.Size = int64(len(entryData))
+			configReplaced = true
+		}
+
+		if err := tarWriter.WriteHeader(header); err != nil {
+			return nil, fmt.Errorf("failed to write header %s: %w", header.Name, err)
+		}
+		if _, err := tarWriter.Write(entryData); err != nil {
+			return nil, fmt.Errorf("failed to write entry %s: %w", header.Name, err)
+		}
+	}
+
+	// If config.json wasn't in the original archive, add it
+	if !configReplaced {
+		header := &tar.Header{
+			Name:    "config.json",
+			Size:    int64(len(configJSON)),
+			Mode:    0640,
+			ModTime: time.Now(),
+		}
+		if err := tarWriter.WriteHeader(header); err != nil {
+			return nil, fmt.Errorf("failed to write new config.json header: %w", err)
+		}
+		if _, err := tarWriter.Write(configJSON); err != nil {
+			return nil, fmt.Errorf("failed to write new config.json: %w", err)
+		}
+	}
+
+	if err := tarWriter.Close(); err != nil {
+		return nil, fmt.Errorf("failed to finalize inner tar: %w", err)
+	}
+	if err := gzWriter.Close(); err != nil {
+		return nil, fmt.Errorf("failed to finalize gzip: %w", err)
+	}
+
+	return outBuf.Bytes(), nil
 }
 
 // padConfigString pads a string to exactly the specified length
