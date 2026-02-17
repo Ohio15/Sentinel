@@ -5,7 +5,7 @@ REM Usage: scripts\deploy-web.bat
 setlocal
 
 set REMOTE_HOST=ohio_@192.168.1.20
-set REMOTE_PATH=D:/Projects/Sentinel
+set REMOTE_PATH=~/Sentinel
 set LOCAL_PATH=D:\Projects\Sentinel
 
 echo === Building web frontend ===
@@ -18,14 +18,14 @@ if not exist "%LOCAL_PATH%\dist\web\portal" mkdir "%LOCAL_PATH%\dist\web\portal"
 copy /Y "%LOCAL_PATH%\src\portal\*" "%LOCAL_PATH%\dist\web\portal\"
 
 echo === Cleaning old assets on remote ===
-ssh %REMOTE_HOST% "cd /d %REMOTE_PATH%/dist/web/assets && del /Q *.js *.css 2>nul || echo No old assets"
+ssh %REMOTE_HOST% "rm -f %REMOTE_PATH%/dist/web/assets/*.js %REMOTE_PATH%/dist/web/assets/*.css 2>/dev/null; echo Old assets cleaned"
 
 echo === Deploying to remote server ===
 scp -r "%LOCAL_PATH%\dist\web\*" "%REMOTE_HOST%:%REMOTE_PATH%/dist/web/"
 if errorlevel 1 goto :error
 
 echo === Verifying deployment ===
-ssh %REMOTE_HOST% "docker exec sentinel-frontend cat /usr/share/nginx/html/index.html"
+ssh %REMOTE_HOST% "ls -la %REMOTE_PATH%/dist/web/assets/index-*.js %REMOTE_PATH%/dist/web/assets/index-*.css"
 
 echo.
 echo === Deployment complete ===
