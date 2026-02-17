@@ -1,7 +1,7 @@
 {
-    "version":  "1.75.2",
-    "releaseDate":  "2026-02-16",
-    "changelog":  "Fix dashboard WebSocket auth, add missing command/script handlers, clean Traefik config",
+    "version":  "1.75.3",
+    "releaseDate":  "2026-02-17",
+    "changelog":  "Fix SPK binary truncation - use streaming tar repack with clean headers",
     "platforms":  [
                       "windows",
                       "linux",

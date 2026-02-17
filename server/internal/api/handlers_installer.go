@@ -430,6 +430,7 @@ func injectConfigSynology(spkData []byte, config InstallerConfig) ([]byte, error
 	// Parse the outer SPK tar
 	spkReader := tar.NewReader(bytes.NewReader(spkData))
 	var spkBuf bytes.Buffer
+	spkBuf.Grow(len(spkData) + 4096) // Pre-allocate
 	spkWriter := tar.NewWriter(&spkBuf)
 
 	for {
@@ -441,25 +442,68 @@ func injectConfigSynology(spkData []byte, config InstallerConfig) ([]byte, error
 			return nil, fmt.Errorf("failed to read SPK tar entry: %w", err)
 		}
 
-		entryData, err := io.ReadAll(spkReader)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read SPK entry %s: %w", header.Name, err)
-		}
-
 		if header.Name == "package.tgz" {
-			// Rewrite package.tgz with injected config
-			entryData, err = rewritePackageTgz(entryData, configJSON)
+			// Read the full package.tgz to rewrite it
+			tgzData, err := io.ReadAll(spkReader)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read package.tgz: %w", err)
+			}
+			log.Printf("[Installer] SPK: Read package.tgz (%d bytes)", len(tgzData))
+
+			newTgz, err := rewritePackageTgz(tgzData, configJSON)
 			if err != nil {
 				return nil, fmt.Errorf("failed to rewrite package.tgz: %w", err)
 			}
-			header.Size = int64(len(entryData))
-		}
+			log.Printf("[Installer] SPK: Rewritten package.tgz (%d bytes -> %d bytes)", len(tgzData), len(newTgz))
 
-		if err := spkWriter.WriteHeader(header); err != nil {
-			return nil, fmt.Errorf("failed to write SPK header %s: %w", header.Name, err)
-		}
-		if _, err := spkWriter.Write(entryData); err != nil {
-			return nil, fmt.Errorf("failed to write SPK entry %s: %w", header.Name, err)
+			// Write with clean header and updated size
+			newHeader := &tar.Header{
+				Typeflag: tar.TypeReg,
+				Name:     header.Name,
+				Size:     int64(len(newTgz)),
+				Mode:     header.Mode,
+				ModTime:  header.ModTime,
+				Format:   tar.FormatGNU,
+			}
+			if err := spkWriter.WriteHeader(newHeader); err != nil {
+				return nil, fmt.Errorf("failed to write package.tgz header: %w", err)
+			}
+			n, err := spkWriter.Write(newTgz)
+			if err != nil {
+				return nil, fmt.Errorf("failed to write package.tgz data: %w", err)
+			}
+			if n != len(newTgz) {
+				return nil, fmt.Errorf("short write for package.tgz: wrote %d of %d bytes", n, len(newTgz))
+			}
+		} else {
+			// Stream other entries through with clean headers to avoid format issues
+			typeflag := header.Typeflag
+			name := header.Name
+			if typeflag == tar.TypeDir {
+				if !strings.HasSuffix(name, "/") {
+					name += "/"
+				}
+			}
+			newHeader := &tar.Header{
+				Typeflag: typeflag,
+				Name:     name,
+				Size:     header.Size,
+				Mode:     header.Mode,
+				ModTime:  header.ModTime,
+				Format:   tar.FormatGNU,
+			}
+			if err := spkWriter.WriteHeader(newHeader); err != nil {
+				return nil, fmt.Errorf("failed to write SPK header %s: %w", header.Name, err)
+			}
+			if header.Size > 0 {
+				n, err := io.Copy(spkWriter, spkReader)
+				if err != nil {
+					return nil, fmt.Errorf("failed to stream SPK entry %s: %w", header.Name, err)
+				}
+				if n != header.Size {
+					return nil, fmt.Errorf("short copy for SPK entry %s: %d of %d bytes", header.Name, n, header.Size)
+				}
+			}
 		}
 	}
 
@@ -467,11 +511,13 @@ func injectConfigSynology(spkData []byte, config InstallerConfig) ([]byte, error
 		return nil, fmt.Errorf("failed to finalize SPK tar: %w", err)
 	}
 
-	log.Printf("[Installer] Synology SPK: Injected config (%d bytes) into package.tgz", len(configJSON))
+	log.Printf("[Installer] Synology SPK: Injected config (%d bytes), output size: %d bytes", len(configJSON), spkBuf.Len())
 	return spkBuf.Bytes(), nil
 }
 
 // rewritePackageTgz unpacks a gzipped tar, replaces config.json, and repacks it.
+// Uses streaming io.Copy for large entries (binaries) and clean tar headers to avoid
+// format-specific issues that can cause truncation with Go's archive/tar package.
 func rewritePackageTgz(tgzData, configJSON []byte) ([]byte, error) {
 	// Decompress
 	gzReader, err := gzip.NewReader(bytes.NewReader(tgzData))
@@ -482,8 +528,9 @@ func rewritePackageTgz(tgzData, configJSON []byte) ([]byte, error) {
 
 	tarReader := tar.NewReader(gzReader)
 
-	// Repack into new tgz
+	// Repack into new tgz with pre-allocated buffer
 	var outBuf bytes.Buffer
+	outBuf.Grow(len(tgzData) + 4096)
 	gzWriter := gzip.NewWriter(&outBuf)
 	tarWriter := tar.NewWriter(gzWriter)
 
@@ -498,34 +545,73 @@ func rewritePackageTgz(tgzData, configJSON []byte) ([]byte, error) {
 			return nil, fmt.Errorf("failed to read package.tgz entry: %w", err)
 		}
 
-		entryData, err := io.ReadAll(tarReader)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read entry %s: %w", header.Name, err)
-		}
-
-		// Replace config.json content (handle both ./config.json and config.json)
 		baseName := filepath.Base(header.Name)
-		if baseName == "config.json" {
-			entryData = configJSON
-			header.Size = int64(len(entryData))
-			configReplaced = true
-		}
 
-		if err := tarWriter.WriteHeader(header); err != nil {
-			return nil, fmt.Errorf("failed to write header %s: %w", header.Name, err)
-		}
-		if _, err := tarWriter.Write(entryData); err != nil {
-			return nil, fmt.Errorf("failed to write entry %s: %w", header.Name, err)
+		if baseName == "config.json" {
+			// Replace config.json with injected config
+			newHeader := &tar.Header{
+				Typeflag: tar.TypeReg,
+				Name:     header.Name,
+				Size:     int64(len(configJSON)),
+				Mode:     header.Mode,
+				ModTime:  header.ModTime,
+				Format:   tar.FormatGNU,
+			}
+			if err := tarWriter.WriteHeader(newHeader); err != nil {
+				return nil, fmt.Errorf("failed to write config.json header: %w", err)
+			}
+			if _, err := tarWriter.Write(configJSON); err != nil {
+				return nil, fmt.Errorf("failed to write config.json data: %w", err)
+			}
+			// Drain the original config.json data from the reader
+			if _, err := io.Copy(io.Discard, tarReader); err != nil {
+				return nil, fmt.Errorf("failed to drain original config.json: %w", err)
+			}
+			configReplaced = true
+			log.Printf("[Installer] package.tgz: Replaced config.json (%d bytes)", len(configJSON))
+		} else {
+			// Stream entry through with clean header (avoids format-specific field issues)
+			typeflag := header.Typeflag
+			if typeflag == 0 {
+				typeflag = tar.TypeReg // Normalize TypeRegA ('\0') to TypeReg ('0')
+			}
+			newHeader := &tar.Header{
+				Typeflag: typeflag,
+				Name:     header.Name,
+				Size:     header.Size,
+				Mode:     header.Mode,
+				ModTime:  header.ModTime,
+				Format:   tar.FormatGNU,
+			}
+			if typeflag == tar.TypeDir && !strings.HasSuffix(newHeader.Name, "/") {
+				newHeader.Name += "/"
+			}
+			if err := tarWriter.WriteHeader(newHeader); err != nil {
+				return nil, fmt.Errorf("failed to write header %s: %w", header.Name, err)
+			}
+			if header.Size > 0 {
+				// Stream data directly from tar reader to tar writer (no buffering)
+				n, err := io.Copy(tarWriter, tarReader)
+				if err != nil {
+					return nil, fmt.Errorf("failed to stream entry %s: %w", header.Name, err)
+				}
+				if n != header.Size {
+					return nil, fmt.Errorf("short copy for %s: copied %d of %d bytes", header.Name, n, header.Size)
+				}
+				log.Printf("[Installer] package.tgz: Streamed %s (%d bytes)", header.Name, n)
+			}
 		}
 	}
 
 	// If config.json wasn't in the original archive, add it
 	if !configReplaced {
 		header := &tar.Header{
-			Name:    "config.json",
-			Size:    int64(len(configJSON)),
-			Mode:    0640,
-			ModTime: time.Now(),
+			Typeflag: tar.TypeReg,
+			Name:     "config.json",
+			Size:     int64(len(configJSON)),
+			Mode:     0640,
+			ModTime:  time.Now(),
+			Format:   tar.FormatGNU,
 		}
 		if err := tarWriter.WriteHeader(header); err != nil {
 			return nil, fmt.Errorf("failed to write new config.json header: %w", err)
@@ -533,6 +619,7 @@ func rewritePackageTgz(tgzData, configJSON []byte) ([]byte, error) {
 		if _, err := tarWriter.Write(configJSON); err != nil {
 			return nil, fmt.Errorf("failed to write new config.json: %w", err)
 		}
+		log.Printf("[Installer] package.tgz: Added new config.json (%d bytes)", len(configJSON))
 	}
 
 	if err := tarWriter.Close(); err != nil {
