@@ -79,12 +79,12 @@ if [ -f "${WATCHDOG_BINARY}" ]; then
 fi
 
 # Create default config template
+# Field names must match agent's internal/config/config.go struct tags
 cat > "${PACKAGE_DIR}/config.json" << 'CONFIGEOF'
 {
   "server_url": "%%SERVER_URL%%",
-  "grpc_endpoint": "%%GRPC_ENDPOINT%%",
-  "enrollment_token": "%%ENROLLMENT_TOKEN%%",
-  "organization_id": "%%ORGANIZATION_ID%%"
+  "grpc_address": "%%GRPC_ADDRESS%%",
+  "enrollment_token": "%%ENROLLMENT_TOKEN%%"
 }
 CONFIGEOF
 chmod 640 "${PACKAGE_DIR}/config.json"

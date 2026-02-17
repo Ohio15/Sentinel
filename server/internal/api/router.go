@@ -296,6 +296,10 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			// Agent installer (generates pre-configured script for direct download)
 			protected.GET("/installer/:platform", generateConfiguredInstallerHandler(services))
 
+			// Agent installer with platform/arch query params (generates SPK/EXE with embedded config)
+			// GET /api/agent/installer?platform=synology&arch=amd64
+			protected.GET("/agent/installer", generateInstallerDownloadHandler(services))
+
 			// Inventory endpoints (new)
 			protected.GET("/devices/:id/inventory", inventoryHandlers.GetDeviceInventory)
 			protected.GET("/devices/:id/inventory/software", inventoryHandlers.GetDeviceSoftware)
