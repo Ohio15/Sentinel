@@ -31,6 +31,11 @@ entryPoints:
         certResolver: letsencrypt
       # NOTE: Middlewares moved to individual routers to avoid interfering with WebSocket upgrades
       # WebSocket connections fail when entrypoint-level middlewares modify upgrade headers
+    # Disable HTTP/2 so browsers use HTTP/1.1 which supports WebSocket Upgrade natively
+    # Without this, browsers negotiate HTTP/2 via ALPN and WebSocket fails silently
+    # (Traefik doesn't support HTTP/2 Extended CONNECT for WebSocket bootstrapping)
+    http2:
+      maxConcurrentStreams: 0
 
   # Alternate HTTPS port (bypasses router cache issues on 443)
   websecure-alt:
