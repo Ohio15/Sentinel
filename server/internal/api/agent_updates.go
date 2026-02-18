@@ -400,6 +400,38 @@ func (r *Router) reportUpdateStatus(c *gin.Context) {
 		r.db.Pool().Exec(c.Request.Context(), `
 			UPDATE devices SET agent_version = $1, updated_at = NOW() WHERE agent_id = $2
 		`, req.ToVersion, req.AgentID)
+
+		// Auto-resolve any open "Update Loop" alerts for this device
+		result, resolveErr := r.db.Pool().Exec(c.Request.Context(), `
+			UPDATE alerts
+			SET status = 'resolved', resolved_at = NOW()
+			WHERE device_id = (SELECT id FROM devices WHERE agent_id = $1 LIMIT 1)
+			  AND status = 'open'
+			  AND title LIKE '%Update Loop%'
+		`, req.AgentID)
+		if resolveErr == nil && result.RowsAffected() > 0 {
+			log.Printf("Auto-resolved update loop alert for agent %s after successful update to %s", req.AgentID, req.ToVersion)
+
+			// Broadcast resolution to dashboards
+			if r.hub != nil {
+				var deviceID uuid.UUID
+				var hostname string
+				_ = r.db.Pool().QueryRow(c.Request.Context(),
+					`SELECT id, COALESCE(hostname, '') FROM devices WHERE agent_id = $1`, req.AgentID,
+				).Scan(&deviceID, &hostname)
+
+				msg, _ := json.Marshal(map[string]interface{}{
+					"type": "alert_resolved",
+					"alert": map[string]interface{}{
+						"deviceId": deviceID,
+						"hostname": hostname,
+						"title":    "Agent Update Loop Resolved",
+						"status":   "resolved",
+					},
+				})
+				r.hub.BroadcastToDashboards(msg)
+			}
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Status updated"})

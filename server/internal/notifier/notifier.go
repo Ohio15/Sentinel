@@ -70,6 +70,17 @@ func (s *Service) SetDatabase(db *pgxpool.Pool) {
 func (s *Service) SendAlert(alert *alerting.Alert, device *alerting.DeviceMetrics, rule *alerting.AlertRule) error {
 	var lastErr error
 
+	// System-generated alerts (rule_id = NULL) send to all webhooks
+	if rule == nil {
+		if s.webhookClient != nil {
+			if err := s.sendWebhookAlert(alert, device, nil); err != nil {
+				log.Printf("Webhook notification failed for system alert: %v", err)
+				lastErr = err
+			}
+		}
+		return lastErr
+	}
+
 	// Check notification channels from rule
 	for _, channel := range rule.NotificationChannels {
 		switch channel {
