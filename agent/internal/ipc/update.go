@@ -7,24 +7,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 )
 
-// Directory and file paths for update coordination
+// PipeName is the named pipe for real-time agent-watchdog communication (Windows only)
+const PipeName = `\\.\pipe\SentinelUpdate`
+
+// File names for update coordination
 const (
-	// BaseDir is the root directory for Sentinel data
-	BaseDir = `C:\ProgramData\Sentinel`
-
-	// UpdateDir contains update-related state files
-	UpdateDir = `C:\ProgramData\Sentinel\update`
-
-	// StagingDir is where downloaded updates are staged before installation
-	StagingDir = `C:\ProgramData\Sentinel\update\staging`
-
-	// PipeName is the named pipe for real-time agent-watchdog communication
-	PipeName = `\\.\pipe\SentinelUpdate`
-
-	// File names
 	UpdateRequestFile         = "update-request.json"
 	UpdateStatusFile          = "update-status.json"
 	AgentInfoFile             = "agent-info.json"
@@ -32,6 +23,23 @@ const (
 	WatchdogUpdateStatusFile  = "watchdog-update-status.json"
 	WatchdogInfoFile          = "watchdog-info.json"
 )
+
+// Directory paths for update coordination - set per-OS at init time
+var (
+	BaseDir    string
+	UpdateDir  string
+	StagingDir string
+)
+
+func init() {
+	if runtime.GOOS == "windows" {
+		BaseDir = `C:\ProgramData\Sentinel`
+	} else {
+		BaseDir = "/var/lib/sentinel"
+	}
+	UpdateDir = filepath.Join(BaseDir, "update")
+	StagingDir = filepath.Join(UpdateDir, "staging")
+}
 
 // UpdateState represents the current state of an update operation
 type UpdateState string
@@ -324,13 +332,23 @@ func CleanupStagingDir() error {
 
 // StagingPath returns the path where a staged update should be stored
 func StagingPath(version, platform, arch string) string {
-	filename := fmt.Sprintf("sentinel-agent-%s-%s-%s.exe", version, platform, arch)
+	var filename string
+	if runtime.GOOS == "windows" {
+		filename = fmt.Sprintf("sentinel-agent-%s-%s-%s.exe", version, platform, arch)
+	} else {
+		filename = fmt.Sprintf("sentinel-agent-%s-%s-%s", version, platform, arch)
+	}
 	return filepath.Join(StagingDir, filename)
 }
 
 // WatchdogStagingPath returns the path where a staged watchdog update should be stored
 func WatchdogStagingPath(version, platform, arch string) string {
-	filename := fmt.Sprintf("sentinel-watchdog-%s-%s-%s.exe", version, platform, arch)
+	var filename string
+	if runtime.GOOS == "windows" {
+		filename = fmt.Sprintf("sentinel-watchdog-%s-%s-%s.exe", version, platform, arch)
+	} else {
+		filename = fmt.Sprintf("sentinel-watchdog-%s-%s-%s", version, platform, arch)
+	}
 	return filepath.Join(StagingDir, filename)
 }
 
