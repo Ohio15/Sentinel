@@ -40,34 +40,42 @@ func NewWebhookClient(secret string) *WebhookClient {
 
 // SendAlert sends an alert webhook notification
 func (c *WebhookClient) SendAlert(url string, alert *alerting.Alert, device *alerting.DeviceMetrics, rule *alerting.AlertRule) error {
+	data := map[string]interface{}{
+		"alert": map[string]interface{}{
+			"id":        alert.ID,
+			"severity":  alert.Severity,
+			"title":     alert.Title,
+			"message":   alert.Message,
+			"status":    alert.Status,
+			"createdAt": alert.CreatedAt.Format(time.RFC3339),
+		},
+		"device": map[string]interface{}{
+			"id":            device.DeviceID,
+			"hostname":      device.Hostname,
+			"cpuPercent":    device.CPUPercent,
+			"memoryPercent": device.MemoryPercent,
+			"diskPercent":   device.DiskPercent,
+			"status":        device.Status,
+		},
+	}
+
+	// Include rule data if available (nil for system-generated alerts)
+	if rule != nil {
+		data["rule"] = map[string]interface{}{
+			"id":        rule.ID,
+			"name":      rule.Name,
+			"metric":    rule.Metric,
+			"operator":  rule.Operator,
+			"threshold": rule.Threshold,
+		}
+	} else {
+		data["rule"] = nil
+	}
+
 	payload := WebhookPayload{
 		Event:     "alert.created",
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		Data: map[string]interface{}{
-			"alert": map[string]interface{}{
-				"id":        alert.ID,
-				"severity":  alert.Severity,
-				"title":     alert.Title,
-				"message":   alert.Message,
-				"status":    alert.Status,
-				"createdAt": alert.CreatedAt.Format(time.RFC3339),
-			},
-			"device": map[string]interface{}{
-				"id":            device.DeviceID,
-				"hostname":      device.Hostname,
-				"cpuPercent":    device.CPUPercent,
-				"memoryPercent": device.MemoryPercent,
-				"diskPercent":   device.DiskPercent,
-				"status":        device.Status,
-			},
-			"rule": map[string]interface{}{
-				"id":        rule.ID,
-				"name":      rule.Name,
-				"metric":    rule.Metric,
-				"operator":  rule.Operator,
-				"threshold": rule.Threshold,
-			},
-		},
+		Data:      data,
 	}
 
 	return c.send(url, payload)
