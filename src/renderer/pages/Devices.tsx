@@ -89,8 +89,6 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null);
   const [downloadingPlatform, setDownloadingPlatform] = useState<string | null>(null);
   const [downloadResult, setDownloadResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const [editingName, setEditingName] = useState<string | null>(null);
-  const [editNameValue, setEditNameValue] = useState('');
 
   // Installation Links state
   const [links, setLinks] = useState<AgentLink[]>([]);
@@ -644,56 +642,10 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                       <td>
                         <StatusBadge status={device.status} />
                       </td>
-                      <td onClick={e => e.stopPropagation()}>
-                        {editingName === device.id ? (
-                          <div className="flex items-center gap-1">
-                            <input
-                              type="text"
-                              value={editNameValue}
-                              onChange={(e) => setEditNameValue(e.target.value)}
-                              className="input py-1 px-2 text-sm w-32"
-                              autoFocus
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  updateDevice(device.id, { displayName: editNameValue || undefined });
-                                  setEditingName(null);
-                                } else if (e.key === 'Escape') {
-                                  setEditingName(null);
-                                }
-                              }}
-                            />
-                            <button
-                              onClick={() => {
-                                updateDevice(device.id, { displayName: editNameValue || undefined });
-                                setEditingName(null);
-                              }}
-                              className="p-1 text-green-600 hover:text-green-700"
-                              title="Save"
-                            >
-                              <CheckIcon className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => setEditingName(null)}
-                              className="p-1 text-gray-400 hover:text-gray-600"
-                              title="Cancel"
-                            >
-                              <CloseIcon className="w-4 h-4" />
-                            </button>
-                          </div>
-                        ) : (
-                          <div
-                            className="flex items-center gap-1 group cursor-pointer"
-                            onClick={() => {
-                              setEditingName(device.id);
-                              setEditNameValue(device.displayName || '');
-                            }}
-                          >
-                            <span className="text-sm text-text-primary">
-                              {device.displayName || <span className="text-text-secondary italic">Click to set</span>}
-                            </span>
-                            <EditIcon className="w-3 h-3 text-text-secondary opacity-0 group-hover:opacity-100 transition-opacity" />
-                          </div>
-                        )}
+                      <td>
+                        <span className="text-sm text-text-primary">
+                          {device.displayName || <span className="text-text-secondary italic">No custom name</span>}
+                        </span>
                       </td>
                       <td>
                         <p className="font-medium text-text-primary">{device.hostname}</p>
@@ -1527,14 +1479,6 @@ function BanIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-    </svg>
-  );
-}
-
-function EditIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
     </svg>
   );
 }
