@@ -183,7 +183,7 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 	ws := r.Group("/ws")
 	{
 		ws.GET("/agent", router.handleAgentWebSocket)
-		ws.GET("/dashboard", middleware.AuthMiddleware(cfg.JWTSecret), router.handleDashboardWebSocket)
+		ws.GET("/dashboard", router.handleDashboardWebSocket)
 	}
 
 	// Backwards-compatible WebSocket route for older agents connecting to /ws directly

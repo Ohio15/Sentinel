@@ -22,6 +22,12 @@ func (r *Router) handleDashboardMessage(userID uuid.UUID, message []byte) {
 	}
 	log.Printf("[Dashboard] Message type: %s", msg.Type)
 
+	// Ignore auth messages - these are handled during WebSocket connection setup
+	// If query param auth worked, the auth message arrives here harmlessly
+	if msg.Type == "auth" {
+		return
+	}
+
 	// Handle ping messages directly - don't forward to agent
 	if msg.Type == ws.MsgTypePing {
 		log.Printf("[Dashboard] Responding to ping from user %s", userID)

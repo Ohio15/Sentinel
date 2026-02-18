@@ -110,11 +110,17 @@ class ReliableWebSocket {
       this.ws = new WebSocket(wsUrl);
 
       this.ws.onopen = () => {
-        console.log('[WebSocket] Connected successfully');
+        console.log('[WebSocket] Connected, sending auth message');
         if (this.connectRetryTimer) { clearTimeout(this.connectRetryTimer); this.connectRetryTimer = null; }
         this.isConnecting = false;
         this.connectionState = 'connected';
         this.lastPongAt = Date.now();
+
+        // Send auth as first message - robust auth that works through all proxies
+        // (query param may be stripped by HTTP/2 reverse proxies)
+        if (this.ws) {
+          this.ws.send(JSON.stringify({ type: 'auth', token }));
+        }
 
         // Reset reconnect counter on successful connection
         if (this.reconnectAttempts > 0) {

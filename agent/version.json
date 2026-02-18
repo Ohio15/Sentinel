@@ -1,7 +1,7 @@
 {
-    "version":  "1.76.2",
+    "version":  "1.76.3",
     "releaseDate":  "2026-02-18",
-    "changelog":  "Fix WebSocket connection blocked by entrypoint-level Traefik middlewares, queue messages during initial connect",
+    "changelog":  "Fix WebSocket auth: add first-message authentication to bypass proxy query-param stripping",
     "platforms":  [
                       "windows",
                       "linux",
