@@ -30,7 +30,7 @@ http:
         certResolver: letsencrypt
       priority: 12
 
-    # WebSocket routes for dashboard
+    # WebSocket routes for dashboard (priority MUST be higher than ws-agent-443's /ws catch-all)
     ws-dashboard:
       rule: "Host(`sentinelrmm.us`) && PathPrefix(`/ws/dashboard`)"
       entryPoints:
@@ -38,7 +38,7 @@ http:
       service: backend
       tls:
         certResolver: letsencrypt
-      priority: 10
+      priority: 15
 
     # Health check routes
     health:
@@ -91,7 +91,7 @@ http:
         - websecure
       service: backend
       tls: {}
-      priority: 10
+      priority: 15
 
     frontend-local:
       rule: "Host(`localhost`)"
@@ -145,7 +145,7 @@ http:
       service: backend
       tls:
         certResolver: letsencrypt
-      priority: 10
+      priority: 18
 
     # Health check route for port 4443
     health-alt:

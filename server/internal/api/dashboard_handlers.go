@@ -219,12 +219,12 @@ func (r *Router) handleDashboardMessage(userID uuid.UUID, message []byte) {
 		}
 
 	case ws.MsgTypeDownloadFile:
-		// Forward file download request to agent
+		// Forward file download request to agent (agent reads "remotePath" field)
 		agentMsg, _ := json.Marshal(map[string]interface{}{
 			"type":      ws.MsgTypeDownloadFile,
 			"requestId": msg.RequestID,
 			"data": map[string]interface{}{
-				"path": payload.Path,
+				"remotePath": payload.Path,
 			},
 		})
 		r.hub.SendToAgent(agentID, agentMsg)

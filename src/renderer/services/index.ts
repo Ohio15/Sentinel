@@ -177,19 +177,24 @@ export const terminal = {
     return { sessionId };
   },
 
-  async send(sessionId: string, data: string): Promise<void> {
+  async send(sessionId: string, data: string, deviceId?: string): Promise<void> {
+    // Extract deviceId from sessionId format: "term-{deviceId}-{timestamp}"
+    const resolvedDeviceId = deviceId || sessionId.replace(/^term-/, '').replace(/-\d+$/, '');
     wsService!.send('terminal_input', {
+      deviceId: resolvedDeviceId,
       sessionId,
       data,
     });
   },
 
-  async close(sessionId: string): Promise<void> {
-    wsService!.send('close_terminal', { sessionId });
+  async close(sessionId: string, deviceId?: string): Promise<void> {
+    const resolvedDeviceId = deviceId || sessionId.replace(/^term-/, '').replace(/-\d+$/, '');
+    wsService!.send('close_terminal', { deviceId: resolvedDeviceId, sessionId });
   },
 
-  async resize(sessionId: string, cols: number, rows: number): Promise<void> {
-    wsService!.send('terminal_resize', { sessionId, cols, rows });
+  async resize(sessionId: string, cols: number, rows: number, deviceId?: string): Promise<void> {
+    const resolvedDeviceId = deviceId || sessionId.replace(/^term-/, '').replace(/-\d+$/, '');
+    wsService!.send('terminal_resize', { deviceId: resolvedDeviceId, sessionId, cols, rows });
   },
 
   onData(handler: (data: string) => void): () => void {
@@ -206,46 +211,32 @@ export const terminal = {
 // File Browser Service
 export const files = {
   async list(deviceId: string, path: string): Promise<unknown[]> {
-    return new Promise((resolve, reject) => {
-      const requestId = `files-${Date.now()}`;
-      const timeout = setTimeout(() => {
-        unsubResponse();
-        unsubError();
-        reject(new Error('Request timed out'));
-      }, 30000);
+    // Use sendRequest for proper requestId correlation (extractPayload strips requestId from events)
+    const response = await wsService!.sendRequest<{ success: boolean; data?: { files?: unknown[] }; error?: string }>(
+      'list_files',
+      { deviceId, path },
+      30000,
+    );
+    if (response && (response as any).success === false) {
+      throw new Error((response as any).error || 'Failed to list files');
+    }
+    return (response as any)?.data?.files || (response as any)?.files || [];
+  },
 
-      const unsubResponse = wsService!.on('response', (data: any) => {
-        if (data.requestId === requestId) {
-          clearTimeout(timeout);
-          unsubResponse();
-          unsubError();
-          if (data.success) {
-            resolve(data.data?.files || []);
-          } else {
-            reject(new Error(data.error || 'Failed to list files'));
-          }
-        }
-      });
-
-      const unsubError = wsService!.on('error', (data: any) => {
-        if (data.requestId === requestId) {
-          clearTimeout(timeout);
-          unsubResponse();
-          unsubError();
-          reject(new Error(data.error || 'Failed to list files'));
-        }
-      });
-
-      wsService!.send('list_files', {
-        deviceId,
-        path,
-        requestId,
-      });
-    });
+  async listDrives(deviceId: string): Promise<unknown[]> {
+    const response = await wsService!.sendRequest<{ success: boolean; data?: { drives?: unknown[] }; error?: string }>(
+      'list_drives',
+      { deviceId },
+      30000,
+    );
+    if (response && (response as any).success === false) {
+      throw new Error((response as any).error || 'Failed to list drives');
+    }
+    return (response as any)?.data?.drives || (response as any)?.drives || [];
   },
 
   async download(deviceId: string, path: string): Promise<void> {
-    wsService!.send('download_file', { deviceId, path });
+    wsService!.send('download_file', { deviceId, remotePath: path });
   },
 };
 
