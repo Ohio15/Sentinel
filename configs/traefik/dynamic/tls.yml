@@ -17,9 +17,14 @@ tls:
 
   options:
     # Standard TLS for web clients
+    # NOTE: alpnProtocols restricts to HTTP/1.1 only to ensure WebSocket Upgrade works.
+    # Traefik 3.0 doesn't support HTTP/2 Extended CONNECT (RFC 8441) for WebSocket,
+    # so browsers that negotiate HTTP/2 via ALPN cannot open WebSocket connections.
     default:
       minVersion: VersionTLS12
       maxVersion: VersionTLS13
+      alpnProtocols:
+        - http/1.1
       cipherSuites:
         - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
         - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
