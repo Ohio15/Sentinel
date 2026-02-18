@@ -22,10 +22,10 @@ jobs:
       - name: Verify deployment
         run: |
           sleep 3
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/health || echo "000")
-          if [ "$STATUS" = "200" ]; then
-            echo "Frontend is healthy (HTTP 200)"
+          if docker exec sentinel-frontend wget -q --spider http://localhost/health; then
+            echo "Frontend is healthy"
           else
-            echo "WARNING: Frontend health check returned $STATUS"
+            echo "WARNING: Frontend health check failed"
+            docker logs sentinel-frontend --tail 20
             exit 1
           fi
