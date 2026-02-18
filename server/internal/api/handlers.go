@@ -462,18 +462,31 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 
 	case ws.MsgTypeMetrics:
 		// Agent sends metrics in "data" field with snake_case keys
+		// Parse core fields for DB storage, but forward ALL fields to dashboards
 		var metricsMsg struct {
 			Data struct {
-				CPUPercent      float64 `json:"cpu_percent"`
-				MemoryPercent   float64 `json:"memory_percent"`
-				MemoryUsed      uint64  `json:"memory_used"`
-				MemoryAvailable uint64  `json:"memory_available"`
-				DiskPercent     float64 `json:"disk_percent"`
-				DiskUsed        uint64  `json:"disk_used"`
-				DiskTotal       uint64  `json:"disk_total"`
-				NetworkRxBytes  uint64  `json:"network_rx_bytes"`
-				NetworkTxBytes  uint64  `json:"network_tx_bytes"`
-				ProcessCount    int     `json:"process_count"`
+				CPUPercent           float64         `json:"cpu_percent"`
+				CPUPerCore           []float64       `json:"cpu_per_core,omitempty"`
+				MemoryPercent        float64         `json:"memory_percent"`
+				MemoryUsed           uint64          `json:"memory_used"`
+				MemoryAvailable      uint64          `json:"memory_available"`
+				MemoryCommitted      uint64          `json:"memory_committed"`
+				MemoryCached         uint64          `json:"memory_cached"`
+				MemoryPagedPool      uint64          `json:"memory_paged_pool"`
+				MemoryNonPagedPool   uint64          `json:"memory_non_paged_pool"`
+				DiskPercent          float64         `json:"disk_percent"`
+				DiskUsed             uint64          `json:"disk_used"`
+				DiskTotal            uint64          `json:"disk_total"`
+				DiskReadBytesPerSec  uint64          `json:"disk_read_bytes_sec"`
+				DiskWriteBytesPerSec uint64          `json:"disk_write_bytes_sec"`
+				NetworkRxBytes       uint64          `json:"network_rx_bytes"`
+				NetworkTxBytes       uint64          `json:"network_tx_bytes"`
+				ProcessCount         int             `json:"process_count"`
+				Uptime               uint64          `json:"uptime"`
+				TopProcesses         json.RawMessage `json:"top_processes,omitempty"`
+				GPUMetrics           json.RawMessage `json:"gpu_metrics,omitempty"`
+				NetworkInterfaces    json.RawMessage `json:"network_interfaces,omitempty"`
+				Storage              json.RawMessage `json:"storage,omitempty"`
 			} `json:"data"`
 		}
 		if err := json.Unmarshal(message, &metricsMsg); err != nil {
@@ -484,7 +497,7 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 		// Compute total memory from used + available
 		memoryTotalBytes := int64(m.MemoryUsed + m.MemoryAvailable)
 
-		// Insert metrics
+		// Insert core metrics to DB
 		if _, err := r.db.Pool().Exec(ctx, `
 			INSERT INTO device_metrics (device_id, cpu_percent, memory_percent, memory_used_bytes,
 				memory_total_bytes, disk_percent, disk_used_bytes, disk_total_bytes,
@@ -497,22 +510,47 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 			log.Printf("Error inserting metrics for device %s: %v", deviceID, err)
 		}
 
-		// Broadcast to dashboards (convert to camelCase for frontend)
+		// Broadcast ALL metrics to dashboards (convert to camelCase for frontend)
+		metricsMap := map[string]interface{}{
+			"cpuPercent":          m.CPUPercent,
+			"memoryPercent":       m.MemoryPercent,
+			"memoryUsedBytes":     m.MemoryUsed,
+			"memoryTotalBytes":    memoryTotalBytes,
+			"memoryCommitted":     m.MemoryCommitted,
+			"memoryCached":        m.MemoryCached,
+			"memoryPagedPool":     m.MemoryPagedPool,
+			"memoryNonPagedPool":  m.MemoryNonPagedPool,
+			"diskPercent":         m.DiskPercent,
+			"diskUsedBytes":       m.DiskUsed,
+			"diskTotalBytes":      m.DiskTotal,
+			"diskReadBytesPerSec": m.DiskReadBytesPerSec,
+			"diskWriteBytesPerSec": m.DiskWriteBytesPerSec,
+			"networkRxBytes":      m.NetworkRxBytes,
+			"networkTxBytes":      m.NetworkTxBytes,
+			"processCount":        m.ProcessCount,
+			"uptime":              m.Uptime,
+		}
+		// Include optional complex fields if present
+		if len(m.CPUPerCore) > 0 {
+			metricsMap["cpuPerCore"] = m.CPUPerCore
+		}
+		if len(m.TopProcesses) > 0 {
+			metricsMap["topProcesses"] = m.TopProcesses
+		}
+		if len(m.GPUMetrics) > 0 {
+			metricsMap["gpuMetrics"] = m.GPUMetrics
+		}
+		if len(m.NetworkInterfaces) > 0 {
+			metricsMap["networkInterfaces"] = m.NetworkInterfaces
+		}
+		if len(m.Storage) > 0 {
+			metricsMap["storage"] = m.Storage
+		}
+
 		broadcastMsg, _ := json.Marshal(map[string]interface{}{
 			"type":     "device_metrics",
 			"deviceId": deviceID,
-			"metrics": map[string]interface{}{
-				"cpuPercent":       m.CPUPercent,
-				"memoryPercent":    m.MemoryPercent,
-				"memoryUsedBytes":  m.MemoryUsed,
-				"memoryTotalBytes": memoryTotalBytes,
-				"diskPercent":      m.DiskPercent,
-				"diskUsedBytes":    m.DiskUsed,
-				"diskTotalBytes":   m.DiskTotal,
-				"networkRxBytes":   m.NetworkRxBytes,
-				"networkTxBytes":   m.NetworkTxBytes,
-				"processCount":     m.ProcessCount,
-			},
+			"metrics":  metricsMap,
 		})
 		log.Printf("[Metrics] Broadcasting device_metrics for device %s: CPU=%.1f%% MEM=%.1f%%", deviceID, m.CPUPercent, m.MemoryPercent)
 		r.hub.BroadcastToDashboards(broadcastMsg)

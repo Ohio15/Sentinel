@@ -73,6 +73,10 @@ class ReliableWebSocket {
       return;
     }
 
+    // Reset manual disconnect flag and reconnect counter on explicit connect()
+    this.manualDisconnect = false;
+    this.reconnectAttempts = 0;
+
     const token = localStorage.getItem('token');
     if (!token) {
       console.warn('[WebSocket] No auth token in localStorage, skipping connection');
@@ -181,19 +185,26 @@ class ReliableWebSocket {
     }
   }
 
+  private manualDisconnect = false;
+
   disconnect() {
     console.log('[WebSocket] Disconnecting (manual)');
+    this.manualDisconnect = true;
     this.stopHeartbeat();
     if (this.ws) {
       this.ws.close(1000, 'Client disconnect');
       this.ws = null;
     }
-    // Don't auto-reconnect on manual disconnect
-    this.reconnectAttempts = Infinity;
     this.connectionState = 'disconnected';
   }
 
   private scheduleReconnect() {
+    // Don't auto-reconnect after manual disconnect
+    if (this.manualDisconnect) {
+      console.log('[WebSocket] Manual disconnect - skipping auto-reconnect');
+      return;
+    }
+
     this.reconnectAttempts++;
     const delay = this.calculateReconnectDelay();
     console.log(`[WebSocket] Reconnecting in ${Math.round(delay / 1000)}s (attempt ${this.reconnectAttempts})`);
