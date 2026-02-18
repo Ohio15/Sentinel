@@ -569,7 +569,7 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 		// mTLS-authenticated agent WebSocket (certificate auth, no token needed)
 		ws.GET("/agent/mtls", handleAgentWebSocketMTLS(services))
 		// Dashboard WebSocket (JWT auth)
-		ws.GET("/dashboard", middleware.AuthMiddleware(services.Config.JWTSecret), handleDashboardWebSocketWithServices(services))
+		ws.GET("/dashboard", handleDashboardWebSocketWithServices(services))
 	}
 
 	// Agent certificate management routes (require mTLS)
