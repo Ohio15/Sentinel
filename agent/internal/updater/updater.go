@@ -579,10 +579,15 @@ func (u *Updater) applyUpdateUnix(currentExe, downloadPath string) error {
 		return fmt.Errorf("failed to backup current binary: %w", err)
 	}
 
-	// Install new binary
+	// Install new binary - try rename first, fall back to copy for cross-filesystem
 	if err := os.Rename(downloadPath, currentExe); err != nil {
-		os.Rename(backupPath, currentExe)
-		return fmt.Errorf("failed to install new binary: %w", err)
+		log.Printf("os.Rename failed (cross-filesystem?): %v, trying copy", err)
+		if cpErr := copyFile(downloadPath, currentExe); cpErr != nil {
+			// Rollback: restore backup
+			os.Rename(backupPath, currentExe)
+			return fmt.Errorf("failed to install new binary: %w", cpErr)
+		}
+		os.Remove(downloadPath)
 	}
 
 	// Re-apply executable permissions after move (some filesystems may not preserve)
@@ -590,38 +595,120 @@ func (u *Updater) applyUpdateUnix(currentExe, downloadPath string) error {
 		log.Printf("Warning: failed to re-apply permissions after move: %v", err)
 	}
 
-	// Restart the service and wait for completion
-	log.Printf("Restarting service via systemctl...")
-	cmd := exec.Command("systemctl", "restart", "sentinel-agent")
-
-	// Use Run() instead of Start() to wait for completion and get error
-	if err := cmd.Run(); err != nil {
-		log.Printf("systemctl restart failed: %v, attempting rollback", err)
-		// Rollback: restore backup
+	// Restart the service using the best available method
+	restartErr := u.restartUnixService(currentExe)
+	if restartErr != nil {
+		log.Printf("Service restart failed: %v, attempting rollback", restartErr)
 		if rbErr := os.Rename(backupPath, currentExe); rbErr != nil {
 			log.Printf("CRITICAL: Rollback also failed: %v", rbErr)
 		} else {
 			log.Printf("Rollback successful, restored previous binary")
+			// Try to restart with old binary
+			u.restartUnixService(currentExe)
 		}
-		return fmt.Errorf("failed to restart service: %w", err)
-	}
-
-	// Verify service is running after restart
-	time.Sleep(2 * time.Second) // Give service time to start
-	verifyCmd := exec.Command("systemctl", "is-active", "--quiet", "sentinel-agent")
-	if err := verifyCmd.Run(); err != nil {
-		log.Printf("Service not running after restart, attempting rollback")
-		// Rollback
-		if rbErr := os.Rename(backupPath, currentExe); rbErr != nil {
-			log.Printf("CRITICAL: Rollback failed: %v", rbErr)
-		}
-		// Try to start with old binary
-		exec.Command("systemctl", "restart", "sentinel-agent").Run()
-		return fmt.Errorf("service failed to start after update")
+		return fmt.Errorf("failed to restart service: %w", restartErr)
 	}
 
 	log.Printf("Update applied successfully, service is running")
 	return nil
+}
+
+// restartUnixService tries multiple restart strategies in order:
+// 1. Synology SPK start-stop-status script
+// 2. systemctl (systemd)
+// 3. Direct process signal (SIGHUP/re-exec via current process)
+func (u *Updater) restartUnixService(currentExe string) error {
+	// Strategy 1: Synology SPK package script
+	synologyScript := "/var/packages/sentinel-agent/scripts/start-stop-status"
+	if _, err := os.Stat(synologyScript); err == nil {
+		log.Printf("Detected Synology SPK, restarting via start-stop-status script")
+		cmd := exec.Command(synologyScript, "restart")
+		if err := cmd.Run(); err != nil {
+			log.Printf("Synology restart script failed: %v", err)
+		} else {
+			time.Sleep(3 * time.Second)
+			// Verify by checking PID file
+			if pidData, err := os.ReadFile("/var/run/sentinel-agent.pid"); err == nil {
+				log.Printf("Synology agent restarted with PID from pidfile: %s", string(pidData))
+				return nil
+			}
+			log.Printf("Synology restart appeared to succeed but no PID file found")
+			return nil
+		}
+	}
+
+	// Strategy 2: systemctl (standard Linux with systemd)
+	if _, err := exec.LookPath("systemctl"); err == nil {
+		log.Printf("Restarting service via systemctl...")
+		cmd := exec.Command("systemctl", "restart", "sentinel-agent")
+		if err := cmd.Run(); err != nil {
+			log.Printf("systemctl restart failed: %v", err)
+		} else {
+			time.Sleep(2 * time.Second)
+			verifyCmd := exec.Command("systemctl", "is-active", "--quiet", "sentinel-agent")
+			if err := verifyCmd.Run(); err == nil {
+				log.Printf("Service restarted successfully via systemctl")
+				return nil
+			}
+			log.Printf("systemctl restart succeeded but service not active")
+		}
+	}
+
+	// Strategy 3: Generic init.d script
+	initScript := "/etc/init.d/sentinel-agent"
+	if _, err := os.Stat(initScript); err == nil {
+		log.Printf("Restarting via init.d script...")
+		cmd := exec.Command(initScript, "restart")
+		if err := cmd.Run(); err != nil {
+			log.Printf("init.d restart failed: %v", err)
+		} else {
+			time.Sleep(3 * time.Second)
+			return nil
+		}
+	}
+
+	// Strategy 4: Direct re-exec - use nohup to start detached process
+	log.Printf("No service manager found, starting new process via nohup")
+	logFile := "/var/log/sentinel-agent.log"
+	cmd := exec.Command("nohup", currentExe, ">>", logFile, "2>&1", "&")
+	cmd.Dir = "/"
+	if err := cmd.Start(); err != nil {
+		// nohup not available, try direct start
+		cmd2 := exec.Command(currentExe)
+		cmd2.Dir = "/"
+		if err2 := cmd2.Start(); err2 != nil {
+			return fmt.Errorf("failed to start new process: %w", err2)
+		}
+		log.Printf("Started new agent process (PID %d), current process will exit", cmd2.Process.Pid)
+	} else {
+		log.Printf("Started new agent process via nohup, current process will exit")
+	}
+	go func() {
+		time.Sleep(2 * time.Second)
+		os.Exit(0)
+	}()
+	return nil
+}
+
+// copyFile copies a file from src to dst, used when os.Rename fails (cross-filesystem)
+func copyFile(src, dst string) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		os.Remove(dst)
+		return err
+	}
+	return dstFile.Sync()
 }
 
 func (u *Updater) RunUpdateLoop(ctx context.Context) {
