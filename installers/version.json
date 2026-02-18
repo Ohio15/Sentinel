@@ -1,7 +1,7 @@
 {
-    "version":  "1.75.3",
+    "version":  "1.76.0",
     "releaseDate":  "2026-02-17",
-    "changelog":  "Fix SPK binary truncation - use streaming tar repack with clean headers",
+    "changelog":  "Remote PowerShell agent capability",
     "platforms":  [
                       "windows",
                       "linux",
