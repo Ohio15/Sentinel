@@ -1,0 +1,31 @@
+name: Deploy Web Frontend
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [master]
+
+jobs:
+  deploy:
+    name: Deploy Frontend
+    runs-on: self-hosted
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      - name: Pull latest code
+        run: cd ~/Sentinel && git pull origin master
+
+      - name: Rebuild and deploy frontend
+        run: cd ~/Sentinel && docker compose build frontend && docker compose up -d frontend
+
+      - name: Verify deployment
+        run: |
+          sleep 3
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/health || echo "000")
+          if [ "$STATUS" = "200" ]; then
+            echo "Frontend is healthy (HTTP 200)"
+          else
+            echo "WARNING: Frontend health check returned $STATUS"
+            exit 1
+          fi

@@ -106,9 +106,8 @@ services:
       retries: 3
       start_period: 40s
 
-  # Frontend (built static files served by nginx)
-  # NOTE: Uses volume mount for hot updates - just run npm run build:web locally
-  # and copy dist/web to remote, no container rebuild needed
+  # Frontend (built via CI/CD — image contains built assets from Dockerfile.web)
+  # Deployment: push to master → CI passes → self-hosted runner rebuilds image
   frontend:
     build:
       context: .
@@ -119,11 +118,7 @@ services:
     container_name: sentinel-frontend
     restart: unless-stopped
     volumes:
-      # Mount local dist for hot updates without rebuilding container
-      - ./dist/web:/usr/share/nginx/html:ro
-      # Mount installers for direct download (separate path for read-only FS)
       - ./installers:/app/installers:ro
-      # Mount nginx config for live updates
       - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - sentinel-network
