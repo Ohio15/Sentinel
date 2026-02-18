@@ -288,7 +288,15 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
     if (!selectedDevice || !editedName.trim()) return;
     try {
       await devicesService.update(selectedDevice.id, { displayName: editedName.trim() });
-      await fetchDevice(deviceId); // Refresh device data
+      // Optimistically update the store without triggering a loading state
+      useDeviceStore.setState((state) => ({
+        selectedDevice: state.selectedDevice
+          ? { ...state.selectedDevice, displayName: editedName.trim() }
+          : null,
+        devices: state.devices.map((d) =>
+          d.id === selectedDevice.id ? { ...d, displayName: editedName.trim() } : d
+        ),
+      }));
       setIsEditingName(false);
     } catch (error) {
       console.error('Failed to update device name:', error);
@@ -524,19 +532,19 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                             if (e.key === 'Enter') handleSaveName();
                             if (e.key === 'Escape') handleCancelEdit();
                           }}
-                          className="text-2xl font-bold text-text-primary bg-gray-100 border border-border rounded-lg px-3 py-1 focus:outline-none focus:ring-2 focus:ring-primary"
+                          className="text-2xl font-bold text-text-primary bg-surface-alt border border-border rounded-lg px-3 py-1 focus:outline-none focus:ring-2 focus:ring-primary"
                           autoFocus
                         />
                         <button
                           onClick={handleSaveName}
-                          className="p-2 hover:bg-green-100 rounded-lg transition-colors"
+                          className="p-2 hover:bg-green-100 dark:hover:bg-green-900/30 rounded-lg transition-colors"
                           title="Save"
                         >
                           <CheckIcon className="w-4 h-4 text-success" />
                         </button>
                         <button
                           onClick={handleCancelEdit}
-                          className="p-2 hover:bg-red-100 rounded-lg transition-colors"
+                          className="p-2 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-colors"
                           title="Cancel"
                         >
                           <CloseIcon className="w-4 h-4 text-danger" />
@@ -549,7 +557,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                         </h2>
                         <button
                           onClick={handleStartEdit}
-                          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                          className="p-2 hover:bg-hover rounded-lg transition-colors"
                           title="Rename this PC"
                         >
                           <EditIcon className="w-4 h-4 text-text-secondary" />
