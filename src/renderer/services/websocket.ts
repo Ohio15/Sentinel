@@ -46,6 +46,8 @@ class ReliableWebSocket {
   private handlers: Map<string, Set<MessageHandler>> = new Map();
   private isConnecting = false;
   private connectionState: ConnectionState = 'disconnected';
+  private manualDisconnect = false;
+  private connectRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Request/response correlation
   private pendingRequests = new Map<string, PendingRequest>();
@@ -88,13 +90,28 @@ class ReliableWebSocket {
     this.isConnecting = true;
     this.connectionState = this.reconnectAttempts > 0 ? 'reconnecting' : 'connecting';
     const wsUrl = `${getWsBaseUrl()}/ws/dashboard?token=${token}`;
-    console.log(`[WebSocket] Connecting to: ${wsUrl} (attempt ${this.reconnectAttempts + 1})`);
+    console.log(`[WebSocket] Connecting to: ${wsUrl.replace(/token=[^&]+/, 'token=***')} (attempt ${this.reconnectAttempts + 1})`);
+
+    // Safety net: if not connected within 10 seconds, force retry
+    if (this.connectRetryTimer) clearTimeout(this.connectRetryTimer);
+    this.connectRetryTimer = setTimeout(() => {
+      if (this.connectionState !== 'connected') {
+        console.warn('[WebSocket] Connection timeout after 10s, forcing retry');
+        this.isConnecting = false;
+        if (this.ws) {
+          try { this.ws.close(); } catch { /* ignore */ }
+          this.ws = null;
+        }
+        this.scheduleReconnect();
+      }
+    }, 10000);
 
     try {
       this.ws = new WebSocket(wsUrl);
 
       this.ws.onopen = () => {
-        console.log('[WebSocket] Connected');
+        console.log('[WebSocket] Connected successfully');
+        if (this.connectRetryTimer) { clearTimeout(this.connectRetryTimer); this.connectRetryTimer = null; }
         this.isConnecting = false;
         this.connectionState = 'connected';
         this.lastPongAt = Date.now();
@@ -135,7 +152,8 @@ class ReliableWebSocket {
 
       this.ws.onerror = (error) => {
         console.error('[WebSocket] Connection error:', error);
-        console.error('[WebSocket] WebSocket state:', this.ws?.readyState, 'URL:', wsUrl);
+        console.error('[WebSocket] WebSocket readyState:', this.ws?.readyState,
+          '(0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)');
         this.isConnecting = false;
         // Connection error will be followed by onclose, which handles reconnection
       };
@@ -184,8 +202,6 @@ class ReliableWebSocket {
       this.scheduleReconnect();
     }
   }
-
-  private manualDisconnect = false;
 
   disconnect() {
     console.log('[WebSocket] Disconnecting (manual)');
@@ -345,16 +361,16 @@ class ReliableWebSocket {
       console.log(`[WebSocket] Sending message: ${message.type}`, msgStr.substring(0, 200));
       this.ws.send(msgStr);
       this.messagesSent++;
-    } else if (this.connectionState === 'reconnecting') {
-      // Queue message for later
+    } else if (this.connectionState === 'connecting' || this.connectionState === 'reconnecting') {
+      // Queue message for later (during initial connection or reconnection)
       if (this.messageQueue.length < this.maxQueueSize) {
         this.messageQueue.push(message);
-        console.log(`[WebSocket] Queued message (${this.messageQueue.length}/${this.maxQueueSize}): ${message.type}`);
+        console.log(`[WebSocket] Queued message (${this.messageQueue.length}/${this.maxQueueSize}): ${message.type} [state=${this.connectionState}]`);
       } else {
         console.warn(`[WebSocket] Message queue full, dropping: ${message.type}`);
       }
     } else {
-      console.warn(`[WebSocket] Not connected, cannot send: ${message.type}`);
+      console.warn(`[WebSocket] Not connected (state=${this.connectionState}), cannot send: ${message.type}`);
     }
   }
 
