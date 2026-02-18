@@ -21,13 +21,16 @@ jobs:
 
       - name: Verify deployment
         run: |
+          FRONTEND_IP=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' sentinel-frontend)
+          echo "Frontend container IP: $FRONTEND_IP"
           for i in 1 2 3 4 5; do
             sleep 5
-            if docker exec sentinel-frontend wget -q --spider http://localhost/health 2>/dev/null; then
-              echo "Frontend is healthy (attempt $i)"
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://${FRONTEND_IP}/health" 2>/dev/null || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "Frontend is healthy (HTTP 200, attempt $i)"
               exit 0
             fi
-            echo "Attempt $i: not ready yet..."
+            echo "Attempt $i: HTTP $STATUS"
           done
           echo "FAILED: Frontend did not become healthy after 25 seconds"
           docker logs sentinel-frontend --tail 20
