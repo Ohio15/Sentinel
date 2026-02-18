@@ -21,11 +21,14 @@ jobs:
 
       - name: Verify deployment
         run: |
-          sleep 3
-          if docker exec sentinel-frontend wget -q --spider http://localhost/health; then
-            echo "Frontend is healthy"
-          else
-            echo "WARNING: Frontend health check failed"
-            docker logs sentinel-frontend --tail 20
-            exit 1
-          fi
+          for i in 1 2 3 4 5; do
+            sleep 5
+            if docker exec sentinel-frontend wget -q --spider http://localhost/health 2>/dev/null; then
+              echo "Frontend is healthy (attempt $i)"
+              exit 0
+            fi
+            echo "Attempt $i: not ready yet..."
+          done
+          echo "FAILED: Frontend did not become healthy after 25 seconds"
+          docker logs sentinel-frontend --tail 20
+          exit 1
