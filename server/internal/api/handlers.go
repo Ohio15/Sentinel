@@ -1123,6 +1123,36 @@ func (r *Router) handleUSBSessionComplete(ctx context.Context, deviceID uuid.UUI
 
 func (r *Router) handleDashboardWebSocket(c *gin.Context) {
 	log.Printf("[DashboardWS] New connection attempt from %s", c.ClientIP())
+
+	var userID uuid.UUID
+	authenticated := false
+
+	// Try query param first
+	tokenString := c.Query("token")
+	// Try Authorization header
+	if tokenString == "" {
+		authHeader := c.GetHeader("Authorization")
+		if authHeader != "" {
+			parts := strings.Split(authHeader, " ")
+			if len(parts) == 2 && parts[0] == "Bearer" {
+				tokenString = parts[1]
+			}
+		}
+	}
+
+	if tokenString != "" {
+		claims, err := middleware.ValidateJWT(tokenString, r.config.JWTSecret)
+		if err != nil {
+			log.Printf("[DashboardWS] Invalid token from query/header: %v", err)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+			return
+		}
+		userID = claims.UserID
+		authenticated = true
+		log.Printf("[DashboardWS] Authenticated via query/header for user %s", userID)
+	}
+
+	// Upgrade to WebSocket
 	upgrader := r.getUpgrader()
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
@@ -1130,7 +1160,45 @@ func (r *Router) handleDashboardWebSocket(c *gin.Context) {
 		return
 	}
 
-	userID := c.MustGet("userId").(uuid.UUID)
+	// If not authenticated via query/header, wait for first-message auth
+	if !authenticated {
+		log.Printf("[DashboardWS] No token in query/header, waiting for first-message auth from %s", c.ClientIP())
+
+		conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+		_, msg, err := conn.ReadMessage()
+		if err != nil {
+			log.Printf("[DashboardWS] Failed to read auth message: %v", err)
+			conn.Close()
+			return
+		}
+
+		var authMsg struct {
+			Type  string `json:"type"`
+			Token string `json:"token"`
+		}
+		if err := json.Unmarshal(msg, &authMsg); err != nil || authMsg.Type != "auth" || authMsg.Token == "" {
+			log.Printf("[DashboardWS] Invalid auth message from %s", c.ClientIP())
+			conn.WriteJSON(map[string]string{"type": "auth_error", "error": "Invalid auth message"})
+			conn.Close()
+			return
+		}
+
+		claims, err := middleware.ValidateJWT(authMsg.Token, r.config.JWTSecret)
+		if err != nil {
+			log.Printf("[DashboardWS] Invalid token in auth message: %v", err)
+			conn.WriteJSON(map[string]string{"type": "auth_error", "error": "Invalid token"})
+			conn.Close()
+			return
+		}
+
+		userID = claims.UserID
+		authenticated = true
+		log.Printf("[DashboardWS] Authenticated via first-message for user %s", userID)
+
+		// Reset read deadline
+		conn.SetReadDeadline(time.Time{})
+	}
+
 	log.Printf("[DashboardWS] Connection established for user %s", userID)
 	ctx := context.Background()
 
