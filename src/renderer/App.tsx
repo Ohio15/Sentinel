@@ -20,6 +20,7 @@ import { Login } from './pages/Login';
 import { Register } from './pages/Register';
 import InstallationPortal from './pages/InstallationPortal';
 import { PopOutPerformance } from './pages/PopOutPerformance';
+import SupportPortal from './pages/SupportPortal';
 import { SmartAppBanner } from './components/SmartAppBanner';
 import { useDeviceStore } from './stores/deviceStore';
 import { useAlertStore } from './stores/alertStore';
@@ -119,6 +120,7 @@ function App() {
           <Route path="/register" element={<Register />} />
           <Route path="/install/:downloadToken" element={<InstallationPortal />} />
           <Route path="/popout/performance/:deviceId" element={<RequireAuth><PopOutPerformance /></RequireAuth>} />
+          <Route path="/portal" element={<SupportPortal />} />
           <Route path="/*" element={<RequireAuth><MainLayout /></RequireAuth>} />
         </Routes>
       </BrowserRouter>
