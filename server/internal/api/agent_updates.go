@@ -434,6 +434,10 @@ func (r *Router) reportUpdateStatus(c *gin.Context) {
 		return
 	}
 
+	// Log the status for debugging (helps diagnose update failures without agent access)
+	log.Printf("[UpdateStatus] agent=%s status=%s from=%s to=%s error=%q ip=%s",
+		req.AgentID, req.Status, req.FromVersion, req.ToVersion, req.Error, c.ClientIP())
+
 	// Validate status enum
 	validStatuses := map[string]bool{
 		"downloading": true, "staging": true, "applying": true,
