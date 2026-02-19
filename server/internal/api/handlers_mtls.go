@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -255,7 +256,7 @@ func handleAgentWebSocketWithCerts(services *Services) gin.HandlerFunc {
 			tokenValid = true
 		} else {
 			// Check legacy env var
-			if services.Config.EnrollmentToken != "" && authPayload.Token == services.Config.EnrollmentToken {
+			if services.Config.EnrollmentToken != "" && subtle.ConstantTimeCompare([]byte(authPayload.Token), []byte(services.Config.EnrollmentToken)) == 1 {
 				tokenValid = true
 			}
 		}

@@ -406,7 +406,7 @@ func (c *Client) Connect(ctx context.Context) error {
 			"agentId":       c.config.AgentID,
 			"token":         c.config.EnrollmentToken,
 			"caCertHash":    paths.GetCACertHash(),
-			"hasClientCert": false, // Tell server we need a certificate
+			"hasClientCert": mtls.HasMTLS(),
 		}
 
 		// Include device info if available (for auto-enrollment of orphaned agents)

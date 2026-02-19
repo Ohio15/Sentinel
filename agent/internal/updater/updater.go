@@ -327,7 +327,22 @@ func (u *Updater) DownloadUpdate(ctx context.Context, info *VersionInfo) (string
 }
 
 func (u *Updater) downloadOnce(ctx context.Context, info *VersionInfo, tempFile string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", info.DownloadURL, nil)
+	// Try primary URL first
+	path, err := u.downloadFromURL(ctx, info.DownloadURL, tempFile, info)
+	if err != nil && u.serverURL != "" {
+		// Fallback: construct URL from agent's own server URL
+		fallbackURL := fmt.Sprintf("%s/api/agent/update/download?platform=%s&arch=%s",
+			u.serverURL, runtime.GOOS, runtime.GOARCH)
+		if fallbackURL != info.DownloadURL {
+			log.Printf("[Updater] Primary download failed, trying fallback URL: %s", fallbackURL)
+			path, err = u.downloadFromURL(ctx, fallbackURL, tempFile, info)
+		}
+	}
+	return path, err
+}
+
+func (u *Updater) downloadFromURL(ctx context.Context, downloadURL, tempFile string, info *VersionInfo) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create download request: %w", err)
 	}
@@ -1417,9 +1432,31 @@ Write-Log "Downloading fresh agent from $downloadUrl"
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-    # Try download with certificate validation disabled (self-signed certs)
+    # Download with proper TLS validation
+    $caCertPath = "$env:ProgramData\Sentinel\certs\ca-cert.pem"
+    if (Test-Path $caCertPath) {
+        # Use internal CA cert for validation (mTLS/internal CA-signed certs)
+        Add-Type @"
+using System.Net;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+public class CertValidator {
+    public static void SetCA(string path) {
+        ServicePointManager.ServerCertificateValidationCallback = delegate(
+            object sender, X509Certificate cert, X509Chain chain, SslPolicyErrors errors) {
+            if (errors == SslPolicyErrors.None) return true;
+            X509Certificate2 ca = new X509Certificate2(path);
+            chain.ChainPolicy.ExtraStore.Add(ca);
+            chain.ChainPolicy.VerificationFlags = X509VerificationFlags.AllowUnknownCertificateAuthority;
+            return chain.Build(new X509Certificate2(cert));
+        };
+    }
+}
+"@
+        [CertValidator]::SetCA($caCertPath)
+    }
+    # If no CA cert, system trust store handles validation (Let's Encrypt)
     $webClient = New-Object System.Net.WebClient
-    [System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
     $webClient.DownloadFile($downloadUrl, $tempPath)
 
     if (Test-Path $tempPath) {
@@ -1535,7 +1572,13 @@ INSTALL_PATH="/usr/local/bin/sentinel-agent"
 
 log "Downloading fresh agent from $DOWNLOAD_URL"
 
-if curl -sk -o "$TEMP_PATH" "$DOWNLOAD_URL"; then
+CA_CERT="/etc/sentinel/certs/ca-cert.pem"
+if [ -f "$CA_CERT" ]; then
+    CURL_OPTS="--cacert $CA_CERT"
+else
+    CURL_OPTS=""
+fi
+if curl -s $CURL_OPTS -o "$TEMP_PATH" "$DOWNLOAD_URL"; then
     FILE_SIZE=$(stat -c%%s "$TEMP_PATH" 2>/dev/null || stat -f%%z "$TEMP_PATH" 2>/dev/null)
     log "Downloaded $FILE_SIZE bytes"
 

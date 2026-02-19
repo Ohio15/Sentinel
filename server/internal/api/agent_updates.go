@@ -35,6 +35,8 @@ var (
 	cachedAgentVersion *AgentVersionFile
 	versionCacheMutex  sync.RWMutex
 	versionCacheTime   time.Time
+	cachedChecksums    map[string]string // "windows-amd64" -> sha256
+	checksumCacheTime  time.Time
 )
 
 // getAgentVersionFromFile reads the agent version from version.json
@@ -120,6 +122,36 @@ var agentBinaryPaths = map[string]string{
 	"darwin-arm64":  "installers/sentinel-agent-darwin-arm64",
 }
 
+// getCachedChecksum returns a cached SHA256 checksum for the given binary, recomputing every 60s.
+func getCachedChecksum(platformKey, binaryPath string) string {
+	versionCacheMutex.RLock()
+	if cachedChecksums != nil && time.Since(checksumCacheTime) < 60*time.Second {
+		cs := cachedChecksums[platformKey]
+		versionCacheMutex.RUnlock()
+		return cs
+	}
+	versionCacheMutex.RUnlock()
+
+	versionCacheMutex.Lock()
+	defer versionCacheMutex.Unlock()
+
+	// Double-check after acquiring write lock
+	if cachedChecksums != nil && time.Since(checksumCacheTime) < 60*time.Second {
+		return cachedChecksums[platformKey]
+	}
+
+	checksum, err := calculateFileChecksum(binaryPath)
+	if err != nil {
+		return ""
+	}
+	if cachedChecksums == nil {
+		cachedChecksums = make(map[string]string)
+	}
+	cachedChecksums[platformKey] = checksum
+	checksumCacheTime = time.Now()
+	return checksum
+}
+
 // getAgentVersion handles version check requests from agents
 func (r *Router) getAgentVersion(c *gin.Context) {
 	platform := c.Query("platform")
@@ -173,16 +205,16 @@ func (r *Router) getAgentVersion(c *gin.Context) {
 		return
 	}
 
-	// Calculate checksum
-	checksum, err := calculateFileChecksum(binaryPath)
-	if err != nil {
-		checksum = ""
-	}
+	// Get cached checksum (avoids re-hashing large binaries on every request)
+	checksum := getCachedChecksum(key, binaryPath)
 
-	// Build download URL
-	serverURL := r.config.ServerURL
+	// Build download URL using PublicURL (public-facing, no mTLS required)
+	serverURL := r.config.PublicURL
 	if serverURL == "" {
-		serverURL = fmt.Sprintf("http://%s", c.Request.Host)
+		serverURL = r.config.ServerURL
+	}
+	if serverURL == "" {
+		serverURL = fmt.Sprintf("https://%s", c.Request.Host)
 	}
 	downloadURL := fmt.Sprintf("%s/api/agent/update/download?platform=%s&arch=%s", serverURL, platform, arch)
 
@@ -372,6 +404,26 @@ func (r *Router) reportUpdateStatus(c *gin.Context) {
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Validate status enum
+	validStatuses := map[string]bool{
+		"downloading": true, "staging": true, "applying": true,
+		"completed": true, "failed": true, "rolled_back": true,
+	}
+	if !validStatuses[req.Status] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid status"})
+		return
+	}
+
+	// Verify agent_id belongs to a real device
+	var deviceExists bool
+	err := r.db.Pool().QueryRow(c.Request.Context(),
+		"SELECT EXISTS(SELECT 1 FROM devices WHERE agent_id = $1)",
+		req.AgentID).Scan(&deviceExists)
+	if err != nil || !deviceExists {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Unknown agent"})
 		return
 	}
 

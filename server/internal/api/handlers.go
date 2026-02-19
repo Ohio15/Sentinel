@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
@@ -215,7 +216,7 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 		tokenValid = true
 	} else {
 		// Token not found in database - check legacy env var
-		if r.config.EnrollmentToken != "" && authPayload.Token == r.config.EnrollmentToken {
+		if r.config.EnrollmentToken != "" && subtle.ConstantTimeCompare([]byte(authPayload.Token), []byte(r.config.EnrollmentToken)) == 1 {
 			tokenValid = true
 		}
 	}

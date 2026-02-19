@@ -19,26 +19,41 @@ import (
 )
 
 var (
-	tlsConfig     *tls.Config
-	tlsConfigOnce sync.Once
-	tlsConfigErr  error
+	tlsConfig    *tls.Config
+	tlsConfigErr error
+	tlsConfigMu  sync.RWMutex
+	tlsLoaded    bool
 )
 
 // GetTLSConfig returns a TLS configuration for mTLS connections.
 // If client certificates are available, it configures mutual TLS.
 // Otherwise, it returns a config that only verifies the server (or skips verification for development).
 func GetTLSConfig() (*tls.Config, error) {
-	tlsConfigOnce.Do(func() {
-		tlsConfig, tlsConfigErr = loadTLSConfig()
-	})
+	tlsConfigMu.RLock()
+	if tlsLoaded {
+		defer tlsConfigMu.RUnlock()
+		return tlsConfig, tlsConfigErr
+	}
+	tlsConfigMu.RUnlock()
+
+	tlsConfigMu.Lock()
+	defer tlsConfigMu.Unlock()
+	if tlsLoaded {
+		return tlsConfig, tlsConfigErr
+	}
+	tlsConfig, tlsConfigErr = loadTLSConfig()
+	tlsLoaded = true
 	return tlsConfig, tlsConfigErr
 }
 
 // ReloadTLSConfig forces a reload of TLS configuration.
 // This should be called after new certificates are installed.
 func ReloadTLSConfig() (*tls.Config, error) {
-	tlsConfigOnce = sync.Once{}
-	return GetTLSConfig()
+	tlsConfigMu.Lock()
+	defer tlsConfigMu.Unlock()
+	tlsConfig, tlsConfigErr = loadTLSConfig()
+	tlsLoaded = true
+	return tlsConfig, tlsConfigErr
 }
 
 // loadTLSConfig loads the TLS configuration from disk.
