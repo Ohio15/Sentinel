@@ -154,6 +154,12 @@ func downloadBootstrapHandler(services *Services) gin.HandlerFunc {
 // downloadBootstrapAgentHandler serves the agent binary with embedded configuration
 func downloadBootstrapAgentHandler(services *Services) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Extend write deadline for large binary transfers
+		rc := http.NewResponseController(c.Writer)
+		if err := rc.SetWriteDeadline(time.Now().Add(5 * time.Minute)); err != nil {
+			log.Printf("[Bootstrap] Warning: failed to extend write deadline: %v", err)
+		}
+
 		platform := c.Query("platform")
 		arch := c.Query("arch")
 		token := c.Query("token")
@@ -397,6 +403,12 @@ func incrementTokenUseCount(c *gin.Context, services *Services, token string) {
 // downloadBootstrapWatchdogHandler serves the watchdog binary
 func downloadBootstrapWatchdogHandler(services *Services) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Extend write deadline for large binary transfers
+		rc := http.NewResponseController(c.Writer)
+		if err := rc.SetWriteDeadline(time.Now().Add(5 * time.Minute)); err != nil {
+			log.Printf("[Bootstrap] Warning: failed to extend write deadline: %v", err)
+		}
+
 		platform := c.Query("platform")
 		arch := c.Query("arch")
 

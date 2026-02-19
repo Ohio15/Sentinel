@@ -236,6 +236,13 @@ func (r *Router) getAgentVersion(c *gin.Context) {
 
 // downloadAgentUpdate serves the agent binary for updates
 func (r *Router) downloadAgentUpdate(c *gin.Context) {
+	// Extend write deadline for large binary transfers over slow WAN links
+	// Default server WriteTimeout (60s) is too short for 25-30MB files
+	rc := http.NewResponseController(c.Writer)
+	if err := rc.SetWriteDeadline(time.Now().Add(5 * time.Minute)); err != nil {
+		log.Printf("[AgentUpdate] Warning: failed to extend write deadline: %v", err)
+	}
+
 	platform := c.Query("platform")
 	arch := c.Query("arch")
 
@@ -417,15 +424,16 @@ func (r *Router) reportUpdateStatus(c *gin.Context) {
 		return
 	}
 
-	// Verify agent_id belongs to a real device
-	var deviceExists bool
+	// Resolve agent: accept either hardware fingerprint (agent_id) or device UUID (id)
+	var resolvedAgentID string
 	err := r.db.Pool().QueryRow(c.Request.Context(),
-		"SELECT EXISTS(SELECT 1 FROM devices WHERE agent_id = $1)",
-		req.AgentID).Scan(&deviceExists)
-	if err != nil || !deviceExists {
+		"SELECT agent_id FROM devices WHERE agent_id = $1 OR id::text = $1 LIMIT 1",
+		req.AgentID).Scan(&resolvedAgentID)
+	if err != nil {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Unknown agent"})
 		return
 	}
+	req.AgentID = resolvedAgentID // Normalize to hardware fingerprint for remaining queries
 
 	// Try to update existing record first
 	result, err := r.db.Pool().Exec(c.Request.Context(), `
