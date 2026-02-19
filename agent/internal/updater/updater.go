@@ -111,7 +111,8 @@ type Updater struct {
 	serverURL      string
 	fallbackURLs   []string // Fallback server URLs for resilience
 	currentVersion string
-	deviceID       string
+	deviceID       string // Device UUID (from enrollment)
+	agentID        string // Hardware fingerprint (agent_id in DB)
 	httpClient     *http.Client
 	checkInterval  time.Duration
 	maxRetries     int
@@ -240,6 +241,7 @@ func (u *Updater) shouldPollAggressively() bool {
 }
 
 func (u *Updater) SetDeviceID(deviceID string)             { u.deviceID = deviceID }
+func (u *Updater) SetAgentID(agentID string)               { u.agentID = agentID }
 func (u *Updater) SetCheckInterval(interval time.Duration) { u.checkInterval = interval }
 
 func (u *Updater) TriggerCheck() {
@@ -989,11 +991,16 @@ func (u *Updater) updateStatus(state, message string, progress int) {
 }
 
 func (u *Updater) reportStatus(ctx context.Context) {
-	if u.deviceID == "" {
+	// Use hardware fingerprint (agentID) for server lookup; fall back to device UUID
+	reportID := u.agentID
+	if reportID == "" {
+		reportID = u.deviceID
+	}
+	if reportID == "" {
 		return
 	}
 	statusData := map[string]interface{}{
-		"agentId": u.deviceID, "fromVersion": u.status.CurrentVersion,
+		"agentId": reportID, "fromVersion": u.status.CurrentVersion,
 		"toVersion": u.status.TargetVersion, "status": u.status.State,
 		"error": u.status.Error,
 	}
