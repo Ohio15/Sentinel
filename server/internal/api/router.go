@@ -75,7 +75,7 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 
 		// Agent update routes (public - agents call these for updates)
 		agentUpdate := api.Group("/agent")
-		agentUpdate.Use(rateLimitMiddleware(cache, 120, 60)) // 120 requests per minute per IP (accounts for multiple agents behind NAT)
+		agentUpdate.Use(rateLimitMiddleware(cache, 600, 60)) // 600 requests per minute per IP (high to survive old agent goroutine storm; per-handler download cooldown prevents bandwidth abuse)
 		{
 			agentUpdate.GET("/version", router.getAgentVersion)
 			agentUpdate.GET("/update/download", router.downloadAgentUpdate)
@@ -243,7 +243,7 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 
 		// Agent update routes (public - agents call these for updates)
 		agentUpdate := api.Group("/agent")
-		agentUpdate.Use(rateLimitMiddleware(services.Redis, 120, 60)) // 120 requests per minute per IP (accounts for multiple agents behind NAT)
+		agentUpdate.Use(rateLimitMiddleware(services.Redis, 600, 60)) // 600 requests per minute per IP (high to survive old agent goroutine storm; per-handler download cooldown prevents bandwidth abuse)
 		{
 			agentUpdate.GET("/version", getAgentVersionHandler(services))
 			agentUpdate.GET("/update/download", downloadAgentUpdateHandler(services))
