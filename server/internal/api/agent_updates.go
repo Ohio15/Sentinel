@@ -235,6 +235,10 @@ func (r *Router) getAgentVersion(c *gin.Context) {
 }
 
 // downloadAgentUpdate serves the agent binary for updates
+// downloadCooldown tracks recent downloads to prevent storm from old agents
+// that spawn a new download goroutine on every heartbeat ack (~10s)
+var downloadCooldown sync.Map // key: "ip-platform-arch" -> time.Time
+
 func (r *Router) downloadAgentUpdate(c *gin.Context) {
 	// Extend write deadline for large binary transfers over slow WAN links
 	// Default server WriteTimeout (60s) is too short for 25-30MB files
@@ -245,6 +249,22 @@ func (r *Router) downloadAgentUpdate(c *gin.Context) {
 
 	platform := c.Query("platform")
 	arch := c.Query("arch")
+
+	// Per-IP download cooldown: one download per platform per 5 minutes
+	// This protects against old agents that spawn concurrent download goroutines
+	cooldownKey := fmt.Sprintf("%s-%s-%s", c.ClientIP(), platform, arch)
+	if lastDownload, ok := downloadCooldown.Load(cooldownKey); ok {
+		if time.Since(lastDownload.(time.Time)) < 5*time.Minute {
+			remaining := 5*time.Minute - time.Since(lastDownload.(time.Time))
+			c.Header("Retry-After", fmt.Sprintf("%d", int(remaining.Seconds())))
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":      "Download cooldown active, binary was recently served",
+				"retryAfter": int(remaining.Seconds()),
+			})
+			return
+		}
+	}
+	downloadCooldown.Store(cooldownKey, time.Now())
 
 	// Normalize
 	switch arch {

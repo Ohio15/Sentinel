@@ -1096,28 +1096,11 @@ func (a *Agent) handleHeartbeatAck(msg *client.Message) error {
 					latestVersion = v
 				}
 				log.Printf("[Update] Server indicated update available: v%s -> v%s", Version, latestVersion)
-				// Trigger update check in background
-				go func() {
-					result, err := a.updater.CheckForUpdate(a.ctx)
-					if err != nil {
-						log.Printf("[Update] Update check failed: %v", err)
-						return
-					}
-					if !result.Available {
-						log.Println("[Update] No update available after check")
-						return
-					}
-					log.Printf("[Update] Downloading update v%s...", result.LatestVersion)
-					downloadPath, err := a.updater.DownloadUpdate(a.ctx, result.VersionInfo)
-					if err != nil {
-						log.Printf("[Update] Failed to download update: %v", err)
-						return
-					}
-					if err := a.updater.ApplyUpdate(a.ctx, downloadPath, result.VersionInfo); err != nil {
-						log.Printf("[Update] Failed to apply update: %v", err)
-						os.Remove(downloadPath)
-					}
-				}()
+				// Use TriggerCheck() to deduplicate via buffered channel (capacity 1)
+				// This prevents the old bug where every heartbeat ack spawned a new
+				// goroutine that independently downloaded + applied, causing 1000+
+				// concurrent downloads and race conditions in apply
+				a.updater.TriggerCheck()
 			}
 		}
 	}
