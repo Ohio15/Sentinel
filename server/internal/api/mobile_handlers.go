@@ -379,6 +379,16 @@ func (h *MobileHandlers) RegisterPushToken(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	// Verify the device exists before allowing token registration
+	var exists bool
+	err = h.services.DB.Pool().QueryRow(ctx,
+		"SELECT EXISTS(SELECT 1 FROM devices WHERE id = $1)",
+		deviceID).Scan(&exists)
+	if err != nil || !exists {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Unknown device"})
+		return
+	}
+
 	// Deactivate old tokens for this device
 	_, _ = h.services.DB.Pool().Exec(ctx, `
 		UPDATE push_tokens SET is_active = false

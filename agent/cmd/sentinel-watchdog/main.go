@@ -1755,8 +1755,8 @@ func (ws *watchdogService) getServerURL() string {
 		}
 	}
 
-	// Fallback to default (the production server)
-	return "https://sentinelrmm.us:8443"
+	// Fallback to default (the production server - public port, no mTLS required)
+	return "https://sentinelrmm.us:4443"
 }
 
 // pollServerForUpdates checks the server for available updates
