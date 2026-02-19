@@ -52,6 +52,10 @@ const (
 	// Health check thresholds
 	ConsecutiveFailuresForAggressive = 3  // Switch to aggressive polling after N failures
 	ConsecutiveSuccessesForNormal    = 2  // Return to normal polling after N successes
+
+	// Update attempt cooldown - prevents retry storms when heartbeat acks
+	// repeatedly signal "update available" for a version that fails to apply
+	UpdateAttemptCooldown = 5 * time.Minute
 )
 
 type VersionInfo struct {
@@ -122,6 +126,11 @@ type Updater struct {
 	isUpdating     bool
 	status         UpdateStatus
 	forceCheck     chan struct{}
+
+	// Update attempt cooldown - prevents retry storms for the same version
+	lastAttemptVersion string    // Version last attempted
+	lastAttemptTime    time.Time // When the last attempt started
+	lastAttemptFailed  bool      // Whether the last attempt failed
 
 	// Adaptive polling state
 	pollMu                sync.Mutex
@@ -691,12 +700,13 @@ func (u *Updater) restartUnixService(currentExe string) error {
 	}
 
 	// Strategy 4: Direct re-exec - use nohup to start detached process
+	// Must use sh -c to interpret shell operators (>>, 2>&1, &)
 	log.Printf("No service manager found, starting new process via nohup")
 	logFile := "/var/log/sentinel-agent.log"
-	cmd := exec.Command("nohup", currentExe, ">>", logFile, "2>&1", "&")
+	cmd := exec.Command("sh", "-c", fmt.Sprintf("nohup %s >> %s 2>&1 &", currentExe, logFile))
 	cmd.Dir = "/"
 	if err := cmd.Start(); err != nil {
-		// nohup not available, try direct start
+		// sh not available, try direct start
 		cmd2 := exec.Command(currentExe)
 		cmd2.Dir = "/"
 		if err2 := cmd2.Start(); err2 != nil {
@@ -835,6 +845,17 @@ func (u *Updater) checkAndUpdateFromURL(ctx context.Context, serverURL string) e
 		u.updateMu.Unlock()
 	}()
 
+	// Cooldown: don't retry the same version within 5 minutes of a failed attempt
+	// This prevents retry storms from heartbeat acks triggering rapid re-downloads
+	if u.lastAttemptFailed && u.lastAttemptVersion != "" &&
+		time.Since(u.lastAttemptTime) < UpdateAttemptCooldown {
+		log.Printf("[Updater] Cooldown active for v%s (failed %v ago, retry in %v)",
+			u.lastAttemptVersion,
+			time.Since(u.lastAttemptTime).Round(time.Second),
+			(UpdateAttemptCooldown - time.Since(u.lastAttemptTime)).Round(time.Second))
+		return nil
+	}
+
 	// Check if watchdog is already handling an update
 	existingRequest, err := ipc.ReadUpdateRequest()
 	if err == nil && existingRequest != nil {
@@ -882,12 +903,18 @@ func (u *Updater) checkAndUpdateFromURL(ctx context.Context, serverURL string) e
 		return nil
 	}
 
+	// Track this attempt for cooldown logic
+	u.lastAttemptVersion = result.LatestVersion
+	u.lastAttemptTime = time.Now()
+	u.lastAttemptFailed = false // Will be set true on failure
+
 	u.status.TargetVersion = result.LatestVersion
 	u.status.StartedAt = time.Now()
 
 	downloadPath, err := u.DownloadUpdate(ctx, result.VersionInfo)
 	if err != nil {
 		log.Printf("[Updater] Failed to download update: %v", err)
+		u.lastAttemptFailed = true
 		u.updateStatus(StateFailed, fmt.Sprintf("Download failed: %v", err), 0)
 		u.reportStatus(ctx)
 		// Write alert file for relay to server via WebSocket
@@ -901,6 +928,7 @@ func (u *Updater) checkAndUpdateFromURL(ctx context.Context, serverURL string) e
 
 	if err := u.ApplyUpdate(ctx, downloadPath, result.VersionInfo); err != nil {
 		log.Printf("[Updater] Failed to apply update: %v", err)
+		u.lastAttemptFailed = true
 		u.updateStatus(StateFailed, fmt.Sprintf("Apply failed: %v", err), 0)
 		u.reportStatus(ctx)
 		os.Remove(downloadPath)
