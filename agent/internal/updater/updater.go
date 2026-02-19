@@ -401,6 +401,12 @@ func (u *Updater) downloadFromURL(ctx context.Context, downloadURL, tempFile str
 	checksum := hex.EncodeToString(hasher.Sum(nil))
 	if info.Checksum != "" && checksum != info.Checksum {
 		os.Remove(tempFile)
+		// Write alert for checksum mismatch (potential supply chain issue)
+		ipc.WriteAlert(&ipc.AlertRelayPayload{
+			Severity: "critical",
+			Title:    "Agent Update Checksum Mismatch",
+			Message:  fmt.Sprintf("Update v%s checksum mismatch: expected %s, got %s", info.Version, info.Checksum, checksum),
+		})
 		return "", fmt.Errorf("checksum mismatch: expected %s, got %s", info.Checksum, checksum)
 	}
 
@@ -882,6 +888,12 @@ func (u *Updater) checkAndUpdateFromURL(ctx context.Context, serverURL string) e
 		log.Printf("[Updater] Failed to download update: %v", err)
 		u.updateStatus(StateFailed, fmt.Sprintf("Download failed: %v", err), 0)
 		u.reportStatus(ctx)
+		// Write alert file for relay to server via WebSocket
+		ipc.WriteAlert(&ipc.AlertRelayPayload{
+			Severity: "critical",
+			Title:    "Agent Update Download Failed",
+			Message:  fmt.Sprintf("Failed to download update to v%s: %v", result.LatestVersion, err),
+		})
 		return fmt.Errorf("download failed: %w", err)
 	}
 
@@ -890,6 +902,12 @@ func (u *Updater) checkAndUpdateFromURL(ctx context.Context, serverURL string) e
 		u.updateStatus(StateFailed, fmt.Sprintf("Apply failed: %v", err), 0)
 		u.reportStatus(ctx)
 		os.Remove(downloadPath)
+		// Write alert file for relay to server via WebSocket
+		ipc.WriteAlert(&ipc.AlertRelayPayload{
+			Severity: "critical",
+			Title:    "Agent Update Staging Failed",
+			Message:  fmt.Sprintf("Failed to apply update to v%s: %v", result.LatestVersion, err),
+		})
 		return fmt.Errorf("apply failed: %w", err)
 	}
 
