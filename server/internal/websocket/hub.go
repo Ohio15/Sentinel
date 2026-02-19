@@ -84,6 +84,9 @@ const (
 	MsgTypeUSBDeviceList     = "usb_device_list"     // Agent sends full USB device list
 	MsgTypeUSBDeviceRequest  = "usb_device_request"  // Server requests USB device scan
 	MsgTypeUSBPolicyUpdate   = "usb_policy_update"   // Server sends policy updates to agent
+
+	// Agent alert message types
+	MsgTypeAgentAlert = "agent_alert" // Agent sends alert (update failure, tamper, etc.)
 )
 
 type Message struct {

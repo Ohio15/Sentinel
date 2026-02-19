@@ -30,6 +30,11 @@ const (
 	MsgTypeUSBSessionComplete = "usb_session_complete" // Agent sends USB session with file transfers
 )
 
+// Agent log pipeline message types
+const (
+	MsgTypeAgentLogs = "agent_logs" // Agent sends batched log entries
+)
+
 // Mobile device message types
 const (
 	MsgTypeMobileMetrics    = "mobile_metrics"

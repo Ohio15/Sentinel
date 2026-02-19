@@ -724,6 +724,12 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 		// Agent reports USB session with file transfers
 		r.handleUSBSessionComplete(ctx, deviceID, message)
 
+	case "event", ws.MsgTypeAgentAlert, "tamper_alert":
+		r.handleAgentAlert(ctx, deviceID, agentID, message)
+
+	case ws.MsgTypeAgentLogs:
+		r.handleAgentLogs(ctx, deviceID, message)
+
 	default:
 		log.Printf("[Agent] Unhandled message type from %s: %s", agentID, msg.Type)
 	}
@@ -801,6 +807,244 @@ func (r *Router) checkAlertRules(deviceID uuid.UUID, cpu, memory, disk float64) 
 			}
 		}
 	}
+}
+
+// handleAgentAlert processes alert messages from agents (update failures, tamper events, etc.)
+func (r *Router) handleAgentAlert(ctx context.Context, deviceID uuid.UUID, agentID string, message []byte) {
+	// Support multiple alert formats from different agent message types
+	var alertMsg struct {
+		Type  string `json:"type"`
+		Event struct {
+			Severity string `json:"severity"`
+			Title    string `json:"title"`
+			Message  string `json:"message"`
+		} `json:"event"`
+		Data struct {
+			Message   string `json:"message"`
+			Timestamp string `json:"timestamp"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(message, &alertMsg); err != nil {
+		log.Printf("[AgentAlert] Failed to parse alert from %s: %v", agentID, err)
+		return
+	}
+
+	// Normalize: tamper_alert uses data.message, event/agent_alert uses event fields
+	severity := alertMsg.Event.Severity
+	title := alertMsg.Event.Title
+	alertMessage := alertMsg.Event.Message
+
+	if alertMsg.Type == "tamper_alert" {
+		severity = "critical"
+		title = "Tamper Detection"
+		alertMessage = alertMsg.Data.Message
+	}
+
+	if severity == "" {
+		severity = "warning"
+	}
+	if title == "" {
+		title = "Agent Alert"
+	}
+	if alertMessage == "" {
+		log.Printf("[AgentAlert] Empty alert message from %s, ignoring", agentID)
+		return
+	}
+
+	log.Printf("[AgentAlert] %s from %s: [%s] %s - %s", alertMsg.Type, agentID, severity, title, alertMessage)
+
+	// Get hostname for alert context
+	var hostname string
+	r.db.Pool().QueryRow(ctx, "SELECT COALESCE(hostname, '') FROM devices WHERE id = $1", deviceID).Scan(&hostname)
+
+	// Deduplicate: skip if identical open alert exists
+	var existingCount int
+	r.db.Pool().QueryRow(ctx, `
+		SELECT COUNT(*) FROM alerts
+		WHERE device_id = $1 AND title = $2 AND status != 'resolved'
+		AND created_at > NOW() - INTERVAL '15 minutes'
+	`, deviceID, title).Scan(&existingCount)
+	if existingCount > 0 {
+		log.Printf("[AgentAlert] Duplicate alert suppressed for %s: %s", agentID, title)
+		return
+	}
+
+	// Create alert in DB
+	alertID := uuid.New()
+	_, err := r.db.Pool().Exec(ctx, `
+		INSERT INTO alerts (id, device_id, severity, title, message, status, organization_id, created_at)
+		VALUES ($1, $2, $3, $4, $5, 'open', $6, NOW())
+	`, alertID, deviceID, severity, title, alertMessage, constants.CurrentOrganizationID)
+	if err != nil {
+		log.Printf("[AgentAlert] Failed to insert alert for %s: %v", agentID, err)
+		return
+	}
+
+	// Broadcast to dashboards
+	if r.hub != nil {
+		dashMsg, _ := json.Marshal(map[string]interface{}{
+			"type": "new_alert",
+			"alert": map[string]interface{}{
+				"id":        alertID,
+				"deviceId":  deviceID,
+				"hostname":  hostname,
+				"severity":  severity,
+				"title":     title,
+				"message":   alertMessage,
+				"status":    "open",
+				"createdAt": time.Now(),
+			},
+		})
+		r.hub.BroadcastToDashboards(dashMsg)
+	}
+}
+
+// handleAgentLogs processes batched log entries from agents
+func (r *Router) handleAgentLogs(ctx context.Context, deviceID uuid.UUID, message []byte) {
+	var logMsg struct {
+		Type string `json:"type"`
+		Logs []struct {
+			Level    string                 `json:"level"`
+			Source   string                 `json:"source"`
+			Message  string                 `json:"message"`
+			Metadata map[string]interface{} `json:"metadata,omitempty"`
+			LoggedAt time.Time              `json:"loggedAt"`
+		} `json:"logs"`
+	}
+	if err := json.Unmarshal(message, &logMsg); err != nil {
+		log.Printf("[AgentLogs] Failed to parse logs from device %s: %v", deviceID, err)
+		return
+	}
+
+	// Limit to 100 entries per message to prevent abuse
+	if len(logMsg.Logs) > 100 {
+		logMsg.Logs = logMsg.Logs[:100]
+	}
+
+	for _, entry := range logMsg.Logs {
+		metadataJSON, _ := json.Marshal(entry.Metadata)
+		level := entry.Level
+		if level == "" {
+			level = "info"
+		}
+		source := entry.Source
+		if source == "" {
+			source = "agent"
+		}
+		loggedAt := entry.LoggedAt
+		if loggedAt.IsZero() {
+			loggedAt = time.Now()
+		}
+
+		_, err := r.db.Pool().Exec(ctx, `
+			INSERT INTO agent_logs (device_id, level, source, message, metadata, logged_at)
+			VALUES ($1, $2, $3, $4, $5, $6)
+		`, deviceID, level, source, entry.Message, metadataJSON, loggedAt)
+		if err != nil {
+			log.Printf("[AgentLogs] Failed to insert log for device %s: %v", deviceID, err)
+			break // Stop on first error to avoid flooding logs
+		}
+	}
+}
+
+// getDeviceLogs returns paginated agent logs for a device
+func (r *Router) getDeviceLogs(c *gin.Context) {
+	deviceID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid device ID"})
+		return
+	}
+
+	// Parse query parameters
+	level := c.Query("level")
+	source := c.Query("source")
+	since := c.Query("since")
+	until := c.Query("until")
+	limitStr := c.DefaultQuery("limit", "100")
+
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+
+	// Build query dynamically
+	query := `SELECT id, device_id, level, source, message, metadata, logged_at, received_at
+		FROM agent_logs WHERE device_id = $1`
+	args := []interface{}{deviceID}
+	argIdx := 2
+
+	if level != "" {
+		query += fmt.Sprintf(" AND level = $%d", argIdx)
+		args = append(args, level)
+		argIdx++
+	}
+	if source != "" {
+		query += fmt.Sprintf(" AND source = $%d", argIdx)
+		args = append(args, source)
+		argIdx++
+	}
+	if since != "" {
+		t, err := time.Parse(time.RFC3339, since)
+		if err == nil {
+			query += fmt.Sprintf(" AND logged_at >= $%d", argIdx)
+			args = append(args, t)
+			argIdx++
+		}
+	}
+	if until != "" {
+		t, err := time.Parse(time.RFC3339, until)
+		if err == nil {
+			query += fmt.Sprintf(" AND logged_at <= $%d", argIdx)
+			args = append(args, t)
+			argIdx++
+		}
+	}
+
+	query += fmt.Sprintf(" ORDER BY logged_at DESC LIMIT $%d", argIdx)
+	args = append(args, limit)
+
+	rows, err := r.db.Pool().Query(c.Request.Context(), query, args...)
+	if err != nil {
+		log.Printf("[AgentLogs] Query failed for device %s: %v", deviceID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query logs"})
+		return
+	}
+	defer rows.Close()
+
+	type LogEntry struct {
+		ID         uuid.UUID              `json:"id"`
+		DeviceID   uuid.UUID              `json:"deviceId"`
+		Level      string                 `json:"level"`
+		Source     string                 `json:"source"`
+		Message    string                 `json:"message"`
+		Metadata   map[string]interface{} `json:"metadata,omitempty"`
+		LoggedAt   time.Time              `json:"loggedAt"`
+		ReceivedAt time.Time              `json:"receivedAt"`
+	}
+
+	var logs []LogEntry
+	for rows.Next() {
+		var entry LogEntry
+		var metadataBytes []byte
+		if err := rows.Scan(&entry.ID, &entry.DeviceID, &entry.Level, &entry.Source,
+			&entry.Message, &metadataBytes, &entry.LoggedAt, &entry.ReceivedAt); err != nil {
+			log.Printf("[AgentLogs] Scan error: %v", err)
+			continue
+		}
+		if len(metadataBytes) > 0 {
+			json.Unmarshal(metadataBytes, &entry.Metadata)
+		}
+		logs = append(logs, entry)
+	}
+
+	if logs == nil {
+		logs = []LogEntry{}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"logs":  logs,
+		"count": len(logs),
+	})
 }
 
 // handleUSBDeviceEvent processes USB device connection/disconnection events from agents

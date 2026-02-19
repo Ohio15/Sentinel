@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -62,6 +63,7 @@ type Manager struct {
 	serviceName  string
 	uninstallKey string
 	configPath   string
+	tamperPaused atomic.Bool
 }
 
 func NewManager(installPath, serviceName string) *Manager {
@@ -345,11 +347,26 @@ func (m *Manager) PreventProcessHollowing() error {
 	return nil
 }
 
+// PauseTamperMonitoring pauses tamper monitoring during update operations
+func (m *Manager) PauseTamperMonitoring() {
+	m.tamperPaused.Store(true)
+	log.Println("[Protection] Tamper monitoring paused for update")
+}
+
+// ResumeTamperMonitoring resumes tamper monitoring after update operations
+func (m *Manager) ResumeTamperMonitoring() {
+	m.tamperPaused.Store(false)
+	log.Println("[Protection] Tamper monitoring resumed")
+}
+
 func (m *Manager) MonitorTamperAttempts(reportChan chan<- string) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	configPath := filepath.Join(os.Getenv("ProgramData"), "Sentinel", "config.json")
 	for range ticker.C {
+		if m.tamperPaused.Load() {
+			continue // Skip checks during updates
+		}
 		for _, file := range []string{"sentinel-agent.exe", "sentinel-watchdog.exe"} {
 			path := filepath.Join(m.installPath, file)
 			if _, err := os.Stat(path); os.IsNotExist(err) {
