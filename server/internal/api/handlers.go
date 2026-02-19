@@ -730,6 +730,20 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 	case ws.MsgTypeAgentLogs:
 		r.handleAgentLogs(ctx, deviceID, message)
 
+	case "update_status":
+		// Agent reports self-update progress via WebSocket (also reported via REST)
+		var statusMsg struct {
+			Data struct {
+				State   string `json:"state"`
+				Version string `json:"version"`
+				Error   string `json:"error"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(message, &statusMsg); err == nil {
+			log.Printf("[UpdateStatus] Agent %s: state=%s version=%s error=%q",
+				agentID, statusMsg.Data.State, statusMsg.Data.Version, statusMsg.Data.Error)
+		}
+
 	default:
 		log.Printf("[Agent] Unhandled message type from %s: %s", agentID, msg.Type)
 	}
@@ -2624,7 +2638,7 @@ func (r *Router) createAgentRollbackAlert(ctx context.Context, deviceID uuid.UUI
 	}
 }
 
-// sendWatchdogFixCommand sends a PowerShell command to update the watchdog on a device
+// sendWatchdogFixCommand sends a platform-appropriate command to fix the agent on a device
 // This is auto-remediation for the rollback issue caused by old watchdog settings
 func (r *Router) sendWatchdogFixCommand(ctx context.Context, deviceID uuid.UUID, agentID, hostname string) {
 	if r.hub == nil || !r.hub.IsAgentOnline(agentID) {
@@ -2632,21 +2646,37 @@ func (r *Router) sendWatchdogFixCommand(ctx context.Context, deviceID uuid.UUID,
 		return
 	}
 
-	// PowerShell command to update the watchdog
-	// "net" is first command (whitelisted), then checks both paths (Inno: "Sentinel", Go: "Sentinel Agent")
-	// No "service" word anywhere, avoids blacklist pattern
-	fixCommand := `net stop SentinelWatchdog; Start-Sleep 2; $p='C:\Program Files\Sentinel Agent\sentinel-watchdog.exe'; if(Test-Path 'C:\Program Files\Sentinel\sentinel-watchdog.exe'){$p='C:\Program Files\Sentinel\sentinel-watchdog.exe'}; Invoke-WebRequest 'https://sentinelrmm.us/installers/sentinel-watchdog-windows-amd64.exe' -OutFile $p; net start SentinelWatchdog; echo $p`
+	// Check device platform to send appropriate command
+	var platform string
+	r.db.Pool().QueryRow(ctx, "SELECT COALESCE(platform, '') FROM devices WHERE id = $1", deviceID).Scan(&platform)
+
+	var fixCommand, commandType string
+	platformLower := strings.ToLower(platform)
+	switch {
+	case strings.Contains(platformLower, "linux") || strings.Contains(platformLower, "ubuntu") ||
+		strings.Contains(platformLower, "debian") || strings.Contains(platformLower, "centos"):
+		// Linux: restart the agent service
+		fixCommand = `systemctl restart sentinel-agent 2>/dev/null || /etc/init.d/sentinel-agent restart 2>/dev/null || echo "No service manager found"`
+		commandType = "bash"
+	case platform == "":
+		// Unknown platform - skip auto-fix to avoid sending wrong command
+		log.Printf("[AutoFix] Skipping fix for %s - unknown platform (cannot determine OS)", hostname)
+		return
+	default:
+		// Windows: PowerShell command to update the watchdog
+		fixCommand = `net stop SentinelWatchdog; Start-Sleep 2; $p='C:\Program Files\Sentinel Agent\sentinel-watchdog.exe'; if(Test-Path 'C:\Program Files\Sentinel\sentinel-watchdog.exe'){$p='C:\Program Files\Sentinel\sentinel-watchdog.exe'}; Invoke-WebRequest 'https://sentinelrmm.us/installers/sentinel-watchdog-windows-amd64.exe' -OutFile $p; net start SentinelWatchdog; echo $p`
+		commandType = "powershell"
+	}
 
 	commandID := uuid.New()
 	requestID := uuid.New().String()
 
-	// Record the command in the database (created_by is nullable, use NULL for system commands)
+	// Record the command in the database
 	if _, err := r.db.Pool().Exec(ctx, `
 		INSERT INTO commands (id, device_id, command_type, command, status, created_by)
-		VALUES ($1, $2, 'powershell', $3, 'pending', NULL)
-	`, commandID, deviceID, fixCommand); err != nil {
-		log.Printf("[AutoFix] Failed to record watchdog fix command for %s: %v", hostname, err)
-		// Continue anyway - still try to send the command
+		VALUES ($1, $2, $3, $4, 'pending', NULL)
+	`, commandID, deviceID, commandType, fixCommand); err != nil {
+		log.Printf("[AutoFix] Failed to record fix command for %s: %v", hostname, err)
 	}
 
 	// Send the command to the agent
@@ -2656,7 +2686,7 @@ func (r *Router) sendWatchdogFixCommand(ctx context.Context, deviceID uuid.UUID,
 		Payload: json.RawMessage(mustMarshal(map[string]interface{}{
 			"commandId":   commandID.String(),
 			"command":     fixCommand,
-			"commandType": "powershell",
+			"commandType": commandType,
 		})),
 	}
 
