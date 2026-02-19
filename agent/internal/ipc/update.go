@@ -101,7 +101,60 @@ const (
 	MsgShutdown             = "shutdown"
 	MsgWatchdogUpdateReady  = "watchdog_update_ready"
 	MsgWatchdogVersionQuery = "watchdog_version_query"
+	MsgAlertRelay           = "alert_relay" // Watchdog asks agent to relay an alert to server
 )
+
+// AlertFile is the file name for pending alerts from the watchdog
+const AlertFile = "pending-alert.json"
+
+// AlertRelayPayload is used by the watchdog to request the agent send an alert to the server
+type AlertRelayPayload struct {
+	Severity  string    `json:"severity"`
+	Title     string    `json:"title"`
+	Message   string    `json:"message"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// AlertFilePath returns the full path to the pending alert file
+func AlertFilePath() string {
+	return filepath.Join(UpdateDir, AlertFile)
+}
+
+// WriteAlert writes a pending alert for the agent to relay to the server
+func WriteAlert(alert *AlertRelayPayload) error {
+	if err := EnsureDirectories(); err != nil {
+		return err
+	}
+	if alert.CreatedAt.IsZero() {
+		alert.CreatedAt = time.Now()
+	}
+	data, err := json.MarshalIndent(alert, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal alert: %w", err)
+	}
+	return os.WriteFile(AlertFilePath(), data, 0644)
+}
+
+// ReadAndDeleteAlert reads a pending alert and removes the file.
+// Returns nil, nil if no pending alert exists.
+func ReadAndDeleteAlert() (*AlertRelayPayload, error) {
+	path := AlertFilePath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read alert file: %w", err)
+	}
+	// Remove the file immediately to prevent duplicate processing
+	os.Remove(path)
+
+	var alert AlertRelayPayload
+	if err := json.Unmarshal(data, &alert); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal alert: %w", err)
+	}
+	return &alert, nil
+}
 
 // WatchdogUpdateRequest is written when a watchdog update is ready to apply.
 // The watchdog reads this file and uses Task Scheduler to update itself.

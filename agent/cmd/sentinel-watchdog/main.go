@@ -38,7 +38,7 @@ const (
 
 	// Update orchestration constants
 	updateCheckInterval    = 5 * time.Second  // How often to check for pending updates
-	updateVerifyTimeout    = 30 * time.Second // How long to wait for agent to report version
+	updateVerifyTimeout    = 120 * time.Second // How long to wait for agent to report version
 	updateVerifyInterval   = 2 * time.Second  // How often to check agent version during verification
 
 	// Health check constants for auto-rollback
@@ -89,6 +89,7 @@ type watchdogService struct {
 	pipeServer          *ipc.PipeServer
 	selfUpdater         *selfupdate.SelfUpdater
 	selfUpdateInProgress bool
+	protMgr             *protection.Manager // Shared protection manager for tamper monitoring + updates
 }
 
 func main() {
@@ -189,11 +190,13 @@ func runService(installPath string) {
 		elog.Warning(1, fmt.Sprintf("Failed to create self-updater: %v", err))
 	}
 
+	cfg := loadConfig(installPath)
 	ws := &watchdogService{
-		config:      loadConfig(installPath),
+		config:      cfg,
 		stopChan:    make(chan struct{}),
 		installPath: installPath,
 		selfUpdater: selfUpdater,
+		protMgr:     protection.NewManager(installPath, cfg.AgentService),
 	}
 
 	// Write watchdog info on startup
@@ -231,11 +234,13 @@ func runDebug(installPath string) {
 		log.Printf("Warning: Failed to create self-updater: %v", err)
 	}
 
+	debugCfg := loadConfig(installPath)
 	ws := &watchdogService{
-		config:      loadConfig(installPath),
+		config:      debugCfg,
 		stopChan:    make(chan struct{}),
 		installPath: installPath,
 		selfUpdater: selfUpdater,
+		protMgr:     protection.NewManager(installPath, debugCfg.AgentService),
 	}
 
 	// Write watchdog info on startup
@@ -927,7 +932,29 @@ func (ws *watchdogService) applyUpdate(request *ipc.UpdateRequest) {
 	}
 	logMessage("Binary replaced successfully")
 
-	// Step 6: Re-enable protection on the new file and directory
+	// Step 6: Pause tamper monitoring during startup window
+	// The tamper monitor runs every 10s and would detect the "missing" agent process
+	// during startup, firing false tamper alerts that interfere with verification.
+	ws.protMgr.PauseTamperMonitoring()
+
+	// Step 7: Start the agent service
+	if err := ws.startAgentService(); err != nil {
+		ws.protMgr.ResumeTamperMonitoring()
+		logMessage(fmt.Sprintf("Failed to start agent: %v, attempting rollback", err))
+		ws.rollbackUpdate(backupPath, request.TargetPath, status)
+		return
+	}
+	logMessage("Agent service started")
+
+	// Step 8: Verify the update succeeded (120s timeout for agent to write agent-info.json)
+	if err := ws.verifyUpdate(request.Version); err != nil {
+		ws.protMgr.ResumeTamperMonitoring()
+		logMessage(fmt.Sprintf("Update verification failed: %v, attempting rollback", err))
+		ws.rollbackUpdate(backupPath, request.TargetPath, status)
+		return
+	}
+
+	// Step 9: Re-enable protection on the new file and directory (after verified running)
 	if err := protMgr.EnableProtectionForFile(request.TargetPath); err != nil {
 		logMessage(fmt.Sprintf("Warning: failed to re-enable file protection: %v", err))
 	}
@@ -935,20 +962,8 @@ func (ws *watchdogService) applyUpdate(request *ipc.UpdateRequest) {
 		logMessage(fmt.Sprintf("Warning: failed to re-enable directory protection: %v", err))
 	}
 
-	// Step 7: Start the agent service
-	if err := ws.startAgentService(); err != nil {
-		logMessage(fmt.Sprintf("Failed to start agent: %v, attempting rollback", err))
-		ws.rollbackUpdate(backupPath, request.TargetPath, status)
-		return
-	}
-	logMessage("Agent service started")
-
-	// Step 8: Verify the update succeeded
-	if err := ws.verifyUpdate(request.Version); err != nil {
-		logMessage(fmt.Sprintf("Update verification failed: %v, attempting rollback", err))
-		ws.rollbackUpdate(backupPath, request.TargetPath, status)
-		return
-	}
+	// Step 10: Resume tamper monitoring
+	ws.protMgr.ResumeTamperMonitoring()
 
 	// Success!
 	status.State = ipc.StateComplete
@@ -1193,6 +1208,15 @@ func (ws *watchdogService) rollbackUpdate(backupPath, targetPath string, status 
 	status.CompletedAt = time.Now()
 	ipc.WriteUpdateStatus(status)
 
+	// Write alert file for agent to relay to server
+	if err := ipc.WriteAlert(&ipc.AlertRelayPayload{
+		Severity: "critical",
+		Title:    "Agent Update Rolled Back",
+		Message:  fmt.Sprintf("Update to v%s was rolled back: %s", status.Version, status.Error),
+	}); err != nil {
+		logMessage(fmt.Sprintf("Warning: failed to write rollback alert file: %v", err))
+	}
+
 	// Clean up request file to prevent retry loops
 	ipc.DeleteUpdateRequest()
 
@@ -1206,6 +1230,15 @@ func (ws *watchdogService) failUpdate(status *ipc.UpdateStatus, reason string) {
 	status.Error = reason
 	status.CompletedAt = time.Now()
 	ipc.WriteUpdateStatus(status)
+
+	// Write alert file for agent to relay to server
+	if err := ipc.WriteAlert(&ipc.AlertRelayPayload{
+		Severity: "critical",
+		Title:    "Agent Update Failed",
+		Message:  fmt.Sprintf("Update to v%s failed: %s", status.Version, reason),
+	}); err != nil {
+		logMessage(fmt.Sprintf("Warning: failed to write alert file: %v", err))
+	}
 
 	// Clean up request file so we don't keep retrying
 	ipc.DeleteUpdateRequest()

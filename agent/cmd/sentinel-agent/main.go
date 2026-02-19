@@ -32,6 +32,7 @@ import (
 	"github.com/sentinel/agent/internal/updater"
 	"github.com/sentinel/agent/internal/updates"
 	"github.com/sentinel/agent/internal/admin"
+	"github.com/sentinel/agent/internal/logforward"
 	"github.com/sentinel/agent/internal/mtls"
 	"github.com/sentinel/agent/internal/peripheral"
 )
@@ -68,6 +69,7 @@ type Agent struct {
 	updateChecker        *updates.Checker
 	updateInstaller      *updates.Installer
 	peripheralManager    *peripheral.Manager
+	logForwarder         *logforward.Forwarder
 	tamperChan           chan string
 	metricsIntervalChan  chan time.Duration // Channel for dynamic metrics interval changes
 	ctx                  context.Context
@@ -304,9 +306,10 @@ func NewAgent(cfg *config.Config) *Agent {
 		dataPlane = agentgrpc.NewDataPlaneClient(cfg.AgentID, grpcAddr)
 	}
 
+	wsClient := client.New(cfg, Version)
 	agent := &Agent{
 		cfg:                  cfg,
-		client:               client.New(cfg, Version),
+		client:               wsClient,
 		dataPlane:            dataPlane,
 		collector:            collector.New(),
 		executor:        executor.New(),
@@ -319,6 +322,7 @@ func NewAgent(cfg *config.Config) *Agent {
 		adminManager:         admin.NewManager(Version),
 		updateChecker:        updates.NewChecker(),
 		updateInstaller:      updates.NewInstaller(),
+		logForwarder:         logforward.New(wsClient),
 		tamperChan:           make(chan string, 10),
 		metricsIntervalChan:  make(chan time.Duration, 1),
 		ctx:                  ctx,
@@ -467,6 +471,15 @@ func (a *Agent) Start() error {
 		go a.dataPlane.RunWithReconnect(a.ctx)
 	}
 
+	// Check for pending alerts from watchdog on startup (e.g., update failures during restart)
+	go func() {
+		// Wait for connection to be established
+		time.Sleep(10 * time.Second)
+		if a.client.IsConnected() && a.client.IsAuthenticated() {
+			a.relayPendingAlerts()
+		}
+	}()
+
 	// Start heartbeat loop
 	go a.heartbeatLoop()
 
@@ -481,6 +494,11 @@ func (a *Agent) Start() error {
 
 	// Start certificate renewal check loop (daily)
 	go a.certRenewalLoop()
+
+	// Start centralized log forwarding pipeline
+	if a.logForwarder != nil {
+		go a.logForwarder.Start(a.ctx)
+	}
 
 	// Start USB/peripheral device monitoring
 	if a.peripheralManager != nil {
@@ -751,7 +769,30 @@ func (a *Agent) heartbeatLoop() {
 				if err := a.client.SendHeartbeat(); err != nil {
 					log.Printf("Failed to send heartbeat: %v", err)
 				}
+				// Check for pending alerts from the watchdog (update failures, rollbacks)
+				a.relayPendingAlerts()
 			}
+		}
+	}
+}
+
+// relayPendingAlerts checks for alert files written by the watchdog and sends them to the server
+func (a *Agent) relayPendingAlerts() {
+	alert, err := ipc.ReadAndDeleteAlert()
+	if err != nil {
+		log.Printf("[Alert] Error reading pending alert: %v", err)
+		return
+	}
+	if alert == nil {
+		return
+	}
+
+	log.Printf("[Alert] Relaying watchdog alert: [%s] %s - %s", alert.Severity, alert.Title, alert.Message)
+	if err := a.client.SendEvent(alert.Severity, alert.Title, alert.Message); err != nil {
+		log.Printf("[Alert] Failed to relay alert to server: %v", err)
+		// Re-write the alert so it can be retried next heartbeat
+		if writeErr := ipc.WriteAlert(alert); writeErr != nil {
+			log.Printf("[Alert] Failed to re-write alert for retry: %v", writeErr)
 		}
 	}
 }
@@ -1308,6 +1349,10 @@ func (a *Agent) handleTamperReports() {
 			return
 		case report := <-a.tamperChan:
 			log.Printf("SECURITY ALERT: %s", report)
+			// Forward to log pipeline
+			if a.logForwarder != nil {
+				a.logForwarder.Log("error", "protection", report, nil)
+			}
 			// Send tamper report to server
 			if a.client.IsConnected() && a.client.IsAuthenticated() {
 				a.client.SendJSON(map[string]interface{}{
@@ -1321,7 +1366,6 @@ func (a *Agent) handleTamperReports() {
 			}
 		}
 	}
-
 }
 
 // handleCollectDiagnostics handles diagnostic data collection requests

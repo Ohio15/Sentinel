@@ -296,6 +296,24 @@ func main() {
 		}
 	}
 
+	// Start agent log cleanup goroutine (delete logs older than 7 days, runs daily)
+	go func() {
+		// Initial delay to let server stabilize
+		time.Sleep(5 * time.Minute)
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			ctx := context.Background()
+			result, err := db.Pool().Exec(ctx, "DELETE FROM agent_logs WHERE logged_at < NOW() - INTERVAL '7 days'")
+			if err != nil {
+				log.Printf("[LogCleanup] Failed to clean up old agent logs: %v", err)
+			} else if result.RowsAffected() > 0 {
+				log.Printf("[LogCleanup] Cleaned up %d old agent log entries", result.RowsAffected())
+			}
+			<-ticker.C
+		}
+	}()
+
 	// Wait for interrupt signal
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

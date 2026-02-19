@@ -442,6 +442,9 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			protected.GET("/agents/versions", listAgentVersionsHandler(services))
 			protected.GET("/devices/:id/version-history", getDeviceVersionHistoryHandler(services))
 
+			// Agent Logs (centralized log pipeline)
+			protected.GET("/devices/:id/logs", getDeviceLogsHandler(services))
+
 			// Mobile device endpoints
 			protected.GET("/mobile/devices", listMobileDevicesHandler(services))
 			protected.GET("/mobile/devices/:id", getMobileDeviceHandler(services))

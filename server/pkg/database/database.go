@@ -119,6 +119,7 @@ func (db *DB) Migrate() error {
 		"migrations/005_mobile_devices.sql",
 		"migrations/006_device_management.sql",
 		"migrations/007_agent_certificates.sql",
+		"migrations/008_agent_logs.sql",
 	}
 
 	// Run pending migrations
