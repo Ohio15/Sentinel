@@ -13,8 +13,12 @@ import ssl
 import base64
 import time
 
-API_KEY = "REDACTED_API_KEY"
-BASE_URL = "https://localhost"
+import os
+API_KEY = os.environ.get("SENTINEL_API_KEY", "")
+BASE_URL = os.environ.get("SENTINEL_URL", "https://localhost")
+if not API_KEY:
+    print("Error: Set SENTINEL_API_KEY environment variable")
+    sys.exit(1)
 
 # Batch file content for recovery
 BATCH_CONTENT = r"""@echo off

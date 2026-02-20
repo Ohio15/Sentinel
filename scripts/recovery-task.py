@@ -13,8 +13,12 @@ import urllib.request
 import ssl
 import sys
 
-API_KEY = "REDACTED_API_KEY"
-BASE_URL = "https://localhost"
+import os
+API_KEY = os.environ.get("SENTINEL_API_KEY", "")
+BASE_URL = os.environ.get("SENTINEL_URL", "https://localhost")
+if not API_KEY:
+    print("Error: Set SENTINEL_API_KEY environment variable")
+    sys.exit(1)
 
 def run_cmd(device_id, cmd, cmd_type="cmd"):
     ctx = ssl.create_default_context()

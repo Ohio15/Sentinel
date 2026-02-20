@@ -23,9 +23,9 @@ param(
     [Parameter(Mandatory=$true)]
     [string]$AdminPassword,
 
-    [string]$BaseUrl = "https://sentinelrmm.us:4443",
-    [string]$SandboxHost = "192.168.1.20",
-    [string]$SandboxUser = "ohio_",
+    [string]$BaseUrl = $env:SENTINEL_URL,
+    [string]$SandboxHost = $env:SENTINEL_SANDBOX_HOST,
+    [string]$SandboxUser = $env:SENTINEL_SANDBOX_USER,
     [string]$DeviceName = "E2E-Test-$(Get-Random -Maximum 9999)",
     [switch]$SkipCleanup,
     [int]$TimeoutSeconds = 120

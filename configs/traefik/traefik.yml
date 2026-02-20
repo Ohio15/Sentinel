@@ -61,6 +61,6 @@ providers:
 certificatesResolvers:
   letsencrypt:
     acme:
-      email: "REDACTED_EMAIL"
+      email: "${ACME_EMAIL}"
       storage: /letsencrypt/acme.json
       tlsChallenge: {}

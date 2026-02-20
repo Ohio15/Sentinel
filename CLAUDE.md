@@ -216,10 +216,10 @@ SENTINEL_EMBEDDED_TOKEN:________________________________________________________
 
 ### Manual Binary Patching (PowerShell)
 ```powershell
-$sourceBinary = "D:\Projects\Sentinel\installers\sentinel-agent-windows-amd64.exe"
-$outputBinary = "D:\Projects\sentinel-agent.exe"
-$serverURL = "https://sentinelrmm.us:8443"
-$token = "REDACTED_ENROLLMENT_TOKEN"
+$sourceBinary = "installers\sentinel-agent-windows-amd64.exe"
+$outputBinary = "sentinel-agent.exe"
+$serverURL = $env:SENTINEL_SERVER_URL
+$token = $env:SENTINEL_ENROLLMENT_TOKEN
 
 # Read binary
 $bytes = [System.IO.File]::ReadAllBytes($sourceBinary)
@@ -229,8 +229,6 @@ $bytes = [System.IO.File]::ReadAllBytes($sourceBinary)
 # Write patched bytes back to output file
 ```
 
-See `D:\Projects\patch-agent.ps1` for full implementation.
-
 ---
 
 ## Remote Agent Deployment (Offline Machine)
@@ -239,10 +237,10 @@ When an agent machine has no network connectivity:
 
 ### Internet Connection Sharing (ICS)
 1. Enable ICS on server machine to share WiFi over Ethernet
-2. Server machine gets IP `192.168.137.1` on Ethernet adapter
-3. Agent machine set static IP `192.168.137.2` with gateway `192.168.137.1`
+2. Server machine gets a local IP on Ethernet adapter
+3. Agent machine set static IP on same subnet with gateway pointing to server
 4. Run HTTP server: `python -m http.server 8888` from project directory
-5. On agent machine: `irm http://192.168.137.1:8888/script.ps1 | iex`
+5. On agent machine: `irm http://<server-ip>:8888/script.ps1 | iex`
 
 ### Agent Protection Bypass
 The agent enables file/process protection on startup. To replace the binary:
@@ -261,45 +259,24 @@ The agent enables file/process protection on startup. To replace the binary:
 
 3. **Reboot machine** - task executes before agent can enable protection
 
-### Key Files for Remote Deployment
-- `D:\Projects\patch-agent.ps1` - Patches binary with embedded config
-- `D:\Projects\final-install.ps1` - Full deployment script for agent machine
-
 ---
 
 ## Production URLs
 
 | Service | URL |
 |---------|-----|
-| Public Server | `https://sentinelrmm.us:8443` |
+| Public Server | Set via `SENTINEL_SERVER_URL` env var |
 | Local Docker | `http://localhost:8090` |
 | Agent mTLS Port | `8443` (Traefik terminates TLS) |
 
 ### Enrollment Token
-Default token: `REDACTED_ENROLLMENT_TOKEN`
+Set via `SENTINEL_ENROLLMENT_TOKEN` env var. Generate new tokens through the admin UI.
 
 ---
 
-## Remote Test Machine (DESKTOP-50D189N)
+## Remote Test Machine
 
 ### SSH Connection
-- **Hostname:** DESKTOP-50D189N
-- **IP Address:** 192.168.1.20 (WiFi network)
-- **User:** ohio_
-- **SSH Key:** ED25519 (`~/.ssh/id_ed25519`)
-- **SSH Command:** `ssh REDACTED_SSH_TARGET`
-
-### Agent Info
-- **Agent ID:** `76e78d99-7292-43f0-bdb2-3f6cef00034e`
-- **Agent Version:** 1.67.6
-- **Status:** Connected via WiFi
-
-### SSH Setup Notes
+- Configure SSH access via environment variables or `~/.ssh/config`
 - SSH server configured to start automatically
-- Firewall rules added for SSH (port 22) and ICMP
-- `administrators_authorized_keys` configured for key-based auth
-- Host key fingerprint updated (2026-01-13) after OS reinstall
-
-### Connectivity History
-- Previously connected via ICS (192.168.137.x) - now disconnected
-- Current connection: WiFi network (192.168.1.x)
+- Key-based auth via `administrators_authorized_keys`

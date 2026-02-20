@@ -621,8 +621,8 @@ func (r *Router) disableDevice(c *gin.Context) {
 ```bash
 $ ls -la migrations/
 total 16
-drwxr-xr-x 1 ohio_ 197609 0 Dec  5 09:43 ./
-drwxr-xr-x 1 ohio_ 197609 0 Dec 23 10:56 ../
+drwxr-xr-x 1 user 197609 0 Dec  5 09:43 ./
+drwxr-xr-x 1 user 197609 0 Dec 23 10:56 ../
 ```
 
 **This is a CRITICAL architectural issue!**

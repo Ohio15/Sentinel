@@ -25,8 +25,8 @@ This creates `release/agent/sentinel-installer-template.exe` - a base installer 
 
 ```powershell
 .\embed-config.ps1 `
-    -ServerUrl "https://sentinelrmm.us" `
-    -GrpcEndpoint "sentinelrmm.us:4444" `
+    -ServerUrl "https://your-server.example.com" `
+    -GrpcEndpoint "your-server.example.com:4444" `
     -EnrollmentToken "your-token-here" `
     -OrganizationId "org-uuid-here" `
     -OutputInstaller "sentinel-installer-acme.exe"
@@ -42,8 +42,8 @@ Or use a config file:
 
 ```powershell
 .\build.ps1 `
-    -ServerUrl "https://sentinelrmm.us" `
-    -GrpcEndpoint "sentinelrmm.us:4444" `
+    -ServerUrl "https://your-server.example.com" `
+    -GrpcEndpoint "your-server.example.com:4444" `
     -EnrollmentToken "your-token" `
     -OrganizationId "org-uuid" `
     -OutputName "sentinel-installer-acme.exe"
@@ -103,8 +103,8 @@ The embedded configuration JSON format:
 
 ```json
 {
-  "server_url": "https://sentinelrmm.us",
-  "grpc_endpoint": "sentinelrmm.us:4444",
+  "server_url": "https://your-server.example.com",
+  "grpc_endpoint": "your-server.example.com:4444",
   "enrollment_token": "enrollment-token-here",
   "organization_id": "organization-uuid-here"
 }
