@@ -487,8 +487,8 @@ func TestPingPongTimeout(t *testing.T) {
 		t.Errorf("Expected writeWait to be 10s, got %v", writeWait)
 	}
 
-	if pongWait != 60*time.Second {
-		t.Errorf("Expected pongWait to be 60s, got %v", pongWait)
+	if pongWait != 120*time.Second {
+		t.Errorf("Expected pongWait to be 120s, got %v", pongWait)
 	}
 
 	if pingPeriod != (pongWait*9)/10 {

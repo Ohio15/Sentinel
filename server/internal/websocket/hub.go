@@ -17,7 +17,7 @@ import (
 
 const (
 	writeWait      = 10 * time.Second
-	pongWait       = 60 * time.Second
+	pongWait       = 120 * time.Second
 	pingPeriod     = (pongWait * 9) / 10
 	maxMessageSize = 512 * 1024 // 512KB
 
@@ -511,7 +511,9 @@ func (c *Client) ReadPump(ctx context.Context, handler func([]byte)) {
 				}
 				return
 			}
-			// Debug: log received message type
+			// Reset read deadline on ANY received data — not just pong frames.
+			// This keeps connections alive when app-level messages flow (heartbeats, metrics, etc.)
+			c.conn.SetReadDeadline(time.Now().Add(pongWait))
 			if !c.isAgent {
 				log.Printf("[ReadPump] Dashboard message received (%d bytes): %.200s", len(message), string(message))
 			}

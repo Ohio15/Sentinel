@@ -722,7 +722,7 @@ func (c *Client) readLoop(ctx context.Context) {
 		}
 
 		// Set read deadline to detect dead connections
-		conn.SetReadDeadline(time.Now().Add(65 * time.Second))
+		conn.SetReadDeadline(time.Now().Add(130 * time.Second))
 
 		_, data, err := conn.ReadMessage()
 		if err != nil {
