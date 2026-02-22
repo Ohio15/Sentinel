@@ -1,0 +1,81 @@
+name: Deploy Shared Brain MCP
+
+on:
+  workflow_dispatch:
+    inputs:
+      fix_ssh:
+        description: 'Restart SSH service before deploying'
+        required: false
+        default: 'true'
+        type: boolean
+      deploy_mcp:
+        description: 'Deploy the shared-brain-mcp server'
+        required: false
+        default: 'true'
+        type: boolean
+
+jobs:
+  deploy:
+    name: Deploy Shared Brain MCP Server
+    runs-on: self-hosted
+
+    steps:
+      - name: Fix SSH service
+        if: ${{ inputs.fix_ssh }}
+        run: |
+          echo "=== Checking SSH status ==="
+          sudo systemctl status sshd || sudo systemctl status ssh || echo "SSH service not found via systemctl"
+          echo "=== Restarting SSH ==="
+          sudo systemctl restart sshd || sudo systemctl restart ssh || sudo service ssh restart || echo "Could not restart SSH"
+          echo "=== Verifying SSH ==="
+          sleep 2
+          sudo systemctl status sshd || sudo systemctl status ssh || echo "SSH status unknown"
+          ss -tlnp | grep :22 || echo "Port 22 not listening"
+
+      - name: Create state directory
+        if: ${{ inputs.deploy_mcp }}
+        run: mkdir -p ~/.claude/memory/state
+
+      - name: Create MCP server directory
+        if: ${{ inputs.deploy_mcp }}
+        run: mkdir -p ~/shared-brain-mcp/lib
+
+      - name: Write package.json
+        if: ${{ inputs.deploy_mcp }}
+        run: |
+          cat > ~/shared-brain-mcp/package.json << 'PKGEOF'
+          {
+            "name": "shared-brain-mcp",
+            "version": "1.0.0",
+            "description": "Intelligent MCP server for shared-brain knowledge base",
+            "main": "index.js",
+            "type": "module",
+            "scripts": {
+              "start": "node index.js"
+            },
+            "dependencies": {
+              "@modelcontextprotocol/sdk": "^1.12.1",
+              "express": "^4.21.2",
+              "chokidar": "^4.0.3",
+              "zod": "^3.24.2"
+            }
+          }
+          PKGEOF
+
+      - name: Upload MCP source files
+        if: ${{ inputs.deploy_mcp }}
+        run: echo "Source files will be transferred via SSH after SSH is restored"
+
+      - name: Verify environment
+        run: |
+          echo "=== System info ==="
+          uname -a
+          echo "=== Docker status ==="
+          docker ps --format 'table {{.Names}}\t{{.Status}}' 2>/dev/null || echo "Docker not available"
+          echo "=== Memory dirs ==="
+          ls -la ~/.claude/memory/procedural/ 2>/dev/null || echo "No procedural dir"
+          ls -la ~/.claude/memory/state/ 2>/dev/null || echo "No state dir"
+          echo "=== SSH port check ==="
+          ss -tlnp | grep :22 || echo "Port 22 not listening"
+          echo "=== Network interfaces ==="
+          ip addr show | grep "inet " || echo "No network info"
