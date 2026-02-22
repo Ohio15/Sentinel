@@ -26,6 +26,11 @@ entryPoints:
 
   websecure:
     address: ":443"
+    transport:
+      respondingTimeouts:
+        readTimeout: 0s
+        writeTimeout: 0s
+        idleTimeout: 300s
     http:
       tls:
         certResolver: letsencrypt
@@ -35,6 +40,11 @@ entryPoints:
   # Alternate HTTPS port (bypasses router cache issues on 443)
   websecure-alt:
     address: ":4443"
+    transport:
+      respondingTimeouts:
+        readTimeout: 0s
+        writeTimeout: 0s
+        idleTimeout: 300s
     http:
       tls:
         certResolver: letsencrypt
@@ -42,6 +52,11 @@ entryPoints:
   # Dedicated entrypoint for agent mTLS connections
   agents:
     address: ":8443"
+    transport:
+      respondingTimeouts:
+        readTimeout: 0s
+        writeTimeout: 0s
+        idleTimeout: 300s
     http:
       tls:
         options: mtls@file

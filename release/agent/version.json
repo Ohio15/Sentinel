@@ -1,5 +1,5 @@
 {
-    "version":  "1.76.4",
+    "version":  "1.76.5",
     "releaseDate":  "2026-02-18",
     "changelog":  "Fix Linux/Synology agent auto-update: cross-platform IPC paths, multi-strategy service restart",
     "platforms":  [
