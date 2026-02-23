@@ -42,12 +42,12 @@ services:
     container_name: sentinel-backend
     # Port 8090 for local development only - in production, only Traefik exposes ports
     ports:
-      - "8090:8080"
+      - "127.0.0.1:8090:8080"
     expose:
       - "4444"   # gRPC Data Plane (exposed via Traefik, not directly to host)
     restart: unless-stopped
     environment:
-      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=${DB_SSL_MODE:-prefer}
+      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=${DB_SSL_MODE:-require}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_dev_password}@redis:6379
       - JWT_SECRET=${JWT_SECRET}
       - ENROLLMENT_TOKEN=${ENROLLMENT_TOKEN}
@@ -154,6 +154,15 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./src/main/migrations:/docker-entrypoint-initdb.d:ro
+      - /home/ohio_/certs/sentinel-postgres/server-cert.pem:/var/lib/postgresql/server.crt:ro
+      - /home/ohio_/certs/sentinel-postgres/server-key.pem:/var/lib/postgresql/server.key:ro
+      - /home/ohio_/certs/sentinel-postgres/ca-cert.pem:/var/lib/postgresql/ca.crt:ro
+    command: >
+      postgres
+      -c ssl=on
+      -c ssl_cert_file=/var/lib/postgresql/server.crt
+      -c ssl_key_file=/var/lib/postgresql/server.key
+      -c ssl_ca_file=/var/lib/postgresql/ca.crt
     networks:
       - sentinel-network
     security_opt:
