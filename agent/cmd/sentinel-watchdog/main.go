@@ -62,7 +62,7 @@ const (
 )
 
 var (
-	Version = "1.76.5"
+	Version = "1.76.6"
 	elog    debug.Log
 	isDebug = false
 )
