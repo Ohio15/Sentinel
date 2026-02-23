@@ -729,10 +729,9 @@ func rateLimitMiddleware(cache *cache.Cache, maxRequests int, windowSeconds int)
 			return
 		}
 
-		// Set expiry on first request
-		if count == 1 {
-			cache.Expire(c.Request.Context(), key, windowSeconds)
-		}
+		// Always ensure TTL is set — prevents immortal keys if TTL was lost
+		// (e.g., after Redis restart or network blip during the original EXPIRE call)
+		cache.Expire(c.Request.Context(), key, windowSeconds)
 
 		if int(count) > maxRequests {
 			c.Header("Retry-After", strconv.Itoa(windowSeconds))
