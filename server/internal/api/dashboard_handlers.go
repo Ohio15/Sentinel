@@ -28,27 +28,25 @@ func (r *Router) handleDashboardMessage(userID uuid.UUID, message []byte) {
 		return
 	}
 
-	// Handle ping messages directly - don't forward to agent
+	// Handle ping messages directly - respond only to the requesting user
 	if msg.Type == ws.MsgTypePing {
-		log.Printf("[Dashboard] Responding to ping from user %s", userID)
 		pongResponse, _ := json.Marshal(map[string]interface{}{
 			"type":      ws.MsgTypePong,
 			"requestId": msg.RequestID,
 			"timestamp": time.Now().UnixMilli(),
 		})
-		r.hub.BroadcastToDashboards(pongResponse)
+		r.hub.SendToUser(userID, pongResponse)
 		return
 	}
 
-	// Handle heartbeat messages directly as well
+	// Handle heartbeat messages directly - respond only to the requesting user
 	if msg.Type == ws.MsgTypeHeartbeat {
-		log.Printf("[Dashboard] Responding to heartbeat from user %s", userID)
 		ackResponse, _ := json.Marshal(map[string]interface{}{
 			"type":      ws.MsgTypeHeartbeatAck,
 			"requestId": msg.RequestID,
 			"timestamp": time.Now().UnixMilli(),
 		})
-		r.hub.BroadcastToDashboards(ackResponse)
+		r.hub.SendToUser(userID, ackResponse)
 		return
 	}
 

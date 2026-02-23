@@ -223,7 +223,26 @@ func (h *Hub) Run() {
 				h.totalAgentConnections.Add(1)
 				log.Printf("Agent connected: %s (conn: %s)", client.agentID, client.connectionID)
 			} else {
-				h.dashboards[client.userID] = append(h.dashboards[client.userID], client)
+				// Close excess dashboard connections for this user (keep max 2)
+				const maxDashboardConns = 2
+				existing := h.dashboards[client.userID]
+				if len(existing) >= maxDashboardConns {
+					excessCount := len(existing) - maxDashboardConns + 1
+					for i := 0; i < excessCount && i < len(existing); i++ {
+						old := existing[i]
+						log.Printf("[Hub] Closing excess dashboard conn for user %s: conn=%s (had %d, max %d)",
+							client.userID, old.connectionID, len(existing), maxDashboardConns)
+						delete(h.connections, old.connectionID)
+						if h.registry != nil {
+							h.registry.Unregister(old.connectionID)
+						}
+						close(old.send)
+						go old.conn.Close()
+					}
+					existing = existing[excessCount:]
+				}
+
+				h.dashboards[client.userID] = append(existing, client)
 				h.totalDashboardConnections.Add(1)
 
 				// Register with dashboard registry for targeted routing

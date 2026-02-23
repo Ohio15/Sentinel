@@ -17,6 +17,7 @@ import (
 // WebSocketHub defines the interface for WebSocket hub operations
 type WebSocketHub interface {
 	SendToAgent(agentID string, message []byte) error
+	SendToUser(userID uuid.UUID, message []byte) error
 	BroadcastToDashboards(message []byte)
 	IsAgentOnline(agentID string) bool
 	RegisterAgent(conn *websocket.Conn, agentID string, deviceID uuid.UUID) *ws.Client
