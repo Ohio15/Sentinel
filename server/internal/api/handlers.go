@@ -123,21 +123,18 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	upgrader := r.getUpgrader()
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		log.Printf("[WS-DEBUG] Upgrade failed from %s: %v", c.ClientIP(), err)
 		return
 	}
 
 	// Wait for auth message
 	_, message, err := conn.ReadMessage()
 	if err != nil {
-		log.Printf("[WS-DEBUG] Auth read failed from %s: %v", c.ClientIP(), err)
 		conn.Close()
 		return
 	}
 
 	var authMsg ws.Message
 	if err := json.Unmarshal(message, &authMsg); err != nil || authMsg.Type != ws.MsgTypeAuth {
-		log.Printf("[WS-DEBUG] Invalid auth message from %s: unmarshalErr=%v type=%s msgLen=%d", c.ClientIP(), err, authMsg.Type, len(message))
 		conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Invalid auth message"}`)})
 		conn.Close()
 		return
@@ -180,13 +177,10 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 		} `json:"deviceInfo,omitempty"`
 	}
 	if err := json.Unmarshal(authMsg.Payload, &authPayload); err != nil {
-		log.Printf("[WS-DEBUG] Invalid auth payload from %s: %v payload=%s", c.ClientIP(), err, string(authMsg.Payload))
 		conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Invalid auth payload"}`)})
 		conn.Close()
 		return
 	}
-
-	log.Printf("[WS-DEBUG] Auth attempt from %s: agentId=%s tokenLen=%d", c.ClientIP(), authPayload.AgentID, len(authPayload.Token))
 
 	// Verify token against database (enrollment_tokens table)
 	// Tokens can be either:
@@ -206,47 +200,36 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 
 	if err == nil {
 		// Token found in database - validate it
-		log.Printf("[WS-DEBUG] Stage=token_db_found from %s agent=%s", c.ClientIP(), authPayload.AgentID)
 		if !isActive {
+			log.Printf("[WS] Token disabled for agent %s from %s", authPayload.AgentID, c.ClientIP())
 			conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Token is disabled"}`)})
 			conn.Close()
 			return
 		}
-		if expiresAt != nil && time.Now().After(*expiresAt) {
-			conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Token has expired"}`)})
-			conn.Close()
-			return
-		}
-		// NOTE: We do NOT check max_uses for WebSocket connections.
-		// max_uses limits how many devices can install using one link.
-		// Once a device is installed, it can reconnect unlimited times.
+		// NOTE: We do NOT check expiry or max_uses for WebSocket connections.
+		// These limits restrict how many NEW devices can enroll using one link.
+		// Once an agent is installed with a token, it can reconnect unlimited times
+		// regardless of whether the enrollment token has since expired.
 		tokenValid = true
 	} else {
 		// Token not found in database - check legacy env var
-		log.Printf("[WS-DEBUG] Stage=token_db_miss from %s agent=%s dbErr=%v", c.ClientIP(), authPayload.AgentID, err)
 		if r.config.EnrollmentToken != "" && subtle.ConstantTimeCompare([]byte(authPayload.Token), []byte(r.config.EnrollmentToken)) == 1 {
 			tokenValid = true
-			log.Printf("[WS-DEBUG] Stage=token_env_match from %s agent=%s", c.ClientIP(), authPayload.AgentID)
-		} else {
-			log.Printf("[WS-DEBUG] Stage=token_env_mismatch from %s agent=%s submittedLen=%d envLen=%d", c.ClientIP(), authPayload.AgentID, len(authPayload.Token), len(r.config.EnrollmentToken))
 		}
 	}
 
 	if !tokenValid {
-		log.Printf("[WS-DEBUG] Invalid token from %s for agent %s: token=%s dbErr=%v", c.ClientIP(), authPayload.AgentID, authPayload.Token[:min(8, len(authPayload.Token))], err)
+		log.Printf("[WS] Invalid token from %s for agent %s", c.ClientIP(), authPayload.AgentID)
 		conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Invalid token"}`)})
 		conn.Close()
 		return
 	}
-
-	log.Printf("[WS-DEBUG] Stage=token_valid from %s agent=%s", c.ClientIP(), authPayload.AgentID)
 
 	// Get device ID - or auto-enroll if device was deleted
 	ctx := context.Background()
 	var deviceID uuid.UUID
 	var isDisabled bool
 	err = r.db.Pool().QueryRow(ctx, "SELECT id, COALESCE(is_disabled, false) FROM devices WHERE agent_id = $1 AND organization_id = $2", authPayload.AgentID, constants.CurrentOrganizationID).Scan(&deviceID, &isDisabled)
-	log.Printf("[WS-DEBUG] Stage=device_lookup from %s agent=%s deviceID=%s isDisabled=%v err=%v", c.ClientIP(), authPayload.AgentID, deviceID, isDisabled, err)
 	if err != nil {
 		// Device not found by agent_id - try MAC address fallback for hardware fingerprint migration
 		if authPayload.DeviceInfo != nil && authPayload.DeviceInfo.MACAddress != "" {
@@ -350,18 +333,11 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	}
 
 	// Send auth response
-	log.Printf("[WS-DEBUG] Stage=sending_auth_response from %s agent=%s", c.ClientIP(), authPayload.AgentID)
 	authRespJSON, _ := json.Marshal(authRespPayload)
-	if writeErr := conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(authRespJSON)}); writeErr != nil {
-		log.Printf("[WS-DEBUG] Stage=auth_response_write_failed from %s agent=%s err=%v", c.ClientIP(), authPayload.AgentID, writeErr)
-		conn.Close()
-		return
-	}
+	conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(authRespJSON)})
 
 	// Register client
-	log.Printf("[WS-DEBUG] Stage=registering from %s agent=%s", c.ClientIP(), authPayload.AgentID)
 	client := r.hub.RegisterAgent(conn, authPayload.AgentID, deviceID)
-	log.Printf("[WS-DEBUG] Stage=registered from %s agent=%s connID=%s", c.ClientIP(), authPayload.AgentID, client.GetConnectionID())
 
 	// Update device status, certificate hash, and hardware info (GPU/Storage) if provided
 	// This ensures devices that enrolled before GPU/Storage support get updated
@@ -415,12 +391,10 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	go r.autoDistributeCertificate(client, authPayload.AgentID, authPayload.CACertHash)
 
 	// Start read/write pumps
-	log.Printf("[WS-DEBUG] Stage=starting_pumps from %s agent=%s", c.ClientIP(), authPayload.AgentID)
 	go client.WritePump(ctx)
 	client.ReadPump(ctx, func(msg []byte) {
 		r.handleAgentMessage(authPayload.AgentID, deviceID, msg)
 	})
-	log.Printf("[WS-DEBUG] Stage=readpump_exited from %s agent=%s", c.ClientIP(), authPayload.AgentID)
 
 	// Update device status on disconnect
 	if _, err := r.db.Pool().Exec(context.Background(), "UPDATE devices SET status = 'offline' WHERE id = $1 AND organization_id = $2", deviceID, constants.CurrentOrganizationID); err != nil {
