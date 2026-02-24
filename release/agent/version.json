@@ -1,7 +1,7 @@
 {
-    "version":  "1.76.8",
+    "version":  "1.76.9",
     "releaseDate":  "2026-02-24",
-    "changelog":  "Fix update pipeline: download URL uses port 443, separate rate limit buckets, watchdog handoff state tracking, verbose update diagnostics",
+    "changelog":  "Fix watchdog self-update gate deadlock, diagnostic handoff logging, staleness timeout, deferral cap",
     "platforms":  [
                       "windows",
                       "linux",

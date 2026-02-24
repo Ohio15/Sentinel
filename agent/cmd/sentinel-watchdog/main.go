@@ -62,7 +62,7 @@ const (
 )
 
 var (
-	Version = "1.76.8"
+	Version = "1.76.9"
 	elog    debug.Log
 	isDebug = false
 )
@@ -633,12 +633,22 @@ func (ws *watchdogService) startPipeServer() {
 	handler := func(msg ipc.PipeMessage) *ipc.PipeMessage {
 		switch msg.Type {
 		case ipc.MsgUpdateReady:
-			logMessage("Received agent update ready signal via pipe")
+			logMessage(fmt.Sprintf("[Pipe] Received MsgUpdateReady — payload length=%d", len(msg.Payload)))
+			if msg.Payload != "" {
+				logMessage(fmt.Sprintf("[Pipe] Payload: %s", msg.Payload))
+			}
+			// Verify the update-request.json file exists (agent should have written it before signaling)
+			reqPath := ipc.UpdateRequestPath()
+			if data, err := os.ReadFile(reqPath); err != nil {
+				logMessage(fmt.Sprintf("[Pipe] WARNING: update-request.json NOT FOUND at %s after pipe signal: %v", reqPath, err))
+			} else {
+				logMessage(fmt.Sprintf("[Pipe] Confirmed update-request.json exists (%d bytes) — updateChecker will process on next tick", len(data)))
+			}
 			// The update checker will pick up the request file
 			return nil
 
 		case ipc.MsgWatchdogUpdateReady:
-			logMessage("Received watchdog update ready signal via pipe")
+			logMessage(fmt.Sprintf("[Pipe] Received MsgWatchdogUpdateReady — payload length=%d", len(msg.Payload)))
 			// The watchdog update checker will pick up the request file
 			return nil
 
@@ -697,45 +707,74 @@ func (ws *watchdogService) checkForPendingUpdate() {
 	// Give the system a moment to stabilize after startup
 	time.Sleep(5 * time.Second)
 
+	requestPath := ipc.UpdateRequestPath()
+	logMessage(fmt.Sprintf("[StartupCheck] Checking for pending update at %s", requestPath))
+
 	request, err := ipc.ReadUpdateRequest()
 	if err != nil {
-		logMessage(fmt.Sprintf("Error reading update request: %v", err))
+		logMessage(fmt.Sprintf("[StartupCheck] Error reading update request: %v", err))
 		return
 	}
 
 	if request == nil {
-		return // No pending update
+		logMessage("[StartupCheck] No pending update request file found")
+		return
 	}
 
-	logMessage(fmt.Sprintf("Found pending update request for version %s", request.Version))
+	logMessage(fmt.Sprintf("[StartupCheck] Found pending update request: version=%s staged=%s target=%s requestedAt=%s",
+		request.Version, request.StagedPath, request.TargetPath, request.RequestedAt.Format(time.RFC3339)))
 
 	// Check if this update was already applied (agent is running new version)
-	info, _ := ipc.ReadAgentInfo()
-	if info != nil && info.Version == request.Version {
-		logMessage(fmt.Sprintf("Update already applied: agent running version %s", info.Version))
-		// Clean up the request file
-		ipc.DeleteUpdateRequest()
-		// Write success status if not already written
-		status, _ := ipc.ReadUpdateStatus()
-		if status == nil || status.State != ipc.StateComplete {
-			ipc.WriteUpdateStatus(&ipc.UpdateStatus{
-				State:       ipc.StateComplete,
-				Version:     request.Version,
-				CompletedAt: time.Now(),
-			})
+	infoPath := ipc.AgentInfoPath()
+	info, infoErr := ipc.ReadAgentInfo()
+	if infoErr != nil {
+		logMessage(fmt.Sprintf("[StartupCheck] Error reading agent info at %s: %v", infoPath, infoErr))
+	}
+	if info != nil {
+		logMessage(fmt.Sprintf("[StartupCheck] Agent info: version=%s pid=%d startedAt=%s", info.Version, info.PID, info.StartedAt.Format(time.RFC3339)))
+		if info.Version == request.Version {
+			logMessage(fmt.Sprintf("[StartupCheck] Update already applied: agent running version %s — cleaning up", info.Version))
+			ipc.DeleteUpdateRequest()
+			status, _ := ipc.ReadUpdateStatus()
+			if status == nil || status.State != ipc.StateComplete {
+				ipc.WriteUpdateStatus(&ipc.UpdateStatus{
+					State:       ipc.StateComplete,
+					Version:     request.Version,
+					CompletedAt: time.Now(),
+				})
+				logMessage("[StartupCheck] Wrote completion status")
+			}
+			return
 		}
-		return
+		logMessage(fmt.Sprintf("[StartupCheck] Version mismatch: agent=%s, request=%s — update not yet applied", info.Version, request.Version))
+	} else {
+		logMessage("[StartupCheck] No agent info file — cannot verify if update was applied")
+	}
+
+	// Verify staged file still exists
+	if stagedInfo, statErr := os.Stat(request.StagedPath); statErr != nil {
+		logMessage(fmt.Sprintf("[StartupCheck] WARNING: Staged file not found at %s: %v", request.StagedPath, statErr))
+	} else {
+		logMessage(fmt.Sprintf("[StartupCheck] Staged file exists: size=%d bytes", stagedInfo.Size()))
+	}
+
+	// Check for watchdog self-update that would block this
+	wdRequestPath := ipc.WatchdogUpdateRequestPath()
+	if wdReq, wdErr := ipc.ReadWatchdogUpdateRequest(); wdErr == nil && wdReq != nil {
+		logMessage(fmt.Sprintf("[StartupCheck] WARNING: watchdog-update-request.json exists at %s (version=%s) — this will BLOCK agent updates in updateChecker!", wdRequestPath, wdReq.Version))
 	}
 
 	// There's a pending update that wasn't completed - attempt to apply it
 	ws.mu.Lock()
 	if ws.updateInProgress {
+		logMessage("[StartupCheck] Another update already in progress — skipping")
 		ws.mu.Unlock()
 		return
 	}
 	ws.updateInProgress = true
 	ws.mu.Unlock()
 
+	logMessage("[StartupCheck] Launching applyUpdate goroutine for pending update")
 	go ws.applyUpdate(request)
 }
 
@@ -744,30 +783,40 @@ func (ws *watchdogService) updateChecker() {
 	ticker := time.NewTicker(updateCheckInterval)
 	defer ticker.Stop()
 
-	// Log once on startup to confirm loop is running and show the request file path
-	logMessage(fmt.Sprintf("[UpdateChecker] Started — polling %s every %v", ipc.UpdateRequestPath(), updateCheckInterval))
+	requestPath := ipc.UpdateRequestPath()
+	wdRequestPath := ipc.WatchdogUpdateRequestPath()
+
+	logMessage(fmt.Sprintf("[UpdateChecker] Started — polling every %v", updateCheckInterval))
+	logMessage(fmt.Sprintf("[UpdateChecker]   agent request file:    %s", requestPath))
+	logMessage(fmt.Sprintf("[UpdateChecker]   watchdog request file: %s", wdRequestPath))
+	logMessage(fmt.Sprintf("[UpdateChecker]   selfUpdater initialized: %v", ws.selfUpdater != nil))
 
 	pollCount := 0
+	consecutiveDefers := 0
 	for {
 		select {
 		case <-ws.stopChan:
 			return
 		case <-ticker.C:
 			pollCount++
+
+			// Verbose logging: first 20 ticks, then every 60
+			verbose := pollCount <= 20 || pollCount%60 == 0
+
 			ws.mu.Lock()
 			inProgress := ws.updateInProgress
 			selfUpdateInProgress := ws.selfUpdateInProgress
 			ws.mu.Unlock()
 
 			if inProgress {
-				if pollCount%60 == 0 { // Log every 5 min (60 * 5s)
-					logMessage("[UpdateChecker] Agent update in progress, skipping check")
+				if verbose {
+					logMessage(fmt.Sprintf("[UpdateChecker] poll #%d: BLOCKED — agent update in progress", pollCount))
 				}
 				continue
 			}
 			if selfUpdateInProgress {
-				if pollCount%60 == 0 {
-					logMessage("[UpdateChecker] Watchdog self-update in progress, skipping check")
+				if verbose {
+					logMessage(fmt.Sprintf("[UpdateChecker] poll #%d: BLOCKED — watchdog self-update in progress", pollCount))
 				}
 				continue
 			}
@@ -775,45 +824,109 @@ func (ws *watchdogService) updateChecker() {
 			// CRITICAL: Check for pending watchdog self-update FIRST
 			// If there's a watchdog update pending, defer agent update until watchdog is updated
 			// This ensures the new watchdog (with lenient settings) handles the agent update
+			// SAFETY: Deferral is capped at 360 ticks (30 min) and stale files (>30 min) are auto-deleted
 			if ws.selfUpdater != nil {
 				watchdogRequest, wdErr := ws.selfUpdater.CheckForPendingUpdate()
 				if wdErr != nil {
-					logMessage(fmt.Sprintf("[UpdateChecker] Error checking watchdog self-update: %v", wdErr))
+					logMessage(fmt.Sprintf("[UpdateChecker] poll #%d: Error reading watchdog self-update request at %s: %v", pollCount, wdRequestPath, wdErr))
 				}
-				if watchdogRequest != nil && watchdogRequest.Version != Version {
-					logMessage(fmt.Sprintf("[UpdateChecker] Deferring agent update — watchdog self-update pending to v%s (current: %s)", watchdogRequest.Version, Version))
-					continue
+				if watchdogRequest != nil {
+					if watchdogRequest.Version != Version {
+						// Check file staleness — if the request has been sitting for >30 min, it's dead
+						stale := false
+						if wdFileInfo, wdStatErr := os.Stat(wdRequestPath); wdStatErr == nil {
+							fileAge := time.Since(wdFileInfo.ModTime())
+							if fileAge > 30*time.Minute {
+								logMessage(fmt.Sprintf("[UpdateChecker] poll #%d: WARNING — watchdog-update-request.json is stale (age: %v, mod: %s). Deleting to unblock agent updates.",
+									pollCount, fileAge.Round(time.Second), wdFileInfo.ModTime().Format(time.RFC3339)))
+								if delErr := ipc.DeleteWatchdogUpdateRequest(); delErr != nil {
+									logMessage(fmt.Sprintf("[UpdateChecker] Failed to delete stale watchdog request: %v", delErr))
+								}
+								stale = true
+								consecutiveDefers = 0
+							}
+						}
+
+						if !stale {
+							consecutiveDefers++
+
+							// Cap: 360 consecutive defers = 30 minutes at 5s intervals
+							if consecutiveDefers >= 360 {
+								logMessage(fmt.Sprintf("[UpdateChecker] poll #%d: WARNING — deferral cap reached (%d consecutive). Force-clearing watchdog gate to unblock agent updates.",
+									pollCount, consecutiveDefers))
+								if delErr := ipc.DeleteWatchdogUpdateRequest(); delErr != nil {
+									logMessage(fmt.Sprintf("[UpdateChecker] Failed to delete watchdog request at cap: %v", delErr))
+								}
+								consecutiveDefers = 0
+							} else {
+								// Log every deferral for first 10, then every 60
+								if consecutiveDefers <= 10 || consecutiveDefers%60 == 0 {
+									logMessage(fmt.Sprintf("[UpdateChecker] poll #%d: DEFERRED — watchdog self-update pending to v%s (current: %s) [deferred %d/360 times, file: %s]",
+										pollCount, watchdogRequest.Version, Version, consecutiveDefers, wdRequestPath))
+								}
+								continue
+							}
+						}
+					} else {
+						// Watchdog request exists but version matches — stale file, log it
+						if verbose {
+							logMessage(fmt.Sprintf("[UpdateChecker] poll #%d: watchdog-update-request.json exists but version %s matches current — will be cleaned by watchdogUpdateChecker", pollCount, watchdogRequest.Version))
+						}
+					}
+				} else {
+					if consecutiveDefers > 0 {
+						logMessage(fmt.Sprintf("[UpdateChecker] poll #%d: watchdog self-update deferral cleared after %d defers", pollCount, consecutiveDefers))
+						consecutiveDefers = 0
+					}
 				}
 			}
 
+			// Check for agent update request file
 			request, err := ipc.ReadUpdateRequest()
 			if err != nil {
-				logMessage(fmt.Sprintf("[UpdateChecker] Error reading update request: %v", err))
+				logMessage(fmt.Sprintf("[UpdateChecker] poll #%d: Error reading update request at %s: %v", pollCount, requestPath, err))
 				continue
 			}
 
 			if request == nil {
-				// Log file absence periodically (every 5 min) to confirm the loop is alive
-				if pollCount%60 == 0 {
-					logMessage(fmt.Sprintf("[UpdateChecker] No update request file found at %s (poll #%d)", ipc.UpdateRequestPath(), pollCount))
+				if verbose {
+					// Also check raw file existence for path debugging
+					_, statErr := os.Stat(requestPath)
+					logMessage(fmt.Sprintf("[UpdateChecker] poll #%d: no update request (file exists: %v, stat err: %v)",
+						pollCount, statErr == nil, statErr))
 				}
 				continue
 			}
 
-			logMessage(fmt.Sprintf("[UpdateChecker] Update request FOUND — version=%s staged=%s target=%s requestedAt=%s",
-				request.Version, request.StagedPath, request.TargetPath, request.RequestedAt.Format(time.RFC3339)))
+			logMessage(fmt.Sprintf("[UpdateChecker] poll #%d: === UPDATE REQUEST FOUND ===", pollCount))
+			logMessage(fmt.Sprintf("[UpdateChecker]   version:     %s", request.Version))
+			logMessage(fmt.Sprintf("[UpdateChecker]   stagedPath:  %s", request.StagedPath))
+			logMessage(fmt.Sprintf("[UpdateChecker]   targetPath:  %s", request.TargetPath))
+			logMessage(fmt.Sprintf("[UpdateChecker]   requestedAt: %s", request.RequestedAt.Format(time.RFC3339)))
+			logMessage(fmt.Sprintf("[UpdateChecker]   requestedBy: %s", request.RequestedBy))
 
 			// Verify staged file exists before starting update
-			if _, statErr := os.Stat(request.StagedPath); statErr != nil {
-				logMessage(fmt.Sprintf("[UpdateChecker] ERROR: Staged file not accessible: %v — deleting stale request", statErr))
+			stagedInfo, statErr := os.Stat(request.StagedPath)
+			if statErr != nil {
+				logMessage(fmt.Sprintf("[UpdateChecker] ERROR: Staged file not accessible at %s: %v — deleting stale request", request.StagedPath, statErr))
 				ipc.DeleteUpdateRequest()
 				continue
+			}
+			logMessage(fmt.Sprintf("[UpdateChecker] Staged file verified: size=%d bytes, mode=%s", stagedInfo.Size(), stagedInfo.Mode()))
+
+			// Verify target path exists (the current agent binary)
+			targetInfo, targetErr := os.Stat(request.TargetPath)
+			if targetErr != nil {
+				logMessage(fmt.Sprintf("[UpdateChecker] WARNING: Target path not accessible at %s: %v", request.TargetPath, targetErr))
+			} else {
+				logMessage(fmt.Sprintf("[UpdateChecker] Target binary: size=%d bytes, mode=%s", targetInfo.Size(), targetInfo.Mode()))
 			}
 
 			ws.mu.Lock()
 			ws.updateInProgress = true
 			ws.mu.Unlock()
 
+			logMessage("[UpdateChecker] updateInProgress=true — launching applyUpdate goroutine")
 			go ws.applyUpdate(request)
 		}
 	}
@@ -883,130 +996,182 @@ func (ws *watchdogService) applySelfUpdate(request *ipc.WatchdogUpdateRequest) {
 	}()
 
 	if ws.selfUpdater == nil {
-		logMessage("Self-updater not initialized")
+		logMessage("[SelfUpdate] Self-updater not initialized")
+		// Clean up the request file so we don't block agent updates forever
+		ipc.DeleteWatchdogUpdateRequest()
 		return
 	}
 
-	logMessage(fmt.Sprintf("Starting watchdog self-update to version %s", request.Version))
+	logMessage(fmt.Sprintf("[SelfUpdate] Starting watchdog self-update to version %s", request.Version))
 
 	if err := ws.selfUpdater.ApplySelfUpdate(request); err != nil {
-		logMessage(fmt.Sprintf("Self-update failed: %v", err))
+		logMessage(fmt.Sprintf("[SelfUpdate] Self-update FAILED: %v — deleting request file to unblock agent updates", err))
+		// Always clean up on failure so the self-update gate doesn't block agent updates.
+		// The agent will re-stage a watchdog update on its next cycle if needed.
+		if delErr := ipc.DeleteWatchdogUpdateRequest(); delErr != nil {
+			logMessage(fmt.Sprintf("[SelfUpdate] Warning: failed to delete watchdog request after failure: %v", delErr))
+		}
 		return
+	}
+
+	// Success path: clean up the request file before the scheduled task restarts us.
+	// If the restart happens before we get here, the new watchdog will see version match
+	// and clean it up via the watchdogUpdateChecker's version==current check.
+	if delErr := ipc.DeleteWatchdogUpdateRequest(); delErr != nil {
+		logMessage(fmt.Sprintf("[SelfUpdate] Warning: failed to delete watchdog request after success: %v", delErr))
 	}
 
 	// The scheduled task will stop this service, so we just wait
-	logMessage("Self-update initiated, watchdog will be restarted by scheduled task")
+	logMessage("[SelfUpdate] Self-update initiated, watchdog will be restarted by scheduled task")
 }
 
 // applyUpdate performs the actual update operation
 func (ws *watchdogService) applyUpdate(request *ipc.UpdateRequest) {
+	updateStart := time.Now()
 	defer func() {
+		if r := recover(); r != nil {
+			logMessage(fmt.Sprintf("[ApplyUpdate] PANIC recovered: %v", r))
+		}
 		ws.mu.Lock()
 		ws.updateInProgress = false
 		ws.mu.Unlock()
+		logMessage(fmt.Sprintf("[ApplyUpdate] Completed in %v — updateInProgress reset to false", time.Since(updateStart).Round(time.Millisecond)))
 	}()
 
-	logMessage(fmt.Sprintf("Starting update to version %s", request.Version))
+	logMessage(fmt.Sprintf("[ApplyUpdate] === BEGIN === version=%s", request.Version))
+	logMessage(fmt.Sprintf("[ApplyUpdate]   stagedPath: %s", request.StagedPath))
+	logMessage(fmt.Sprintf("[ApplyUpdate]   targetPath: %s", request.TargetPath))
+	logMessage(fmt.Sprintf("[ApplyUpdate]   installPath: %s", ws.installPath))
+	logMessage(fmt.Sprintf("[ApplyUpdate]   agentService: %s", ws.config.AgentService))
 
 	// Write status: applying
+	statusPath := ipc.UpdateStatusPath()
 	status := &ipc.UpdateStatus{
 		State:     ipc.StateApplying,
 		Version:   request.Version,
 		StartedAt: time.Now(),
 	}
 	if err := ipc.WriteUpdateStatus(status); err != nil {
-		logMessage(fmt.Sprintf("Failed to write update status: %v", err))
+		logMessage(fmt.Sprintf("[ApplyUpdate] WARNING: Failed to write 'applying' status to %s: %v", statusPath, err))
+	} else {
+		logMessage(fmt.Sprintf("[ApplyUpdate] Step 0/10: Wrote 'applying' status to %s", statusPath))
 	}
 
 	// Step 1: Verify staged file exists and checksum matches
+	stepStart := time.Now()
 	if err := ws.verifyStagedFile(request); err != nil {
+		logMessage(fmt.Sprintf("[ApplyUpdate] Step 1 FAILED in %v", time.Since(stepStart)))
 		ws.failUpdate(status, fmt.Sprintf("staged file verification failed: %v", err))
 		return
 	}
-	logMessage("Staged file verified")
+	logMessage(fmt.Sprintf("[ApplyUpdate] Step 1/10: Staged file verified in %v", time.Since(stepStart).Round(time.Millisecond)))
 
 	// Step 2: Disable protection on target file AND directory FIRST (before stopping service)
-	// The directory has a DENY ACL on Everyone that prevents creating new files (like .backup)
+	stepStart = time.Now()
 	protMgr := protection.NewManager(ws.installPath, ws.config.AgentService)
 	if err := protMgr.DisableProtectionForDir(ws.installPath); err != nil {
-		logMessage(fmt.Sprintf("Warning: failed to disable directory protection: %v", err))
-		// Continue anyway - might not have been protected
+		logMessage(fmt.Sprintf("[ApplyUpdate] Step 2: Warning — failed to disable directory protection on %s: %v", ws.installPath, err))
 	}
 	if err := protMgr.DisableProtectionForFile(request.TargetPath); err != nil {
-		logMessage(fmt.Sprintf("Warning: failed to disable file protection: %v", err))
-		// Continue anyway - might not have been protected
+		logMessage(fmt.Sprintf("[ApplyUpdate] Step 2: Warning — failed to disable file protection on %s: %v", request.TargetPath, err))
 	}
+	logMessage(fmt.Sprintf("[ApplyUpdate] Step 2/10: Protection disabled in %v", time.Since(stepStart).Round(time.Millisecond)))
 
 	// Step 3: Stop the agent service (releases file lock)
+	stepStart = time.Now()
+	logMessage(fmt.Sprintf("[ApplyUpdate] Step 3/10: Stopping agent service %q ...", ws.config.AgentService))
 	if err := ws.stopAgentService(); err != nil {
+		logMessage(fmt.Sprintf("[ApplyUpdate] Step 3 FAILED in %v", time.Since(stepStart)))
 		ws.failUpdate(status, fmt.Sprintf("failed to stop agent: %v", err))
 		return
 	}
-	logMessage("Agent service stopped")
+	logMessage(fmt.Sprintf("[ApplyUpdate] Step 3/10: Agent service stopped in %v", time.Since(stepStart).Round(time.Millisecond)))
 
 	// Step 4: Create backup of current binary (after service stopped, file unlocked)
+	stepStart = time.Now()
 	backupPath, err := ws.createBackup(request.TargetPath)
 	if err != nil {
+		logMessage(fmt.Sprintf("[ApplyUpdate] Step 4 FAILED in %v", time.Since(stepStart)))
 		ws.failUpdate(status, fmt.Sprintf("failed to create backup: %v", err))
 		return
 	}
 	status.BackupPath = backupPath
-	logMessage(fmt.Sprintf("Backup created at %s", backupPath))
+	logMessage(fmt.Sprintf("[ApplyUpdate] Step 4/10: Backup created at %s in %v", backupPath, time.Since(stepStart).Round(time.Millisecond)))
 
 	// Step 5: Replace the binary using atomic move
+	stepStart = time.Now()
+	logMessage(fmt.Sprintf("[ApplyUpdate] Step 5/10: Replacing %s with %s ...", request.TargetPath, request.StagedPath))
 	if err := ws.atomicReplace(request.StagedPath, request.TargetPath); err != nil {
-		logMessage(fmt.Sprintf("Failed to replace binary: %v, attempting rollback", err))
+		logMessage(fmt.Sprintf("[ApplyUpdate] Step 5 FAILED in %v: %v — attempting rollback", time.Since(stepStart), err))
 		ws.rollbackUpdate(backupPath, request.TargetPath, status)
 		return
 	}
-	logMessage("Binary replaced successfully")
+	// Verify the new binary is in place
+	if newInfo, statErr := os.Stat(request.TargetPath); statErr != nil {
+		logMessage(fmt.Sprintf("[ApplyUpdate] Step 5 WARNING: new binary not stat-able after replace: %v", statErr))
+	} else {
+		logMessage(fmt.Sprintf("[ApplyUpdate] Step 5/10: Binary replaced in %v — new size=%d bytes", time.Since(stepStart).Round(time.Millisecond), newInfo.Size()))
+	}
 
 	// Step 6: Pause tamper monitoring during startup window
-	// The tamper monitor runs every 10s and would detect the "missing" agent process
-	// during startup, firing false tamper alerts that interfere with verification.
 	ws.protMgr.PauseTamperMonitoring()
+	logMessage("[ApplyUpdate] Step 6/10: Tamper monitoring paused")
 
 	// Step 7: Start the agent service
+	stepStart = time.Now()
+	logMessage(fmt.Sprintf("[ApplyUpdate] Step 7/10: Starting agent service %q ...", ws.config.AgentService))
 	if err := ws.startAgentService(); err != nil {
 		ws.protMgr.ResumeTamperMonitoring()
-		logMessage(fmt.Sprintf("Failed to start agent: %v, attempting rollback", err))
+		logMessage(fmt.Sprintf("[ApplyUpdate] Step 7 FAILED in %v: %v — attempting rollback", time.Since(stepStart), err))
 		ws.rollbackUpdate(backupPath, request.TargetPath, status)
 		return
 	}
-	logMessage("Agent service started")
+	logMessage(fmt.Sprintf("[ApplyUpdate] Step 7/10: Agent service started in %v", time.Since(stepStart).Round(time.Millisecond)))
 
 	// Step 8: Verify the update succeeded (120s timeout for agent to write agent-info.json)
+	stepStart = time.Now()
+	logMessage(fmt.Sprintf("[ApplyUpdate] Step 8/10: Verifying agent reports version %s (timeout: %v) ...", request.Version, updateVerifyTimeout))
 	if err := ws.verifyUpdate(request.Version); err != nil {
 		ws.protMgr.ResumeTamperMonitoring()
-		logMessage(fmt.Sprintf("Update verification failed: %v, attempting rollback", err))
+		logMessage(fmt.Sprintf("[ApplyUpdate] Step 8 FAILED in %v: %v — attempting rollback", time.Since(stepStart), err))
 		ws.rollbackUpdate(backupPath, request.TargetPath, status)
 		return
 	}
+	logMessage(fmt.Sprintf("[ApplyUpdate] Step 8/10: Version verified in %v", time.Since(stepStart).Round(time.Millisecond)))
 
 	// Step 9: Re-enable protection on the new file and directory (after verified running)
+	stepStart = time.Now()
 	if err := protMgr.EnableProtectionForFile(request.TargetPath); err != nil {
-		logMessage(fmt.Sprintf("Warning: failed to re-enable file protection: %v", err))
+		logMessage(fmt.Sprintf("[ApplyUpdate] Step 9: Warning — failed to re-enable file protection: %v", err))
 	}
 	if err := protMgr.EnableProtectionForDir(ws.installPath); err != nil {
-		logMessage(fmt.Sprintf("Warning: failed to re-enable directory protection: %v", err))
+		logMessage(fmt.Sprintf("[ApplyUpdate] Step 9: Warning — failed to re-enable directory protection: %v", err))
 	}
+	logMessage(fmt.Sprintf("[ApplyUpdate] Step 9/10: Protection re-enabled in %v", time.Since(stepStart).Round(time.Millisecond)))
 
 	// Step 10: Resume tamper monitoring
 	ws.protMgr.ResumeTamperMonitoring()
+	logMessage("[ApplyUpdate] Step 10/10: Tamper monitoring resumed")
 
 	// Success!
 	status.State = ipc.StateComplete
 	status.CompletedAt = time.Now()
+	statusPath = ipc.UpdateStatusPath()
 	if err := ipc.WriteUpdateStatus(status); err != nil {
-		logMessage(fmt.Sprintf("Failed to write success status: %v", err))
+		logMessage(fmt.Sprintf("[ApplyUpdate] WARNING: Failed to write 'complete' status to %s: %v", statusPath, err))
+	} else {
+		logMessage(fmt.Sprintf("[ApplyUpdate] Wrote 'complete' status to %s", statusPath))
 	}
 
 	// Clean up
-	ipc.DeleteUpdateRequest()
+	if err := ipc.DeleteUpdateRequest(); err != nil {
+		logMessage(fmt.Sprintf("[ApplyUpdate] Warning: failed to delete update request: %v", err))
+	}
 	os.Remove(backupPath)
 	ipc.CleanupStagingDir()
 
-	logMessage(fmt.Sprintf("Update to version %s completed successfully", request.Version))
+	totalDuration := time.Since(updateStart).Round(time.Millisecond)
+	logMessage(fmt.Sprintf("[ApplyUpdate] === SUCCESS === Update to v%s completed in %v", request.Version, totalDuration))
 }
 
 // verifyStagedFile verifies the staged update file exists and checksum matches

@@ -495,8 +495,43 @@ func (u *Updater) applyUpdateWindows(currentExe, downloadPath, newVersion string
 
 // applyUpdateViaWatchdog uses the new watchdog-orchestrated update mechanism
 func (u *Updater) applyUpdateViaWatchdog(currentExe, downloadPath, newVersion string) error {
-	log.Printf("DEBUG applyUpdateViaWatchdog: currentExe=%q downloadPath=%q newVersion=%q", currentExe, downloadPath, newVersion)
-	
+	log.Printf("[Handoff] === BEGIN WATCHDOG HANDOFF === version=%s", newVersion)
+	log.Printf("[Handoff] currentExe=%q downloadPath=%q", currentExe, downloadPath)
+
+	// Verify the staged binary exists and is readable before writing the request
+	stagedInfo, err := os.Stat(downloadPath)
+	if err != nil {
+		log.Printf("[Handoff] FATAL: staged binary not accessible: %v", err)
+		return fmt.Errorf("staged binary not accessible: %w", err)
+	}
+	log.Printf("[Handoff] Staged binary verified: size=%d bytes, mode=%s", stagedInfo.Size(), stagedInfo.Mode())
+
+	// Proactively clear stale watchdog-update-request.json BEFORE writing agent update request.
+	// If this file exists and is stale (>30 min), the watchdog's self-update gate will block
+	// the agent update indefinitely. Clear it now so the handoff succeeds.
+	wdRequestPath := ipc.WatchdogUpdateRequestPath()
+	if wdFileInfo, wdStatErr := os.Stat(wdRequestPath); wdStatErr == nil {
+		fileAge := time.Since(wdFileInfo.ModTime())
+		if fileAge > 30*time.Minute {
+			log.Printf("[Handoff] WARNING: Stale watchdog-update-request.json at %s (age: %v) — deleting to prevent deadlock", wdRequestPath, fileAge.Round(time.Second))
+			if delErr := os.Remove(wdRequestPath); delErr != nil {
+				log.Printf("[Handoff] Failed to delete stale watchdog request: %v", delErr)
+			} else {
+				log.Printf("[Handoff] Stale watchdog request deleted successfully")
+			}
+		} else {
+			// File exists but is recent — read and log its contents
+			if wdData, rdErr := os.ReadFile(wdRequestPath); rdErr == nil {
+				log.Printf("[Handoff] WARNING: watchdog-update-request.json EXISTS at %s (age: %v, %d bytes): %s — watchdog self-update gate may defer this handoff",
+					wdRequestPath, fileAge.Round(time.Second), len(wdData), string(wdData))
+			}
+		}
+	} else if !os.IsNotExist(wdStatErr) {
+		log.Printf("[Handoff] Error checking watchdog-update-request.json: %v", wdStatErr)
+	} else {
+		log.Printf("[Handoff] No watchdog-update-request.json (good — no self-update gate)")
+	}
+
 	// Create update request for the watchdog
 	request := &ipc.UpdateRequest{
 		Version:     newVersion,
@@ -508,20 +543,32 @@ func (u *Updater) applyUpdateViaWatchdog(currentExe, downloadPath, newVersion st
 	}
 
 	// Write the update request file (persists across reboots)
+	requestPath := ipc.UpdateRequestPath()
+	log.Printf("[Handoff] Writing update-request.json to %s", requestPath)
 	if err := ipc.WriteUpdateRequest(request); err != nil {
+		log.Printf("[Handoff] FATAL: failed to write update request: %v", err)
 		return fmt.Errorf("failed to write update request: %w", err)
 	}
-	log.Printf("Update request written for version %s", newVersion)
 
-	// Signal the watchdog via named pipe for immediate handling
-	if err := ipc.SignalUpdateReady(request); err != nil {
-		// Not fatal - watchdog will poll the JSON file
-		log.Printf("Could not signal watchdog via pipe (will poll): %v", err)
+	// Verify the file was written by re-reading it
+	verifyData, verifyErr := os.ReadFile(requestPath)
+	if verifyErr != nil {
+		log.Printf("[Handoff] WARNING: could not re-read request file after write: %v", verifyErr)
 	} else {
-		log.Println("Watchdog signaled via pipe")
+		log.Printf("[Handoff] Verified request file written (%d bytes): %s", len(verifyData), string(verifyData))
 	}
 
-	log.Printf("Update orchestration handed to watchdog, agent will be restarted")
+	// Signal the watchdog via named pipe for immediate handling
+	log.Printf("[Handoff] Connecting to pipe %s ...", ipc.PipeName)
+	pipeStart := time.Now()
+	if err := ipc.SignalUpdateReady(request); err != nil {
+		// Not fatal - watchdog will poll the JSON file
+		log.Printf("[Handoff] Pipe signal FAILED after %v: %v (watchdog will poll file instead)", time.Since(pipeStart).Round(time.Millisecond), err)
+	} else {
+		log.Printf("[Handoff] Pipe signal SUCCEEDED in %v", time.Since(pipeStart).Round(time.Millisecond))
+	}
+
+	log.Printf("[Handoff] === HANDOFF COMPLETE === watchdog should pick up %s within 5s", requestPath)
 
 	// Give the watchdog a moment to receive the signal before we potentially exit
 	time.Sleep(1 * time.Second)

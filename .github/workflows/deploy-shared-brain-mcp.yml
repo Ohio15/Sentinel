@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       fix_ssh:
-        description: 'Restart SSH service before deploying'
+        description: 'Restart SSH service'
         required: false
         default: 'true'
         type: boolean
@@ -24,47 +24,53 @@ jobs:
         if: ${{ inputs.fix_ssh }}
         run: |
           echo "=== Checking SSH status ==="
-          sudo systemctl status sshd || sudo systemctl status ssh || echo "SSH service not found via systemctl"
+          sudo systemctl status sshd 2>&1 || sudo systemctl status ssh 2>&1 || echo "SSH service not found"
           echo "=== Restarting SSH ==="
-          sudo systemctl restart sshd || sudo systemctl restart ssh || sudo service ssh restart || echo "Could not restart SSH"
+          sudo systemctl restart sshd 2>&1 || sudo systemctl restart ssh 2>&1 || sudo service ssh restart 2>&1 || echo "Could not restart SSH"
           echo "=== Verifying SSH ==="
           sleep 2
-          sudo systemctl status sshd || sudo systemctl status ssh || echo "SSH status unknown"
-          ss -tlnp | grep :22 || echo "Port 22 not listening"
+          ss -tlnp | grep :22 || netstat -tlnp 2>/dev/null | grep :22 || echo "Port 22 not listening"
 
-      - name: Create state directory
+      - name: Checkout source
         if: ${{ inputs.deploy_mcp }}
-        run: mkdir -p ~/.claude/memory/state
+        uses: actions/checkout@v4
 
-      - name: Create MCP server directory
-        if: ${{ inputs.deploy_mcp }}
-        run: mkdir -p ~/shared-brain-mcp/lib
-
-      - name: Write package.json
+      - name: Setup MCP directories
         if: ${{ inputs.deploy_mcp }}
         run: |
-          cat > ~/shared-brain-mcp/package.json << 'PKGEOF'
-          {
-            "name": "shared-brain-mcp",
-            "version": "1.0.0",
-            "description": "Intelligent MCP server for shared-brain knowledge base",
-            "main": "index.js",
-            "type": "module",
-            "scripts": {
-              "start": "node index.js"
-            },
-            "dependencies": {
-              "@modelcontextprotocol/sdk": "^1.12.1",
-              "express": "^4.21.2",
-              "chokidar": "^4.0.3",
-              "zod": "^3.24.2"
-            }
-          }
-          PKGEOF
+          mkdir -p ~/shared-brain-mcp/lib
+          mkdir -p ~/.claude/memory/state
 
-      - name: Upload MCP source files
+      - name: Deploy MCP source from repo
         if: ${{ inputs.deploy_mcp }}
-        run: echo "Source files will be transferred via SSH after SSH is restored"
+        run: |
+          # Copy files from the shared-brain-mcp directory in the repo
+          if [ -d "shared-brain-mcp" ]; then
+            cp -r shared-brain-mcp/* ~/shared-brain-mcp/
+          else
+            echo "No shared-brain-mcp directory in repo - files must be transferred via SSH"
+            echo "Run: deploy-remote.sh from your local machine"
+          fi
+
+      - name: Create .env for Linux paths
+        if: ${{ inputs.deploy_mcp }}
+        run: |
+          cat > ~/shared-brain-mcp/.env << 'EOF'
+          BRAIN_VOLUME=/home/ohio_/.claude/memory/procedural
+          STATE_VOLUME=/home/ohio_/.claude/memory/state
+          EOF
+
+      - name: Build and start Docker container
+        if: ${{ inputs.deploy_mcp }}
+        run: |
+          cd ~/shared-brain-mcp
+          if [ -f "docker-compose.yml" ] && [ -f "Dockerfile" ]; then
+            docker compose up -d --build
+            sleep 3
+            curl -s http://localhost:3100/health || echo "Health check failed"
+          else
+            echo "Docker files not found - deploy via SSH first"
+          fi
 
       - name: Verify environment
         run: |
@@ -72,10 +78,9 @@ jobs:
           uname -a
           echo "=== Docker status ==="
           docker ps --format 'table {{.Names}}\t{{.Status}}' 2>/dev/null || echo "Docker not available"
-          echo "=== Memory dirs ==="
-          ls -la ~/.claude/memory/procedural/ 2>/dev/null || echo "No procedural dir"
-          ls -la ~/.claude/memory/state/ 2>/dev/null || echo "No state dir"
-          echo "=== SSH port check ==="
+          echo "=== Brain files ==="
+          ls -la ~/.claude/memory/procedural/ 2>/dev/null | head -15
+          echo "=== SSH port ==="
           ss -tlnp | grep :22 || echo "Port 22 not listening"
-          echo "=== Network interfaces ==="
-          ip addr show | grep "inet " || echo "No network info"
+          echo "=== MCP health ==="
+          curl -s http://localhost:3100/health 2>/dev/null || echo "MCP not running"
