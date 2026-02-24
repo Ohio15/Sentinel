@@ -132,6 +132,11 @@ type Updater struct {
 	lastAttemptTime    time.Time // When the last attempt started
 	lastAttemptFailed  bool      // Whether the last attempt failed
 
+	// Watchdog handoff state - prevents re-downloading while watchdog is applying
+	handedOffToWatchdog bool      // True after successful staging + IPC write
+	handoffTime         time.Time // When the handoff occurred
+	handoffVersion      string    // Version handed off
+
 	// Adaptive polling state
 	pollMu                sync.Mutex
 	consecutiveFailures   int
@@ -254,12 +259,29 @@ func (u *Updater) SetAgentID(agentID string)               { u.agentID = agentID
 func (u *Updater) SetCheckInterval(interval time.Duration) { u.checkInterval = interval }
 
 func (u *Updater) TriggerCheck() {
+	// Don't queue a check if we've already handed off to the watchdog
+	u.updateMu.Lock()
+	if u.handedOffToWatchdog {
+		u.updateMu.Unlock()
+		log.Printf("[Updater] TriggerCheck suppressed — update v%s handed to watchdog %v ago",
+			u.handoffVersion, time.Since(u.handoffTime).Round(time.Second))
+		return
+	}
+	u.updateMu.Unlock()
+
 	select {
 	case u.forceCheck <- struct{}{}:
 		log.Println("Update check triggered")
 	default:
 		log.Println("Update check already pending")
 	}
+}
+
+// IsUpdateInProgress returns true if an update is actively downloading, staging, or handed to watchdog
+func (u *Updater) IsUpdateInProgress() bool {
+	u.updateMu.Lock()
+	defer u.updateMu.Unlock()
+	return u.isUpdating || u.handedOffToWatchdog
 }
 
 func (u *Updater) GetStatus() UpdateStatus {
@@ -845,6 +867,27 @@ func (u *Updater) checkAndUpdateFromURL(ctx context.Context, serverURL string) e
 		u.updateMu.Unlock()
 	}()
 
+	// === HANDOFF CHECK: If we already handed this update to the watchdog, don't re-download ===
+	if u.handedOffToWatchdog {
+		// Check if the request file still exists (watchdog hasn't processed it yet)
+		existingRequest, _ := ipc.ReadUpdateRequest()
+		if existingRequest != nil {
+			log.Printf("[Updater] Update v%s already handed to watchdog %v ago, waiting for completion",
+				u.handoffVersion, time.Since(u.handoffTime).Round(time.Second))
+			return nil
+		}
+		// Request file is gone — watchdog processed it (or it was cleaned up)
+		// Check if the watchdog completed successfully
+		existingStatus, _ := ipc.ReadUpdateStatus()
+		if existingStatus != nil && existingStatus.State == ipc.StateApplying {
+			log.Printf("[Updater] Watchdog is currently applying update, waiting")
+			return nil
+		}
+		// Handoff is done (success or failure) — clear state
+		log.Printf("[Updater] Watchdog handoff for v%s completed (request file gone), resuming normal checks", u.handoffVersion)
+		u.handedOffToWatchdog = false
+	}
+
 	// Cooldown: don't retry the same version within 5 minutes of a failed attempt
 	// This prevents retry storms from heartbeat acks triggering rapid re-downloads
 	if u.lastAttemptFailed && u.lastAttemptVersion != "" &&
@@ -856,10 +899,13 @@ func (u *Updater) checkAndUpdateFromURL(ctx context.Context, serverURL string) e
 		return nil
 	}
 
-	// Check if watchdog is already handling an update
+	// Check if watchdog is already handling an update (covers restarts where handoff state was lost)
 	existingRequest, err := ipc.ReadUpdateRequest()
 	if err == nil && existingRequest != nil {
-		log.Printf("[Updater] Update request already exists for v%s, watchdog will handle it", existingRequest.Version)
+		log.Printf("[Updater] Update request already exists for v%s, watchdog will handle it — restoring handoff state", existingRequest.Version)
+		u.handedOffToWatchdog = true
+		u.handoffTime = existingRequest.RequestedAt
+		u.handoffVersion = existingRequest.Version
 		return nil
 	}
 
@@ -940,6 +986,13 @@ func (u *Updater) checkAndUpdateFromURL(ctx context.Context, serverURL string) e
 		})
 		return fmt.Errorf("apply failed: %w", err)
 	}
+
+	// Successfully staged and handed off to watchdog — mark handoff state
+	// This prevents re-downloading while the watchdog is applying the update
+	u.handedOffToWatchdog = true
+	u.handoffTime = time.Now()
+	u.handoffVersion = result.LatestVersion
+	log.Printf("[Updater] Update v%s handed off to watchdog — suppressing re-downloads until processed", result.LatestVersion)
 
 	return nil
 }

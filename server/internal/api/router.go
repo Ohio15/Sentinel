@@ -57,7 +57,7 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 		// Public routes with rate limiting
 		// DC-001: Apply authentication rate limiting middleware for brute force protection
 		auth := api.Group("/auth")
-		auth.Use(rateLimitMiddleware(cache, cfg.RateLimitRequests, cfg.RateLimitWindow))
+		auth.Use(rateLimitMiddleware(cache, cfg.RateLimitRequests, cfg.RateLimitWindow, "auth"))
 		auth.Use(middleware.AuthRateLimitMiddleware())
 		{
 			auth.POST("/login", router.login)
@@ -73,11 +73,16 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 			agent.POST("/enroll", router.enrollAgent)
 		}
 
-		// Agent update routes (public - agents call these for updates)
-		agentUpdate := api.Group("/agent")
-		agentUpdate.Use(rateLimitMiddleware(cache, 600, 60)) // 600 requests per minute per IP (high to survive old agent goroutine storm; per-handler download cooldown prevents bandwidth abuse)
+		// Agent version check (rate-limited with its own bucket)
+		agentVersion := api.Group("/agent")
+		agentVersion.Use(rateLimitMiddleware(cache, 600, 60, "agent-version")) // 600/min per IP for version polling
 		{
-			agentUpdate.GET("/version", router.getAgentVersion)
+			agentVersion.GET("/version", router.getAgentVersion)
+		}
+
+		// Agent update download & status (no rate limiting - downloads have per-IP cooldown already)
+		agentUpdate := api.Group("/agent")
+		{
 			agentUpdate.GET("/update/download", router.downloadAgentUpdate)
 			agentUpdate.POST("/update/status", router.reportUpdateStatus)
 		}
@@ -224,7 +229,7 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 		// Public routes with rate limiting
 		// DC-001: Apply authentication rate limiting middleware for brute force protection
 		auth := api.Group("/auth")
-		auth.Use(rateLimitMiddleware(services.Redis, services.Config.RateLimitRequests, services.Config.RateLimitWindow))
+		auth.Use(rateLimitMiddleware(services.Redis, services.Config.RateLimitRequests, services.Config.RateLimitWindow, "auth"))
 		auth.Use(middleware.AuthRateLimitMiddleware())
 		{
 			auth.POST("/login", loginHandler(services))
@@ -241,11 +246,16 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			agent.POST("/enroll", enrollAgentHandler(services))
 		}
 
-		// Agent update routes (public - agents call these for updates)
-		agentUpdate := api.Group("/agent")
-		agentUpdate.Use(rateLimitMiddleware(services.Redis, 600, 60)) // 600 requests per minute per IP (high to survive old agent goroutine storm; per-handler download cooldown prevents bandwidth abuse)
+		// Agent version check (rate-limited with its own bucket)
+		agentVersion := api.Group("/agent")
+		agentVersion.Use(rateLimitMiddleware(services.Redis, 600, 60, "agent-version")) // 600/min per IP for version polling
 		{
-			agentUpdate.GET("/version", getAgentVersionHandler(services))
+			agentVersion.GET("/version", getAgentVersionHandler(services))
+		}
+
+		// Agent update download & status (no rate limiting - downloads have per-IP cooldown already)
+		agentUpdate := api.Group("/agent")
+		{
 			agentUpdate.GET("/update/download", downloadAgentUpdateHandler(services))
 			agentUpdate.POST("/update/status", reportUpdateStatusHandler(services))
 		}
@@ -705,8 +715,13 @@ func corsMiddleware(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
-// rateLimitMiddleware implements rate limiting using Redis
-func rateLimitMiddleware(cache *cache.Cache, maxRequests int, windowSeconds int) gin.HandlerFunc {
+// rateLimitMiddleware implements rate limiting using Redis.
+// prefix isolates rate limit buckets so different endpoint groups don't share quotas.
+func rateLimitMiddleware(cache *cache.Cache, maxRequests int, windowSeconds int, prefix ...string) gin.HandlerFunc {
+	bucket := "global"
+	if len(prefix) > 0 && prefix[0] != "" {
+		bucket = prefix[0]
+	}
 	return func(c *gin.Context) {
 		if cache == nil {
 			c.Next()
@@ -720,7 +735,7 @@ func rateLimitMiddleware(cache *cache.Cache, maxRequests int, windowSeconds int)
 			return
 		}
 
-		key := "ratelimit:" + clientIP
+		key := "ratelimit:" + bucket + ":" + clientIP
 
 		count, err := cache.Incr(c.Request.Context(), key)
 		if err != nil {

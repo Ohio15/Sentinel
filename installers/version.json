@@ -1,7 +1,7 @@
 {
-    "version":  "1.76.7",
-    "releaseDate":  "2026-02-18",
-    "changelog":  "Fix Linux/Synology agent auto-update: cross-platform IPC paths, multi-strategy service restart",
+    "version":  "1.76.8",
+    "releaseDate":  "2026-02-24",
+    "changelog":  "Fix update pipeline: download URL uses port 443, separate rate limit buckets, watchdog handoff state tracking, verbose update diagnostics",
     "platforms":  [
                       "windows",
                       "linux",

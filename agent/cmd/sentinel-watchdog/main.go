@@ -62,7 +62,7 @@ const (
 )
 
 var (
-	Version = "1.76.7"
+	Version = "1.76.8"
 	elog    debug.Log
 	isDebug = false
 )
@@ -744,17 +744,31 @@ func (ws *watchdogService) updateChecker() {
 	ticker := time.NewTicker(updateCheckInterval)
 	defer ticker.Stop()
 
+	// Log once on startup to confirm loop is running and show the request file path
+	logMessage(fmt.Sprintf("[UpdateChecker] Started — polling %s every %v", ipc.UpdateRequestPath(), updateCheckInterval))
+
+	pollCount := 0
 	for {
 		select {
 		case <-ws.stopChan:
 			return
 		case <-ticker.C:
+			pollCount++
 			ws.mu.Lock()
 			inProgress := ws.updateInProgress
 			selfUpdateInProgress := ws.selfUpdateInProgress
 			ws.mu.Unlock()
 
-			if inProgress || selfUpdateInProgress {
+			if inProgress {
+				if pollCount%60 == 0 { // Log every 5 min (60 * 5s)
+					logMessage("[UpdateChecker] Agent update in progress, skipping check")
+				}
+				continue
+			}
+			if selfUpdateInProgress {
+				if pollCount%60 == 0 {
+					logMessage("[UpdateChecker] Watchdog self-update in progress, skipping check")
+				}
 				continue
 			}
 
@@ -762,24 +776,39 @@ func (ws *watchdogService) updateChecker() {
 			// If there's a watchdog update pending, defer agent update until watchdog is updated
 			// This ensures the new watchdog (with lenient settings) handles the agent update
 			if ws.selfUpdater != nil {
-				watchdogRequest, _ := ws.selfUpdater.CheckForPendingUpdate()
+				watchdogRequest, wdErr := ws.selfUpdater.CheckForPendingUpdate()
+				if wdErr != nil {
+					logMessage(fmt.Sprintf("[UpdateChecker] Error checking watchdog self-update: %v", wdErr))
+				}
 				if watchdogRequest != nil && watchdogRequest.Version != Version {
-					logMessage(fmt.Sprintf("Deferring agent update - watchdog self-update pending to v%s (current: %s)", watchdogRequest.Version, Version))
+					logMessage(fmt.Sprintf("[UpdateChecker] Deferring agent update — watchdog self-update pending to v%s (current: %s)", watchdogRequest.Version, Version))
 					continue
 				}
 			}
 
 			request, err := ipc.ReadUpdateRequest()
 			if err != nil {
-				logMessage(fmt.Sprintf("Error checking for updates: %v", err))
+				logMessage(fmt.Sprintf("[UpdateChecker] Error reading update request: %v", err))
 				continue
 			}
 
 			if request == nil {
+				// Log file absence periodically (every 5 min) to confirm the loop is alive
+				if pollCount%60 == 0 {
+					logMessage(fmt.Sprintf("[UpdateChecker] No update request file found at %s (poll #%d)", ipc.UpdateRequestPath(), pollCount))
+				}
 				continue
 			}
 
-			logMessage(fmt.Sprintf("Update request found for version %s", request.Version))
+			logMessage(fmt.Sprintf("[UpdateChecker] Update request FOUND — version=%s staged=%s target=%s requestedAt=%s",
+				request.Version, request.StagedPath, request.TargetPath, request.RequestedAt.Format(time.RFC3339)))
+
+			// Verify staged file exists before starting update
+			if _, statErr := os.Stat(request.StagedPath); statErr != nil {
+				logMessage(fmt.Sprintf("[UpdateChecker] ERROR: Staged file not accessible: %v — deleting stale request", statErr))
+				ipc.DeleteUpdateRequest()
+				continue
+			}
 
 			ws.mu.Lock()
 			ws.updateInProgress = true
