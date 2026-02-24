@@ -490,14 +490,14 @@ func (e *Engine) AutoResolveOfflineAlerts(ctx context.Context, deviceID uuid.UUI
 	return err
 }
 
-// AutoResolveUpdateLoopAlerts resolves update loop alerts when an agent successfully updates
+// AutoResolveUpdateLoopAlerts resolves update-related alerts when an agent successfully updates
 func (e *Engine) AutoResolveUpdateLoopAlerts(ctx context.Context, agentID string) error {
 	result, err := e.db.Exec(ctx, `
 		UPDATE alerts
 		SET status = 'resolved', resolved_at = NOW()
 		WHERE device_id = (SELECT id FROM devices WHERE agent_id = $1 LIMIT 1)
 		  AND status = 'open'
-		  AND title LIKE '%Update Loop%'
+		  AND (title LIKE '%Update Loop%' OR title LIKE '%Download Failed%' OR title LIKE '%Rolled Back%')
 	`, agentID)
 	if err != nil {
 		return err

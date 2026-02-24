@@ -380,6 +380,15 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	})
 	r.hub.BroadcastToDashboards(onlineMsg)
 
+	// Auto-resolve open "Device Offline" alerts now that device is back online
+	if result, err := r.db.Pool().Exec(ctx, `
+		UPDATE alerts SET status = 'resolved', resolved_at = NOW()
+		WHERE device_id = $1 AND status = 'open'
+		  AND (title LIKE '%Device Offline%')
+	`, deviceID); err == nil && result.RowsAffected() > 0 {
+		log.Printf("Auto-resolved %d offline alert(s) for device %s on reconnect", result.RowsAffected(), deviceID)
+	}
+
 	// Auto-distribute CA certificate if agent doesn't have it or has outdated version
 	go r.autoDistributeCertificate(client, authPayload.AgentID, authPayload.CACertHash)
 
@@ -452,6 +461,15 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 			ackPayload["updateAvailable"] = true
 			ackPayload["latestVersion"] = latestVersion
 			log.Printf("Agent %s has update available: %s -> %s", agentID, heartbeat.AgentVersion, latestVersion)
+		} else if heartbeat.AgentVersion != "" {
+			// Agent is at latest version — auto-resolve any stale update failure alerts
+			if result, err := r.db.Pool().Exec(ctx, `
+				UPDATE alerts SET status = 'resolved', resolved_at = NOW()
+				WHERE device_id = $1 AND status = 'open'
+				  AND (title LIKE '%Download Failed%' OR title LIKE '%Update Loop%' OR title LIKE '%Rolled Back%')
+			`, deviceID); err == nil && result.RowsAffected() > 0 {
+				log.Printf("Auto-resolved %d update alert(s) for agent %s (now at latest %s)", result.RowsAffected(), agentID, heartbeat.AgentVersion)
+			}
 		}
 
 		// Send ack back to agent
