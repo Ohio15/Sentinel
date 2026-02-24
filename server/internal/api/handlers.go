@@ -206,6 +206,7 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 
 	if err == nil {
 		// Token found in database - validate it
+		log.Printf("[WS-DEBUG] Stage=token_db_found from %s agent=%s", c.ClientIP(), authPayload.AgentID)
 		if !isActive {
 			conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Token is disabled"}`)})
 			conn.Close()
@@ -222,8 +223,12 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 		tokenValid = true
 	} else {
 		// Token not found in database - check legacy env var
+		log.Printf("[WS-DEBUG] Stage=token_db_miss from %s agent=%s dbErr=%v", c.ClientIP(), authPayload.AgentID, err)
 		if r.config.EnrollmentToken != "" && subtle.ConstantTimeCompare([]byte(authPayload.Token), []byte(r.config.EnrollmentToken)) == 1 {
 			tokenValid = true
+			log.Printf("[WS-DEBUG] Stage=token_env_match from %s agent=%s", c.ClientIP(), authPayload.AgentID)
+		} else {
+			log.Printf("[WS-DEBUG] Stage=token_env_mismatch from %s agent=%s submittedLen=%d envLen=%d", c.ClientIP(), authPayload.AgentID, len(authPayload.Token), len(r.config.EnrollmentToken))
 		}
 	}
 
@@ -234,11 +239,14 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 		return
 	}
 
+	log.Printf("[WS-DEBUG] Stage=token_valid from %s agent=%s", c.ClientIP(), authPayload.AgentID)
+
 	// Get device ID - or auto-enroll if device was deleted
 	ctx := context.Background()
 	var deviceID uuid.UUID
 	var isDisabled bool
 	err = r.db.Pool().QueryRow(ctx, "SELECT id, COALESCE(is_disabled, false) FROM devices WHERE agent_id = $1 AND organization_id = $2", authPayload.AgentID, constants.CurrentOrganizationID).Scan(&deviceID, &isDisabled)
+	log.Printf("[WS-DEBUG] Stage=device_lookup from %s agent=%s deviceID=%s isDisabled=%v err=%v", c.ClientIP(), authPayload.AgentID, deviceID, isDisabled, err)
 	if err != nil {
 		// Device not found by agent_id - try MAC address fallback for hardware fingerprint migration
 		if authPayload.DeviceInfo != nil && authPayload.DeviceInfo.MACAddress != "" {
@@ -342,11 +350,18 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	}
 
 	// Send auth response
+	log.Printf("[WS-DEBUG] Stage=sending_auth_response from %s agent=%s", c.ClientIP(), authPayload.AgentID)
 	authRespJSON, _ := json.Marshal(authRespPayload)
-	conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(authRespJSON)})
+	if writeErr := conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(authRespJSON)}); writeErr != nil {
+		log.Printf("[WS-DEBUG] Stage=auth_response_write_failed from %s agent=%s err=%v", c.ClientIP(), authPayload.AgentID, writeErr)
+		conn.Close()
+		return
+	}
 
 	// Register client
+	log.Printf("[WS-DEBUG] Stage=registering from %s agent=%s", c.ClientIP(), authPayload.AgentID)
 	client := r.hub.RegisterAgent(conn, authPayload.AgentID, deviceID)
+	log.Printf("[WS-DEBUG] Stage=registered from %s agent=%s connID=%s", c.ClientIP(), authPayload.AgentID, client.GetConnectionID())
 
 	// Update device status, certificate hash, and hardware info (GPU/Storage) if provided
 	// This ensures devices that enrolled before GPU/Storage support get updated
@@ -400,10 +415,12 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	go r.autoDistributeCertificate(client, authPayload.AgentID, authPayload.CACertHash)
 
 	// Start read/write pumps
+	log.Printf("[WS-DEBUG] Stage=starting_pumps from %s agent=%s", c.ClientIP(), authPayload.AgentID)
 	go client.WritePump(ctx)
 	client.ReadPump(ctx, func(msg []byte) {
 		r.handleAgentMessage(authPayload.AgentID, deviceID, msg)
 	})
+	log.Printf("[WS-DEBUG] Stage=readpump_exited from %s agent=%s", c.ClientIP(), authPayload.AgentID)
 
 	// Update device status on disconnect
 	if _, err := r.db.Pool().Exec(context.Background(), "UPDATE devices SET status = 'offline' WHERE id = $1 AND organization_id = $2", deviceID, constants.CurrentOrganizationID); err != nil {
