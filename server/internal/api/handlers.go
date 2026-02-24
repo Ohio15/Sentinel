@@ -390,6 +390,28 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	// Auto-distribute CA certificate if agent doesn't have it or has outdated version
 	go r.autoDistributeCertificate(client, authPayload.AgentID, authPayload.CACertHash)
 
+	// Proactively notify agent of available updates on connect.
+	// Agents with long heartbeat intervals may disconnect before the first heartbeat fires,
+	// so we check the device's stored version and send update info immediately.
+	go func() {
+		var agentVersion string
+		if verErr := r.db.Pool().QueryRow(ctx, "SELECT COALESCE(agent_version, '') FROM devices WHERE id = $1",
+			deviceID).Scan(&agentVersion); verErr == nil && agentVersion != "" {
+			latestVersion := getCurrentAgentVersion()
+			if isNewerVersion(latestVersion, agentVersion) {
+				ackMsg, _ := json.Marshal(map[string]interface{}{
+					"type": ws.MsgTypeHeartbeatAck,
+					"payload": map[string]interface{}{
+						"updateAvailable": true,
+						"latestVersion":   latestVersion,
+					},
+				})
+				r.hub.SendToAgent(authPayload.AgentID, ackMsg)
+				log.Printf("Proactive update notification for agent %s: %s -> %s", authPayload.AgentID, agentVersion, latestVersion)
+			}
+		}
+	}()
+
 	// Start read/write pumps
 	go client.WritePump(ctx)
 	client.ReadPump(ctx, func(msg []byte) {
