@@ -1,7 +1,7 @@
 {
-    "version":  "1.76.9",
+    "version":  "1.76.10",
     "releaseDate":  "2026-02-24",
-    "changelog":  "Fix watchdog self-update gate deadlock, diagnostic handoff logging, staleness timeout, deferral cap",
+    "changelog":  "Fix Files tab using list_files instead of list_drives for drive enumeration",
     "platforms":  [
                       "windows",
                       "linux",
