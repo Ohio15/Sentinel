@@ -55,7 +55,6 @@ services:
       - ALLOWED_ORIGINS=https://${DOMAIN},https://${DOMAIN}:4443
       - RATE_LIMIT_REQUESTS=${RATE_LIMIT_REQUESTS:-100}
       - RATE_LIMIT_WINDOW=${RATE_LIMIT_WINDOW:-60}
-      - RATE_LIMIT_WHITELIST=${RATE_LIMIT_WHITELIST:-}
       - SERVER_URL=${SERVER_URL:-http://localhost:8090}
       - PUBLIC_URL=${PUBLIC_URL:-http://localhost:8090}
       - API_KEY=${API_KEY}

@@ -226,39 +226,27 @@ func NewAgentAuthMiddleware(pool *pgxpool.Pool, fallbackToken string) gin.Handle
 		}
 
 		if token == "" {
-			log.Printf("[AUTH-ENROLL] REJECTED: No token header from IP %s for %s", c.ClientIP(), c.Request.URL.Path)
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Agent token required"})
 			c.Abort()
 			return
 		}
 
-		// TEMP DEBUG: Log enrollment attempt with masked token
-		maskedToken := token
-		if len(maskedToken) > 8 {
-			maskedToken = maskedToken[:4] + "..." + maskedToken[len(maskedToken)-4:]
-		}
-		log.Printf("[AUTH-ENROLL] Attempt from IP %s, token=%s, path=%s", c.ClientIP(), maskedToken, c.Request.URL.Path)
-
 		// Try database validation first
 		if pool != nil {
 			valid, tokenID := validateDatabaseToken(c.Request.Context(), pool, token)
 			if valid {
-				log.Printf("[AUTH-ENROLL] SUCCESS: Token matched DB token %s for IP %s", tokenID, c.ClientIP())
 				c.Set("enrollmentTokenID", tokenID)
 				c.Next()
 				return
 			}
-			log.Printf("[AUTH-ENROLL] No database token match for IP %s", c.ClientIP())
 		}
 
 		// Fallback to static token for backwards compatibility
 		if fallbackToken != "" && subtle.ConstantTimeCompare([]byte(token), []byte(fallbackToken)) == 1 {
-			log.Printf("[AUTH-ENROLL] SUCCESS: Matched fallback token for IP %s", c.ClientIP())
 			c.Next()
 			return
 		}
 
-		log.Printf("[AUTH-ENROLL] REJECTED: No matching token for IP %s (token=%s, hasFallback=%v)", c.ClientIP(), maskedToken, fallbackToken != "")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid agent token"})
 		c.Abort()
 	}
@@ -268,7 +256,7 @@ func NewAgentAuthMiddleware(pool *pgxpool.Pool, fallbackToken string) gin.Handle
 func validateDatabaseToken(ctx context.Context, pool *pgxpool.Pool, token string) (bool, uuid.UUID) {
 	// Query all active tokens and check each one
 	rows, err := pool.Query(ctx, `
-		SELECT id, token, token_hash, is_legacy, expires_at, max_uses, use_count, name
+		SELECT id, token, token_hash, is_legacy, expires_at, max_uses, use_count
 		FROM enrollment_tokens
 		WHERE is_active = TRUE
 	`)
@@ -286,40 +274,33 @@ func validateDatabaseToken(ctx context.Context, pool *pgxpool.Pool, token string
 		var expiresAt *time.Time
 		var maxUses *int
 		var useCount int
-		var tokenName *string
 
-		err := rows.Scan(&tokenID, &plainToken, &tokenHash, &isLegacy, &expiresAt, &maxUses, &useCount, &tokenName)
+		err := rows.Scan(&tokenID, &plainToken, &tokenHash, &isLegacy, &expiresAt, &maxUses, &useCount)
 		if err != nil {
 			log.Printf("[AUTH] Error scanning token row: %v", err)
 			continue
 		}
 
-		name := "<unnamed>"
-		if tokenName != nil {
-			name = *tokenName
-		}
-
 		// Check expiration
 		if expiresAt != nil && time.Now().After(*expiresAt) {
-			log.Printf("[AUTH-ENROLL-DBG] Token %s (%s) skipped: expired at %v", tokenID, name, expiresAt)
 			continue
 		}
 
 		// Check usage limits
 		if maxUses != nil && useCount >= *maxUses {
-			log.Printf("[AUTH-ENROLL-DBG] Token %s (%s) skipped: use_count %d >= max_uses %d", tokenID, name, useCount, *maxUses)
 			continue
 		}
 
 		// Validate token based on type
 		var valid bool
-		if isLegacy && plainToken != nil {
-			// Legacy token: use constant-time comparison
-			valid = subtle.ConstantTimeCompare([]byte(token), []byte(*plainToken)) == 1
-		} else if tokenHash != nil && *tokenHash != "" {
-			// Hashed token: use bcrypt comparison
+		if tokenHash != nil && *tokenHash != "" {
+			// Hashed token: use bcrypt comparison (preferred)
 			err := bcrypt.CompareHashAndPassword([]byte(*tokenHash), []byte(token))
 			valid = err == nil
+		} else if plainToken != nil && *plainToken != "" {
+			// Plain text token: use constant-time comparison
+			// Handles both legacy tokens and tokens created without a hash
+			valid = subtle.ConstantTimeCompare([]byte(token), []byte(*plainToken)) == 1
 		}
 
 		if valid {
