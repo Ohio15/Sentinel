@@ -525,18 +525,21 @@ func (r *Router) executeCommand(c *gin.Context) {
 		return
 	}
 
-	// Send command to agent
-	msg := websocket.Message{
-		Type:      websocket.MsgTypeCommand,
-		RequestID: requestID,
-		Payload: json.RawMessage(mustMarshal(map[string]interface{}{
-			"commandId":   commandID.String(),
-			"command":     req.Command,
-			"commandType": req.CommandType,
-		})),
+	// Send command to agent.
+	// Include command info in BOTH "payload" and "data" fields for compatibility:
+	// - Agents >= 1.76.0 read from Payload (json.RawMessage)
+	// - Agents < 1.76.0 read from Data (interface{})
+	cmdData := map[string]interface{}{
+		"commandId":   commandID.String(),
+		"command":     req.Command,
+		"commandType": req.CommandType,
 	}
-
-	msgBytes, _ := json.Marshal(msg)
+	msgBytes, _ := json.Marshal(map[string]interface{}{
+		"type":      websocket.MsgTypeCommand,
+		"requestId": requestID,
+		"payload":   cmdData,
+		"data":      cmdData,
+	})
 	if err := r.hub.SendToAgent(agentID, msgBytes); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send command to agent"})
 		return
