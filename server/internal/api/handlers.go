@@ -123,18 +123,21 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	upgrader := r.getUpgrader()
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
+		log.Printf("[WS-DEBUG] Upgrade failed from %s: %v", c.ClientIP(), err)
 		return
 	}
 
 	// Wait for auth message
 	_, message, err := conn.ReadMessage()
 	if err != nil {
+		log.Printf("[WS-DEBUG] Auth read failed from %s: %v", c.ClientIP(), err)
 		conn.Close()
 		return
 	}
 
 	var authMsg ws.Message
 	if err := json.Unmarshal(message, &authMsg); err != nil || authMsg.Type != ws.MsgTypeAuth {
+		log.Printf("[WS-DEBUG] Invalid auth message from %s: unmarshalErr=%v type=%s msgLen=%d", c.ClientIP(), err, authMsg.Type, len(message))
 		conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Invalid auth message"}`)})
 		conn.Close()
 		return
@@ -177,10 +180,13 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 		} `json:"deviceInfo,omitempty"`
 	}
 	if err := json.Unmarshal(authMsg.Payload, &authPayload); err != nil {
+		log.Printf("[WS-DEBUG] Invalid auth payload from %s: %v payload=%s", c.ClientIP(), err, string(authMsg.Payload))
 		conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Invalid auth payload"}`)})
 		conn.Close()
 		return
 	}
+
+	log.Printf("[WS-DEBUG] Auth attempt from %s: agentId=%s tokenLen=%d", c.ClientIP(), authPayload.AgentID, len(authPayload.Token))
 
 	// Verify token against database (enrollment_tokens table)
 	// Tokens can be either:
@@ -222,6 +228,7 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	}
 
 	if !tokenValid {
+		log.Printf("[WS-DEBUG] Invalid token from %s for agent %s: token=%s dbErr=%v", c.ClientIP(), authPayload.AgentID, authPayload.Token[:min(8, len(authPayload.Token))], err)
 		conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Invalid token"}`)})
 		conn.Close()
 		return
