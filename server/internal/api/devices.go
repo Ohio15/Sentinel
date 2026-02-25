@@ -483,8 +483,16 @@ func (r *Router) executeCommand(c *gin.Context) {
 		return
 	}
 
-	if req.CommandType == "" {
-		req.CommandType = "shell"
+	if req.CommandType == "" || req.CommandType == "shell" {
+		// Agent validator only accepts: "", "powershell", "cmd", "bash", "sh"
+		// Auto-detect based on device OS type
+		var deviceOS string
+		_ = r.db.Pool().QueryRow(c.Request.Context(), "SELECT COALESCE(os_type, '') FROM devices WHERE id = $1", id).Scan(&deviceOS)
+		if deviceOS == "windows" {
+			req.CommandType = "powershell"
+		} else {
+			req.CommandType = "bash"
+		}
 	}
 
 	ctx := context.Background()

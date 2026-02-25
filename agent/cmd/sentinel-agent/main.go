@@ -1115,16 +1115,20 @@ func (a *Agent) handleExecuteCommand(msg *client.Message) error {
 
 	command, _ := data["command"].(string)
 	cmdType, _ := data["commandType"].(string)
+	commandID, _ := data["commandId"].(string)
 
 	result, err := a.executor.Execute(a.ctx, command, cmdType)
 	if err != nil {
-		return a.client.SendResponse(msg.RequestID, false, nil, err.Error())
+		return a.client.SendResponse(msg.RequestID, false, map[string]interface{}{
+			"commandId": commandID,
+		}, err.Error())
 	}
 
 	return a.client.SendResponse(msg.RequestID, true, map[string]interface{}{
-		"output":   result.Stdout + result.Stderr,
-		"exitCode": result.ExitCode,
-		"duration": result.Duration,
+		"commandId": commandID,
+		"output":    result.Stdout + result.Stderr,
+		"exitCode":  result.ExitCode,
+		"duration":  result.Duration,
 	}, "")
 }
 
