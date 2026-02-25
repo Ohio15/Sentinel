@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS usb_device_policies (
     description TEXT,
 
     -- Scope
-    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
     applies_to_all BOOLEAN DEFAULT true,        -- If false, use device_groups
 
     -- Policy type
@@ -141,7 +141,7 @@ CREATE TABLE IF NOT EXISTS usb_approved_devices (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
     -- Scope
-    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    organization_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE,
     device_id UUID REFERENCES devices(id) ON DELETE CASCADE, -- NULL = org-wide
 
     -- Device identification (match any non-null criteria)
@@ -163,19 +163,23 @@ CREATE INDEX IF NOT EXISTS idx_usb_approved_device ON usb_approved_devices(devic
 CREATE INDEX IF NOT EXISTS idx_usb_approved_vendor_product ON usb_approved_devices(vendor_id, product_id);
 CREATE INDEX IF NOT EXISTS idx_usb_approved_serial ON usb_approved_devices(serial_number);
 
--- Add USB-related alert rule types
--- These are added to support USB events in the alert evaluation engine
-INSERT INTO alert_rule_types (name, description, category, parameters_schema)
-VALUES
-    ('usb_device_connected', 'Alert when any USB device is connected', 'security',
-     '{"device_classes": {"type": "array", "items": {"type": "string"}}, "exclude_approved": {"type": "boolean", "default": true}}'::jsonb),
-    ('usb_mass_storage_connected', 'Alert when USB mass storage device is connected', 'security',
-     '{"exclude_approved": {"type": "boolean", "default": true}}'::jsonb),
-    ('usb_unauthorized_device', 'Alert when unauthorized USB device is connected', 'security',
-     '{"check_vendor_whitelist": {"type": "boolean", "default": true}}'::jsonb),
-    ('usb_device_disconnected', 'Alert when USB device is disconnected', 'security',
-     '{"device_classes": {"type": "array", "items": {"type": "string"}}}'::jsonb)
-ON CONFLICT (name) DO NOTHING;
+-- Add USB-related alert rule types (only if the alert_rule_types table exists)
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'alert_rule_types') THEN
+        INSERT INTO alert_rule_types (name, description, category, parameters_schema)
+        VALUES
+            ('usb_device_connected', 'Alert when any USB device is connected', 'security',
+             '{"device_classes": {"type": "array", "items": {"type": "string"}}, "exclude_approved": {"type": "boolean", "default": true}}'::jsonb),
+            ('usb_mass_storage_connected', 'Alert when USB mass storage device is connected', 'security',
+             '{"exclude_approved": {"type": "boolean", "default": true}}'::jsonb),
+            ('usb_unauthorized_device', 'Alert when unauthorized USB device is connected', 'security',
+             '{"check_vendor_whitelist": {"type": "boolean", "default": true}}'::jsonb),
+            ('usb_device_disconnected', 'Alert when USB device is disconnected', 'security',
+             '{"device_classes": {"type": "array", "items": {"type": "string"}}}'::jsonb)
+        ON CONFLICT (name) DO NOTHING;
+    END IF;
+END $$;
 
 -- Function to update timestamp on USB device changes
 CREATE OR REPLACE FUNCTION update_usb_device_timestamp()
