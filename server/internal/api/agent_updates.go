@@ -188,6 +188,17 @@ func (r *Router) getAgentVersion(c *gin.Context) {
 		return
 	}
 
+	// Agents below v1.72.0 on Linux have broken self-update (hardcoded Windows paths,
+	// no cross-filesystem fallback, broken restart). Telling them "update available"
+	// just causes an endless download-fail loop. Return unavailable to stop the storm;
+	// these agents require manual binary replacement or a relay update from a LAN peer.
+	if platform == "linux" && currentVersion != "" && !isNewerVersion(currentVersion, "1.71.99") {
+		log.Printf("[AgentVersion] Agent %s on Linux at v%s is below minimum self-update version (v1.72.0), suppressing update notification", currentVersion, currentVersion)
+		response.Available = false
+		c.JSON(http.StatusOK, response)
+		return
+	}
+
 	// Find binary for this platform
 	key := fmt.Sprintf("%s-%s", platform, arch)
 	binaryPath, ok := agentBinaryPaths[key]

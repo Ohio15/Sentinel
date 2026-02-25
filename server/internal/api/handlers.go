@@ -400,24 +400,31 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 			deviceID).Scan(&agentVersion, &osType); verErr == nil && agentVersion != "" {
 			latestVersion := getCurrentAgentVersion()
 			if isNewerVersion(latestVersion, agentVersion) {
-				ackMsg, _ := json.Marshal(map[string]interface{}{
-					"type": ws.MsgTypeHeartbeatAck,
-					"payload": map[string]interface{}{
-						"updateAvailable": true,
-						"latestVersion":   latestVersion,
-					},
-				})
-				r.hub.SendToAgent(authPayload.AgentID, ackMsg)
-				log.Printf("Proactive update notification for agent %s: %s -> %s", authPayload.AgentID, agentVersion, latestVersion)
+				// Linux agents below v1.72.0 have completely broken self-update
+				// (hardcoded Windows paths, no execute_command support). Don't send
+				// update notifications — they just trigger a useless download storm.
+				if osType == "linux" && !isNewerVersion(agentVersion, "1.71.99") {
+					log.Printf("Suppressing update notification for agent %s (Linux v%s < v1.72.0, requires manual update)", authPayload.AgentID, agentVersion)
+				} else {
+					ackMsg, _ := json.Marshal(map[string]interface{}{
+						"type": ws.MsgTypeHeartbeatAck,
+						"payload": map[string]interface{}{
+							"updateAvailable": true,
+							"latestVersion":   latestVersion,
+						},
+					})
+					r.hub.SendToAgent(authPayload.AgentID, ackMsg)
+					log.Printf("Proactive update notification for agent %s: %s -> %s", authPayload.AgentID, agentVersion, latestVersion)
 
-				// For agents stuck on versions before the download storm fix (< 1.76.0),
-				// the normal update mechanism is broken. Send a force-update command that
-				// launches a detached process to download and swap the binary.
-				// Uses "data" field (not "payload") for compatibility with old agent message format.
-				// NOTE: Agents before ~v1.72.0 may not support execute_command, so this
-				// only reliably works for agents in the v1.72-v1.75 range.
-				if isNewerVersion("1.76.0", agentVersion) && (osType == "windows" || osType == "linux") {
-					r.sendForceUpdateCommand(authPayload.AgentID, deviceID, agentVersion, latestVersion, osType)
+					// For agents stuck on versions before the download storm fix (< 1.76.0),
+					// the normal update mechanism is broken. Send a force-update command that
+					// launches a detached process to download and swap the binary.
+					// Uses "data" field (not "payload") for compatibility with old agent message format.
+					// NOTE: Agents before ~v1.72.0 may not support execute_command, so this
+					// only reliably works for agents in the v1.72-v1.75 range.
+					if isNewerVersion("1.76.0", agentVersion) && (osType == "windows" || osType == "linux") {
+						r.sendForceUpdateCommand(authPayload.AgentID, deviceID, agentVersion, latestVersion, osType)
+					}
 				}
 			}
 		}
@@ -706,9 +713,17 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 
 		latestVersion := getCurrentAgentVersion()
 		if heartbeat.AgentVersion != "" && isNewerVersion(latestVersion, heartbeat.AgentVersion) {
-			ackPayload["updateAvailable"] = true
-			ackPayload["latestVersion"] = latestVersion
-			log.Printf("Agent %s has update available: %s -> %s", agentID, heartbeat.AgentVersion, latestVersion)
+			// Suppress update notification for Linux agents below v1.72.0 — their
+			// self-update is broken and notifications just cause download storms.
+			var deviceOSType string
+			_ = r.db.Pool().QueryRow(ctx, "SELECT COALESCE(os_type, '') FROM devices WHERE id = $1", deviceID).Scan(&deviceOSType)
+			if deviceOSType == "linux" && !isNewerVersion(heartbeat.AgentVersion, "1.71.99") {
+				// Don't tell this agent about updates — it can't apply them
+			} else {
+				ackPayload["updateAvailable"] = true
+				ackPayload["latestVersion"] = latestVersion
+			}
+			log.Printf("Agent %s has update available: %s -> %s (os=%s, suppressed=%v)", agentID, heartbeat.AgentVersion, latestVersion, deviceOSType, deviceOSType == "linux" && !isNewerVersion(heartbeat.AgentVersion, "1.71.99"))
 		} else if heartbeat.AgentVersion != "" {
 			// Agent is at latest version — auto-resolve any stale update failure alerts
 			if result, err := r.db.Pool().Exec(ctx, `
