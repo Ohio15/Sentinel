@@ -440,9 +440,35 @@ func SeedDefaultScheduledActions(services *Services) {
 		Cron     string
 		IsActive bool
 	}{
+		// Monitoring & diagnostics
 		{"Daily Speed Test (3 AM)", "speed_test", "0 0 3 * * *", true},
+		{"Hourly Uptime Check", "uptime_check", "0 0 * * * *", true},
+		{"Network Device Scan (6 AM daily)", "device_scan", "0 0 6 * * *", true},
+		{"Bandwidth Usage Report (midnight)", "bandwidth_report", "0 0 0 * * *", true},
+
+		// WiFi management
 		{"Weekend Guest WiFi On (8 AM)", "guest_wifi_on", "0 0 8 * * 0,6", false},
 		{"Weekend Guest WiFi Off (10 PM)", "guest_wifi_off", "0 0 22 * * 0,6", false},
+		{"Weekday Guest WiFi On (9 AM)", "guest_wifi_on", "0 0 9 * * 1-5", false},
+		{"Weekday Guest WiFi Off (6 PM)", "guest_wifi_off", "0 0 18 * * 1-5", false},
+		{"WiFi Channel Optimization (4 AM Sunday)", "wifi_channel_optimize", "0 0 4 * * 0", false},
+
+		// Maintenance
+		{"Weekly Router Reboot (Sunday 4 AM)", "reboot_router", "0 0 4 * * 0", false},
+		{"DNS Cache Flush (every 6 hours)", "dns_cache_flush", "0 0 */6 * * *", false},
+		{"DHCP Lease Cleanup (2 AM daily)", "dhcp_lease_cleanup", "0 0 2 * * *", false},
+		{"Firmware Update Check (Monday 5 AM)", "firmware_check", "0 0 5 * * 1", true},
+		{"ARP Table Cleanup (1 AM daily)", "arp_table_cleanup", "0 0 1 * * *", false},
+
+		// Security
+		{"Rogue Device Detection (every 4 hours)", "rogue_device_scan", "0 0 */4 * * *", false},
+		{"Port Scan (Sunday 3 AM)", "port_scan", "0 0 3 * * 0", false},
+		{"Firewall Rule Audit (1st of month 5 AM)", "firewall_audit", "0 0 5 1 * *", false},
+		{"VPN Tunnel Health Check (every 30 min)", "vpn_health_check", "0 */30 * * * *", false},
+
+		// Traffic management
+		{"Peak Hours QoS Enable (8 AM weekdays)", "qos_peak_enable", "0 0 8 * * 1-5", false},
+		{"Peak Hours QoS Disable (6 PM weekdays)", "qos_peak_disable", "0 0 18 * * 1-5", false},
 	}
 
 	for _, d := range defaults {

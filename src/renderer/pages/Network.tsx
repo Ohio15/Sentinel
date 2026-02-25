@@ -4,15 +4,39 @@ import { useNetworkStore, type AuditLogEntry, type RouterScheduledAction } from 
 type TabId = 'automation' | 'audit';
 
 const ACTION_BADGES: Record<string, { label: string; color: string }> = {
+  // Device actions
   device_blocked: { label: 'Device Blocked', color: 'bg-red-500/20 text-red-400' },
   device_allowed: { label: 'Device Allowed', color: 'bg-green-500/20 text-green-400' },
   device_marked_known: { label: 'Marked Known', color: 'bg-blue-500/20 text-blue-400' },
   wol_sent: { label: 'WOL Sent', color: 'bg-purple-500/20 text-purple-400' },
+  anomaly_dismissed: { label: 'Anomaly Dismissed', color: 'bg-yellow-500/20 text-yellow-400' },
+  // Monitoring
   speed_test_run: { label: 'Speed Test', color: 'bg-cyan-500/20 text-cyan-400' },
+  uptime_check: { label: 'Uptime Check', color: 'bg-cyan-500/20 text-cyan-400' },
+  device_scan: { label: 'Device Scan', color: 'bg-sky-500/20 text-sky-400' },
+  bandwidth_report: { label: 'Bandwidth Report', color: 'bg-sky-500/20 text-sky-400' },
+  // WiFi
+  guest_wifi_on: { label: 'Guest WiFi On', color: 'bg-green-500/20 text-green-400' },
+  guest_wifi_off: { label: 'Guest WiFi Off', color: 'bg-gray-500/20 text-gray-400' },
+  wifi_channel_optimize: { label: 'WiFi Optimize', color: 'bg-violet-500/20 text-violet-400' },
+  // Maintenance
+  reboot_router: { label: 'Router Reboot', color: 'bg-amber-500/20 text-amber-400' },
+  dns_cache_flush: { label: 'DNS Flush', color: 'bg-blue-500/20 text-blue-400' },
+  dhcp_lease_cleanup: { label: 'DHCP Cleanup', color: 'bg-blue-500/20 text-blue-400' },
+  firmware_check: { label: 'Firmware Check', color: 'bg-indigo-500/20 text-indigo-400' },
+  arp_table_cleanup: { label: 'ARP Cleanup', color: 'bg-blue-500/20 text-blue-400' },
+  // Security
+  rogue_device_scan: { label: 'Rogue Scan', color: 'bg-red-500/20 text-red-400' },
+  port_scan: { label: 'Port Scan', color: 'bg-orange-500/20 text-orange-400' },
+  firewall_audit: { label: 'Firewall Audit', color: 'bg-rose-500/20 text-rose-400' },
+  vpn_health_check: { label: 'VPN Check', color: 'bg-emerald-500/20 text-emerald-400' },
+  // Traffic
+  qos_peak_enable: { label: 'QoS Enable', color: 'bg-teal-500/20 text-teal-400' },
+  qos_peak_disable: { label: 'QoS Disable', color: 'bg-gray-500/20 text-gray-400' },
+  // Schedule lifecycle
   schedule_created: { label: 'Schedule Created', color: 'bg-indigo-500/20 text-indigo-400' },
   schedule_deleted: { label: 'Schedule Deleted', color: 'bg-orange-500/20 text-orange-400' },
   schedule_executed: { label: 'Schedule Executed', color: 'bg-teal-500/20 text-teal-400' },
-  anomaly_dismissed: { label: 'Anomaly Dismissed', color: 'bg-yellow-500/20 text-yellow-400' },
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -112,10 +136,34 @@ function AutomationTab() {
                 onChange={(e) => setNewAction({ ...newAction, actionType: e.target.value })}
                 className="w-full px-3 py-2 bg-background border border-border rounded-lg text-text-primary text-sm"
               >
-                <option value="speed_test">Speed Test</option>
-                <option value="guest_wifi_on">Guest WiFi On</option>
-                <option value="guest_wifi_off">Guest WiFi Off</option>
-                <option value="reboot_router">Reboot Router</option>
+                <optgroup label="Monitoring">
+                  <option value="speed_test">Speed Test</option>
+                  <option value="uptime_check">Uptime Check</option>
+                  <option value="device_scan">Network Device Scan</option>
+                  <option value="bandwidth_report">Bandwidth Usage Report</option>
+                </optgroup>
+                <optgroup label="WiFi Management">
+                  <option value="guest_wifi_on">Guest WiFi On</option>
+                  <option value="guest_wifi_off">Guest WiFi Off</option>
+                  <option value="wifi_channel_optimize">WiFi Channel Optimization</option>
+                </optgroup>
+                <optgroup label="Maintenance">
+                  <option value="reboot_router">Reboot Router</option>
+                  <option value="dns_cache_flush">DNS Cache Flush</option>
+                  <option value="dhcp_lease_cleanup">DHCP Lease Cleanup</option>
+                  <option value="firmware_check">Firmware Update Check</option>
+                  <option value="arp_table_cleanup">ARP Table Cleanup</option>
+                </optgroup>
+                <optgroup label="Security">
+                  <option value="rogue_device_scan">Rogue Device Detection</option>
+                  <option value="port_scan">Port Scan</option>
+                  <option value="firewall_audit">Firewall Rule Audit</option>
+                  <option value="vpn_health_check">VPN Tunnel Health Check</option>
+                </optgroup>
+                <optgroup label="Traffic">
+                  <option value="qos_peak_enable">QoS Peak Hours Enable</option>
+                  <option value="qos_peak_disable">QoS Peak Hours Disable</option>
+                </optgroup>
               </select>
             </div>
           </div>
