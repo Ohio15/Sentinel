@@ -20,6 +20,7 @@ import { Login } from './pages/Login';
 import { Register } from './pages/Register';
 import InstallationPortal from './pages/InstallationPortal';
 import { PopOutPerformance } from './pages/PopOutPerformance';
+import { Network } from './pages/Network';
 import SupportPortal from './pages/SupportPortal';
 import { SmartAppBanner } from './components/SmartAppBanner';
 import { useDeviceStore } from './stores/deviceStore';
@@ -29,7 +30,7 @@ import { useAuthStore } from './stores/authStore';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Loader2 } from 'lucide-react';
 
-type Page = 'dashboard' | 'devices' | 'device-detail' | 'alerts' | 'scripts' | 'certificates' | 'settings' | 'tickets' | 'ticket-detail' | 'tickets-kanban' | 'tickets-calendar' | 'tickets-analytics' | 'knowledge-base' | 'clients';
+type Page = 'dashboard' | 'devices' | 'device-detail' | 'alerts' | 'scripts' | 'certificates' | 'settings' | 'tickets' | 'ticket-detail' | 'tickets-kanban' | 'tickets-calendar' | 'tickets-analytics' | 'knowledge-base' | 'clients' | 'network';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading, checkAuth } = useAuthStore();
@@ -92,6 +93,7 @@ function MainLayout() {
       case 'tickets-calendar': return <ErrorBoundary key="tickets-calendar"><TicketsCalendar onTicketSelect={handleTicketSelect} onViewChange={handleTicketViewChange} /></ErrorBoundary>;
       case 'tickets-analytics': return <ErrorBoundary key="tickets-analytics"><TicketAnalytics onViewChange={handleTicketViewChange} /></ErrorBoundary>;
       case 'knowledge-base': return <ErrorBoundary key="knowledge-base"><KnowledgeBase /></ErrorBoundary>;
+      case 'network': return <ErrorBoundary key="network"><Network /></ErrorBoundary>;
       default: return <ErrorBoundary key="dashboard-default"><Dashboard onDeviceSelect={handleDeviceSelect} /></ErrorBoundary>;
     }
   };
