@@ -515,34 +515,13 @@ func (r *Router) sendForceUpdateCommand(agentID string, deviceID uuid.UUID, curr
 	log.Printf("[ForceUpdate] Sent %s force update script to agent %s: %s -> %s", osType, agentID, currentVersion, targetVersion)
 }
 
-// buildWindowsForceUpdateScript creates a PowerShell script that launches a detached process
-// to download the new binary, stop the service, swap the binary, and restart.
+// buildWindowsForceUpdateScript restarts the watchdog service to clear any stuck
+// updateInProgress state. The watchdog will find the existing update-request.json
+// (written by the agent's normal download/stage flow) and perform the binary swap.
+// Uses sc.exe explicitly to avoid PowerShell's "sc" alias for Set-Content.
+// The base command "sc.exe" resolves to "sc" in the agent validator (whitelisted).
 func (r *Router) buildWindowsForceUpdateScript(serverURL, arch string) (string, string) {
-	downloadURL := fmt.Sprintf("%s/api/agent/update/download?platform=windows&arch=%s", serverURL, arch)
-
-	script := fmt.Sprintf(
-		`$scriptBlock = @'
-Start-Sleep 10
-$downloadUrl = '%s'
-$tempPath = "$env:TEMP\sentinel-agent-force-update.exe"
-try {
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    Invoke-WebRequest -Uri $downloadUrl -OutFile $tempPath -UseBasicParsing -TimeoutSec 120
-    if (-not (Test-Path $tempPath) -or (Get-Item $tempPath).Length -lt 1000000) { exit 1 }
-    $svc = Get-WmiObject Win32_Service -Filter "Name='SentinelAgent'"
-    $targetPath = $svc.PathName.Trim('"')
-    Stop-Service SentinelAgent -Force -ErrorAction SilentlyContinue
-    Start-Sleep 5
-    Copy-Item $tempPath $targetPath -Force
-    Start-Service SentinelAgent
-    Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
-} catch { Start-Service SentinelAgent -ErrorAction SilentlyContinue }
-'@
-$bytes = [System.Text.Encoding]::Unicode.GetBytes($scriptBlock)
-$encoded = [Convert]::ToBase64String($bytes)
-Start-Process powershell.exe -ArgumentList "-WindowStyle Hidden -EncodedCommand $encoded" -WindowStyle Hidden`,
-		downloadURL)
-
+	script := `sc.exe stop SentinelWatchdog; Start-Sleep 3; sc.exe start SentinelWatchdog`
 	return script, "powershell"
 }
 
