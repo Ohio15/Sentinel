@@ -110,17 +110,56 @@ func (db *DB) Migrate() error {
 		return fmt.Errorf("failed to get current version: %w", err)
 	}
 
-	// Available migrations
+	// Available migrations (position = version - 1)
 	migrationFiles := []string{
-		"migrations/001_initial_schema.sql",
-		"migrations/002_enrollment_tokens.sql",
-		"migrations/003_metrics_partitioning.sql",
-		"migrations/004_inventory_schema.sql",
-		"migrations/005_mobile_devices.sql",
-		"migrations/006_device_management.sql",
-		"migrations/007_agent_certificates.sql",
-		"migrations/008_agent_logs.sql",
-		"migrations/009_fix_agent_logs_columns.sql",
+		"migrations/001_initial_schema.sql",          // v1
+		"migrations/002_enrollment_tokens.sql",       // v2
+		"migrations/003_metrics_partitioning.sql",    // v3
+		"migrations/004_inventory_schema.sql",        // v4
+		"migrations/005_mobile_devices.sql",          // v5
+		"migrations/006_device_management.sql",       // v6
+		"migrations/007_agent_certificates.sql",      // v7
+		"migrations/008_agent_logs.sql",              // v8
+		"migrations/009_fix_agent_logs_columns.sql",  // v9
+		"migrations/002_extended_device_info.sql",    // v10
+		"migrations/002b_tickets.sql",                // v11
+		"migrations/003_agent_updates.sql",           // v12
+		"migrations/004_grpc_dataplane.sql",          // v13
+		"migrations/005_clients.sql",                 // v14
+		"migrations/006_agent_cert_status.sql",       // v15
+		"migrations/006b_fix_os_types_column.sql",    // v16
+		"migrations/007_preset_scripts.sql",          // v17
+		"migrations/007b_fix_device_updates.sql",     // v18
+		"migrations/008_device_updates.sql",          // v19
+		"migrations/009_extended_metrics.sql",        // v20
+		"migrations/010_update_groups.sql",           // v21
+		"migrations/011_staged_rollouts.sql",         // v22
+		"migrations/012_command_queue.sql",           // v23
+		"migrations/013_agent_health.sql",            // v24
+		"migrations/014_portal_users.sql",            // v25
+		"migrations/015_portal_branding.sql",         // v26
+		"migrations/016_logo_sizing.sql",             // v27
+		"migrations/017_portal_enhancements.sql",     // v28
+		"migrations/018_ticketing_enhancements.sql",  // v29
+		"migrations/019_knowledge_base.sql",          // v30
+		"migrations/020_username_and_invitations.sql", // v31
+		"migrations/021_token_hashing.sql",           // v32
+		"migrations/022_agent_installation_links.sql", // v33
+		"migrations/023_organization_multi_tenant.sql", // v34
+		"migrations/024_installation_codes.sql",      // v35
+		"migrations/025_client_certificates.sql",     // v36
+		"migrations/026_session_persistence.sql",     // v37
+		"migrations/027_webauthn_credentials.sql",    // v38
+		"migrations/028_recordings.sql",              // v39
+		"migrations/029_power_management.sql",        // v40
+		"migrations/030_webhooks.sql",                // v41
+		"migrations/031_patch_approvals.sql",         // v42
+		"migrations/032_mfa_totp.sql",                // v43
+		"migrations/033_script_scheduling.sql",       // v44
+		"migrations/034_usb_devices.sql",             // v45
+		"migrations/035_credential_management.sql",   // v46
+		"migrations/036_usb_file_transfers.sql",      // v47
+		"migrations/037_router_audit_log.sql",        // v48
 	}
 
 	// Run pending migrations
