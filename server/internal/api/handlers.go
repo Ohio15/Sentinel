@@ -414,8 +414,8 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 				// the normal update mechanism is broken. Send a force-update command that
 				// launches a detached process to download and swap the binary.
 				// Uses "data" field (not "payload") for compatibility with old agent message format.
-				if isNewerVersion("1.76.0", agentVersion) && osType == "windows" {
-					r.sendForceUpdateCommand(authPayload.AgentID, deviceID, agentVersion, latestVersion)
+				if isNewerVersion("1.76.0", agentVersion) && (osType == "windows" || osType == "linux") {
+					r.sendForceUpdateCommand(authPayload.AgentID, deviceID, agentVersion, latestVersion, osType)
 				}
 			}
 		}
@@ -445,7 +445,8 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 // Agents before v1.76.0 have a download storm bug that prevents normal updates.
 // This sends an execute_command with the data in the "data" field (not "payload")
 // for backward compatibility with old agent message formats.
-func (r *Router) sendForceUpdateCommand(agentID string, deviceID uuid.UUID, currentVersion, targetVersion string) {
+// Supports both Windows (PowerShell) and Linux (bash) agents.
+func (r *Router) sendForceUpdateCommand(agentID string, deviceID uuid.UUID, currentVersion, targetVersion, osType string) {
 	// Throttle: only send once per device per 10 minutes (tracked in DB)
 	var lastForceUpdate *time.Time
 	_ = r.db.Pool().QueryRow(context.Background(),
@@ -463,11 +464,53 @@ func (r *Router) sendForceUpdateCommand(agentID string, deviceID uuid.UUID, curr
 		log.Printf("[ForceUpdate] Cannot send force update: no server URL configured")
 		return
 	}
-	downloadURL := fmt.Sprintf("%s/api/agent/update/download?platform=windows&arch=amd64", serverURL)
 
-	// PowerShell script that launches a DETACHED background process.
-	// The detached process: downloads new binary → stops service → swaps binary → starts service.
-	// This bypasses the agent's broken updater entirely.
+	// Look up architecture from the database (default to amd64)
+	var arch string
+	_ = r.db.Pool().QueryRow(context.Background(),
+		"SELECT COALESCE(architecture, 'amd64') FROM devices WHERE id = $1", deviceID).Scan(&arch)
+	if arch == "" || arch == "x86_64" {
+		arch = "amd64"
+	}
+
+	var script, cmdType string
+
+	switch osType {
+	case "windows":
+		script, cmdType = r.buildWindowsForceUpdateScript(serverURL, arch)
+	case "linux":
+		script, cmdType = r.buildLinuxForceUpdateScript(serverURL, arch)
+	default:
+		log.Printf("[ForceUpdate] Unsupported OS type %q for agent %s", osType, agentID)
+		return
+	}
+
+	// Send as execute_command with data in "data" field for old agent compatibility.
+	// Old agents (< 1.76.0) read command info from msg.Data, not msg.Payload.
+	cmdMsg, _ := json.Marshal(map[string]interface{}{
+		"type":      ws.MsgTypeCommand,
+		"requestId": uuid.New().String(),
+		"data": map[string]interface{}{
+			"command":     script,
+			"commandType": cmdType,
+		},
+	})
+	if err := r.hub.SendToAgent(agentID, cmdMsg); err != nil {
+		log.Printf("[ForceUpdate] Failed to send force update to agent %s: %v", agentID, err)
+		return
+	}
+
+	// Record that we sent a force update to throttle future attempts
+	_, _ = r.db.Pool().Exec(context.Background(),
+		"UPDATE devices SET last_force_update_at = NOW() WHERE id = $1", deviceID)
+	log.Printf("[ForceUpdate] Sent %s force update script to agent %s: %s -> %s", osType, agentID, currentVersion, targetVersion)
+}
+
+// buildWindowsForceUpdateScript creates a PowerShell script that launches a detached process
+// to download the new binary, stop the service, swap the binary, and restart.
+func (r *Router) buildWindowsForceUpdateScript(serverURL, arch string) (string, string) {
+	downloadURL := fmt.Sprintf("%s/api/agent/update/download?platform=windows&arch=%s", serverURL, arch)
+
 	script := fmt.Sprintf(
 		`$scriptBlock = @'
 Start-Sleep 10
@@ -491,25 +534,120 @@ $encoded = [Convert]::ToBase64String($bytes)
 Start-Process powershell.exe -ArgumentList "-WindowStyle Hidden -EncodedCommand $encoded" -WindowStyle Hidden`,
 		downloadURL)
 
-	// Send as execute_command with data in "data" field for old agent compatibility.
-	// Old agents (< 1.76.0) read command info from msg.Data, not msg.Payload.
-	cmdMsg, _ := json.Marshal(map[string]interface{}{
-		"type":      ws.MsgTypeCommand,
-		"requestId": uuid.New().String(),
-		"data": map[string]interface{}{
-			"command":     script,
-			"commandType": "powershell",
-		},
-	})
-	if err := r.hub.SendToAgent(agentID, cmdMsg); err != nil {
-		log.Printf("[ForceUpdate] Failed to send force update to agent %s: %v", agentID, err)
-		return
-	}
+	return script, "powershell"
+}
 
-	// Record that we sent a force update to throttle future attempts
-	_, _ = r.db.Pool().Exec(context.Background(),
-		"UPDATE devices SET last_force_update_at = NOW() WHERE id = $1", deviceID)
-	log.Printf("[ForceUpdate] Sent force update script to agent %s: %s -> %s", agentID, currentVersion, targetVersion)
+// buildLinuxForceUpdateScript creates a bash script that launches a detached background process
+// to download the new binary, stop the systemd service, swap the binary, and restart.
+// Uses nohup + disown to survive the parent agent process stopping.
+func (r *Router) buildLinuxForceUpdateScript(serverURL, arch string) (string, string) {
+	downloadURL := fmt.Sprintf("%s/api/agent/update/download?platform=linux&arch=%s", serverURL, arch)
+
+	// The outer script launches the update logic in a fully detached background process
+	// so it survives the agent stopping. The inner script:
+	// 1. Waits 10s for the agent to settle
+	// 2. Downloads the new binary to a temp path
+	// 3. Validates the download (size > 1MB)
+	// 4. Finds the running agent binary path
+	// 5. Stops the service (tries systemctl, then pkill)
+	// 6. Backs up old binary, installs new one
+	// 7. Restarts the service
+	// 8. Rolls back on failure
+	script := fmt.Sprintf(`nohup bash -c '
+sleep 10
+DOWNLOAD_URL="%s"
+TEMP_PATH="/tmp/sentinel-agent-force-update"
+LOG="/tmp/sentinel-force-update.log"
+echo "[$(date)] Force update starting" > "$LOG"
+
+# Download new binary
+if command -v curl >/dev/null 2>&1; then
+    curl -sS -o "$TEMP_PATH" --connect-timeout 30 --max-time 120 "$DOWNLOAD_URL" 2>>"$LOG"
+elif command -v wget >/dev/null 2>&1; then
+    wget -q -O "$TEMP_PATH" --timeout=120 "$DOWNLOAD_URL" 2>>"$LOG"
+else
+    echo "[$(date)] No curl or wget available" >> "$LOG"
+    exit 1
+fi
+
+# Validate download
+if [ ! -f "$TEMP_PATH" ] || [ "$(stat -c%%s "$TEMP_PATH" 2>/dev/null || stat -f%%z "$TEMP_PATH" 2>/dev/null)" -lt 1000000 ]; then
+    echo "[$(date)] Download failed or file too small" >> "$LOG"
+    rm -f "$TEMP_PATH"
+    exit 1
+fi
+chmod +x "$TEMP_PATH"
+echo "[$(date)] Download successful ($(stat -c%%s "$TEMP_PATH" 2>/dev/null || stat -f%%z "$TEMP_PATH" 2>/dev/null) bytes)" >> "$LOG"
+
+# Find current binary path
+CURRENT_BIN=$(readlink -f /proc/$(pgrep -f sentinel-agent | head -1)/exe 2>/dev/null)
+if [ -z "$CURRENT_BIN" ]; then
+    CURRENT_BIN=$(which sentinel-agent 2>/dev/null)
+fi
+if [ -z "$CURRENT_BIN" ]; then
+    # Common install locations
+    for p in /usr/local/bin/sentinel-agent /opt/sentinel/sentinel-agent /usr/bin/sentinel-agent; do
+        if [ -f "$p" ]; then CURRENT_BIN="$p"; break; fi
+    done
+fi
+if [ -z "$CURRENT_BIN" ]; then
+    echo "[$(date)] Cannot find sentinel-agent binary" >> "$LOG"
+    rm -f "$TEMP_PATH"
+    exit 1
+fi
+echo "[$(date)] Current binary: $CURRENT_BIN" >> "$LOG"
+
+# Backup current binary
+cp "$CURRENT_BIN" "${CURRENT_BIN}.old" 2>/dev/null
+
+# Stop the service
+SVC_NAME=""
+for name in SentinelAgent sentinel-agent sentinelagent; do
+    if systemctl is-active "$name" >/dev/null 2>&1 || systemctl list-unit-files "$name.service" >/dev/null 2>&1; then
+        SVC_NAME="$name"
+        break
+    fi
+done
+
+if [ -n "$SVC_NAME" ]; then
+    echo "[$(date)] Stopping service: $SVC_NAME" >> "$LOG"
+    systemctl stop "$SVC_NAME" 2>>"$LOG"
+    sleep 3
+else
+    echo "[$(date)] No systemd service found, using pkill" >> "$LOG"
+    pkill -f sentinel-agent 2>/dev/null
+    sleep 3
+fi
+
+# Install new binary
+cp "$TEMP_PATH" "$CURRENT_BIN" 2>>"$LOG"
+chmod +x "$CURRENT_BIN"
+echo "[$(date)] Installed new binary" >> "$LOG"
+
+# Start the service
+if [ -n "$SVC_NAME" ]; then
+    systemctl start "$SVC_NAME" 2>>"$LOG"
+    sleep 2
+    if systemctl is-active "$SVC_NAME" >/dev/null 2>&1; then
+        echo "[$(date)] Service started successfully" >> "$LOG"
+    else
+        echo "[$(date)] Service failed to start, rolling back" >> "$LOG"
+        cp "${CURRENT_BIN}.old" "$CURRENT_BIN" 2>/dev/null
+        chmod +x "$CURRENT_BIN"
+        systemctl start "$SVC_NAME" 2>>"$LOG"
+    fi
+else
+    # Start directly if no systemd service
+    nohup "$CURRENT_BIN" >/dev/null 2>&1 &
+    echo "[$(date)] Started binary directly (no systemd)" >> "$LOG"
+fi
+
+rm -f "$TEMP_PATH"
+echo "[$(date)] Force update complete" >> "$LOG"
+' >/dev/null 2>&1 &
+disown`, downloadURL)
+
+	return script, "bash"
 }
 
 func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message []byte) {
