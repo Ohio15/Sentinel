@@ -414,7 +414,9 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 				// the normal update mechanism is broken. Send a force-update command that
 				// launches a detached process to download and swap the binary.
 				// Uses "data" field (not "payload") for compatibility with old agent message format.
-				if isNewerVersion("1.76.0", agentVersion) && (osType == "windows" || osType == "linux") {
+				newerCheck := isNewerVersion("1.76.0", agentVersion)
+				log.Printf("[ForceUpdate-Check] agent=%s version=%s os=%s isNewer=%v", authPayload.AgentID, agentVersion, osType, newerCheck)
+				if newerCheck && (osType == "windows" || osType == "linux") {
 					r.sendForceUpdateCommand(authPayload.AgentID, deviceID, agentVersion, latestVersion, osType)
 				}
 			}
