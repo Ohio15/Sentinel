@@ -349,7 +349,7 @@ func finishPasskeyAuthenticationHandler(services *Services, waService *WebAuthnS
 		c.JSON(http.StatusOK, gin.H{
 			"accessToken":  accessToken,
 			"refreshToken": refreshToken,
-			"expiresIn":    3600,
+			"expiresIn":    86400,
 			"csrfToken":    csrfToken,
 			"user": UserResponse{
 				ID:        user.ID,

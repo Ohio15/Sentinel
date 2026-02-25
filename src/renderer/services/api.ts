@@ -10,6 +10,7 @@ interface ApiError {
 
 class ApiService {
   private baseUrl: string;
+  private _isRefreshing = false;
 
   constructor() {
     this.baseUrl = getApiBaseUrl();
@@ -57,10 +58,49 @@ class ApiService {
 
     if (!response.ok) {
       if (response.status === 401) {
-        const isAuthValidation = endpoint.includes('/auth/me') || endpoint.includes('/auth/login');
+        const isAuthEndpoint = endpoint.includes('/auth/me') || endpoint.includes('/auth/login') || endpoint.includes('/auth/refresh');
         const isOnLoginPage = window.location.pathname === '/login';
-        if (!isAuthValidation && !isOnLoginPage) {
+        if (!isAuthEndpoint && !isOnLoginPage) {
+          // Attempt token refresh before logging out
+          const refreshToken = localStorage.getItem('refreshToken');
+          if (refreshToken && !this._isRefreshing) {
+            this._isRefreshing = true;
+            try {
+              const refreshResponse = await fetch(`${this.baseUrl}/auth/refresh`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ refreshToken }),
+              });
+              if (refreshResponse.ok) {
+                const refreshData = await refreshResponse.json();
+                localStorage.setItem('token', refreshData.accessToken || refreshData.token);
+                const expiresAt = Date.now() + ((refreshData.expiresIn || 86400) * 1000);
+                localStorage.setItem('tokenExpiresAt', expiresAt.toString());
+                this._isRefreshing = false;
+                // Retry the original request with the new token
+                headers['Authorization'] = `Bearer ${refreshData.accessToken || refreshData.token}`;
+                const retryResponse = await fetch(url, {
+                  method,
+                  headers,
+                  credentials: 'include',
+                  body: data ? JSON.stringify(data) : undefined,
+                });
+                if (retryResponse.ok) {
+                  const text = await retryResponse.text();
+                  return (text ? JSON.parse(text) : null) as T;
+                }
+              }
+            } catch {
+              // Refresh failed, fall through to logout
+            } finally {
+              this._isRefreshing = false;
+            }
+          }
+          // Refresh failed or unavailable — clear session
           localStorage.removeItem('token');
+          localStorage.removeItem('refreshToken');
+          localStorage.removeItem('tokenExpiresAt');
           localStorage.removeItem('user');
           localStorage.removeItem('auth-storage');
           window.location.href = '/login';

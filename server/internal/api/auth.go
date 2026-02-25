@@ -111,7 +111,7 @@ func (r *Router) login(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"accessToken":  accessToken,
 		"refreshToken": refreshToken,
-		"expiresIn":    3600,
+		"expiresIn":    86400,
 		"csrfToken":    csrfToken,
 		"user": UserResponse{
 			ID:        user.ID,
@@ -186,7 +186,7 @@ func (r *Router) refreshToken(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"accessToken": accessToken,
-		"expiresIn":   3600,
+		"expiresIn":   86400,
 	})
 }
 
@@ -226,7 +226,7 @@ func (r *Router) generateAccessToken(userID uuid.UUID, email, role string) (stri
 		Email:  email,
 		Role:   role,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			Issuer:    "sentinel",
 		},
