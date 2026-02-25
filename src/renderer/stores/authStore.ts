@@ -129,8 +129,9 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
     try {
       console.log(`[AuthStore] Refreshing access token (attempt ${state._refreshAttempts + 1}/2)...`);
-      const response = await api.refreshToken(state.refreshToken);
-      const { token: newToken, expiresIn } = response;
+      const response = await api.refreshToken(state.refreshToken) as { accessToken?: string; token?: string; expiresIn: number };
+      const newToken = response.accessToken || response.token;
+      const expiresIn = response.expiresIn;
 
       const expiresAt = Date.now() + (expiresIn * 1000);
       localStorage.setItem('token', newToken);
