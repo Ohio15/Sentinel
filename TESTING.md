@@ -6,12 +6,12 @@ This document describes the testing infrastructure designed to prevent "fix one 
 
 ```bash
 # Before ANY deployment - validate critical paths
-./scripts/validate-critical-paths.sh https://your-server.example.com:4443
-# PowerShell: .\scripts\Validate-CriticalPaths.ps1 -BaseUrl "https://your-server.example.com:4443"
+./scripts/validate-critical-paths.sh https://sentinelrmm.us:4443
+# PowerShell: .\scripts\Validate-CriticalPaths.ps1 -BaseUrl "https://sentinelrmm.us:4443"
 
 # Full agent connection test (validates real agent-to-server communication)
-./scripts/test-agent-flow.sh https://your-server.example.com:4443 --token "enrollment-token"
-# PowerShell: .\scripts\test-agent-flow.ps1 -BaseUrl "https://your-server.example.com:4443" -EnrollmentToken "token"
+./scripts/test-agent-flow.sh https://sentinelrmm.us:4443 --token "enrollment-token"
+# PowerShell: .\scripts\test-agent-flow.ps1 -BaseUrl "https://sentinelrmm.us:4443" -EnrollmentToken "token"
 
 # Safe deployment with backup and rollback
 ./scripts/deploy-safe.sh
@@ -101,7 +101,7 @@ Complete end-to-end tests that simulate a real agent connecting.
 **Usage**:
 ```bash
 # Test remote production
-./scripts/validate-critical-paths.sh https://your-server.example.com:4443
+./scripts/validate-critical-paths.sh https://sentinelrmm.us:4443
 
 # Test local development
 ./scripts/validate-critical-paths.sh http://localhost:8090
@@ -120,7 +120,7 @@ Same tests as the bash script, for Windows development.
 
 ```powershell
 # Test production
-.\scripts\Validate-CriticalPaths.ps1 -BaseUrl "https://your-server.example.com:4443"
+.\scripts\Validate-CriticalPaths.ps1 -BaseUrl "https://sentinelrmm.us:4443"
 
 # Test local
 .\scripts\Validate-CriticalPaths.ps1 -BaseUrl "http://localhost:8090" -Verbose
@@ -182,22 +182,22 @@ Same tests as the bash script, for Windows development.
 **Usage (Bash)**:
 ```bash
 # With enrollment token
-./scripts/test-agent-flow.sh https://your-server.example.com:4443 --token "your-enrollment-token"
+./scripts/test-agent-flow.sh https://sentinelrmm.us:4443 --token "your-enrollment-token"
 
 # With installation code
-./scripts/test-agent-flow.sh https://your-server.example.com:4443 --code "XXXX-XXXX"
+./scripts/test-agent-flow.sh https://sentinelrmm.us:4443 --code "XXXX-XXXX"
 
 # Auto-fetch token (if public endpoint available)
-./scripts/test-agent-flow.sh https://your-server.example.com:4443
+./scripts/test-agent-flow.sh https://sentinelrmm.us:4443
 ```
 
 **Usage (PowerShell)**:
 ```powershell
 # With enrollment token
-.\scripts\test-agent-flow.ps1 -BaseUrl "https://your-server.example.com:4443" -EnrollmentToken "token"
+.\scripts\test-agent-flow.ps1 -BaseUrl "https://sentinelrmm.us:4443" -EnrollmentToken "token"
 
 # With installation code
-.\scripts\test-agent-flow.ps1 -BaseUrl "https://your-server.example.com:4443" -InstallationCode "XXXX-XXXX"
+.\scripts\test-agent-flow.ps1 -BaseUrl "https://sentinelrmm.us:4443" -InstallationCode "XXXX-XXXX"
 ```
 
 **Requirements (Bash)**:
@@ -280,7 +280,7 @@ cd server
 go test -v ./tests/integration/... -base-url=http://localhost:8091
 
 # Against production (skips destructive tests)
-go test -v ./tests/integration/... -base-url=https://your-server.example.com:4443 -skip-destructive
+go test -v ./tests/integration/... -base-url=https://sentinelrmm.us:4443 -skip-destructive
 ```
 
 **Tests included**:

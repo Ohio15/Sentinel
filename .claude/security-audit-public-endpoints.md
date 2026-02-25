@@ -1,7 +1,7 @@
 # Security Audit: Public Installation Portal Endpoints
 
 **Date:** 2026-01-14
-**Auditor:** Internal Security Review
+**Auditor:** Claude Code
 **Scope:** Public-facing agent installation portal endpoints
 
 ## Executive Summary

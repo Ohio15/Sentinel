@@ -1,4 +1,4 @@
-import React, { useState, useEffect, memo, useRef } from 'react';
+import React, { useState, useEffect, memo } from 'react';
 import { files as filesService, events } from '../services';
 
 interface FileEntry {
@@ -42,9 +42,7 @@ export const FileExplorer = memo(function FileExplorer({ deviceId, isOnline, isA
   const [transferProgress, setTransferProgress] = useState<{ filename: string; percentage: number } | null>(null);
 
   useEffect(() => {
-    console.log('[FileExplorer] useEffect check:', { isOnline, isActive, drivesLength: drives.length, deviceId });
     if (isOnline && isActive && drives.length === 0) {
-      console.log('[FileExplorer] Calling loadDrives...');
       loadDrives();
     }
 
@@ -65,19 +63,14 @@ export const FileExplorer = memo(function FileExplorer({ deviceId, isOnline, isA
   }, [deviceId, isOnline, isActive]);
 
   const loadDrives = async () => {
-    console.log('[FileExplorer] loadDrives called for device:', deviceId);
     setLoading(true);
     setError(null);
     try {
-      console.log('[FileExplorer] Calling filesService.list for root...');
-      // Get drives by listing root - in web mode we may not have a separate drives endpoint
-      const driveList = await filesService.list(deviceId, '/') as unknown as DriveInfo[];
-      console.log('[FileExplorer] Got drives:', driveList);
+      const driveList = await filesService.listDrives(deviceId) as DriveInfo[];
       setDrives(driveList);
       setViewMode('drives');
       setCurrentPath('');
     } catch (err: unknown) {
-      console.error('[FileExplorer] Error loading drives:', err);
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setLoading(false);

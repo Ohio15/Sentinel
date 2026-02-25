@@ -215,6 +215,9 @@ func main() {
 		APIKeyManager:   apiKeyManager,
 	}
 
+	// Seed default router scheduled actions (no-op if already populated)
+	api.SeedDefaultScheduledActions(services)
+
 	// Initialize API router with all services
 	router := api.NewRouterWithServices(services)
 

@@ -6,12 +6,8 @@ import ssl
 import time
 import sys
 
-import os
-API_KEY = os.environ.get("SENTINEL_API_KEY", "")
-BASE_URL = os.environ.get("SENTINEL_URL", "https://localhost")
-if not API_KEY:
-    print("Error: Set SENTINEL_API_KEY environment variable")
-    sys.exit(1)
+API_KEY = "55ccf1fd8b1d937fd9377a5c306eaf675e00a5876e1cd33e5ac1c602f7559168"
+BASE_URL = "https://localhost"
 
 def run_cmd(device_id, cmd):
     ctx = ssl.create_default_context()

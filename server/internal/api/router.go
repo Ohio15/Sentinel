@@ -57,7 +57,7 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 		// Public routes with rate limiting
 		// DC-001: Apply authentication rate limiting middleware for brute force protection
 		auth := api.Group("/auth")
-		auth.Use(rateLimitMiddleware(cache, cfg.RateLimitRequests, cfg.RateLimitWindow))
+		auth.Use(rateLimitMiddleware(cache, cfg.RateLimitRequests, cfg.RateLimitWindow, "auth"))
 		auth.Use(middleware.AuthRateLimitMiddleware())
 		{
 			auth.POST("/login", router.login)
@@ -73,11 +73,17 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 			agent.POST("/enroll", router.enrollAgent)
 		}
 
-		// Agent update routes (public - agents call these for updates)
+		// Agent version check (rate-limited with its own bucket)
+		agentVersion := api.Group("/agent")
+		agentVersion.Use(rateLimitMiddleware(cache, 600, 60, "agent-version")) // 600/min per IP for version polling
+		{
+			agentVersion.GET("/version", router.getAgentVersion)
+		}
+
+		// Agent update download & status (no rate limiting - downloads have per-IP cooldown already)
 		agentUpdate := api.Group("/agent")
 		agentUpdate.Use(rateLimitMiddleware(cache, 600, 60)) // 600 requests per minute per IP (high to survive old agent goroutine storm; per-handler download cooldown prevents bandwidth abuse)
 		{
-			agentUpdate.GET("/version", router.getAgentVersion)
 			agentUpdate.GET("/update/download", router.downloadAgentUpdate)
 			agentUpdate.POST("/update/status", router.reportUpdateStatus)
 		}
@@ -224,7 +230,7 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 		// Public routes with rate limiting
 		// DC-001: Apply authentication rate limiting middleware for brute force protection
 		auth := api.Group("/auth")
-		auth.Use(rateLimitMiddleware(services.Redis, services.Config.RateLimitRequests, services.Config.RateLimitWindow))
+		auth.Use(rateLimitMiddleware(services.Redis, services.Config.RateLimitRequests, services.Config.RateLimitWindow, "auth"))
 		auth.Use(middleware.AuthRateLimitMiddleware())
 		{
 			auth.POST("/login", loginHandler(services))
@@ -241,11 +247,16 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			agent.POST("/enroll", enrollAgentHandler(services))
 		}
 
-		// Agent update routes (public - agents call these for updates)
-		agentUpdate := api.Group("/agent")
-		agentUpdate.Use(rateLimitMiddleware(services.Redis, 600, 60)) // 600 requests per minute per IP (high to survive old agent goroutine storm; per-handler download cooldown prevents bandwidth abuse)
+		// Agent version check (rate-limited with its own bucket)
+		agentVersion := api.Group("/agent")
+		agentVersion.Use(rateLimitMiddleware(services.Redis, 600, 60, "agent-version")) // 600/min per IP for version polling
 		{
-			agentUpdate.GET("/version", getAgentVersionHandler(services))
+			agentVersion.GET("/version", getAgentVersionHandler(services))
+		}
+
+		// Agent update download & status (no rate limiting - downloads have per-IP cooldown already)
+		agentUpdate := api.Group("/agent")
+		{
 			agentUpdate.GET("/update/download", downloadAgentUpdateHandler(services))
 			agentUpdate.POST("/update/status", reportUpdateStatusHandler(services))
 		}
@@ -532,6 +543,24 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			protected.GET("/kb/articles/:id/feedback", getKBArticleFeedbackHandler(services))
 			protected.POST("/kb/articles/:id/view", recordKBArticleViewHandler(services))
 
+			// Router Network (APM) - Scheduled Actions
+			protected.GET("/router/scheduled-actions", listScheduledActionsHandler(services))
+			protected.POST("/router/scheduled-actions", middleware.RequireRole("admin", "operator"), createScheduledActionHandler(services))
+			protected.PUT("/router/scheduled-actions/:id", middleware.RequireRole("admin", "operator"), updateScheduledActionHandler(services))
+			protected.DELETE("/router/scheduled-actions/:id", middleware.RequireRole("admin"), deleteScheduledActionHandler(services))
+			protected.POST("/router/scheduled-actions/:id/toggle", middleware.RequireRole("admin", "operator"), toggleScheduledActionHandler(services))
+
+			// Router Network (APM) - Write actions
+			protected.POST("/router/block-device", middleware.RequireRole("admin", "operator"), handleBlockDevice(services))
+			protected.POST("/router/allow-device", middleware.RequireRole("admin", "operator"), handleAllowDevice(services))
+			protected.POST("/router/mark-known", middleware.RequireRole("admin", "operator"), handleMarkDeviceKnown(services))
+			protected.POST("/router/send-wol", middleware.RequireRole("admin", "operator"), handleSendWOL(services))
+			protected.POST("/router/speed-test", middleware.RequireRole("admin", "operator"), handleRunSpeedTest(services))
+			protected.POST("/router/dismiss-anomaly", middleware.RequireRole("admin", "operator"), handleDismissAnomaly(services))
+
+			// Router Network (APM) - Audit Logs (read scope)
+			protected.GET("/router/audit-logs", getAuditLogsHandler(services))
+
 			// Performance Recordings
 			protected.GET("/recordings", listRecordingsHandler(services))
 			protected.POST("/recordings", middleware.RequireRole("admin", "operator"), startRecordingHandler(services))
@@ -705,8 +734,13 @@ func corsMiddleware(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
-// rateLimitMiddleware implements rate limiting using Redis
-func rateLimitMiddleware(cache *cache.Cache, maxRequests int, windowSeconds int) gin.HandlerFunc {
+// rateLimitMiddleware implements rate limiting using Redis.
+// prefix isolates rate limit buckets so different endpoint groups don't share quotas.
+func rateLimitMiddleware(cache *cache.Cache, maxRequests int, windowSeconds int, prefix ...string) gin.HandlerFunc {
+	bucket := "global"
+	if len(prefix) > 0 && prefix[0] != "" {
+		bucket = prefix[0]
+	}
 	return func(c *gin.Context) {
 		if cache == nil {
 			c.Next()
@@ -720,7 +754,7 @@ func rateLimitMiddleware(cache *cache.Cache, maxRequests int, windowSeconds int)
 			return
 		}
 
-		key := "ratelimit:" + clientIP
+		key := "ratelimit:" + bucket + ":" + clientIP
 
 		count, err := cache.Incr(c.Request.Context(), key)
 		if err != nil {

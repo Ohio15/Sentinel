@@ -22,7 +22,7 @@ services:
     environment:
       POSTGRES_DB: sentinel_test
       POSTGRES_USER: sentinel_test
-      POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD:-test_password}
+      POSTGRES_PASSWORD: test_password_only_for_testing_123
     ports:
       - "5433:5432"  # Different port than production
     # Use tmpfs for fast ephemeral storage (data lost on restart)
@@ -59,7 +59,7 @@ services:
     ports:
       - "8091:8080"  # Different port than production (8090)
     environment:
-      - DATABASE_URL=postgres://sentinel_test:${TEST_POSTGRES_PASSWORD:-test_password}@postgres-test:5432/sentinel_test?sslmode=disable
+      - DATABASE_URL=postgres://sentinel_test:test_password_only_for_testing_123@postgres-test:5432/sentinel_test?sslmode=disable
       - REDIS_URL=redis://redis-test:6379
       - JWT_SECRET=test_jwt_secret_for_testing_only_do_not_use_in_production
       - ENROLLMENT_TOKEN=test_enrollment_token_123

@@ -293,13 +293,14 @@ func validateDatabaseToken(ctx context.Context, pool *pgxpool.Pool, token string
 
 		// Validate token based on type
 		var valid bool
-		if isLegacy && plainToken != nil {
-			// Legacy token: use constant-time comparison
-			valid = subtle.ConstantTimeCompare([]byte(token), []byte(*plainToken)) == 1
-		} else if tokenHash != nil && *tokenHash != "" {
-			// Hashed token: use bcrypt comparison
+		if tokenHash != nil && *tokenHash != "" {
+			// Hashed token: use bcrypt comparison (preferred)
 			err := bcrypt.CompareHashAndPassword([]byte(*tokenHash), []byte(token))
 			valid = err == nil
+		} else if plainToken != nil && *plainToken != "" {
+			// Plain text token: use constant-time comparison
+			// Handles both legacy tokens and tokens created without a hash
+			valid = subtle.ConstantTimeCompare([]byte(token), []byte(*plainToken)) == 1
 		}
 
 		if valid {

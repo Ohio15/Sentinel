@@ -4,11 +4,9 @@ REM Usage: scripts\deploy-web.bat
 
 setlocal
 
-if "%SENTINEL_DEPLOY_HOST%"=="" (echo Set SENTINEL_DEPLOY_HOST env var & exit /b 1)
-if "%SENTINEL_DEPLOY_PATH%"=="" (echo Set SENTINEL_DEPLOY_PATH env var & exit /b 1)
-set REMOTE_HOST=%SENTINEL_DEPLOY_HOST%
-set REMOTE_PATH=%SENTINEL_DEPLOY_PATH%
-set LOCAL_PATH=%~dp0..
+set REMOTE_HOST=ohio_@192.168.1.20
+set REMOTE_PATH=~/Sentinel
+set LOCAL_PATH=D:\Projects\Sentinel
 
 echo === Building web frontend ===
 cd /d %LOCAL_PATH%

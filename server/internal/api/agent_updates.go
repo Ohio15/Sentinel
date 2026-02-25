@@ -485,13 +485,13 @@ func (r *Router) reportUpdateStatus(c *gin.Context) {
 			UPDATE devices SET agent_version = $1, updated_at = NOW() WHERE agent_id = $2
 		`, req.ToVersion, req.AgentID)
 
-		// Auto-resolve any open "Update Loop" alerts for this device
+		// Auto-resolve any open update-related alerts for this device
 		result, resolveErr := r.db.Pool().Exec(c.Request.Context(), `
 			UPDATE alerts
 			SET status = 'resolved', resolved_at = NOW()
 			WHERE device_id = (SELECT id FROM devices WHERE agent_id = $1 LIMIT 1)
 			  AND status = 'open'
-			  AND title LIKE '%Update Loop%'
+			  AND (title LIKE '%Update Loop%' OR title LIKE '%Download Failed%' OR title LIKE '%Rolled Back%')
 		`, req.AgentID)
 		if resolveErr == nil && result.RowsAffected() > 0 {
 			log.Printf("Auto-resolved update loop alert for agent %s after successful update to %s", req.AgentID, req.ToVersion)

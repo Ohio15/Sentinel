@@ -132,6 +132,11 @@ type Updater struct {
 	lastAttemptTime    time.Time // When the last attempt started
 	lastAttemptFailed  bool      // Whether the last attempt failed
 
+	// Watchdog handoff state - prevents re-downloading while watchdog is applying
+	handedOffToWatchdog bool      // True after successful staging + IPC write
+	handoffTime         time.Time // When the handoff occurred
+	handoffVersion      string    // Version handed off
+
 	// Adaptive polling state
 	pollMu                sync.Mutex
 	consecutiveFailures   int
@@ -254,12 +259,29 @@ func (u *Updater) SetAgentID(agentID string)               { u.agentID = agentID
 func (u *Updater) SetCheckInterval(interval time.Duration) { u.checkInterval = interval }
 
 func (u *Updater) TriggerCheck() {
+	// Don't queue a check if we've already handed off to the watchdog
+	u.updateMu.Lock()
+	if u.handedOffToWatchdog {
+		u.updateMu.Unlock()
+		log.Printf("[Updater] TriggerCheck suppressed — update v%s handed to watchdog %v ago",
+			u.handoffVersion, time.Since(u.handoffTime).Round(time.Second))
+		return
+	}
+	u.updateMu.Unlock()
+
 	select {
 	case u.forceCheck <- struct{}{}:
 		log.Println("Update check triggered")
 	default:
 		log.Println("Update check already pending")
 	}
+}
+
+// IsUpdateInProgress returns true if an update is actively downloading, staging, or handed to watchdog
+func (u *Updater) IsUpdateInProgress() bool {
+	u.updateMu.Lock()
+	defer u.updateMu.Unlock()
+	return u.isUpdating || u.handedOffToWatchdog
 }
 
 func (u *Updater) GetStatus() UpdateStatus {
@@ -473,8 +495,43 @@ func (u *Updater) applyUpdateWindows(currentExe, downloadPath, newVersion string
 
 // applyUpdateViaWatchdog uses the new watchdog-orchestrated update mechanism
 func (u *Updater) applyUpdateViaWatchdog(currentExe, downloadPath, newVersion string) error {
-	log.Printf("DEBUG applyUpdateViaWatchdog: currentExe=%q downloadPath=%q newVersion=%q", currentExe, downloadPath, newVersion)
-	
+	log.Printf("[Handoff] === BEGIN WATCHDOG HANDOFF === version=%s", newVersion)
+	log.Printf("[Handoff] currentExe=%q downloadPath=%q", currentExe, downloadPath)
+
+	// Verify the staged binary exists and is readable before writing the request
+	stagedInfo, err := os.Stat(downloadPath)
+	if err != nil {
+		log.Printf("[Handoff] FATAL: staged binary not accessible: %v", err)
+		return fmt.Errorf("staged binary not accessible: %w", err)
+	}
+	log.Printf("[Handoff] Staged binary verified: size=%d bytes, mode=%s", stagedInfo.Size(), stagedInfo.Mode())
+
+	// Proactively clear stale watchdog-update-request.json BEFORE writing agent update request.
+	// If this file exists and is stale (>30 min), the watchdog's self-update gate will block
+	// the agent update indefinitely. Clear it now so the handoff succeeds.
+	wdRequestPath := ipc.WatchdogUpdateRequestPath()
+	if wdFileInfo, wdStatErr := os.Stat(wdRequestPath); wdStatErr == nil {
+		fileAge := time.Since(wdFileInfo.ModTime())
+		if fileAge > 30*time.Minute {
+			log.Printf("[Handoff] WARNING: Stale watchdog-update-request.json at %s (age: %v) — deleting to prevent deadlock", wdRequestPath, fileAge.Round(time.Second))
+			if delErr := os.Remove(wdRequestPath); delErr != nil {
+				log.Printf("[Handoff] Failed to delete stale watchdog request: %v", delErr)
+			} else {
+				log.Printf("[Handoff] Stale watchdog request deleted successfully")
+			}
+		} else {
+			// File exists but is recent — read and log its contents
+			if wdData, rdErr := os.ReadFile(wdRequestPath); rdErr == nil {
+				log.Printf("[Handoff] WARNING: watchdog-update-request.json EXISTS at %s (age: %v, %d bytes): %s — watchdog self-update gate may defer this handoff",
+					wdRequestPath, fileAge.Round(time.Second), len(wdData), string(wdData))
+			}
+		}
+	} else if !os.IsNotExist(wdStatErr) {
+		log.Printf("[Handoff] Error checking watchdog-update-request.json: %v", wdStatErr)
+	} else {
+		log.Printf("[Handoff] No watchdog-update-request.json (good — no self-update gate)")
+	}
+
 	// Create update request for the watchdog
 	request := &ipc.UpdateRequest{
 		Version:     newVersion,
@@ -486,20 +543,32 @@ func (u *Updater) applyUpdateViaWatchdog(currentExe, downloadPath, newVersion st
 	}
 
 	// Write the update request file (persists across reboots)
+	requestPath := ipc.UpdateRequestPath()
+	log.Printf("[Handoff] Writing update-request.json to %s", requestPath)
 	if err := ipc.WriteUpdateRequest(request); err != nil {
+		log.Printf("[Handoff] FATAL: failed to write update request: %v", err)
 		return fmt.Errorf("failed to write update request: %w", err)
 	}
-	log.Printf("Update request written for version %s", newVersion)
 
-	// Signal the watchdog via named pipe for immediate handling
-	if err := ipc.SignalUpdateReady(request); err != nil {
-		// Not fatal - watchdog will poll the JSON file
-		log.Printf("Could not signal watchdog via pipe (will poll): %v", err)
+	// Verify the file was written by re-reading it
+	verifyData, verifyErr := os.ReadFile(requestPath)
+	if verifyErr != nil {
+		log.Printf("[Handoff] WARNING: could not re-read request file after write: %v", verifyErr)
 	} else {
-		log.Println("Watchdog signaled via pipe")
+		log.Printf("[Handoff] Verified request file written (%d bytes): %s", len(verifyData), string(verifyData))
 	}
 
-	log.Printf("Update orchestration handed to watchdog, agent will be restarted")
+	// Signal the watchdog via named pipe for immediate handling
+	log.Printf("[Handoff] Connecting to pipe %s ...", ipc.PipeName)
+	pipeStart := time.Now()
+	if err := ipc.SignalUpdateReady(request); err != nil {
+		// Not fatal - watchdog will poll the JSON file
+		log.Printf("[Handoff] Pipe signal FAILED after %v: %v (watchdog will poll file instead)", time.Since(pipeStart).Round(time.Millisecond), err)
+	} else {
+		log.Printf("[Handoff] Pipe signal SUCCEEDED in %v", time.Since(pipeStart).Round(time.Millisecond))
+	}
+
+	log.Printf("[Handoff] === HANDOFF COMPLETE === watchdog should pick up %s within 5s", requestPath)
 
 	// Give the watchdog a moment to receive the signal before we potentially exit
 	time.Sleep(1 * time.Second)
@@ -845,6 +914,27 @@ func (u *Updater) checkAndUpdateFromURL(ctx context.Context, serverURL string) e
 		u.updateMu.Unlock()
 	}()
 
+	// === HANDOFF CHECK: If we already handed this update to the watchdog, don't re-download ===
+	if u.handedOffToWatchdog {
+		// Check if the request file still exists (watchdog hasn't processed it yet)
+		existingRequest, _ := ipc.ReadUpdateRequest()
+		if existingRequest != nil {
+			log.Printf("[Updater] Update v%s already handed to watchdog %v ago, waiting for completion",
+				u.handoffVersion, time.Since(u.handoffTime).Round(time.Second))
+			return nil
+		}
+		// Request file is gone — watchdog processed it (or it was cleaned up)
+		// Check if the watchdog completed successfully
+		existingStatus, _ := ipc.ReadUpdateStatus()
+		if existingStatus != nil && existingStatus.State == ipc.StateApplying {
+			log.Printf("[Updater] Watchdog is currently applying update, waiting")
+			return nil
+		}
+		// Handoff is done (success or failure) — clear state
+		log.Printf("[Updater] Watchdog handoff for v%s completed (request file gone), resuming normal checks", u.handoffVersion)
+		u.handedOffToWatchdog = false
+	}
+
 	// Cooldown: don't retry the same version within 5 minutes of a failed attempt
 	// This prevents retry storms from heartbeat acks triggering rapid re-downloads
 	if u.lastAttemptFailed && u.lastAttemptVersion != "" &&
@@ -856,10 +946,13 @@ func (u *Updater) checkAndUpdateFromURL(ctx context.Context, serverURL string) e
 		return nil
 	}
 
-	// Check if watchdog is already handling an update
+	// Check if watchdog is already handling an update (covers restarts where handoff state was lost)
 	existingRequest, err := ipc.ReadUpdateRequest()
 	if err == nil && existingRequest != nil {
-		log.Printf("[Updater] Update request already exists for v%s, watchdog will handle it", existingRequest.Version)
+		log.Printf("[Updater] Update request already exists for v%s, watchdog will handle it — restoring handoff state", existingRequest.Version)
+		u.handedOffToWatchdog = true
+		u.handoffTime = existingRequest.RequestedAt
+		u.handoffVersion = existingRequest.Version
 		return nil
 	}
 
@@ -940,6 +1033,13 @@ func (u *Updater) checkAndUpdateFromURL(ctx context.Context, serverURL string) e
 		})
 		return fmt.Errorf("apply failed: %w", err)
 	}
+
+	// Successfully staged and handed off to watchdog — mark handoff state
+	// This prevents re-downloading while the watchdog is applying the update
+	u.handedOffToWatchdog = true
+	u.handoffTime = time.Now()
+	u.handoffVersion = result.LatestVersion
+	log.Printf("[Updater] Update v%s handed off to watchdog — suppressing re-downloads until processed", result.LatestVersion)
 
 	return nil
 }

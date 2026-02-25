@@ -133,7 +133,7 @@ if ($Changelog -ne "") {
     $commitMsg = "Release v$Version - $Changelog"
 }
 
-git commit -m "$commitMsg"
+git commit -m "$commitMsg`n`nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 git push
 
 Pop-Location
@@ -144,14 +144,10 @@ Write-Host "=== Release v$Version built and committed ===" -ForegroundColor Gree
 # Deploy if requested
 if ($Deploy) {
     Write-Host ""
-    Write-Host "Deploying to remote server..." -ForegroundColor Yellow
+    Write-Host "Deploying to remote server (192.168.1.20)..." -ForegroundColor Yellow
 
-    $RemoteHost = $env:SENTINEL_DEPLOY_HOST
-    $RemotePath = $env:SENTINEL_DEPLOY_PATH
-    if (-not $RemoteHost -or -not $RemotePath) {
-        Write-Host "Set SENTINEL_DEPLOY_HOST and SENTINEL_DEPLOY_PATH env vars" -ForegroundColor Red
-        exit 1
-    }
+    $RemoteHost = "ohio_@192.168.1.20"
+    $RemotePath = "D:/Projects/Sentinel/installers"
 
     scp "$ProjectRoot/installers/version.json" "${RemoteHost}:${RemotePath}/version.json"
     scp "$ProjectRoot/installers/sentinel-agent-windows-amd64.exe" "${RemoteHost}:${RemotePath}/sentinel-agent-windows-amd64.exe"

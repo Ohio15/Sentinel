@@ -1,7 +1,7 @@
 {
-    "version":  "1.76.6",
-    "releaseDate":  "2026-02-18",
-    "changelog":  "Fix Linux/Synology agent auto-update: cross-platform IPC paths, multi-strategy service restart",
+    "version":  "1.76.11",
+    "releaseDate":  "2026-02-24",
+    "changelog":  "Auto-resolve stale offline and update failure alerts on reconnect and heartbeat",
     "platforms":  [
                       "windows",
                       "linux",

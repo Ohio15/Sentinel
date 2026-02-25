@@ -253,3 +253,27 @@ type AgentInstaller struct {
 	Version      string `json:"version"`
 	DownloadURL  string `json:"downloadUrl"`
 }
+
+// RouterScheduledAction represents a scheduled router action (speed test, guest wifi, etc.)
+type RouterScheduledAction struct {
+	ID             uuid.UUID  `json:"id"`
+	Name           string     `json:"name"`
+	ActionType     string     `json:"actionType"`
+	CronExpression string     `json:"cronExpression"`
+	IsActive       bool       `json:"isActive"`
+	LastRunAt      *time.Time `json:"lastRunAt,omitempty"`
+	NextRunAt      *time.Time `json:"nextRunAt,omitempty"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
+}
+
+// RouterAuditLog represents an audit trail entry for router write operations
+type RouterAuditLog struct {
+	ID          uuid.UUID              `json:"id"`
+	Action      string                 `json:"action"`
+	Description string                 `json:"description"`
+	TargetMAC   *string                `json:"targetMac,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata"`
+	Status      string                 `json:"status"`
+	CreatedAt   time.Time              `json:"createdAt"`
+}

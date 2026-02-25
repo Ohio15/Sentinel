@@ -201,18 +201,15 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	if err == nil {
 		// Token found in database - validate it
 		if !isActive {
+			log.Printf("[WS] Token disabled for agent %s from %s", authPayload.AgentID, c.ClientIP())
 			conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Token is disabled"}`)})
 			conn.Close()
 			return
 		}
-		if expiresAt != nil && time.Now().After(*expiresAt) {
-			conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Token has expired"}`)})
-			conn.Close()
-			return
-		}
-		// NOTE: We do NOT check max_uses for WebSocket connections.
-		// max_uses limits how many devices can install using one link.
-		// Once a device is installed, it can reconnect unlimited times.
+		// NOTE: We do NOT check expiry or max_uses for WebSocket connections.
+		// These limits restrict how many NEW devices can enroll using one link.
+		// Once an agent is installed with a token, it can reconnect unlimited times
+		// regardless of whether the enrollment token has since expired.
 		tokenValid = true
 	} else {
 		// Token not found in database - check legacy env var
@@ -222,6 +219,7 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	}
 
 	if !tokenValid {
+		log.Printf("[WS] Invalid token from %s for agent %s", c.ClientIP(), authPayload.AgentID)
 		conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Invalid token"}`)})
 		conn.Close()
 		return
@@ -380,8 +378,48 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	})
 	r.hub.BroadcastToDashboards(onlineMsg)
 
+	// Auto-resolve open "Device Offline" alerts now that device is back online
+	if result, err := r.db.Pool().Exec(ctx, `
+		UPDATE alerts SET status = 'resolved', resolved_at = NOW()
+		WHERE device_id = $1 AND status = 'open'
+		  AND (title LIKE '%Device Offline%')
+	`, deviceID); err == nil && result.RowsAffected() > 0 {
+		log.Printf("Auto-resolved %d offline alert(s) for device %s on reconnect", result.RowsAffected(), deviceID)
+	}
+
 	// Auto-distribute CA certificate if agent doesn't have it or has outdated version
 	go r.autoDistributeCertificate(client, authPayload.AgentID, authPayload.CACertHash)
+
+	// Proactively notify agent of available updates on connect.
+	// Agents with long heartbeat intervals may disconnect before the first heartbeat fires,
+	// so we check the device's stored version and send update info immediately.
+	go func() {
+		var agentVersion, osType string
+		if verErr := r.db.Pool().QueryRow(ctx,
+			"SELECT COALESCE(agent_version, ''), COALESCE(os_type, '') FROM devices WHERE id = $1",
+			deviceID).Scan(&agentVersion, &osType); verErr == nil && agentVersion != "" {
+			latestVersion := getCurrentAgentVersion()
+			if isNewerVersion(latestVersion, agentVersion) {
+				ackMsg, _ := json.Marshal(map[string]interface{}{
+					"type": ws.MsgTypeHeartbeatAck,
+					"payload": map[string]interface{}{
+						"updateAvailable": true,
+						"latestVersion":   latestVersion,
+					},
+				})
+				r.hub.SendToAgent(authPayload.AgentID, ackMsg)
+				log.Printf("Proactive update notification for agent %s: %s -> %s", authPayload.AgentID, agentVersion, latestVersion)
+
+				// For agents stuck on versions before the download storm fix (< 1.76.0),
+				// the normal update mechanism is broken. Send a force-update command that
+				// launches a detached process to download and swap the binary.
+				// Uses "data" field (not "payload") for compatibility with old agent message format.
+				if isNewerVersion("1.76.0", agentVersion) && osType == "windows" {
+					r.sendForceUpdateCommand(authPayload.AgentID, deviceID, agentVersion, latestVersion)
+				}
+			}
+		}
+	}()
 
 	// Start read/write pumps
 	go client.WritePump(ctx)
@@ -401,6 +439,77 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 		"status":   "offline",
 	})
 	r.hub.BroadcastToDashboards(offlineMsg)
+}
+
+// sendForceUpdateCommand sends a detached update script to agents with broken updaters.
+// Agents before v1.76.0 have a download storm bug that prevents normal updates.
+// This sends an execute_command with the data in the "data" field (not "payload")
+// for backward compatibility with old agent message formats.
+func (r *Router) sendForceUpdateCommand(agentID string, deviceID uuid.UUID, currentVersion, targetVersion string) {
+	// Throttle: only send once per device per 10 minutes (tracked in DB)
+	var lastForceUpdate *time.Time
+	_ = r.db.Pool().QueryRow(context.Background(),
+		"SELECT last_force_update_at FROM devices WHERE id = $1", deviceID).Scan(&lastForceUpdate)
+	if lastForceUpdate != nil && time.Since(*lastForceUpdate) < 10*time.Minute {
+		return
+	}
+
+	// Build the download URL
+	serverURL := r.config.PublicURL
+	if serverURL == "" {
+		serverURL = r.config.ServerURL
+	}
+	if serverURL == "" {
+		log.Printf("[ForceUpdate] Cannot send force update: no server URL configured")
+		return
+	}
+	downloadURL := fmt.Sprintf("%s/api/agent/update/download?platform=windows&arch=amd64", serverURL)
+
+	// PowerShell script that launches a DETACHED background process.
+	// The detached process: downloads new binary → stops service → swaps binary → starts service.
+	// This bypasses the agent's broken updater entirely.
+	script := fmt.Sprintf(
+		`$scriptBlock = @'
+Start-Sleep 10
+$downloadUrl = '%s'
+$tempPath = "$env:TEMP\sentinel-agent-force-update.exe"
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    Invoke-WebRequest -Uri $downloadUrl -OutFile $tempPath -UseBasicParsing -TimeoutSec 120
+    if (-not (Test-Path $tempPath) -or (Get-Item $tempPath).Length -lt 1000000) { exit 1 }
+    $svc = Get-WmiObject Win32_Service -Filter "Name='SentinelAgent'"
+    $targetPath = $svc.PathName.Trim('"')
+    Stop-Service SentinelAgent -Force -ErrorAction SilentlyContinue
+    Start-Sleep 5
+    Copy-Item $tempPath $targetPath -Force
+    Start-Service SentinelAgent
+    Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
+} catch { Start-Service SentinelAgent -ErrorAction SilentlyContinue }
+'@
+$bytes = [System.Text.Encoding]::Unicode.GetBytes($scriptBlock)
+$encoded = [Convert]::ToBase64String($bytes)
+Start-Process powershell.exe -ArgumentList "-WindowStyle Hidden -EncodedCommand $encoded" -WindowStyle Hidden`,
+		downloadURL)
+
+	// Send as execute_command with data in "data" field for old agent compatibility.
+	// Old agents (< 1.76.0) read command info from msg.Data, not msg.Payload.
+	cmdMsg, _ := json.Marshal(map[string]interface{}{
+		"type":      ws.MsgTypeCommand,
+		"requestId": uuid.New().String(),
+		"data": map[string]interface{}{
+			"command":     script,
+			"commandType": "powershell",
+		},
+	})
+	if err := r.hub.SendToAgent(agentID, cmdMsg); err != nil {
+		log.Printf("[ForceUpdate] Failed to send force update to agent %s: %v", agentID, err)
+		return
+	}
+
+	// Record that we sent a force update to throttle future attempts
+	_, _ = r.db.Pool().Exec(context.Background(),
+		"UPDATE devices SET last_force_update_at = NOW() WHERE id = $1", deviceID)
+	log.Printf("[ForceUpdate] Sent force update script to agent %s: %s -> %s", agentID, currentVersion, targetVersion)
 }
 
 func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message []byte) {
@@ -452,6 +561,15 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 			ackPayload["updateAvailable"] = true
 			ackPayload["latestVersion"] = latestVersion
 			log.Printf("Agent %s has update available: %s -> %s", agentID, heartbeat.AgentVersion, latestVersion)
+		} else if heartbeat.AgentVersion != "" {
+			// Agent is at latest version — auto-resolve any stale update failure alerts
+			if result, err := r.db.Pool().Exec(ctx, `
+				UPDATE alerts SET status = 'resolved', resolved_at = NOW()
+				WHERE device_id = $1 AND status = 'open'
+				  AND (title LIKE '%Download Failed%' OR title LIKE '%Update Loop%' OR title LIKE '%Rolled Back%')
+			`, deviceID); err == nil && result.RowsAffected() > 0 {
+				log.Printf("Auto-resolved %d update alert(s) for agent %s (now at latest %s)", result.RowsAffected(), agentID, heartbeat.AgentVersion)
+			}
 		}
 
 		// Send ack back to agent

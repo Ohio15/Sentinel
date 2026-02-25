@@ -1,9 +1,7 @@
 # Debug failing endpoints
-$BaseUrl = $env:SENTINEL_URL
+$BaseUrl = "https://sentinelrmm.us:4443"
 $Username = "admin"
-$Password = $env:SENTINEL_ADMIN_PASSWORD
-if (-not $BaseUrl) { Write-Host "Set SENTINEL_URL env var" -ForegroundColor Red; exit 1 }
-if (-not $Password) { Write-Host "Set SENTINEL_ADMIN_PASSWORD env var" -ForegroundColor Red; exit 1 }
+$Password = 'V_hqyDU.!dsRKoiBN*.JPVnsFJ4Xzo'
 
 # Trust all certs
 Add-Type @"

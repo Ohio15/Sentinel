@@ -1,11 +1,9 @@
 # Quick login test
 param(
-    [string]$BaseUrl = $env:SENTINEL_URL,
+    [string]$BaseUrl = "https://sentinelrmm.us:4443",
     [string]$Username = "admin",
-    [string]$Password = $env:SENTINEL_ADMIN_PASSWORD
+    [string]$Password = 'V_hqyDU.!dsRKoiBN*.JPVnsFJ4Xzo'
 )
-if (-not $BaseUrl) { Write-Host "Set SENTINEL_URL env var" -ForegroundColor Red; exit 1 }
-if (-not $Password) { Write-Host "Set SENTINEL_ADMIN_PASSWORD env var" -ForegroundColor Red; exit 1 }
 
 # Trust all certs
 Add-Type @"

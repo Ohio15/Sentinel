@@ -76,6 +76,6 @@ providers:
 certificatesResolvers:
   letsencrypt:
     acme:
-      email: "${ACME_EMAIL}"
+      email: "ohio_15@hotmail.com"
       storage: /letsencrypt/acme.json
       tlsChallenge: {}

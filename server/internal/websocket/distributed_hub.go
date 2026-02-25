@@ -441,3 +441,9 @@ func (h *DistributedHub) RegisterDashboard(conn *websocket.Conn, userID uuid.UUI
 	}
 	return client
 }
+
+func (h *DistributedHub) SendToUser(userID uuid.UUID, message []byte) error {
+	// Fallback to broadcast for distributed hub (no local dashboard tracking)
+	h.BroadcastToDashboards(message)
+	return nil
+}

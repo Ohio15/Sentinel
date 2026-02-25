@@ -4,9 +4,9 @@
 
 set -e
 
-REMOTE_HOST="${SENTINEL_DEPLOY_HOST:?Set SENTINEL_DEPLOY_HOST env var}"
-REMOTE_PATH="${SENTINEL_DEPLOY_PATH:?Set SENTINEL_DEPLOY_PATH env var}"
-LOCAL_PATH="$(cd "$(dirname "$0")/.." && pwd)"
+REMOTE_HOST="ohio_@192.168.1.20"
+REMOTE_PATH="D:/Projects/Sentinel"
+LOCAL_PATH="D:/Projects/Sentinel"
 
 echo "=== Building web frontend ==="
 cd "$LOCAL_PATH"

@@ -862,7 +862,7 @@ func RegisterWebAuthnRoutes(api *gin.RouterGroup, protected *gin.RouterGroup, se
 
 	// Public routes (for authentication/login)
 	webauthn := api.Group("/webauthn")
-	webauthn.Use(rateLimitMiddleware(services.Redis, services.Config.RateLimitRequests, services.Config.RateLimitWindow))
+	webauthn.Use(rateLimitMiddleware(services.Redis, services.Config.RateLimitRequests, services.Config.RateLimitWindow, "auth"))
 	{
 		webauthn.POST("/authenticate/begin", beginPasskeyAuthenticationHandler(services, waService))
 		webauthn.POST("/authenticate/finish", finishPasskeyAuthenticationHandler(services, waService))

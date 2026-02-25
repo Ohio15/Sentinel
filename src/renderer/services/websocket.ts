@@ -75,9 +75,18 @@ class ReliableWebSocket {
       return;
     }
 
-    // Reset manual disconnect flag and reconnect counter on explicit connect()
+    // Reset manual disconnect flag (counter is reset in onopen on success)
     this.manualDisconnect = false;
-    this.reconnectAttempts = 0;
+
+    // Close any existing WebSocket that isn't already closed
+    if (this.ws) {
+      const state = this.ws.readyState;
+      if (state === WebSocket.CONNECTING || state === WebSocket.OPEN) {
+        console.warn('[WebSocket] Closing stale connection before reconnecting');
+        try { this.ws.onclose = null; this.ws.onerror = null; this.ws.close(); } catch { /* ignore */ }
+      }
+      this.ws = null;
+    }
 
     const token = localStorage.getItem('token');
     if (!token) {
