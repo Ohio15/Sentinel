@@ -600,45 +600,53 @@ echo "[$(date)] Current binary: $CURRENT_BIN" >> "$LOG"
 # Backup current binary
 cp "$CURRENT_BIN" "${CURRENT_BIN}.old" 2>/dev/null
 
+# Determine if we need sudo (check if we are root)
+SUDO=""
+if [ "$(id -u)" -ne 0 ]; then
+    if command -v sudo >/dev/null 2>&1; then
+        SUDO="sudo"
+    fi
+fi
+
 # Stop the service
 SVC_NAME=""
 for name in SentinelAgent sentinel-agent sentinelagent; do
-    if systemctl is-active "$name" >/dev/null 2>&1 || systemctl list-unit-files "$name.service" >/dev/null 2>&1; then
+    if $SUDO systemctl is-active "$name" >/dev/null 2>&1 || $SUDO systemctl list-unit-files "$name.service" >/dev/null 2>&1; then
         SVC_NAME="$name"
         break
     fi
 done
 
 if [ -n "$SVC_NAME" ]; then
-    echo "[$(date)] Stopping service: $SVC_NAME" >> "$LOG"
-    systemctl stop "$SVC_NAME" 2>>"$LOG"
+    echo "[$(date)] Stopping service: $SVC_NAME (sudo=$SUDO)" >> "$LOG"
+    $SUDO systemctl stop "$SVC_NAME" 2>>"$LOG"
     sleep 3
 else
     echo "[$(date)] No systemd service found, using pkill" >> "$LOG"
-    pkill -f sentinel-agent 2>/dev/null
+    $SUDO pkill -f sentinel-agent 2>/dev/null
     sleep 3
 fi
 
 # Install new binary
-cp "$TEMP_PATH" "$CURRENT_BIN" 2>>"$LOG"
-chmod +x "$CURRENT_BIN"
+$SUDO cp "$TEMP_PATH" "$CURRENT_BIN" 2>>"$LOG"
+$SUDO chmod +x "$CURRENT_BIN"
 echo "[$(date)] Installed new binary" >> "$LOG"
 
 # Start the service
 if [ -n "$SVC_NAME" ]; then
-    systemctl start "$SVC_NAME" 2>>"$LOG"
+    $SUDO systemctl start "$SVC_NAME" 2>>"$LOG"
     sleep 2
-    if systemctl is-active "$SVC_NAME" >/dev/null 2>&1; then
+    if $SUDO systemctl is-active "$SVC_NAME" >/dev/null 2>&1; then
         echo "[$(date)] Service started successfully" >> "$LOG"
     else
         echo "[$(date)] Service failed to start, rolling back" >> "$LOG"
-        cp "${CURRENT_BIN}.old" "$CURRENT_BIN" 2>/dev/null
-        chmod +x "$CURRENT_BIN"
-        systemctl start "$SVC_NAME" 2>>"$LOG"
+        $SUDO cp "${CURRENT_BIN}.old" "$CURRENT_BIN" 2>/dev/null
+        $SUDO chmod +x "$CURRENT_BIN"
+        $SUDO systemctl start "$SVC_NAME" 2>>"$LOG"
     fi
 else
     # Start directly if no systemd service
-    nohup "$CURRENT_BIN" >/dev/null 2>&1 &
+    nohup $SUDO "$CURRENT_BIN" >/dev/null 2>&1 &
     echo "[$(date)] Started binary directly (no systemd)" >> "$LOG"
 fi
 
