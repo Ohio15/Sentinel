@@ -44,8 +44,8 @@ var (
 // Default server host for code validation (used when no embedded config)
 const DefaultServerHost = "sentinelrmm.us"
 
-// Ports to try in order of preference (4443 first to bypass router caching)
-var DefaultPorts = []string{"4443", "443", "8443"}
+// Ports to try in order of preference (443 first for universal firewall compatibility)
+var DefaultPorts = []string{"443", "4443", "8443"}
 
 var logFile *os.File
 

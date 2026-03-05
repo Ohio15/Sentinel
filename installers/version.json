@@ -1,5 +1,5 @@
 {
-    "version":  "1.76.11",
+    "version":  "1.76.12",
     "releaseDate":  "2026-02-24",
     "changelog":  "Auto-resolve stale offline and update failure alerts on reconnect and heartbeat",
     "platforms":  [

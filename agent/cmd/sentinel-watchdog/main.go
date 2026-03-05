@@ -62,7 +62,7 @@ const (
 )
 
 var (
-	Version = "1.76.11"
+	Version = "1.76.12"
 	elog    debug.Log
 	isDebug = false
 )
@@ -1982,8 +1982,8 @@ func (ws *watchdogService) getServerURL() string {
 		}
 	}
 
-	// Fallback to default (the production server - public port, no mTLS required)
-	return "https://sentinelrmm.us:4443"
+	// Fallback to default (the production server - standard HTTPS through Cloudflare)
+	return "https://sentinelrmm.us"
 }
 
 // pollServerForUpdates checks the server for available updates
