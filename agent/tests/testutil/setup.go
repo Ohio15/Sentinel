@@ -4,6 +4,7 @@ package testutil
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -112,7 +113,7 @@ func AssertEventually(t *testing.T, condition func() bool, timeout time.Duration
 		time.Sleep(50 * time.Millisecond)
 	}
 	if len(msgAndArgs) > 0 {
-		t.Fatalf("Condition not met within %v: %v", timeout, msgAndArgs...)
+		t.Fatalf("Condition not met within %v: %v", timeout, fmt.Sprint(msgAndArgs...))
 	} else {
 		t.Fatalf("Condition not met within %v", timeout)
 	}

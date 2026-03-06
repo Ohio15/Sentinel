@@ -951,7 +951,7 @@ func (ws *watchdogService) watchdogUpdateChecker() {
 			inProgress := ws.selfUpdateInProgress
 			ws.mu.Unlock()
 
-			if inProgress || selfUpdateInProgress {
+			if inProgress {
 				continue
 			}
 

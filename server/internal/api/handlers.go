@@ -1073,7 +1073,7 @@ func (r *Router) checkAlertRules(deviceID uuid.UUID, cpu, memory, disk float64) 
 				SELECT COUNT(*) FROM alerts
 						WHERE device_id = $1 AND rule_id = $2 AND status != 'resolved' AND organization_id = $3
 				AND created_at > NOW() - INTERVAL '15 minutes'
-			`, deviceID, rule.ID).Scan(&count); err != nil {
+			`, deviceID, rule.ID, constants.CurrentOrganizationID).Scan(&count); err != nil {
 				log.Printf("Error checking alert cooldown for device %s: %v", deviceID, err)
 				continue
 			}

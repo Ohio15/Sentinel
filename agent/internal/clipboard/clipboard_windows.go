@@ -6,12 +6,12 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"image"
 	"image/png"
 	"log"
+	"os"
 	"sync"
 	"syscall"
 	"time"
@@ -458,7 +458,7 @@ func (c *WindowsClipboard) readDIBFormat(format uintptr) (*ClipboardFormat, erro
 	defer procGlobalUnlock.Call(handle)
 
 	size, _, _ := procGlobalSize.Call(handle)
-	if size < uint32(unsafe.Sizeof(BITMAPINFOHEADER{})) {
+	if size < uintptr(unsafe.Sizeof(BITMAPINFOHEADER{})) {
 		return nil, errors.New("invalid DIB data")
 	}
 
@@ -601,22 +601,22 @@ func (c *WindowsClipboard) readFilesFormat() (*ClipboardFormat, error) {
 		path := syscall.UTF16ToString(buf[:pathLen])
 
 		// Get file info
-		fileInfo, err := syscall.Stat(path)
+		fileInfo, err := os.Stat(path)
 		if err != nil {
 			continue
 		}
 
 		// Calculate hash for small files (< 1MB)
 		var hash string
-		if fileInfo.Size < 1024*1024 {
+		if fileInfo.Size() < 1024*1024 {
 			if h, err := calculateFileHash(path); err == nil {
 				hash = h
 			}
 		}
 
 		files = append(files, FileRef{
-			Name: fileInfo.Name,
-			Size: fileInfo.Size,
+			Name: fileInfo.Name(),
+			Size: fileInfo.Size(),
 			Path: path, // Server-side only
 			Hash: hash,
 		})

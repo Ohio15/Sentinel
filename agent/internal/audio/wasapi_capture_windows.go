@@ -3,7 +3,6 @@
 package audio
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"sync"
