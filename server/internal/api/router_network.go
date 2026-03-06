@@ -84,7 +84,7 @@ func createScheduledActionHandler(services *Services) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req CreateScheduledActionRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+			sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 			return
 		}
 
@@ -122,7 +122,7 @@ func updateScheduledActionHandler(services *Services) gin.HandlerFunc {
 
 		var req CreateScheduledActionRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+			sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 			return
 		}
 
@@ -231,7 +231,7 @@ func handleBlockDevice(services *Services) gin.HandlerFunc {
 			Reason string `json:"reason"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+			sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 			return
 		}
 
@@ -249,7 +249,7 @@ func handleAllowDevice(services *Services) gin.HandlerFunc {
 			MAC string `json:"mac" binding:"required"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+			sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 			return
 		}
 
@@ -268,7 +268,7 @@ func handleMarkDeviceKnown(services *Services) gin.HandlerFunc {
 			Name string `json:"name"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+			sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 			return
 		}
 
@@ -286,7 +286,7 @@ func handleSendWOL(services *Services) gin.HandlerFunc {
 			MAC string `json:"mac" binding:"required"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+			sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 			return
 		}
 
@@ -315,7 +315,7 @@ func handleDismissAnomaly(services *Services) gin.HandlerFunc {
 			Reason    string `json:"reason"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+			sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 			return
 		}
 

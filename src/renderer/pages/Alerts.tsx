@@ -573,3 +573,5 @@ function TrashIcon({ className }: { className?: string }) {
     </svg>
   );
 }
+
+export default Alerts;

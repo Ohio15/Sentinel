@@ -128,7 +128,7 @@ func createWebhookHandler(services *Services) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req CreateWebhookRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+			sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 			return
 		}
 
@@ -378,9 +378,10 @@ func testWebhookHandler(services *Services) gin.HandlerFunc {
 		// Simple connectivity test
 		resp, err := client.Do(req2)
 		if err != nil {
+			log.Printf("[Webhook] Test delivery failed for webhook %s: %v", id, err)
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
-				"error":   err.Error(),
+				"error":   "Failed to connect to webhook URL",
 				"message": "Failed to connect to webhook URL",
 			})
 			return

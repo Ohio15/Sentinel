@@ -355,3 +355,5 @@ export function Certificates() {
     </div>
   );
 }
+
+export default Certificates;

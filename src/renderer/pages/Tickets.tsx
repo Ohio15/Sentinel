@@ -624,3 +624,5 @@ function CloseIcon({ className }: { className?: string }) {
     </svg>
   );
 }
+
+export default Tickets;

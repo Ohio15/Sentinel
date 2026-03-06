@@ -37,7 +37,7 @@ services:
       - SERVER_ID=server-1
       - SERVER_ENV=production
       - PORT=8080
-      - DATABASE_URL=postgres://sentinel:${DB_PASSWORD}@postgres:5432/sentinel?sslmode=disable
+      - DATABASE_URL=postgres://sentinel:${DB_PASSWORD}@postgres:5432/sentinel?sslmode=require
       - REDIS_URL=redis://redis:6379
       - JWT_SECRET=${JWT_SECRET}
       - ENROLLMENT_TOKEN=${ENROLLMENT_TOKEN}
@@ -64,7 +64,7 @@ services:
       - SERVER_ID=server-2
       - SERVER_ENV=production
       - PORT=8080
-      - DATABASE_URL=postgres://sentinel:${DB_PASSWORD}@postgres:5432/sentinel?sslmode=disable
+      - DATABASE_URL=postgres://sentinel:${DB_PASSWORD}@postgres:5432/sentinel?sslmode=require
       - REDIS_URL=redis://redis:6379
       - JWT_SECRET=${JWT_SECRET}
       - ENROLLMENT_TOKEN=${ENROLLMENT_TOKEN}
@@ -91,7 +91,7 @@ services:
       - SERVER_ID=server-3
       - SERVER_ENV=production
       - PORT=8080
-      - DATABASE_URL=postgres://sentinel:${DB_PASSWORD}@postgres:5432/sentinel?sslmode=disable
+      - DATABASE_URL=postgres://sentinel:${DB_PASSWORD}@postgres:5432/sentinel?sslmode=require
       - REDIS_URL=redis://redis:6379
       - JWT_SECRET=${JWT_SECRET}
       - ENROLLMENT_TOKEN=${ENROLLMENT_TOKEN}

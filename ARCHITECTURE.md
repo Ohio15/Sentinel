@@ -1,5 +1,7 @@
 # Sentinel RMM - Oracle Cloud Architecture
 
+> **Note:** This document describes the reference architecture. Current production deployment uses a self-hosted Ubuntu server. See deployment docs for production details.
+
 ## Overview
 
 Sentinel is a cloud-hosted Remote Monitoring and Management (RMM) platform designed to run on Oracle Cloud's Always Free tier.

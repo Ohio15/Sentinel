@@ -50,6 +50,18 @@ http:
         certResolver: letsencrypt
       priority: 5
 
+    # Grafana monitoring dashboards
+    grafana:
+      rule: "Host(`sentinelrmm.us`) && PathPrefix(`/grafana`)"
+      entryPoints:
+        - websecure
+      service: grafana
+      tls:
+        certResolver: letsencrypt
+      middlewares:
+        - securityHeaders
+      priority: 8
+
     # Frontend (catch-all for web UI)
     frontend:
       rule: "Host(`sentinelrmm.us`)"
@@ -228,6 +240,11 @@ http:
       loadBalancer:
         servers:
           - url: "http://sentinel-frontend:80"
+
+    grafana:
+      loadBalancer:
+        servers:
+          - url: "http://sentinel-grafana:3000"
 
 # TCP routers for TLS passthrough
 tcp:

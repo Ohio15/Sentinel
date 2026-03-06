@@ -1,10 +1,10 @@
 package api
 
 import (
-	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sentinel/server/pkg/logger"
 )
 
 // sanitizedError logs the real error server-side and returns a generic message to the client.
@@ -12,7 +12,7 @@ import (
 // to clients, which would be an information disclosure vulnerability.
 func sanitizedError(c *gin.Context, statusCode int, publicMsg string, err error) {
 	if err != nil {
-		log.Printf("[ERROR] %s: %v (ip=%s path=%s)", publicMsg, err, c.ClientIP(), c.Request.URL.Path)
+		logger.Error(publicMsg, "error", err, "ip", c.ClientIP(), "path", c.Request.URL.Path, "status", statusCode)
 	}
 	c.JSON(statusCode, gin.H{"error": publicMsg})
 }

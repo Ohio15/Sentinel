@@ -91,7 +91,6 @@ class ReliableWebSocket {
     const token = localStorage.getItem('token');
     if (!token) {
       console.warn('[WebSocket] No auth token in localStorage, skipping connection');
-      console.warn('[WebSocket] localStorage keys:', Object.keys(localStorage));
       return;
     }
     console.log('[WebSocket] Found token, length:', token.length);

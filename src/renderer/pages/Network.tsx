@@ -420,3 +420,5 @@ export function Network() {
     </div>
   );
 }
+
+export default Network;

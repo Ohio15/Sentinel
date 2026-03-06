@@ -84,12 +84,20 @@ Sentinel is a modern, cloud-hosted Remote Monitoring and Management (RMM) platfo
 
 4. Access the dashboard at `http://localhost:5173`
 
-### Default Credentials
+### First Run
 
-- **Email:** admin@sentinel.local
-- **Password:** admin
+On first startup with an empty database, Sentinel generates a random admin password:
 
-> **Important:** Change the default password immediately after first login.
+```
+========================================
+FIRST RUN: Admin credentials
+Email: admin@sentinel.local
+Password: [randomly generated]
+CHANGE THIS IMMEDIATELY
+========================================
+```
+
+> **Important:** Save this password -- it is only shown once. Change it immediately after first login.
 
 ## Production Deployment
 

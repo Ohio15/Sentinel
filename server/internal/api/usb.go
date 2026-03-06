@@ -608,7 +608,7 @@ func createUSBPolicyHandler(db *pgxpool.Pool) gin.HandlerFunc {
 		}
 
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 			return
 		}
 
@@ -677,7 +677,7 @@ func updateUSBPolicyHandler(db *pgxpool.Pool) gin.HandlerFunc {
 		}
 
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 			return
 		}
 
@@ -823,7 +823,7 @@ func addApprovedDeviceHandler(db *pgxpool.Pool) gin.HandlerFunc {
 		}
 
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 			return
 		}
 

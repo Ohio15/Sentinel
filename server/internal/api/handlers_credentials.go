@@ -163,7 +163,7 @@ func createAPIKeyHandler(services *Services) gin.HandlerFunc {
 
 		var req credentials.CreateAPIKeyRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 			return
 		}
 
@@ -373,7 +373,7 @@ func updateRotationScheduleHandler(services *Services) gin.HandlerFunc {
 			Enabled               *bool `json:"enabled"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 			return
 		}
 

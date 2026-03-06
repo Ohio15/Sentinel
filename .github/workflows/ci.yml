@@ -7,6 +7,29 @@ on:
     branches: [master, main]
 
 jobs:
+  # Security Scanning (runs in parallel with build jobs)
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for secret scanning
+
+      - name: Run Gitleaks (secret detection)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Go vulnerability check
+        working-directory: ./agent
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - name: npm audit
+        run: npm audit --audit-level=high || true
+
   # Go Agent - Build and Test
   agent:
     name: Agent Build & Test
@@ -40,6 +63,13 @@ jobs:
       - name: Build watchdog
         run: go build -o sentinel-watchdog.exe ./cmd/sentinel-watchdog
 
+      - name: Check for Go vulnerabilities
+        working-directory: agent
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./... || true
+        continue-on-error: true  # Advisory only
+
   # Web Frontend - Build and Lint
   app:
     name: Web App Build & Lint
@@ -66,6 +96,41 @@ jobs:
 
       - name: Build web frontend
         run: npm run build:web
+
+      - name: Check for known vulnerabilities
+        run: npm audit --audit-level=high --production
+        continue-on-error: true  # Advisory only, don't block on transitive deps
+
+  # Integration Tests (runs after build jobs succeed)
+  integration-tests:
+    name: Integration Tests
+    runs-on: self-hosted
+    needs: [agent, app]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start test environment
+        run: |
+          docker compose -f docker-compose.test.yml up -d --build
+          sleep 15  # Wait for services to be ready
+
+      - name: Wait for backend health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8091/health > /dev/null 2>&1; then
+              echo "Backend healthy on attempt $i"
+              break
+            fi
+            echo "Waiting for backend... attempt $i/30"
+            sleep 2
+          done
+
+      - name: Run validation script
+        run: ./scripts/validate-critical-paths.sh http://localhost:8091
+
+      - name: Tear down test environment
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v
 
   # Cross-platform agent builds (on release tags)
   agent-release:

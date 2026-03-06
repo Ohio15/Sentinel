@@ -456,7 +456,7 @@ func (r *Router) validateInvitation(c *gin.Context) {
 func (r *Router) register(c *gin.Context) {
 	var req RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 
@@ -515,7 +515,7 @@ func (r *Router) register(c *gin.Context) {
 
 	// Validate password complexity
 	if err := validatePassword(req.Password); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 

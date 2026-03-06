@@ -158,7 +158,7 @@ func (h *RDPHandler) HandleRDPConnect(c *gin.Context) {
 	shadowInfo, err := h.agentManager.PrepareRDPShadow(ctx, agentID)
 	if err != nil {
 		log.Printf("[RDPHandler] Failed to prepare shadow: %v", err)
-		sendGuacError(ws, "Failed to prepare shadow session: "+err.Error())
+		sendGuacError(ws, "Failed to prepare shadow session")
 		return
 	}
 
@@ -197,7 +197,7 @@ func (h *RDPHandler) HandleRDPConnect(c *gin.Context) {
 	// Initiate RDP connection through guacd
 	if err := guacd.InitiateRDPConnection(config); err != nil {
 		log.Printf("[RDPHandler] RDP connection failed: %v", err)
-		sendGuacError(ws, "RDP connection failed: "+err.Error())
+		sendGuacError(ws, "RDP connection failed")
 		return
 	}
 
@@ -272,7 +272,8 @@ func (h *RDPHandler) GetCapabilities(c *gin.Context) {
 
 	caps, err := h.agentManager.GetRDPCapabilities(agentID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		log.Printf("[RDPHandler] Failed to get RDP capabilities for agent %s: %v", agentID, err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "Agent not found or RDP not available"})
 		return
 	}
 

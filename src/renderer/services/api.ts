@@ -87,8 +87,14 @@ class ApiService {
                   body: data ? JSON.stringify(data) : undefined,
                 });
                 if (retryResponse.ok) {
-                  const text = await retryResponse.text();
-                  return (text ? JSON.parse(text) : null) as T;
+                  try {
+                    const text = await retryResponse.text();
+                    if (!text) return null as T;
+                    return JSON.parse(text) as T;
+                  } catch (parseError) {
+                    console.error(`[API] JSON parse error for ${endpoint} (retry):`, parseError);
+                    throw new Error('Invalid server response');
+                  }
                 }
               }
             } catch {
@@ -110,9 +116,15 @@ class ApiService {
       throw new Error(error.message || 'Request failed');
     }
 
-    // Handle empty responses
-    const text = await response.text();
-    return (text ? JSON.parse(text) : null) as T;
+    // Handle empty responses with JSON parse error protection
+    try {
+      const text = await response.text();
+      if (!text) return null as T;
+      return JSON.parse(text) as T;
+    } catch (parseError) {
+      console.error(`[API] JSON parse error for ${endpoint}:`, parseError);
+      throw new Error('Invalid server response');
+    }
   }
 
   private get<T>(endpoint: string, params?: Record<string, string>): Promise<T> {

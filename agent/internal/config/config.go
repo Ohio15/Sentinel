@@ -56,6 +56,15 @@ type Config struct {
 	MetricsInterval   int    `json:"metrics_interval"`   // seconds
 	Enrolled          bool   `json:"enrolled"`
 	DeviceID          string `json:"device_id"`
+	AuditLogDir       string `json:"audit_log_dir"`      // directory for terminal audit logs (default: platform log path)
+}
+
+// GetAuditLogDir returns the configured audit log directory, or the platform default
+func (c *Config) GetAuditLogDir() string {
+	if c.AuditLogDir != "" {
+		return c.AuditLogDir
+	}
+	return GetLogPath()
 }
 
 var (

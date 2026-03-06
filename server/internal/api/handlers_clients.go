@@ -120,7 +120,7 @@ func (r *Router) createClient(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 
@@ -160,7 +160,7 @@ func (r *Router) updateClient(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 
@@ -221,7 +221,7 @@ func (r *Router) assignDeviceToClient(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 
@@ -253,7 +253,7 @@ func (r *Router) bulkAssignDevicesToClient(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 

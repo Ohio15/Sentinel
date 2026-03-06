@@ -1,7 +1,7 @@
 {
-    "version":  "1.76.12",
-    "releaseDate":  "2026-02-24",
-    "changelog":  "Auto-resolve stale offline and update failure alerts on reconnect and heartbeat",
+    "version":  "1.76.14",
+    "releaseDate":  "2026-03-06",
+    "changelog":  "Terminal security: input validation (4KB limit, null byte rejection), audit log rotation, configurable audit log path",
     "platforms":  [
                       "windows",
                       "linux",

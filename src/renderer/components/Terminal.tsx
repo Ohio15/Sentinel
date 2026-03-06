@@ -7,6 +7,8 @@ interface TerminalProps {
   isOnline: boolean;
 }
 
+const MAX_INPUT_LENGTH = 4096; // 4KB max per command
+
 export const Terminal = memo(function Terminal({ deviceId, isOnline }: TerminalProps) {
   const [input, setInput] = useState('');
   const [connecting, setConnecting] = useState(false);
@@ -63,6 +65,12 @@ export const Terminal = memo(function Terminal({ deviceId, isOnline }: TerminalP
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!sessionId || !input.trim()) return;
+
+    // Validate input length
+    if (input.length > MAX_INPUT_LENGTH) {
+      addOutput(deviceId, `Error: Command too long (${input.length} chars, max ${MAX_INPUT_LENGTH})\n`);
+      return;
+    }
 
     addOutput(deviceId, '$ ' + input + '\n');
     await terminalService.send(sessionId, input + '\n');
@@ -130,8 +138,14 @@ export const Terminal = memo(function Terminal({ deviceId, isOnline }: TerminalP
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               className="flex-1 ml-2 bg-transparent text-gray-100 outline-none"
+              maxLength={MAX_INPUT_LENGTH + 1}
               autoFocus
             />
+            {input.length > MAX_INPUT_LENGTH * 0.9 && (
+              <span className={`text-xs ml-2 whitespace-nowrap ${input.length > MAX_INPUT_LENGTH ? 'text-red-400 font-bold' : 'text-yellow-400'}`}>
+                {input.length}/{MAX_INPUT_LENGTH}
+              </span>
+            )}
           </form>
         )}
       </div>

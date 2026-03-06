@@ -126,7 +126,7 @@ func createScheduleHandler(services *Services) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req CreateScheduleRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+			sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 			return
 		}
 

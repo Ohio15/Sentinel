@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -24,11 +25,49 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// httpClient is a shared HTTP client that skips TLS verification for self-signed certs
+// buildInstallerTLSConfig creates a TLS configuration with proper certificate verification.
+// Uses system root CAs (which handle Let's Encrypt and other public CAs).
+// InsecureSkipVerify is NEVER set to true.
+func buildInstallerTLSConfig() *tls.Config {
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	}
+
+	// Try to load CA cert from standard locations
+	caCertPaths := []string{
+		`C:\ProgramData\Sentinel\certs\ca.crt`,
+		`C:\ProgramData\Sentinel\certs\ca-cert.pem`,
+	}
+
+	// Also check relative to executable
+	if exePath, err := os.Executable(); err == nil {
+		execDir := filepath.Dir(exePath)
+		caCertPaths = append([]string{
+			filepath.Join(execDir, "certs", "ca.crt"),
+			filepath.Join(execDir, "certs", "ca-cert.pem"),
+		}, caCertPaths...)
+	}
+
+	for _, path := range caCertPaths {
+		if caCert, err := os.ReadFile(path); err == nil {
+			caCertPool := x509.NewCertPool()
+			if caCertPool.AppendCertsFromPEM(caCert) {
+				tlsConfig.RootCAs = caCertPool
+				logMsg("[TLS] Loaded CA certificate from %s", path)
+				break
+			}
+		}
+	}
+
+	// If no CA cert found, system root CAs are used (RootCAs nil = system pool)
+	return tlsConfig
+}
+
+// httpClient is a shared HTTP client with proper TLS verification
 var httpClient = &http.Client{
 	Timeout: 30 * time.Second,
 	Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		TLSClientConfig: buildInstallerTLSConfig(),
 	},
 }
 
@@ -363,11 +402,11 @@ func promptForInstallationCode() *InstallConfig {
 
 // discoverServerURL tries multiple ports to find a reachable server
 func discoverServerURL(host string) string {
-	// Use a shorter timeout for discovery
+	// Use a shorter timeout for discovery with proper TLS verification
 	discoverClient := &http.Client{
 		Timeout: 5 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig: buildInstallerTLSConfig(),
 		},
 	}
 
@@ -813,11 +852,11 @@ func downloadAgent(serverURL, token, destPath string, info *AgentInfo) error {
 		}
 	}
 
-	// Use longer timeout for downloads
+	// Use longer timeout for downloads with proper TLS verification
 	downloadClient := &http.Client{
 		Timeout: 10 * time.Minute,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig: buildInstallerTLSConfig(),
 		},
 	}
 	resp, err := downloadClient.Get(downloadURL)
@@ -880,11 +919,11 @@ func downloadWatchdog(serverURL, destPath string) error {
 
 	logMsg("[DEBUG] Downloading watchdog from: %s", downloadURL)
 
-	// Use longer timeout for downloads
+	// Use longer timeout for downloads with proper TLS verification
 	downloadClient := &http.Client{
 		Timeout: 5 * time.Minute,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig: buildInstallerTLSConfig(),
 		},
 	}
 	resp, err := downloadClient.Get(downloadURL)

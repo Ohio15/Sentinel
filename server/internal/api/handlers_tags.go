@@ -141,7 +141,7 @@ func (r *Router) createTicketCategory(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 
@@ -214,7 +214,7 @@ func (r *Router) updateTicketCategory(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 
@@ -384,7 +384,7 @@ func (r *Router) createTicketTag(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 
@@ -434,7 +434,7 @@ func (r *Router) updateTicketTag(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 
@@ -539,7 +539,7 @@ func (r *Router) assignTicketTag(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 
@@ -656,7 +656,7 @@ func (r *Router) createTicketLink(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 
@@ -812,7 +812,7 @@ func (r *Router) createCustomFieldDefinition(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 
@@ -885,7 +885,7 @@ func (r *Router) updateCustomFieldDefinition(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 

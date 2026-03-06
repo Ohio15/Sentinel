@@ -812,3 +812,5 @@ function ActivityIcon({ className }: { className?: string }) {
     </svg>
   );
 }
+
+export default TicketDetail;

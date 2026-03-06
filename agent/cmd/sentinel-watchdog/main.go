@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -62,7 +63,7 @@ const (
 )
 
 var (
-	Version = "1.76.12"
+	Version = "1.76.14"
 	elog    debug.Log
 	isDebug = false
 )
@@ -1986,6 +1987,51 @@ func (ws *watchdogService) getServerURL() string {
 	return "https://sentinelrmm.us"
 }
 
+// buildSecureTLSConfig creates a TLS configuration with proper certificate verification.
+// It attempts to load a CA certificate from standard locations. If no custom CA cert
+// is found, it falls back to the system root CA pool (which handles Let's Encrypt
+// and other public CAs). InsecureSkipVerify is NEVER set to true.
+func buildSecureTLSConfig() *tls.Config {
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	}
+
+	// Determine config directory from executable location
+	exePath, err := os.Executable()
+	if err != nil {
+		// Use system roots (default when RootCAs is nil)
+		return tlsConfig
+	}
+	configDir := filepath.Dir(exePath)
+
+	// Try to load CA cert from standard locations
+	caCertPaths := []string{
+		filepath.Join(configDir, "certs", "ca.crt"),
+		filepath.Join(configDir, "certs", "ca-cert.pem"),
+		`C:\ProgramData\Sentinel\certs\ca.crt`,
+		`C:\ProgramData\Sentinel\certs\ca-cert.pem`,
+	}
+
+	for _, path := range caCertPaths {
+		if caCert, err := os.ReadFile(path); err == nil {
+			caCertPool := x509.NewCertPool()
+			if caCertPool.AppendCertsFromPEM(caCert) {
+				tlsConfig.RootCAs = caCertPool
+				logMessage(fmt.Sprintf("[TLS] Loaded CA certificate from %s", path))
+				break
+			}
+		}
+	}
+
+	// If no CA cert found, use system roots (DO NOT skip verification)
+	// System root CAs handle Let's Encrypt and other public CAs
+	if tlsConfig.RootCAs == nil {
+		logMessage("[TLS] No custom CA certificate found, using system root CAs")
+	}
+
+	return tlsConfig
+}
+
 // pollServerForUpdates checks the server for available updates
 func (ws *watchdogService) pollServerForUpdates(serverURL string) error {
 	// Get current agent version from agent-info.json
@@ -2006,11 +2052,11 @@ func (ws *watchdogService) pollServerForUpdates(serverURL string) error {
 
 	logMessage(fmt.Sprintf("[IndependentPoll] Checking for updates (current: %s)", currentVersion))
 
-	// Create HTTP client with TLS skip verify (for self-signed certs)
+	// Create HTTP client with proper TLS verification
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig: buildSecureTLSConfig(),
 		},
 	}
 
@@ -2060,11 +2106,11 @@ func (ws *watchdogService) downloadAndStageUpdate(info *ServerVersionInfo, serve
 
 	logMessage(fmt.Sprintf("[IndependentPoll] Downloading update from %s", downloadURL))
 
-	// Create HTTP client for download
+	// Create HTTP client for download with proper TLS verification
 	client := &http.Client{
 		Timeout: independentDownloadTimeout,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig: buildSecureTLSConfig(),
 		},
 	}
 

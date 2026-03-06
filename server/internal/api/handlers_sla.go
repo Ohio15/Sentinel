@@ -142,7 +142,7 @@ func (r *Router) createSLAPolicy(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 
@@ -226,7 +226,7 @@ func (r *Router) updateSLAPolicy(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 

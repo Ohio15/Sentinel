@@ -1539,3 +1539,5 @@ function SynologyIcon({ className }: { className?: string }) {
     </svg>
   );
 }
+
+export default Devices;

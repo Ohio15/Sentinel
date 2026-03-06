@@ -239,3 +239,5 @@ function ChevronRightIcon({ className }: { className?: string }) {
     </svg>
   );
 }
+
+export default Dashboard;

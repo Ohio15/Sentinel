@@ -462,3 +462,5 @@ function ScriptModal({
     </div>
   );
 }
+
+export default Scripts;

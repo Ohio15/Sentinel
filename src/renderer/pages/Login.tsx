@@ -26,6 +26,8 @@ export function Login() {
   const [passkeySupported, setPasskeySupported] = useState(false);
   const [passkeyLoading, setPasskeyLoading] = useState(false);
   const [passkeyError, setPasskeyError] = useState<string | null>(null);
+  const [attemptCount, setAttemptCount] = useState(0);
+  const [lockoutUntil, setLockoutUntil] = useState<number | null>(null);
 
   // Check if passkeys are supported
   useEffect(() => {
@@ -108,8 +110,18 @@ export function Login() {
     e.preventDefault();
     clearError();
 
+    // Client-side rate limiting
+    if (lockoutUntil && Date.now() < lockoutUntil) {
+      const seconds = Math.ceil((lockoutUntil - Date.now()) / 1000);
+      useAuthStore.setState({ error: `Too many attempts. Try again in ${seconds} seconds.` });
+      return;
+    }
+
     try {
       await login(identifier, password);
+      // Reset rate limiting on success
+      setAttemptCount(0);
+      setLockoutUntil(null);
       toast.success('Welcome back!');
 
       // Check if user has passkeys set up, if not suggest adding one
@@ -142,7 +154,14 @@ export function Login() {
 
       navigate('/');
     } catch {
-      // Error is handled by the store
+      // Error is handled by the store — track failed attempts for rate limiting
+      const newCount = attemptCount + 1;
+      setAttemptCount(newCount);
+      if (newCount >= 5) {
+        setLockoutUntil(Date.now() + 60000); // 1 minute lockout
+        setAttemptCount(0);
+        useAuthStore.setState({ error: 'Too many failed attempts. Please wait 60 seconds before trying again.' });
+      }
     }
   };
 
@@ -400,3 +419,5 @@ export function Login() {
     </div>
   );
 }
+
+export default Login;

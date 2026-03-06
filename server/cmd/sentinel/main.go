@@ -32,6 +32,7 @@ import (
 	"github.com/sentinel/server/pkg/cache"
 	"github.com/sentinel/server/pkg/config"
 	"github.com/sentinel/server/pkg/database"
+	"github.com/sentinel/server/pkg/logger"
 )
 
 func main() {
@@ -46,7 +47,9 @@ func main() {
 		log.Fatalf("Configuration validation failed:\n%s", err)
 	}
 
-	log.Printf("Starting Sentinel server (ID: %s, Environment: %s)", cfg.ServerID, cfg.Environment)
+	// Initialize structured logger
+	logger.Init(cfg.Environment)
+	logger.Info("Sentinel server starting", "version", "1.76.14", "env", cfg.Environment, "server_id", cfg.ServerID)
 
 	// Initialize database with connection pool settings
 	dbConfig := &database.Config{
@@ -190,7 +193,7 @@ func main() {
 	if masterKeySource == "" {
 		// Derive a DIFFERENT key - not the raw JWT secret
 		masterKeySource = cfg.JWTSecret + ":credential-master-key-v1"
-		log.Println("[WARN] CREDENTIAL_MASTER_KEY not set, deriving from JWT_SECRET. Set a separate key for production.")
+		logger.Warn("CREDENTIAL_MASTER_KEY not set, deriving from JWT_SECRET — set a separate key for production")
 	}
 	masterKey := sha256.Sum256([]byte(masterKeySource))
 
@@ -258,10 +261,10 @@ func main() {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("[CRITICAL] HTTP server goroutine panicked: %v\nStack: %s", r, debug.Stack())
+				logger.Error("HTTP server goroutine panicked", "panic", r, "stack", string(debug.Stack()))
 			}
 		}()
-		log.Printf("Sentinel HTTP server listening on %s", server.Addr)
+		logger.Info("Sentinel HTTP server listening", "addr", server.Addr)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("HTTP server failed: %v", err)
 		}
@@ -318,7 +321,7 @@ func main() {
 			go func() {
 				defer func() {
 					if r := recover(); r != nil {
-						log.Printf("[CRITICAL] gRPC server goroutine panicked: %v\nStack: %s", r, debug.Stack())
+						logger.Error("gRPC server goroutine panicked", "panic", r, "stack", string(debug.Stack()))
 					}
 				}()
 				if err := srv.Serve(listener); err != nil {
@@ -332,7 +335,7 @@ func main() {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("[CRITICAL] Log cleanup goroutine panicked: %v\nStack: %s", r, debug.Stack())
+				logger.Error("Log cleanup goroutine panicked", "panic", r, "stack", string(debug.Stack()))
 			}
 		}()
 		// Initial delay to let server stabilize
@@ -355,7 +358,7 @@ func main() {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("[CRITICAL] Metrics cleanup panicked: %v", r)
+				logger.Error("Metrics cleanup goroutine panicked", "panic", r)
 			}
 		}()
 		// Run once on startup after a delay
@@ -364,9 +367,9 @@ func main() {
 		var deleted int
 		err := db.Pool().QueryRow(context.Background(), "SELECT cleanup_old_metrics($1)", retentionDays).Scan(&deleted)
 		if err != nil {
-			log.Printf("[ERROR] Initial metrics cleanup: %v", err)
+			logger.Error("Initial metrics cleanup failed", "error", err)
 		} else if deleted > 0 {
-			log.Printf("[INFO] Startup metrics cleanup: removed %d old records", deleted)
+			logger.Info("Startup metrics cleanup complete", "deleted", deleted)
 		}
 
 		ticker := time.NewTicker(24 * time.Hour)
@@ -375,9 +378,9 @@ func main() {
 			var d int
 			err := db.Pool().QueryRow(context.Background(), "SELECT cleanup_old_metrics($1)", retentionDays).Scan(&d)
 			if err != nil {
-				log.Printf("[ERROR] Metrics cleanup: %v", err)
+				logger.Error("Daily metrics cleanup failed", "error", err)
 			} else if d > 0 {
-				log.Printf("[INFO] Daily metrics cleanup: removed %d records (retention: %d days)", d, retentionDays)
+				logger.Info("Daily metrics cleanup complete", "deleted", d, "retention_days", retentionDays)
 			}
 		}
 	}()
@@ -475,6 +478,9 @@ func ensureFirstRunAdmin(db *database.DB) error {
 		return fmt.Errorf("failed to insert admin user: %w", err)
 	}
 
+	logger.Info("First-run admin user created",
+		"email", "admin@sentinel.local",
+		"action", "CHANGE PASSWORD IMMEDIATELY")
 	fmt.Printf("\n========================================\nFIRST RUN: Admin credentials\nEmail: admin@sentinel.local\nPassword: %s\nCHANGE THIS IMMEDIATELY\n========================================\n", password)
 
 	return nil

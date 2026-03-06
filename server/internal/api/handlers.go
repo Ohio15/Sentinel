@@ -1800,7 +1800,7 @@ func (r *Router) createScript(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 
@@ -1879,7 +1879,7 @@ func (r *Router) updateScript(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 
@@ -1935,7 +1935,7 @@ func (r *Router) executeScript(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 
@@ -2195,7 +2195,7 @@ func (r *Router) createAlertRule(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 
@@ -2273,7 +2273,7 @@ func (r *Router) updateAlertRule(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 
@@ -2346,7 +2346,7 @@ func (r *Router) getSettings(c *gin.Context) {
 func (r *Router) updateSettings(c *gin.Context) {
 	var req map[string]string
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 
@@ -2424,12 +2424,18 @@ func (r *Router) createUser(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 
 	if req.Role == "" {
 		req.Role = "user"
+	}
+
+	// Validate password complexity
+	if err := validatePassword(req.Password); err != nil {
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
+		return
 	}
 
 	// Hash password
@@ -2473,7 +2479,7 @@ func (r *Router) updateUser(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
 		return
 	}
 
@@ -2515,6 +2521,10 @@ func (r *Router) updateUser(c *gin.Context) {
 		argNum++
 	}
 	if req.Password != "" {
+		if err := validatePassword(req.Password); err != nil {
+			sanitizedError(c, http.StatusBadRequest, "Invalid request body", err)
+			return
+		}
 		hashedPassword, err := hashPassword(req.Password)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})

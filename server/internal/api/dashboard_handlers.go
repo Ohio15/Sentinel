@@ -256,7 +256,7 @@ func (r *Router) handleDashboardMessage(userID uuid.UUID, message []byte) {
 		})
 		if err := r.hub.SendToAgent(agentID, agentMsg); err != nil {
 			log.Printf("[WebRTC] ERROR: Failed to send webrtc_start to agent %s: %v", agentID, err)
-			sendError("Failed to forward WebRTC start to agent: " + err.Error())
+			sendError("Failed to forward WebRTC start to agent")
 			return
 		}
 		log.Printf("[WebRTC] Successfully forwarded webrtc_start to agent %s", agentID)

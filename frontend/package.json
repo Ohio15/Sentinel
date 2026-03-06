@@ -1,6 +1,6 @@
 {
   "name": "sentinel-frontend",
-  "version": "1.76.11",
+  "version": "1.76.14",
   "private": true,
   "type": "module",
   "scripts": {

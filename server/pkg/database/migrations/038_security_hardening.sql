@@ -19,8 +19,12 @@ CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'api_keys' AND column_name = 'role') THEN
-        ALTER TABLE api_keys ADD COLUMN role VARCHAR(20) DEFAULT 'operator';
-        UPDATE api_keys SET role = 'admin' WHERE role = 'operator';
+        -- Add column with no default first
+        ALTER TABLE api_keys ADD COLUMN role VARCHAR(20);
+        -- Existing keys were all admin-equivalent, preserve that
+        UPDATE api_keys SET role = 'admin';
+        -- Now set default for future keys
+        ALTER TABLE api_keys ALTER COLUMN role SET DEFAULT 'operator';
     END IF;
 END $$;
 

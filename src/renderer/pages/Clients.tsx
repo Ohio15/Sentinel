@@ -449,3 +449,5 @@ function CloseIcon({ className }: { className?: string }) {
     </svg>
   );
 }
+
+export default Clients;

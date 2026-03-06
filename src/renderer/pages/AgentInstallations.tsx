@@ -352,7 +352,6 @@ export default function AgentInstallations() {
               </tbody>
             </table>
           </div>
-          </div>
           {totalPages > 1 && (
             <div className="px-6 py-3 border-t border-gray-200 flex items-center justify-between">
               <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}
@@ -405,7 +404,6 @@ export default function AgentInstallations() {
                 ))}
               </tbody>
             </table>
-          </div>
           </div>
         </div>
       )}

@@ -144,35 +144,30 @@ func (c *DataPlaneClient) createTransportCredentials() (credentials.TransportCre
 		return insecure.NewCredentials(), nil
 	}
 
-	// Load CA certificate
+	// Load CA certificate - gRPC requires proper TLS in production
 	if c.caCertPath == "" {
-		log.Printf("[gRPC] WARNING: No CA certificate found, using insecure connection")
-		return insecure.NewCredentials(), nil
+		log.Printf("[gRPC] ERROR: No CA certificate configured - gRPC data plane DISABLED for security")
+		return nil, fmt.Errorf("gRPC requires CA certificate in production")
 	}
 
 	// Read CA certificate
 	caCert, err := os.ReadFile(c.caCertPath)
 	if err != nil {
-		log.Printf("[gRPC] ERROR: Failed to read CA certificate from %s: %v", c.caCertPath, err)
-		log.Printf("[gRPC] Falling back to insecure connection")
-		return insecure.NewCredentials(), nil
+		log.Printf("[gRPC] ERROR: Failed to read gRPC CA cert %s: %v - gRPC data plane DISABLED", c.caCertPath, err)
+		return nil, fmt.Errorf("gRPC CA certificate unreadable: %w", err)
 	}
 
 	// Create certificate pool
 	certPool := x509.NewCertPool()
 	if !certPool.AppendCertsFromPEM(caCert) {
-		log.Printf("[gRPC] ERROR: Failed to parse CA certificate")
-		log.Printf("[gRPC] Falling back to insecure connection")
-		return insecure.NewCredentials(), nil
+		log.Printf("[gRPC] ERROR: Failed to parse CA certificate from %s - gRPC data plane DISABLED", c.caCertPath)
+		return nil, fmt.Errorf("gRPC CA certificate unparseable: %s", c.caCertPath)
 	}
 
-	// Create TLS config
+	// Create TLS config with proper verification (never skip verification)
 	tlsConfig := &tls.Config{
 		RootCAs:    certPool,
 		MinVersion: tls.VersionTLS12,
-		// For self-signed certificates in development, you might need to skip verification
-		// In production, remove this line and use proper certificates
-		// InsecureSkipVerify: false,
 	}
 
 	// Create and return credentials

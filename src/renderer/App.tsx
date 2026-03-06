@@ -1,28 +1,31 @@
-import React, { useState, useEffect } from 'react';
+import React, { lazy, Suspense, useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
-import { Dashboard } from './pages/Dashboard';
-import { Devices } from './pages/Devices';
-import { DeviceDetail } from './pages/DeviceDetail';
-import { Alerts } from './pages/Alerts';
-import { Scripts } from './pages/Scripts';
-import { Settings } from './pages/Settings';
-import { Tickets } from './pages/Tickets';
-import { TicketDetail } from './pages/TicketDetail';
-import { TicketsKanban } from './pages/TicketsKanban';
-import { TicketsCalendar } from './pages/TicketsCalendar';
-import { TicketAnalytics } from './pages/TicketAnalytics';
-import { KnowledgeBase } from './pages/KnowledgeBase';
-import { Clients } from './pages/Clients';
-import { Certificates } from './pages/Certificates';
 import { Login } from './pages/Login';
 import { Register } from './pages/Register';
-import InstallationPortal from './pages/InstallationPortal';
-import { PopOutPerformance } from './pages/PopOutPerformance';
-import { Network } from './pages/Network';
-import SupportPortal from './pages/SupportPortal';
 import { SmartAppBanner } from './components/SmartAppBanner';
+
+// Lazy-loaded pages (code splitting)
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Devices = lazy(() => import('./pages/Devices'));
+const DeviceDetail = lazy(() => import('./pages/DeviceDetail'));
+const Alerts = lazy(() => import('./pages/Alerts'));
+const Scripts = lazy(() => import('./pages/Scripts'));
+const Settings = lazy(() => import('./pages/Settings'));
+const Tickets = lazy(() => import('./pages/Tickets'));
+const TicketDetail = lazy(() => import('./pages/TicketDetail'));
+const TicketsKanban = lazy(() => import('./pages/TicketsKanban'));
+const TicketsCalendar = lazy(() => import('./pages/TicketsCalendar'));
+const TicketAnalytics = lazy(() => import('./pages/TicketAnalytics'));
+const KnowledgeBase = lazy(() => import('./pages/KnowledgeBase'));
+const Clients = lazy(() => import('./pages/Clients'));
+const Certificates = lazy(() => import('./pages/Certificates'));
+const Network = lazy(() => import('./pages/Network'));
+const InstallationPortal = lazy(() => import('./pages/InstallationPortal'));
+const PopOutPerformance = lazy(() => import('./pages/PopOutPerformance'));
+const SupportPortal = lazy(() => import('./pages/SupportPortal'));
+const AgentInstallations = lazy(() => import('./pages/AgentInstallations'));
 import { useDeviceStore } from './stores/deviceStore';
 import { useAlertStore } from './stores/alertStore';
 import { useClientStore } from './stores/clientStore';
@@ -103,7 +106,11 @@ function MainLayout() {
       <ErrorBoundary><Sidebar currentPage={currentPage} onNavigate={handleNavigate} /></ErrorBoundary>
       <div className="flex-1 flex flex-col overflow-hidden">
         <ErrorBoundary><Header /></ErrorBoundary>
-        <main className="flex-1 overflow-auto p-6">{renderPage()}</main>
+        <main className="flex-1 overflow-auto p-6">
+          <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" /></div>}>
+            {renderPage()}
+          </Suspense>
+        </main>
       </div>
     </div>
   );
@@ -117,14 +124,16 @@ function App() {
         expoProjectUrl="https://expo.dev/@sentinel/sentinel-mobile"
       />
       <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
-          <Route path="/install/:downloadToken" element={<InstallationPortal />} />
-          <Route path="/popout/performance/:deviceId" element={<RequireAuth><PopOutPerformance /></RequireAuth>} />
-          <Route path="/portal" element={<SupportPortal />} />
-          <Route path="/*" element={<RequireAuth><MainLayout /></RequireAuth>} />
-        </Routes>
+        <Suspense fallback={<div className="flex items-center justify-center h-screen bg-background"><div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" /></div>}>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
+            <Route path="/install/:downloadToken" element={<InstallationPortal />} />
+            <Route path="/popout/performance/:deviceId" element={<RequireAuth><PopOutPerformance /></RequireAuth>} />
+            <Route path="/portal" element={<SupportPortal />} />
+            <Route path="/*" element={<RequireAuth><MainLayout /></RequireAuth>} />
+          </Routes>
+        </Suspense>
       </BrowserRouter>
     </>
   );

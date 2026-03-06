@@ -35,9 +35,22 @@ certs/*.crt
 certs/*.srl
 certs/*.cnf
 server/sentinel.exe
+server/*.test.exe
+*.test.exe
 # Private keys and certificates (global)
 *.pem
 *.key
 
 # Backup files from API migration
 *.bak
+
+# Temporary fix scripts
+fix-*.js
+fix_*.ps1
+check-service.ps1
+cleanup_services.bat
+update_main_ts.py
+*.patch
+
+# Screenshots
+*.png

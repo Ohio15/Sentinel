@@ -38,7 +38,7 @@ import (
 	"github.com/sentinel/agent/internal/peripheral"
 )
 
-var Version = "1.76.12"
+var Version = "1.76.14"
 
 const ServiceName = "SentinelAgent"
 
@@ -327,7 +327,7 @@ func NewAgent(cfg *config.Config) *Agent {
 		updateChecker:        updates.NewChecker(),
 		updateInstaller:      updates.NewInstaller(),
 		logForwarder:         logforward.New(wsClient),
-		terminalAudit:        initTerminalAudit(),
+		terminalAudit:        initTerminalAudit(cfg),
 		tamperChan:           make(chan string, 10),
 		metricsIntervalChan:  make(chan time.Duration, 1),
 		ctx:                  ctx,
@@ -341,19 +341,16 @@ func NewAgent(cfg *config.Config) *Agent {
 }
 
 // initTerminalAudit creates an audit logger for terminal sessions.
+// Uses the configured AuditLogDir if set, otherwise falls back to the platform default.
 // Returns nil if the audit log directory cannot be created (non-fatal).
-func initTerminalAudit() *terminal.AuditLogger {
-	var logDir string
-	if runtime.GOOS == "windows" {
-		logDir = "C:\\ProgramData\\Sentinel\\logs"
-	} else {
-		logDir = "/var/log/sentinel"
-	}
+func initTerminalAudit(cfg *config.Config) *terminal.AuditLogger {
+	logDir := cfg.GetAuditLogDir()
 	audit, err := terminal.NewAuditLogger(logDir)
 	if err != nil {
 		log.Printf("[WARN] Terminal audit logging disabled: %v", err)
 		return nil
 	}
+	log.Printf("[INFO] Terminal audit logging to: %s", logDir)
 	return audit
 }
 
@@ -1218,6 +1215,8 @@ func (a *Agent) handleStartTerminal(msg *client.Message) error {
 }
 
 func (a *Agent) handleTerminalInput(msg *client.Message) error {
+	const maxInputLength = 4096 // 4KB max per command
+
 	data, ok := msg.Data.(map[string]interface{})
 	if !ok {
 		return fmt.Errorf("invalid message data")
@@ -1225,6 +1224,26 @@ func (a *Agent) handleTerminalInput(msg *client.Message) error {
 
 	sessionID, _ := data["sessionId"].(string)
 	input, _ := data["data"].(string)
+
+	// Validate input length
+	if len(input) > maxInputLength {
+		log.Printf("[SECURITY] Oversized terminal input rejected: session=%s length=%d max=%d", sessionID, len(input), maxInputLength)
+		if a.terminalAudit != nil {
+			a.terminalAudit.LogInput(sessionID, fmt.Sprintf("[REJECTED: oversized input %d bytes]", len(input)))
+		}
+		return fmt.Errorf("terminal input too long (%d bytes, max %d)", len(input), maxInputLength)
+	}
+
+	// Reject null bytes (potential injection)
+	for i := 0; i < len(input); i++ {
+		if input[i] == 0x00 {
+			log.Printf("[SECURITY] Null byte in terminal input rejected: session=%s", sessionID)
+			if a.terminalAudit != nil {
+				a.terminalAudit.LogInput(sessionID, "[REJECTED: null byte detected]")
+			}
+			return fmt.Errorf("terminal input contains null bytes")
+		}
+	}
 
 	session, ok := a.terminalManager.GetSession(sessionID)
 	if !ok {

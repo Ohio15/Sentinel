@@ -1176,3 +1176,5 @@ function PowerIcon({ className }: { className?: string }) {
     </svg>
   );
 }
+
+export default DeviceDetail;
