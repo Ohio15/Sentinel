@@ -97,8 +97,8 @@ func TestLogin_ValidCredentials(t *testing.T) {
 
 	// Test login
 	loginReq := LoginRequest{
-		Email:    email,
-		Password: password,
+		Identifier: email,
+		Password:   password,
 	}
 	reqBody, _ := json.Marshal(loginReq)
 	req := httptest.NewRequest("POST", "/api/auth/login", bytes.NewBuffer(reqBody))
@@ -146,7 +146,7 @@ func TestLogin_InvalidEmail(t *testing.T) {
 
 	// Test with invalid email format
 	loginReq := LoginRequest{
-		Email:    "notanemail",
+		Identifier:"notanemail",
 		Password: "SomePassword123!",
 	}
 	reqBody, _ := json.Marshal(loginReq)
@@ -187,7 +187,7 @@ func TestLogin_WrongPassword(t *testing.T) {
 
 	// Test with wrong password
 	loginReq := LoginRequest{
-		Email:    email,
+		Identifier:email,
 		Password: "WrongPassword456!",
 	}
 	reqBody, _ := json.Marshal(loginReq)
@@ -220,7 +220,7 @@ func TestLogin_NonexistentUser(t *testing.T) {
 
 	// Test with nonexistent user
 	loginReq := LoginRequest{
-		Email:    "nonexistent@test.example.com",
+		Identifier:"nonexistent@test.example.com",
 		Password: "SomePassword123!",
 	}
 	reqBody, _ := json.Marshal(loginReq)
@@ -253,7 +253,7 @@ func TestLogin_PasswordTooShort(t *testing.T) {
 
 	// Test with password too short
 	loginReq := LoginRequest{
-		Email:    "user@test.example.com",
+		Identifier:"user@test.example.com",
 		Password: "Short1!",
 	}
 	reqBody, _ := json.Marshal(loginReq)
@@ -336,7 +336,7 @@ func TestLogin_SQLInjection(t *testing.T) {
 
 	for _, injection := range sqlInjectionAttempts {
 		loginReq := LoginRequest{
-			Email:    injection,
+			Identifier:injection,
 			Password: "Password123!",
 		}
 		reqBody, _ := json.Marshal(loginReq)
@@ -383,8 +383,8 @@ func TestLogin_InactiveUser(t *testing.T) {
 	r.POST("/api/auth/login", router.login)
 
 	loginReq := LoginRequest{
-		Email:    email,
-		Password: password,
+		Identifier: email,
+		Password:   password,
 	}
 	reqBody, _ := json.Marshal(loginReq)
 	req := httptest.NewRequest("POST", "/api/auth/login", bytes.NewBuffer(reqBody))

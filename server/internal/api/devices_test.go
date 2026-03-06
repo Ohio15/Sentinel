@@ -32,6 +32,10 @@ func (m *mockHub) SendToAgent(agentID string, message []byte) error {
 	return nil
 }
 
+func (m *mockHub) SendToUser(userID uuid.UUID, message []byte) error {
+	return nil
+}
+
 func (m *mockHub) BroadcastToDashboards(message []byte) {
 }
 

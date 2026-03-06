@@ -160,26 +160,38 @@ func Load() (*Config, error) {
 		AlertingEnabled:         getEnvBool("ALERTING_ENABLED", true),
 	}
 
-	// Validate required fields
-	if cfg.DatabaseURL == "" {
-		return nil, fmt.Errorf("DATABASE_URL is required")
-	}
-	if cfg.JWTSecret == "" {
-		return nil, fmt.Errorf("JWT_SECRET is required")
-	}
-	if len(cfg.JWTSecret) < 32 {
-		return nil, fmt.Errorf("JWT_SECRET must be at least 32 characters")
-	}
-	if cfg.EnrollmentToken == "" {
-		return nil, fmt.Errorf("ENROLLMENT_TOKEN is required")
-	}
-
 	// In production, require explicit allowed origins
 	if cfg.Environment == "production" && len(cfg.AllowedOrigins) == 0 {
 		return nil, fmt.Errorf("ALLOWED_ORIGINS is required in production")
 	}
 
 	return cfg, nil
+}
+
+// Validate checks all required configuration fields and returns a combined error
+// listing ALL missing or invalid configs rather than failing on the first one.
+func (c *Config) Validate() error {
+	var errors []string
+
+	if c.DatabaseURL == "" {
+		errors = append(errors, "DATABASE_URL is required")
+	}
+	if c.JWTSecret == "" {
+		errors = append(errors, "JWT_SECRET must be at least 32 characters")
+	} else if len(c.JWTSecret) < 32 {
+		errors = append(errors, "JWT_SECRET must be at least 32 characters")
+	}
+	if c.EnrollmentToken == "" {
+		errors = append(errors, "ENROLLMENT_TOKEN is required")
+	}
+	if c.RedisURL == "" {
+		errors = append(errors, "REDIS_URL is required")
+	}
+
+	if len(errors) > 0 {
+		return fmt.Errorf("%s", strings.Join(errors, "\n"))
+	}
+	return nil
 }
 
 func getEnv(key, defaultValue string) string {

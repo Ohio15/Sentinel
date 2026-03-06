@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"fmt"
 	"encoding/hex"
 	"log"
 	"net/http"
 	"time"
+	"unicode"
 
 	"github.com/gin-gonic/gin"
 	"github.com/sentinel/server/internal/constants"
@@ -145,19 +147,15 @@ func (r *Router) refreshToken(c *gin.Context) {
 
 	err := r.db.Pool().QueryRow(ctx, `
 		SELECT id, user_id, expires_at FROM sessions
-		WHERE refresh_token_hash = $1
+		WHERE refresh_token_hash = $1 AND expires_at > NOW()
 	`, tokenHash).Scan(&session.ID, &session.UserID, &session.ExpiresAt)
 
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
-		return
-	}
-
-	if time.Now().After(session.ExpiresAt) {
-		if _, err := r.db.Pool().Exec(ctx, "DELETE FROM sessions WHERE id = $1", session.ID); err != nil {
-			log.Printf("Error deleting expired session %s: %v", session.ID, err)
+		// Clean up any expired session with this token hash
+		if _, delErr := r.db.Pool().Exec(ctx, "DELETE FROM sessions WHERE refresh_token_hash = $1 AND expires_at <= NOW()", tokenHash); delErr != nil {
+			log.Printf("Error cleaning up expired session: %v", delErr)
 		}
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Refresh token expired"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Session expired, please login again"})
 		return
 	}
 
@@ -265,6 +263,38 @@ func hashToken(token string) string {
 func hashPassword(password string) (string, error) {
 	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	return string(bytes), err
+}
+
+func validatePassword(password string) error {
+	if len(password) < 8 {
+		return fmt.Errorf("password must be at least 8 characters")
+	}
+	var hasUpper, hasLower, hasDigit, hasSpecial bool
+	for _, c := range password {
+		switch {
+		case unicode.IsUpper(c):
+			hasUpper = true
+		case unicode.IsLower(c):
+			hasLower = true
+		case unicode.IsDigit(c):
+			hasDigit = true
+		case unicode.IsPunct(c) || unicode.IsSymbol(c):
+			hasSpecial = true
+		}
+	}
+	if !hasUpper {
+		return fmt.Errorf("password must contain at least one uppercase letter")
+	}
+	if !hasLower {
+		return fmt.Errorf("password must contain at least one lowercase letter")
+	}
+	if !hasDigit {
+		return fmt.Errorf("password must contain at least one digit")
+	}
+	if !hasSpecial {
+		return fmt.Errorf("password must contain at least one special character")
+	}
+	return nil
 }
 
 // Invitation types
@@ -480,6 +510,12 @@ func (r *Router) register(c *gin.Context) {
 
 	if exists {
 		c.JSON(http.StatusConflict, gin.H{"error": "Username or email already exists"})
+		return
+	}
+
+	// Validate password complexity
+	if err := validatePassword(req.Password); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 

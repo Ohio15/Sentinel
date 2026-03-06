@@ -46,7 +46,7 @@ Sentinel is a cloud-hosted Remote Monitoring and Management (RMM) platform desig
         ┌───────────────────────────┼───────────────────────────┐
         │                           │                           │
 ┌───────▼───────┐          ┌───────▼───────┐          ┌───────▼───────┐
-│  Agent (Rust) │          │  Agent (Rust) │          │  Agent (Rust) │
+│  Agent (Go)   │          │  Agent (Go)   │          │  Agent (Go)   │
 │   Windows PC  │          │  Linux Server │          │   macOS Mac   │
 └───────────────┘          └───────────────┘          └───────────────┘
 ```
@@ -61,7 +61,7 @@ Sentinel is a cloud-hosted Remote Monitoring and Management (RMM) platform desig
 | **Database** | PostgreSQL 16 | Primary data store |
 | **Cache/PubSub** | Redis 7 | Session cache, real-time events |
 | **Frontend** | React 18 + Vite | Admin web interface |
-| **Agent** | Rust | Cross-platform endpoint agent |
+| **Agent** | Go 1.21 | Cross-platform endpoint agent |
 | **Containerization** | Docker + Compose | Deployment orchestration |
 
 ## Oracle Cloud Free Tier Resources

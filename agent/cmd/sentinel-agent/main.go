@@ -29,6 +29,7 @@ import (
 	"github.com/sentinel/agent/internal/protection"
 	svc "github.com/sentinel/agent/internal/service"
 	"github.com/sentinel/agent/internal/terminal"
+	"github.com/sentinel/agent/internal/logrotate"
 	"github.com/sentinel/agent/internal/updater"
 	"github.com/sentinel/agent/internal/updates"
 	"github.com/sentinel/agent/internal/admin"
@@ -70,6 +71,8 @@ type Agent struct {
 	updateInstaller      *updates.Installer
 	peripheralManager    *peripheral.Manager
 	logForwarder         *logforward.Forwarder
+	terminalAudit        *terminal.AuditLogger
+	logRotator           *logrotate.RotatingWriter
 	tamperChan           chan string
 	metricsIntervalChan  chan time.Duration // Channel for dynamic metrics interval changes
 	ctx                  context.Context
@@ -88,10 +91,11 @@ func main() {
 		logPath = "/var/log/sentinel/agent.log"
 	}
 
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	// Use rotating log writer: 10MB max, keep 5 rotated files
+	logRotator, err := logrotate.New(logPath, 0, 0) // 0,0 = use defaults (10MB, 5 files)
 	if err == nil {
-		log.SetOutput(logFile)
-		defer logFile.Close()
+		log.SetOutput(logRotator)
+		defer logRotator.Close()
 	} else if runtime.GOOS != "windows" {
 		// On Linux, if we can't write to log file, write to stderr for systemd
 		log.SetOutput(os.Stderr)
@@ -323,6 +327,7 @@ func NewAgent(cfg *config.Config) *Agent {
 		updateChecker:        updates.NewChecker(),
 		updateInstaller:      updates.NewInstaller(),
 		logForwarder:         logforward.New(wsClient),
+		terminalAudit:        initTerminalAudit(),
 		tamperChan:           make(chan string, 10),
 		metricsIntervalChan:  make(chan time.Duration, 1),
 		ctx:                  ctx,
@@ -333,6 +338,23 @@ func NewAgent(cfg *config.Config) *Agent {
 	agent.peripheralManager = peripheral.NewManager(agent.handleUSBDeviceEvent)
 
 	return agent
+}
+
+// initTerminalAudit creates an audit logger for terminal sessions.
+// Returns nil if the audit log directory cannot be created (non-fatal).
+func initTerminalAudit() *terminal.AuditLogger {
+	var logDir string
+	if runtime.GOOS == "windows" {
+		logDir = "C:\\ProgramData\\Sentinel\\logs"
+	} else {
+		logDir = "/var/log/sentinel"
+	}
+	audit, err := terminal.NewAuditLogger(logDir)
+	if err != nil {
+		log.Printf("[WARN] Terminal audit logging disabled: %v", err)
+		return nil
+	}
+	return audit
 }
 
 // Run starts the agent in interactive mode
@@ -1164,12 +1186,27 @@ func (a *Agent) handleStartTerminal(msg *client.Message) error {
 		return a.client.SendResponse(msg.RequestID, false, nil, "Session ID required")
 	}
 
+	requestedBy, _ := data["requestedBy"].(string)
+	if requestedBy == "" {
+		requestedBy = "unknown"
+	}
+
 	onOutput := func(output string) {
 		a.client.SendTerminalOutput(sessionID, output)
 	}
 
+	sessionStart := time.Now()
+	cmdCount := 0
+
 	onClose := func() {
 		log.Printf("Terminal session %s closed", sessionID)
+		if a.terminalAudit != nil {
+			a.terminalAudit.LogSessionEnd(sessionID, time.Since(sessionStart), cmdCount)
+		}
+	}
+
+	if a.terminalAudit != nil {
+		a.terminalAudit.LogSessionStart(sessionID, requestedBy)
 	}
 
 	_, err := a.terminalManager.CreateSession(a.ctx, sessionID, onOutput, onClose)
@@ -1192,6 +1229,10 @@ func (a *Agent) handleTerminalInput(msg *client.Message) error {
 	session, ok := a.terminalManager.GetSession(sessionID)
 	if !ok {
 		return fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	if a.terminalAudit != nil {
+		a.terminalAudit.LogInput(sessionID, input)
 	}
 
 	return session.Write(input)

@@ -29,7 +29,7 @@ func generateSecurityReportHandler(services *Services) gin.HandlerFunc {
 			Type: reports.ReportTypeSecurityPosture,
 		})
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate report: " + err.Error()})
+			internalError(c, "Failed to generate report", err)
 			return
 		}
 
@@ -56,7 +56,7 @@ func generateDeviceReportHandler(services *Services) gin.HandlerFunc {
 		ctx := c.Request.Context()
 		pdf, err := reportsGenerator.GenerateDeviceSummaryReport(ctx, deviceID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate report: " + err.Error()})
+			internalError(c, "Failed to generate report", err)
 			return
 		}
 
@@ -107,7 +107,7 @@ func generateAlertHistoryReportHandler(services *Services) gin.HandlerFunc {
 		ctx := c.Request.Context()
 		pdf, err := reportsGenerator.GenerateAlertHistoryReport(ctx, startDate, endDate)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate report: " + err.Error()})
+			internalError(c, "Failed to generate report", err)
 			return
 		}
 
@@ -130,7 +130,7 @@ func generateExecutiveReportHandler(services *Services) gin.HandlerFunc {
 		ctx := c.Request.Context()
 		pdf, err := reportsGenerator.GenerateExecutiveReport(ctx)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate report: " + err.Error()})
+			internalError(c, "Failed to generate report", err)
 			return
 		}
 

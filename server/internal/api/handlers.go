@@ -34,17 +34,25 @@ func (r *Router) getUpgrader() websocket.Upgrader {
 			if r.config.Environment != "production" {
 				return true
 			}
-			// Allow WebSocket connections without Origin header (native apps, etc.)
 			origin := req.Header.Get("Origin")
-			if origin == "" {
+
+			// Agent endpoints - allow no Origin (native apps don't send it)
+			if strings.HasPrefix(req.URL.Path, "/ws/agent") {
 				return true
 			}
-			// Check against allowed origins
+
+			// Dashboard MUST have valid Origin
+			if origin == "" {
+				log.Printf("[SECURITY] WebSocket rejected: no Origin header from %s on %s", req.RemoteAddr, req.URL.Path)
+				return false
+			}
+
 			for _, allowed := range r.config.AllowedOrigins {
 				if origin == allowed {
 					return true
 				}
 			}
+			log.Printf("[SECURITY] WebSocket rejected: invalid Origin %q from %s", origin, req.RemoteAddr)
 			return false
 		},
 	}
@@ -1646,16 +1654,20 @@ func (r *Router) handleDashboardWebSocket(c *gin.Context) {
 	var userID uuid.UUID
 	authenticated := false
 
-	// Try query param first
-	tokenString := c.Query("token")
-	// Try Authorization header
+	// Try Authorization header first (preferred)
+	var tokenString string
+	authHeader := c.GetHeader("Authorization")
+	if authHeader != "" {
+		parts := strings.Split(authHeader, " ")
+		if len(parts) == 2 && parts[0] == "Bearer" {
+			tokenString = parts[1]
+		}
+	}
+	// Fall back to query parameter (deprecated)
 	if tokenString == "" {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader != "" {
-			parts := strings.Split(authHeader, " ")
-			if len(parts) == 2 && parts[0] == "Bearer" {
-				tokenString = parts[1]
-			}
+		tokenString = c.Query("token")
+		if tokenString != "" {
+			log.Printf("[DEPRECATION] Token in query string from %s path=%s — use Authorization header", c.ClientIP(), c.Request.URL.Path)
 		}
 	}
 

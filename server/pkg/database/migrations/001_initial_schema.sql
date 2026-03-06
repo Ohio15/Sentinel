@@ -17,10 +17,6 @@ CREATE TABLE users (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Create default admin user (password: admin123 - CHANGE IN PRODUCTION)
-INSERT INTO users (email, password_hash, first_name, last_name, role) VALUES
-    ('admin@sentinel.local', '$2b$10$HF.QSMYbYa6XVlKdwZ88juRwQ4zSK1CN8q8JZTsYTM5W3KCyjpQxy', 'Admin', 'User', 'admin');
-
 -- Devices table
 CREATE TABLE devices (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

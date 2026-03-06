@@ -98,7 +98,7 @@ class ReliableWebSocket {
 
     this.isConnecting = true;
     this.connectionState = this.reconnectAttempts > 0 ? 'reconnecting' : 'connecting';
-    const wsUrl = `${getWsBaseUrl()}/ws/dashboard?token=${token}`;
+    const wsUrl = `${getWsBaseUrl()}/ws/dashboard`;
     console.log(`[WebSocket] Connecting to: ${wsUrl.replace(/token=[^&]+/, 'token=***')} (attempt ${this.reconnectAttempts + 1})`);
 
     // Safety net: if not connected within 10 seconds, force retry

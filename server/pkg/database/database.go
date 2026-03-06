@@ -160,6 +160,7 @@ func (db *DB) Migrate() error {
 		"migrations/035_credential_management.sql",   // v46
 		"migrations/036_usb_file_transfers.sql",      // v47
 		"migrations/037_router_audit_log.sql",        // v48
+		"migrations/038_security_hardening.sql",      // v49
 	}
 
 	// Run pending migrations

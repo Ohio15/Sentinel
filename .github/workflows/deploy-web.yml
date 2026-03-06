@@ -16,10 +16,17 @@ jobs:
       - name: Pull latest code
         run: cd ~/Sentinel && git pull origin master
 
+      - name: Save current image for rollback
+        run: |
+          CURRENT_IMAGE=$(docker inspect --format='{{.Image}}' sentinel-frontend 2>/dev/null || echo "")
+          echo "ROLLBACK_IMAGE=$CURRENT_IMAGE" >> $GITHUB_ENV
+          echo "Saved rollback image: $CURRENT_IMAGE"
+
       - name: Rebuild and deploy frontend
         run: cd ~/Sentinel && docker compose build frontend && docker compose up -d frontend
 
       - name: Verify deployment
+        id: healthcheck
         run: |
           FRONTEND_IP=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' sentinel-frontend)
           echo "Frontend container IP: $FRONTEND_IP"
@@ -34,4 +41,28 @@ jobs:
           done
           echo "FAILED: Frontend did not become healthy after 25 seconds"
           docker logs sentinel-frontend --tail 20
+          exit 1
+
+      - name: Rollback on failure
+        if: failure() && steps.healthcheck.outcome == 'failure'
+        run: |
+          echo "Health check failed — rolling back deployment..."
+          cd ~/Sentinel
+          git log --oneline -3
+          PREV_COMMIT=$(git rev-parse HEAD~1)
+          echo "Rolling back to commit: $PREV_COMMIT"
+          git checkout $PREV_COMMIT -- Dockerfile.web src/ frontend/
+          docker compose build frontend
+          docker compose up -d frontend
+          sleep 10
+          FRONTEND_IP=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' sentinel-frontend)
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://${FRONTEND_IP}/health" 2>/dev/null || echo "000")
+          if [ "$STATUS" = "200" ]; then
+            echo "Rollback successful — frontend healthy on previous version"
+          else
+            echo "WARNING: Rollback may have failed — frontend returned HTTP $STATUS"
+            docker logs sentinel-frontend --tail 30
+          fi
+          git checkout master
+          echo "::error::Deployment failed and was rolled back to $PREV_COMMIT. Fix the issue and re-deploy."
           exit 1

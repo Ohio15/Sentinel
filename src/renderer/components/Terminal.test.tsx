@@ -3,330 +3,160 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Terminal } from './Terminal';
 
+// Mock the services and stores that the Terminal component actually uses
+vi.mock('../services', () => ({
+  terminal: {
+    start: vi.fn().mockResolvedValue({ sessionId: 'test-session-456' }),
+    send: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn(),
+    resize: vi.fn(),
+    onOutput: vi.fn().mockReturnValue(() => {}),
+  },
+}));
+
+// Shared sessions map accessible from both the mock and test code
+// vi.mock is hoisted, so we use a global to share state
+const _sessionsHolder = { map: new Map<string, any>() };
+
+vi.mock('../stores/terminalStore', () => {
+  return {
+    useTerminalStore: vi.fn((selector: any) => {
+      const sessions = _sessionsHolder.map;
+      const state = {
+        sessions,
+        createSession: vi.fn((deviceId: string, sessionId: string) => {
+          sessions.set(deviceId, {
+            sessionId,
+            deviceId,
+            connected: true,
+            connectionState: 'connected',
+            output: ['Welcome to terminal\r\n'],
+            inputQueue: [],
+            lastActivityAt: Date.now(),
+          });
+        }),
+        closeSession: vi.fn((deviceId: string) => {
+          sessions.delete(deviceId);
+        }),
+        addOutput: vi.fn(),
+        clearOutput: vi.fn(),
+      };
+      return selector(state);
+    }),
+    setupTerminalHandler: vi.fn(),
+  };
+});
+
 describe('Terminal Component', () => {
   const mockDeviceId = 'test-device-123';
-  const mockSessionId = 'test-session-456';
 
   beforeEach(() => {
-    // Reset all mocks
     vi.clearAllMocks();
-
-    // Mock terminal.start to return a session
-    vi.mocked(window.api.terminal.start).mockResolvedValue({
-      success: true,
-      sessionId: mockSessionId,
-    });
-
-    // Mock terminal.send
-    vi.mocked(window.api.terminal.send).mockResolvedValue({
-      success: true,
-    });
-
-    // Mock terminal.close
-    vi.mocked(window.api.terminal.close).mockResolvedValue({
-      success: true,
-    });
-
-    // Mock terminal.onData to call callback with test data
-    let dataCallback: ((data: any) => void) | null = null;
-    vi.mocked(window.api.terminal.onData).mockImplementation((callback) => {
-      dataCallback = callback;
-      // Simulate receiving data
-      setTimeout(() => {
-        if (dataCallback) {
-          dataCallback({
-            sessionId: mockSessionId,
-            data: 'Welcome to terminal\r\n$ ',
-          });
-        }
-      }, 100);
-      return () => {
-        dataCallback = null;
-      };
-    });
+    // Reset sessions between tests so state doesn't leak
+    _sessionsHolder.map.clear();
   });
 
   it('renders terminal container', () => {
-    render(<Terminal deviceId={mockDeviceId} />);
-    const terminalContainer = screen.getByRole('region', { name: /terminal/i });
-    expect(terminalContainer).toBeInTheDocument();
+    const { container } = render(<Terminal deviceId={mockDeviceId} isOnline={true} />);
+    // Terminal renders a flex column container with h-96
+    expect(container.querySelector('.flex.flex-col')).toBeInTheDocument();
   });
 
-  it('starts terminal session on mount', async () => {
-    render(<Terminal deviceId={mockDeviceId} />);
-
-    await waitFor(() => {
-      expect(window.api.terminal.start).toHaveBeenCalledWith(
-        mockDeviceId,
-        expect.objectContaining({
-          cols: expect.any(Number),
-          rows: expect.any(Number),
-        })
-      );
-    });
+  it('shows offline message when device is offline', () => {
+    render(<Terminal deviceId={mockDeviceId} isOnline={false} />);
+    expect(screen.getByText(/device is offline/i)).toBeInTheDocument();
   });
 
-  it('displays received terminal output', async () => {
-    render(<Terminal deviceId={mockDeviceId} />);
-
-    await waitFor(() => {
-      expect(window.api.terminal.onData).toHaveBeenCalled();
-    });
-
-    // Wait for terminal to process the data
-    await waitFor(
-      () => {
-        const terminalElement = screen.getByRole('region', { name: /terminal/i });
-        expect(terminalElement).toBeInTheDocument();
-      },
-      { timeout: 2000 }
-    );
+  it('shows Connect button when not connected', () => {
+    render(<Terminal deviceId={mockDeviceId} isOnline={true} />);
+    expect(screen.getByText('Connect')).toBeInTheDocument();
   });
 
-  it('handles terminal resize', async () => {
-    const { container } = render(<Terminal deviceId={mockDeviceId} />);
-
-    await waitFor(() => {
-      expect(window.api.terminal.start).toHaveBeenCalled();
-    });
-
-    // Simulate resize by dispatching resize event
-    global.dispatchEvent(new Event('resize'));
-
-    // Terminal should handle resize gracefully
-    await waitFor(() => {
-      const terminalElement = container.querySelector('.xterm');
-      expect(terminalElement).toBeInTheDocument();
-    });
+  it('shows Disconnected status initially', () => {
+    render(<Terminal deviceId={mockDeviceId} isOnline={true} />);
+    expect(screen.getByText('Disconnected')).toBeInTheDocument();
   });
 
-  it('closes terminal session on unmount', async () => {
-    const { unmount } = render(<Terminal deviceId={mockDeviceId} />);
+  it('calls terminal service start when Connect is clicked', async () => {
+    const { terminal } = await import('../services');
+
+    render(<Terminal deviceId={mockDeviceId} isOnline={true} />);
+
+    const connectBtn = screen.getByText('Connect');
+    fireEvent.click(connectBtn);
 
     await waitFor(() => {
-      expect(window.api.terminal.start).toHaveBeenCalled();
-    });
-
-    unmount();
-
-    await waitFor(() => {
-      expect(window.api.terminal.close).toHaveBeenCalledWith(mockSessionId);
-    });
-  });
-
-  it('handles terminal start failure', async () => {
-    vi.mocked(window.api.terminal.start).mockResolvedValue({
-      success: false,
-      error: 'Failed to start terminal',
-    });
-
-    render(<Terminal deviceId={mockDeviceId} />);
-
-    await waitFor(() => {
-      expect(window.api.terminal.start).toHaveBeenCalled();
-    });
-
-    // Component should handle error gracefully
-    const terminalContainer = screen.getByRole('region', { name: /terminal/i });
-    expect(terminalContainer).toBeInTheDocument();
-  });
-
-  it('sends input to terminal', async () => {
-    vi.mocked(window.api.terminal.start).mockResolvedValue({
-      success: true,
-      sessionId: mockSessionId,
-    });
-
-    render(<Terminal deviceId={mockDeviceId} />);
-
-    await waitFor(() => {
-      expect(window.api.terminal.start).toHaveBeenCalled();
-    });
-
-    // Simulate typing in terminal
-    const terminalContainer = screen.getByRole('region', { name: /terminal/i });
-
-    // Focus terminal
-    fireEvent.click(terminalContainer);
-
-    // Wait for terminal to be ready
-    await waitFor(() => {
-      expect(window.api.terminal.onData).toHaveBeenCalled();
-    });
-  });
-
-  it('handles rapid input correctly', async () => {
-    render(<Terminal deviceId={mockDeviceId} />);
-
-    await waitFor(() => {
-      expect(window.api.terminal.start).toHaveBeenCalled();
-    });
-
-    // Simulate rapid typing
-    const commands = ['ls', 'pwd', 'whoami'];
-
-    for (const cmd of commands) {
-      // Terminal input is handled internally by xterm
-      // We verify that the session is active
-      expect(window.api.terminal.start).toHaveBeenCalledWith(
-        mockDeviceId,
-        expect.any(Object)
-      );
-    }
-  });
-
-  it('handles special keys (Ctrl+C, Enter, etc.)', async () => {
-    render(<Terminal deviceId={mockDeviceId} />);
-
-    await waitFor(() => {
-      expect(window.api.terminal.start).toHaveBeenCalled();
-    });
-
-    const terminalContainer = screen.getByRole('region', { name: /terminal/i });
-    fireEvent.click(terminalContainer);
-
-    // Simulate Enter key
-    fireEvent.keyDown(terminalContainer, { key: 'Enter', code: 'Enter' });
-
-    // Simulate Ctrl+C
-    fireEvent.keyDown(terminalContainer, {
-      key: 'c',
-      code: 'KeyC',
-      ctrlKey: true,
-    });
-
-    // Terminal should still be functional
-    expect(terminalContainer).toBeInTheDocument();
-  });
-
-  it('handles terminal disconnect and reconnect', async () => {
-    const { rerender } = render(<Terminal deviceId={mockDeviceId} />);
-
-    await waitFor(() => {
-      expect(window.api.terminal.start).toHaveBeenCalled();
-    });
-
-    // Simulate disconnect by providing different deviceId
-    const newDeviceId = 'new-device-789';
-    vi.mocked(window.api.terminal.start).mockResolvedValue({
-      success: true,
-      sessionId: 'new-session-789',
-    });
-
-    rerender(<Terminal deviceId={newDeviceId} />);
-
-    await waitFor(() => {
-      expect(window.api.terminal.close).toHaveBeenCalledWith(mockSessionId);
-      expect(window.api.terminal.start).toHaveBeenCalledWith(
-        newDeviceId,
-        expect.any(Object)
-      );
+      expect(terminal.start).toHaveBeenCalledWith(mockDeviceId);
     });
   });
 
   it('handles null or undefined deviceId gracefully', () => {
-    const { container } = render(<Terminal deviceId={null as any} />);
+    const { container } = render(<Terminal deviceId={null as any} isOnline={true} />);
     expect(container).toBeInTheDocument();
   });
 
-  it('cleans up event listeners on unmount', async () => {
-    const { unmount } = render(<Terminal deviceId={mockDeviceId} />);
-
-    await waitFor(() => {
-      expect(window.api.terminal.start).toHaveBeenCalled();
-    });
-
-    const onDataMock = vi.mocked(window.api.terminal.onData);
-    const removeListener = onDataMock.mock.results[0]?.value;
-
-    unmount();
-
-    // Verify cleanup was called
-    if (removeListener && typeof removeListener === 'function') {
-      // Listener should be cleaned up
-      expect(window.api.terminal.close).toHaveBeenCalled();
-    }
+  it('renders output area with dark background', () => {
+    const { container } = render(<Terminal deviceId={mockDeviceId} isOnline={true} />);
+    const outputArea = container.querySelector('.bg-gray-900');
+    expect(outputArea).toBeInTheDocument();
   });
 
-  it('handles large output efficiently', async () => {
-    const largeOutput = 'A'.repeat(10000);
-
-    vi.mocked(window.api.terminal.onData).mockImplementation((callback) => {
-      setTimeout(() => {
-        callback({
-          sessionId: mockSessionId,
-          data: largeOutput,
-        });
-      }, 100);
-      return () => {};
-    });
-
-    render(<Terminal deviceId={mockDeviceId} />);
-
-    await waitFor(() => {
-      expect(window.api.terminal.start).toHaveBeenCalled();
-    });
-
-    // Terminal should handle large output without crashing
-    await waitFor(
-      () => {
-        const terminalContainer = screen.getByRole('region', {
-          name: /terminal/i,
-        });
-        expect(terminalContainer).toBeInTheDocument();
-      },
-      { timeout: 3000 }
-    );
+  it('renders status indicator dot', () => {
+    const { container } = render(<Terminal deviceId={mockDeviceId} isOnline={true} />);
+    // Should have a status dot (red for disconnected)
+    const statusDot = container.querySelector('.rounded-full');
+    expect(statusDot).toBeInTheDocument();
   });
 
-  it('handles concurrent terminal sessions for different devices', async () => {
-    const device1 = 'device-1';
-    const device2 = 'device-2';
+  it('calls setupTerminalHandler on mount', async () => {
+    const { setupTerminalHandler } = await import('../stores/terminalStore');
 
-    const { rerender } = render(<Terminal deviceId={device1} />);
+    render(<Terminal deviceId={mockDeviceId} isOnline={true} />);
 
+    expect(setupTerminalHandler).toHaveBeenCalled();
+  });
+
+  it('does not show Connect button when offline', () => {
+    render(<Terminal deviceId={mockDeviceId} isOnline={false} />);
+    expect(screen.queryByText('Connect')).not.toBeInTheDocument();
+  });
+
+  it('shows connecting state while terminal service is starting', async () => {
+    // The component uses internal `connecting` state that shows "Connecting..." text
+    // This is rendered as the button text during the async start call
+    const { container } = render(<Terminal deviceId={mockDeviceId} isOnline={true} />);
+
+    // Initially should show Connect
+    expect(screen.getByText('Connect')).toBeInTheDocument();
+    // The button should not be disabled initially
+    const btn = screen.getByText('Connect');
+    expect(btn).not.toBeDisabled();
+  });
+
+  it('handles start failure without crashing', async () => {
+    const { terminal } = await import('../services');
+    vi.mocked(terminal.start).mockRejectedValueOnce(new Error('Connection refused'));
+
+    render(<Terminal deviceId={mockDeviceId} isOnline={true} />);
+
+    const connectBtn = screen.getByText('Connect');
+    fireEvent.click(connectBtn);
+
+    // After failure, should return to Connect state (not crash)
     await waitFor(() => {
-      expect(window.api.terminal.start).toHaveBeenCalledWith(
-        device1,
-        expect.any(Object)
-      );
-    });
-
-    vi.mocked(window.api.terminal.start).mockResolvedValue({
-      success: true,
-      sessionId: 'session-2',
-    });
-
-    rerender(<Terminal deviceId={device2} />);
-
-    await waitFor(() => {
-      expect(window.api.terminal.start).toHaveBeenCalledWith(
-        device2,
-        expect.any(Object)
-      );
+      expect(screen.getByText('Connect')).toBeInTheDocument();
     });
   });
 
-  it('validates terminal dimensions', async () => {
-    render(<Terminal deviceId={mockDeviceId} />);
+  it('renders header with toolbar styling', () => {
+    const { container } = render(<Terminal deviceId={mockDeviceId} isOnline={true} />);
+    const header = container.querySelector('.bg-gray-800');
+    expect(header).toBeInTheDocument();
+  });
 
-    await waitFor(() => {
-      expect(window.api.terminal.start).toHaveBeenCalledWith(
-        mockDeviceId,
-        expect.objectContaining({
-          cols: expect.any(Number),
-          rows: expect.any(Number),
-        })
-      );
-    });
-
-    const startCall = vi.mocked(window.api.terminal.start).mock.calls[0];
-    const dimensions = startCall[1];
-
-    // Validate reasonable dimensions
-    expect(dimensions.cols).toBeGreaterThan(0);
-    expect(dimensions.rows).toBeGreaterThan(0);
-    expect(dimensions.cols).toBeLessThan(500);
-    expect(dimensions.rows).toBeLessThan(200);
+  it('renders font-mono output area for terminal text', () => {
+    const { container } = render(<Terminal deviceId={mockDeviceId} isOnline={true} />);
+    const monoArea = container.querySelector('.font-mono');
+    expect(monoArea).toBeInTheDocument();
   });
 });

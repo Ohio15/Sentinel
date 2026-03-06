@@ -115,6 +115,11 @@ type Client struct {
 
 	// Backpressure tracking
 	backpressureCount atomic.Int64
+
+	// Per-client rate limiting
+	rateLimitCount  int64
+	rateLimitWindow time.Time
+	rateLimitMax    int64 // 600 for agents, 120 for dashboards
 }
 
 type Hub struct {
@@ -419,14 +424,16 @@ func (h *Hub) GetOnlineAgents() []string {
 // RegisterAgent registers a new agent client
 func (h *Hub) RegisterAgent(conn *websocket.Conn, agentID string, deviceID uuid.UUID) *Client {
 	client := &Client{
-		hub:          h,
-		conn:         conn,
-		send:         make(chan []byte, sendBufferSize),
-		agentID:      agentID,
-		deviceID:     deviceID,
-		isAgent:      true,
-		connectionID: uuid.New().String(),
-		connectedAt:  time.Now(),
+		hub:             h,
+		conn:            conn,
+		send:            make(chan []byte, sendBufferSize),
+		agentID:         agentID,
+		deviceID:        deviceID,
+		isAgent:         true,
+		connectionID:    uuid.New().String(),
+		connectedAt:     time.Now(),
+		rateLimitMax:    600, // 600 messages per minute for agents
+		rateLimitWindow: time.Now(),
 	}
 	h.register <- client
 	return client
@@ -435,13 +442,15 @@ func (h *Hub) RegisterAgent(conn *websocket.Conn, agentID string, deviceID uuid.
 // RegisterDashboard registers a new dashboard client
 func (h *Hub) RegisterDashboard(conn *websocket.Conn, userID uuid.UUID) *Client {
 	client := &Client{
-		hub:          h,
-		conn:         conn,
-		send:         make(chan []byte, sendBufferSize),
-		userID:       userID,
-		isAgent:      false,
-		connectionID: uuid.New().String(),
-		connectedAt:  time.Now(),
+		hub:             h,
+		conn:            conn,
+		send:            make(chan []byte, sendBufferSize),
+		userID:          userID,
+		isAgent:         false,
+		connectionID:    uuid.New().String(),
+		connectedAt:     time.Now(),
+		rateLimitMax:    120, // 120 messages per minute for dashboards
+		rateLimitWindow: time.Now(),
 	}
 	h.register <- client
 	return client
@@ -497,6 +506,18 @@ func (h *Hub) SendToUser(userID uuid.UUID, message []byte) error {
 	return nil
 }
 
+// checkMessageRateLimit checks if the client has exceeded its per-minute message rate limit.
+// Returns true if the message is allowed, false if rate limited.
+func (c *Client) checkMessageRateLimit() bool {
+	now := time.Now()
+	if now.Sub(c.rateLimitWindow) > time.Minute {
+		atomic.StoreInt64(&c.rateLimitCount, 0)
+		c.rateLimitWindow = now
+	}
+	count := atomic.AddInt64(&c.rateLimitCount, 1)
+	return count <= c.rateLimitMax
+}
+
 func (c *Client) ReadPump(ctx context.Context, handler func([]byte)) {
 	defer func() {
 		c.hub.unregister <- c
@@ -533,6 +554,15 @@ func (c *Client) ReadPump(ctx context.Context, handler func([]byte)) {
 			// Reset read deadline on ANY received data — not just pong frames.
 			// This keeps connections alive when app-level messages flow (heartbeats, metrics, etc.)
 			c.conn.SetReadDeadline(time.Now().Add(pongWait))
+
+			// Per-client rate limiting
+			if !c.checkMessageRateLimit() {
+				log.Printf("[ReadPump] Rate limited %s (agent=%v, count=%d, max=%d)",
+					c.connectionID, c.isAgent, atomic.LoadInt64(&c.rateLimitCount), c.rateLimitMax)
+				c.send <- []byte(`{"type":"rate_limited","message":"Too many messages, slow down"}`)
+				continue // skip processing this message
+			}
+
 			if !c.isAgent {
 				log.Printf("[ReadPump] Dashboard message received (%d bytes): %.200s", len(message), string(message))
 			}

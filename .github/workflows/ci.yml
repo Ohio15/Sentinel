@@ -30,11 +30,9 @@ jobs:
 
       - name: Run go vet
         run: go vet ./...
-        continue-on-error: true  # Windows syscall code triggers unsafe.Pointer warnings
 
       - name: Run tests
         run: go test -race -timeout 60s ./...
-        continue-on-error: true  # Some tests require Windows-specific environment
 
       - name: Build agent
         run: go build -o sentinel-agent.exe ./cmd/sentinel-agent
@@ -62,11 +60,9 @@ jobs:
 
       - name: Run ESLint
         run: npm run lint
-        continue-on-error: true
 
       - name: TypeScript type check
         run: npx tsc --noEmit
-        continue-on-error: true  # Strict checking; build step is the real gate
 
       - name: Build web frontend
         run: npm run build:web

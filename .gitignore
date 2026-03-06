@@ -7,6 +7,8 @@ release/
 
 # Environment and config
 .env
+.env.local
+.env.production
 update-config.json
 
 # IDE
@@ -33,5 +35,9 @@ certs/*.crt
 certs/*.srl
 certs/*.cnf
 server/sentinel.exe
+# Private keys and certificates (global)
+*.pem
+*.key
+
 # Backup files from API migration
 *.bak

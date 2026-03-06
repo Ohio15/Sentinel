@@ -155,7 +155,7 @@ func TestSendToAgent_AgentOnline(t *testing.T) {
 
 		client := hub.RegisterAgent(conn, agentID, deviceID)
 
-		// Start write pump to handle messages
+		// Start write pump: reads from client.send and writes to server-side conn
 		go func() {
 			for msg := range client.send {
 				if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
@@ -164,33 +164,22 @@ func TestSendToAgent_AgentOnline(t *testing.T) {
 			}
 		}()
 
-		// Wait for message
-		time.Sleep(100 * time.Millisecond)
-
-		_, msg, err := conn.ReadMessage()
-		if err == nil {
-			var parsed Message
-			if json.Unmarshal(msg, &parsed) == nil {
-				if parsed.Type == "test_message" {
-					messageReceived <- true
-				}
-			}
-		}
-
-		time.Sleep(500 * time.Millisecond)
+		// Keep the handler alive while the test runs
+		time.Sleep(3 * time.Second)
 	}))
 	defer server.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		t.Fatalf("Failed to dial websocket: %v", err)
 	}
-	defer conn.Close()
+	defer clientConn.Close()
 
-	time.Sleep(200 * time.Millisecond)
+	// Wait for server handler to register agent and start write pump
+	time.Sleep(500 * time.Millisecond)
 
-	// Send message to agent
+	// Send message to agent via hub
 	testMsg := Message{
 		Type:      "test_message",
 		Timestamp: time.Now(),
@@ -202,11 +191,24 @@ func TestSendToAgent_AgentOnline(t *testing.T) {
 		t.Errorf("Failed to send message to agent: %v", err)
 	}
 
-	// Wait for confirmation
+	// Read the message on the CLIENT side (hub -> server write pump -> client)
+	go func() {
+		clientConn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		_, msg, err := clientConn.ReadMessage()
+		if err == nil {
+			var parsed Message
+			if json.Unmarshal(msg, &parsed) == nil {
+				if parsed.Type == "test_message" {
+					messageReceived <- true
+				}
+			}
+		}
+	}()
+
 	select {
 	case <-messageReceived:
 		// Success
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Error("Message was not received by agent")
 	}
 }
@@ -251,7 +253,7 @@ func TestBroadcastToDashboards(t *testing.T) {
 
 		client := hub.RegisterDashboard(conn, userID)
 
-		// Start write pump
+		// Start write pump: reads from client.send and writes to server-side conn
 		go func() {
 			for msg := range client.send {
 				if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
@@ -260,31 +262,20 @@ func TestBroadcastToDashboards(t *testing.T) {
 			}
 		}()
 
-		time.Sleep(100 * time.Millisecond)
-
-		// Read broadcast message
-		_, msg, err := conn.ReadMessage()
-		if err == nil {
-			var parsed map[string]interface{}
-			if json.Unmarshal(msg, &parsed) == nil {
-				if parsed["type"] == "broadcast_test" {
-					messageReceived <- true
-				}
-			}
-		}
-
-		time.Sleep(500 * time.Millisecond)
+		// Keep handler alive while the test runs
+		time.Sleep(3 * time.Second)
 	}))
 	defer server.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		t.Fatalf("Failed to dial websocket: %v", err)
 	}
-	defer conn.Close()
+	defer clientConn.Close()
 
-	time.Sleep(200 * time.Millisecond)
+	// Wait for server handler to register dashboard and start write pump
+	time.Sleep(500 * time.Millisecond)
 
 	// Broadcast message
 	broadcastMsg := map[string]interface{}{
@@ -295,10 +286,24 @@ func TestBroadcastToDashboards(t *testing.T) {
 
 	hub.BroadcastToDashboards(msgBytes)
 
+	// Read the broadcast on the CLIENT side
+	go func() {
+		clientConn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		_, msg, err := clientConn.ReadMessage()
+		if err == nil {
+			var parsed map[string]interface{}
+			if json.Unmarshal(msg, &parsed) == nil {
+				if parsed["type"] == "broadcast_test" {
+					messageReceived <- true
+				}
+			}
+		}
+	}()
+
 	select {
 	case <-messageReceived:
 		// Success
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Error("Broadcast message was not received by dashboard")
 	}
 }
@@ -459,11 +464,15 @@ func TestMaxMessageSize(t *testing.T) {
 		t.Errorf("Expected maxMessageSize to be 512KB, got %d", maxMessageSize)
 	}
 
-	// Test message larger than max size
-	largePayload := make([]byte, maxMessageSize+1)
-	for i := range largePayload {
-		largePayload[i] = 'A'
+	// Test message larger than max size — payload must be valid JSON for json.Marshal
+	// Build a JSON string filled with 'A' characters that exceeds maxMessageSize
+	innerLen := maxMessageSize + 1
+	inner := make([]byte, innerLen)
+	for i := range inner {
+		inner[i] = 'A'
 	}
+	// Wrap as a JSON string: "AAAA..."
+	largePayload := append([]byte{'"'}, append(inner, '"')...)
 
 	msg := Message{
 		Type:    MsgTypeMetrics,

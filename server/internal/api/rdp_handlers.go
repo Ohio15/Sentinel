@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,12 +15,37 @@ import (
 	ws "github.com/sentinel/server/internal/websocket"
 )
 
-var rdpUpgrader = websocket.Upgrader{
-	ReadBufferSize:  32768,
-	WriteBufferSize: 32768,
-	CheckOrigin: func(r *http.Request) bool {
-		return true // TODO: Configure appropriately for production
-	},
+// getRDPUpgrader returns a WebSocket upgrader with origin validation for RDP connections
+func getRDPUpgrader(services *Services) websocket.Upgrader {
+	return websocket.Upgrader{
+		ReadBufferSize:  32768,
+		WriteBufferSize: 32768,
+		CheckOrigin: func(req *http.Request) bool {
+			if services.Config.Environment != "production" {
+				return true
+			}
+			origin := req.Header.Get("Origin")
+
+			// Agent-side RDP tunnel — no Origin from native apps
+			if strings.Contains(req.URL.Path, "/agent/") {
+				return true
+			}
+
+			// Dashboard RDP connections MUST have valid Origin
+			if origin == "" {
+				log.Printf("[SECURITY] RDP WebSocket rejected: no Origin header from %s on %s", req.RemoteAddr, req.URL.Path)
+				return false
+			}
+
+			for _, allowed := range services.Config.AllowedOrigins {
+				if origin == allowed {
+					return true
+				}
+			}
+			log.Printf("[SECURITY] RDP WebSocket rejected: invalid Origin %q from %s", origin, req.RemoteAddr)
+			return false
+		},
+	}
 }
 
 // RDPCapabilities represents the RDP capabilities of an agent
@@ -210,6 +236,7 @@ func rdpConnectHandler(services *Services) gin.HandlerFunc {
 		}
 
 		// Upgrade to WebSocket
+		rdpUpgrader := getRDPUpgrader(services)
 		conn, err := rdpUpgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			log.Printf("[RDP] WebSocket upgrade failed: %v", err)
@@ -314,6 +341,7 @@ func rdpAgentTunnelHandler(services *Services) gin.HandlerFunc {
 		}
 
 		// Upgrade to WebSocket
+		rdpUpgrader := getRDPUpgrader(services)
 		conn, err := rdpUpgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			log.Printf("[RDP] Agent tunnel WebSocket upgrade failed: %v", err)

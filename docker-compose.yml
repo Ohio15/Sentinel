@@ -154,9 +154,9 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./src/main/migrations:/docker-entrypoint-initdb.d:ro
-      - /home/ohio_/certs/sentinel-postgres/server-cert.pem:/var/lib/postgresql/server.crt:ro
-      - /home/ohio_/certs/sentinel-postgres/server-key.pem:/var/lib/postgresql/server.key:ro
-      - /home/ohio_/certs/sentinel-postgres/ca-cert.pem:/var/lib/postgresql/ca.crt:ro
+      - ${PG_CERT_DIR:-./certs/postgres}/server-cert.pem:/var/lib/postgresql/server.crt:ro
+      - ${PG_CERT_DIR:-./certs/postgres}/server-key.pem:/var/lib/postgresql/server.key:ro
+      - ${PG_CERT_DIR:-./certs/postgres}/ca-cert.pem:/var/lib/postgresql/ca.crt:ro
     command: >
       postgres
       -c ssl=on

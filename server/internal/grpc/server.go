@@ -29,6 +29,12 @@ type ActiveRecording struct {
 	StartedAt   time.Time
 }
 
+// deviceCacheEntry caches the device ID for an agent to avoid per-metric DB lookups
+type deviceCacheEntry struct {
+	deviceID  string
+	expiresAt time.Time
+}
+
 // DataPlaneServer implements the gRPC DataPlaneService
 type DataPlaneServer struct {
 	pb.UnimplementedDataPlaneServiceServer
@@ -41,6 +47,9 @@ type DataPlaneServer struct {
 	// Recording state - store metrics to recording_metrics when recording is enabled
 	recordingDevices map[string]*ActiveRecording // agentID -> active recording info
 	recordingMu      sync.RWMutex
+	// Device ID cache - avoids per-metric DB lookups for agent_id -> device_id mapping
+	deviceCacheMu sync.RWMutex
+	deviceCache   map[string]deviceCacheEntry
 }
 
 // ServerConfig holds configuration for the gRPC server
@@ -59,6 +68,7 @@ func NewDataPlaneServer(db *database.DB, bulkInserter *metrics.BulkInserter) *Da
 		bulkInserter:     bulkInserter,
 		activeStreams:    make(map[string]time.Time),
 		recordingDevices: make(map[string]*ActiveRecording),
+		deviceCache:      make(map[string]deviceCacheEntry),
 	}
 }
 
@@ -70,6 +80,30 @@ func (s *DataPlaneServer) SetMetricsCallback(cb func(agentID string, m *pb.Metri
 // SetInventoryCallback sets a callback for when inventory is received
 func (s *DataPlaneServer) SetInventoryCallback(cb func(agentID string, inv *pb.InventoryData)) {
 	s.onInventory = cb
+}
+
+// getCachedDeviceID returns a cached device ID for an agent, or false if not cached/expired
+func (s *DataPlaneServer) getCachedDeviceID(agentID string) (string, bool) {
+	s.deviceCacheMu.RLock()
+	defer s.deviceCacheMu.RUnlock()
+	entry, ok := s.deviceCache[agentID]
+	if !ok || time.Now().After(entry.expiresAt) {
+		return "", false
+	}
+	return entry.deviceID, true
+}
+
+// cacheDeviceID stores a device ID in the cache with a 5-minute TTL
+func (s *DataPlaneServer) cacheDeviceID(agentID, deviceID string) {
+	s.deviceCacheMu.Lock()
+	defer s.deviceCacheMu.Unlock()
+	if s.deviceCache == nil {
+		s.deviceCache = make(map[string]deviceCacheEntry)
+	}
+	s.deviceCache[agentID] = deviceCacheEntry{
+		deviceID:  deviceID,
+		expiresAt: time.Now().Add(5 * time.Minute),
+	}
 }
 
 // StreamMetrics handles streaming metrics from agents
@@ -110,6 +144,16 @@ func (s *DataPlaneServer) StreamMetrics(stream pb.DataPlaneService_StreamMetrics
 		// Track agent ID from first message
 		if agentID == "" && m.AgentId != "" {
 			agentID = m.AgentId
+
+			// Validate agent_id exists in the database before processing further
+			var exists bool
+			err := s.db.Pool().QueryRow(stream.Context(),
+				"SELECT EXISTS(SELECT 1 FROM devices WHERE agent_id = $1)", agentID).Scan(&exists)
+			if err != nil || !exists {
+				log.Printf("[gRPC] Rejected unknown agent_id %s (peer: %s)", agentID, peerAddr)
+				return fmt.Errorf("unauthorized: unknown agent_id")
+			}
+
 			log.Printf("[gRPC] Metrics stream started from agent %s (peer: %s)", agentID, peerAddr)
 			s.streamsMu.Lock()
 			s.activeStreams[agentID] = time.Now()
@@ -142,14 +186,20 @@ func (s *DataPlaneServer) processMetrics(ctx context.Context, m *pb.Metrics) err
 		return fmt.Errorf("missing agent_id in metrics")
 	}
 
-	// Get device ID from agent ID
+	// Get device ID from agent ID (cache-first to avoid per-metric DB lookups)
 	var deviceID uuid.UUID
-	err := s.db.Pool().QueryRow(ctx,
-		"SELECT id FROM devices WHERE agent_id = $1",
-		m.AgentId,
-	).Scan(&deviceID)
-	if err != nil {
-		return fmt.Errorf("failed to find device for agent %s: %w", m.AgentId, err)
+	cachedID, cached := s.getCachedDeviceID(m.AgentId)
+	if cached {
+		deviceID, _ = uuid.Parse(cachedID)
+	} else {
+		err := s.db.Pool().QueryRow(ctx,
+			"SELECT id FROM devices WHERE agent_id = $1",
+			m.AgentId,
+		).Scan(&deviceID)
+		if err != nil {
+			return fmt.Errorf("failed to find device for agent %s: %w", m.AgentId, err)
+		}
+		s.cacheDeviceID(m.AgentId, deviceID.String())
 	}
 
 	// Check if recording is enabled for this device
@@ -180,12 +230,12 @@ func (s *DataPlaneServer) processMetrics(ctx context.Context, m *pb.Metrics) err
 	}
 
 	// Update device last_seen (always do this for online status tracking)
-	_, err = s.db.Pool().Exec(ctx,
+	_, updateErr := s.db.Pool().Exec(ctx,
 		"UPDATE devices SET last_seen = NOW() WHERE id = $1",
 		deviceID,
 	)
 
-	return err
+	return updateErr
 }
 
 // StartRecording enables metrics storage for a device with a specific recording session
@@ -251,20 +301,26 @@ func (s *DataPlaneServer) UploadInventory(ctx context.Context, inv *pb.Inventory
 
 	log.Printf("[gRPC] Received inventory from agent %s", inv.AgentId)
 
-	// Get device ID
+	// Get device ID (cache-first to avoid redundant DB lookups)
 	var deviceID uuid.UUID
-	err := s.db.Pool().QueryRow(ctx,
-		"SELECT id FROM devices WHERE agent_id = $1",
-		inv.AgentId,
-	).Scan(&deviceID)
-	if err != nil {
-		return &pb.StreamResponse{Success: false, Error: "device not found"}, nil
+	cachedID, cached := s.getCachedDeviceID(inv.AgentId)
+	if cached {
+		deviceID, _ = uuid.Parse(cachedID)
+	} else {
+		err := s.db.Pool().QueryRow(ctx,
+			"SELECT id FROM devices WHERE agent_id = $1",
+			inv.AgentId,
+		).Scan(&deviceID)
+		if err != nil {
+			return &pb.StreamResponse{Success: false, Error: "device not found"}, nil
+		}
+		s.cacheDeviceID(inv.AgentId, deviceID.String())
 	}
 
 	// Update device info
 	if inv.SystemInfo != nil {
 		si := inv.SystemInfo
-		_, err = s.db.Pool().Exec(ctx, `
+		_, err := s.db.Pool().Exec(ctx, `
 			UPDATE devices SET
 				hostname = COALESCE(NULLIF($2, ''), hostname),
 				os_type = COALESCE(NULLIF($3, ''), os_type),

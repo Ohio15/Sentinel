@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,13 +13,37 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  ReadBufferSize,
-	WriteBufferSize: WriteBufferSize,
-	CheckOrigin: func(r *http.Request) bool {
-		// TODO: Configure appropriately for production
-		return true
-	},
+// getUpgrader returns a WebSocket upgrader with proper origin validation
+func getUpgrader(environment string, allowedOrigins []string) websocket.Upgrader {
+	return websocket.Upgrader{
+		ReadBufferSize:  ReadBufferSize,
+		WriteBufferSize: WriteBufferSize,
+		CheckOrigin: func(req *http.Request) bool {
+			if environment != "production" {
+				return true
+			}
+			origin := req.Header.Get("Origin")
+
+			// Agent-side tunnel connections — native apps don't send Origin
+			if strings.Contains(req.URL.Path, "/agent/") || strings.Contains(req.URL.Path, "/tunnel") {
+				return true
+			}
+
+			// Dashboard connections MUST have valid Origin
+			if origin == "" {
+				log.Printf("[SECURITY] Guacamole WebSocket rejected: no Origin header from %s on %s", req.RemoteAddr, req.URL.Path)
+				return false
+			}
+
+			for _, allowed := range allowedOrigins {
+				if origin == allowed {
+					return true
+				}
+			}
+			log.Printf("[SECURITY] Guacamole WebSocket rejected: invalid Origin %q from %s", origin, req.RemoteAddr)
+			return false
+		},
+	}
 }
 
 // RDPSession represents an active RDP session
@@ -63,23 +88,27 @@ type Capabilities struct {
 
 // RDPHandler manages RDP connections through Guacamole
 type RDPHandler struct {
-	guacdAddr    string
-	agentManager AgentManager
+	guacdAddr      string
+	agentManager   AgentManager
+	environment    string
+	allowedOrigins []string
 
 	mu       sync.RWMutex
 	sessions map[string]*RDPSession
 }
 
 // NewRDPHandler creates a new RDP handler
-func NewRDPHandler(guacdAddr string, am AgentManager) *RDPHandler {
+func NewRDPHandler(guacdAddr string, am AgentManager, environment string, allowedOrigins []string) *RDPHandler {
 	if guacdAddr == "" {
 		guacdAddr = DefaultGuacdAddr
 	}
 
 	handler := &RDPHandler{
-		guacdAddr:    guacdAddr,
-		agentManager: am,
-		sessions:     make(map[string]*RDPSession),
+		guacdAddr:      guacdAddr,
+		agentManager:   am,
+		environment:    environment,
+		allowedOrigins: allowedOrigins,
+		sessions:       make(map[string]*RDPSession),
 	}
 
 	// Start session cleanup goroutine
@@ -112,6 +141,7 @@ func (h *RDPHandler) HandleRDPConnect(c *gin.Context) {
 	}
 
 	// Upgrade to WebSocket
+	upgrader := getUpgrader(h.environment, h.allowedOrigins)
 	ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		log.Printf("[RDPHandler] WebSocket upgrade failed: %v", err)
@@ -216,6 +246,7 @@ func (h *RDPHandler) HandleAgentRDPTunnel(c *gin.Context) {
 	}
 
 	// Upgrade to WebSocket
+	upgrader := getUpgrader(h.environment, h.allowedOrigins)
 	ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		log.Printf("[RDPHandler] Agent tunnel WebSocket upgrade failed: %v", err)

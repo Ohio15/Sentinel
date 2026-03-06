@@ -49,8 +49,8 @@ describe('Sidebar', () => {
   it('displays version in footer', async () => {
     render(<Sidebar currentPage="dashboard" onNavigate={mockOnNavigate} />);
 
-    // Wait for the version to be loaded
-    const versionText = await screen.findByText(/Version 1\.0\.0/);
+    // __APP_VERSION__ is not defined in test env, so fallback is '0.0.0'
+    const versionText = await screen.findByText(/Version 0\.0\.0/);
     expect(versionText).toBeInTheDocument();
   });
 

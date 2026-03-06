@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"time"
 
@@ -49,8 +50,9 @@ func getCredentialStatusHandler(services *Services) gin.HandlerFunc {
 		if services.JWTManager != nil {
 			jwtStatus, err := services.JWTManager.GetStatus(ctx)
 			if err != nil {
+				log.Printf("[ERROR] Failed to get JWT status: %v", err)
 				statuses["jwt_secret"] = map[string]interface{}{
-					"error": err.Error(),
+					"error": "Failed to retrieve status",
 				}
 			} else {
 				statuses["jwt_secret"] = jwtStatus
@@ -61,8 +63,9 @@ func getCredentialStatusHandler(services *Services) gin.HandlerFunc {
 		if services.APIKeyManager != nil {
 			apiKeyStatus, err := services.APIKeyManager.GetStatus(ctx)
 			if err != nil {
+				log.Printf("[ERROR] Failed to get API key status: %v", err)
 				statuses["api_key"] = map[string]interface{}{
-					"error": err.Error(),
+					"error": "Failed to retrieve status",
 				}
 			} else {
 				statuses["api_key"] = apiKeyStatus
@@ -100,10 +103,7 @@ func rotateJWTSecretHandler(services *Services) gin.HandlerFunc {
 
 		result, err := services.JWTManager.Rotate(c.Request.Context(), userID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error":    err.Error(),
-				"rollback": true,
-			})
+			internalError(c, "Failed to rotate JWT secret", err)
 			return
 		}
 
@@ -123,7 +123,7 @@ func getJWTStatusHandler(services *Services) gin.HandlerFunc {
 
 		status, err := services.JWTManager.GetStatus(c.Request.Context())
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			internalError(c, "Failed to fetch JWT status", err)
 			return
 		}
 
@@ -143,7 +143,7 @@ func listAPIKeysHandler(services *Services) gin.HandlerFunc {
 
 		keys, err := services.APIKeyManager.ListKeys(c.Request.Context())
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			internalError(c, "Failed to fetch API keys", err)
 			return
 		}
 
@@ -187,7 +187,7 @@ func createAPIKeyHandler(services *Services) gin.HandlerFunc {
 
 		key, err := services.APIKeyManager.CreateKey(c.Request.Context(), req)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			internalError(c, "Failed to create API key", err)
 			return
 		}
 
@@ -237,7 +237,7 @@ func revokeAPIKeyHandler(services *Services) gin.HandlerFunc {
 				c.JSON(http.StatusNotFound, gin.H{"error": "API key not found"})
 				return
 			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			internalError(c, "Failed to revoke API key", err)
 			return
 		}
 
@@ -257,7 +257,7 @@ func getAPIKeyStatusHandler(services *Services) gin.HandlerFunc {
 
 		status, err := services.APIKeyManager.GetStatus(c.Request.Context())
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			internalError(c, "Failed to fetch API key status", err)
 			return
 		}
 
@@ -294,7 +294,7 @@ func getRotationHistoryHandler(services *Services) gin.HandlerFunc {
 
 		rows, err := services.DB.Pool().Query(c.Request.Context(), query, args...)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			internalError(c, "Failed to fetch rotation history", err)
 			return
 		}
 		defer rows.Close()
@@ -351,7 +351,7 @@ func getRotationSchedulesHandler(services *Services) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		schedules, err := getRotationSchedules(c.Request.Context(), services.DB.Pool())
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			internalError(c, "Failed to fetch rotation schedules", err)
 			return
 		}
 		c.JSON(http.StatusOK, schedules)
@@ -426,7 +426,7 @@ func updateRotationScheduleHandler(services *Services) gin.HandlerFunc {
 
 		_, err := services.DB.Pool().Exec(c.Request.Context(), query, args...)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			internalError(c, "Failed to update rotation schedule", err)
 			return
 		}
 

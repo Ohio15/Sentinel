@@ -297,17 +297,20 @@ func TestAuthRateLimitMiddleware_Blocked(t *testing.T) {
 		c.JSON(http.StatusOK, gin.H{"message": "ok"})
 	})
 
+	// Use a public IP (not private/whitelisted) so rate limiting is enforced
+	testIP := "203.0.113.101:12345" // RFC 5737 TEST-NET-3 — not private, not whitelisted
+
 	// Make max attempts
 	for i := 0; i < MaxAuthAttempts; i++ {
 		req := httptest.NewRequest("POST", "/auth/login", nil)
-		req.RemoteAddr = "192.168.1.101:12345"
+		req.RemoteAddr = testIP
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 	}
 
 	// Next attempt should be blocked
 	req := httptest.NewRequest("POST", "/auth/login", nil)
-	req.RemoteAddr = "192.168.1.101:12345"
+	req.RemoteAddr = testIP
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)
@@ -337,17 +340,20 @@ func TestAuthRateLimitMiddleware_Lockout(t *testing.T) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
 	})
 
+	// Use a public IP so rate limiting is enforced
+	testIP := "203.0.113.102:12345" // RFC 5737 TEST-NET-3
+
 	// Make enough failed attempts to trigger lockout
 	for i := 0; i <= LockoutThreshold; i++ {
 		req := httptest.NewRequest("POST", "/auth/login", nil)
-		req.RemoteAddr = "192.168.1.102:12345"
+		req.RemoteAddr = testIP
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 	}
 
 	// Next attempt should show lockout message
 	req := httptest.NewRequest("POST", "/auth/login", nil)
-	req.RemoteAddr = "192.168.1.102:12345"
+	req.RemoteAddr = testIP
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)

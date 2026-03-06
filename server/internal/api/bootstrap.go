@@ -643,8 +643,7 @@ func generateConfiguredInstallerHandler(services *Services) gin.HandlerFunc {
 			// Use the patched EXE method with embedded config AND installation code
 			installerData, err := buildPatchedInstallerWithCode(serverURL, enrollmentToken, installCode)
 			if err != nil {
-				log.Printf("Failed to build patched installer: %v", err)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to prepare installer: " + err.Error()})
+				internalError(c, "Failed to prepare installer", err)
 				return
 			}
 

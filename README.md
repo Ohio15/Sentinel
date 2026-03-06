@@ -11,7 +11,7 @@ Sentinel is a modern, cloud-hosted Remote Monitoring and Management (RMM) platfo
 - **Alerting System** - Configurable threshold-based alerts with multiple notification channels
 - **Script Library** - Store and execute PowerShell, Bash, and Python scripts
 - **WebSocket Communication** - Low-latency, bi-directional agent communication
-- **Multi-platform Agent** - Cross-platform Rust agent for Windows, Linux, and macOS
+- **Multi-platform Agent** - Cross-platform Go agent for Windows, Linux, and macOS
 - **Modern Web Dashboard** - React-based responsive UI
 
 ## Architecture
@@ -53,7 +53,7 @@ Sentinel is a modern, cloud-hosted Remote Monitoring and Management (RMM) platfo
 | Backend | Go 1.22, Gin Framework |
 | Database | PostgreSQL 16 |
 | Cache | Redis 7 |
-| Agent | Rust |
+| Agent | Go 1.21 |
 | Reverse Proxy | Traefik v3 |
 | Container | Docker, Docker Compose |
 
@@ -154,8 +154,7 @@ sudo ./sentinel-agent install --server=https://your-server --token=YOUR_ENROLLME
 ### Current Platform
 
 ```bash
-cd agent
-cargo build --release
+cd agent && go build -o sentinel-agent ./cmd/sentinel-agent
 ```
 
 ### All Platforms (requires cross)
@@ -222,7 +221,7 @@ curl -X POST https://your-server/api/devices/{id}/commands \
 
 ```
 sentinel/
-├── agent/              # Rust agent source
+├── agent/              # Go agent source
 ├── frontend/           # React frontend
 ├── server/             # Go backend
 │   ├── cmd/           # Entry points

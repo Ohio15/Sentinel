@@ -1,7 +1,6 @@
 package executor
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -12,6 +11,38 @@ import (
 	"strings"
 	"time"
 )
+
+const maxOutputSize = 1024 * 1024 // 1MB per stream
+
+// limitedBuffer captures output up to a maximum size, discarding excess data.
+type limitedBuffer struct {
+	buf       []byte
+	max       int
+	truncated bool
+}
+
+func (lb *limitedBuffer) Write(p []byte) (n int, err error) {
+	remaining := lb.max - len(lb.buf)
+	if remaining <= 0 {
+		lb.truncated = true
+		return len(p), nil // Accept but discard
+	}
+	if len(p) > remaining {
+		lb.buf = append(lb.buf, p[:remaining]...)
+		lb.truncated = true
+		return len(p), nil
+	}
+	lb.buf = append(lb.buf, p...)
+	return len(p), nil
+}
+
+func (lb *limitedBuffer) String() string {
+	s := string(lb.buf)
+	if lb.truncated {
+		s += "\n... [output truncated at 1MB]"
+	}
+	return s
+}
 
 // CommandResult contains the result of a command execution
 type CommandResult struct {
@@ -101,9 +132,10 @@ func (e *Executor) Execute(ctx context.Context, command string, cmdType string) 
 		}
 	}
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout := &limitedBuffer{max: maxOutputSize}
+	stderr := &limitedBuffer{max: maxOutputSize}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 
 	// Set environment
 	cmd.Env = os.Environ()
@@ -221,9 +253,10 @@ func (e *Executor) ExecuteScript(ctx context.Context, script string, language st
 	// Clean up temp file after execution
 	defer os.Remove(filename)
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout := &limitedBuffer{max: maxOutputSize}
+	stderr := &limitedBuffer{max: maxOutputSize}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	cmd.Env = os.Environ()
 
 	err := cmd.Run()

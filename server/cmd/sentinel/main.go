@@ -2,15 +2,20 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/sentinel/server/internal/alerting"
 	"github.com/sentinel/server/internal/api"
@@ -36,6 +41,11 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
+	// Validate all required configuration
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Configuration validation failed:\n%s", err)
+	}
+
 	log.Printf("Starting Sentinel server (ID: %s, Environment: %s)", cfg.ServerID, cfg.Environment)
 
 	// Initialize database with connection pool settings
@@ -57,6 +67,11 @@ func main() {
 	// Run migrations
 	if err := db.Migrate(); err != nil {
 		log.Fatalf("Failed to run migrations: %v", err)
+	}
+
+	// First-run admin creation (only when users table is empty)
+	if err := ensureFirstRunAdmin(db); err != nil {
+		log.Fatalf("Failed to create first-run admin: %v", err)
 	}
 
 	// Initialize Redis cache
@@ -170,10 +185,12 @@ func main() {
 	var jwtManager *credentials.JWTManager
 	var apiKeyManager *credentials.APIKeyManager
 
-	// Derive master encryption key from JWT secret (or use dedicated MASTER_KEY env var)
+	// Derive master encryption key from dedicated env var (or derive from JWT secret with salt)
 	masterKeySource := os.Getenv("CREDENTIAL_MASTER_KEY")
 	if masterKeySource == "" {
-		masterKeySource = cfg.JWTSecret // Fallback to JWT secret for key derivation
+		// Derive a DIFFERENT key - not the raw JWT secret
+		masterKeySource = cfg.JWTSecret + ":credential-master-key-v1"
+		log.Println("[WARN] CREDENTIAL_MASTER_KEY not set, deriving from JWT_SECRET. Set a separate key for production.")
 	}
 	masterKey := sha256.Sum256([]byte(masterKeySource))
 
@@ -221,14 +238,15 @@ func main() {
 	// Initialize API router with all services
 	router := api.NewRouterWithServices(services)
 
-	// Create HTTP server
+	// Create HTTP server with hardened timeouts to prevent slowloris and resource exhaustion
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
 		Handler:           router,
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       0,
-		WriteTimeout:      0,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1MB
 	}
 
 	// Start command queue consumer
@@ -238,6 +256,11 @@ func main() {
 
 	// Start HTTP server in goroutine
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[CRITICAL] HTTP server goroutine panicked: %v\nStack: %s", r, debug.Stack())
+			}
+		}()
 		log.Printf("Sentinel HTTP server listening on %s", server.Addr)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("HTTP server failed: %v", err)
@@ -293,6 +316,11 @@ func main() {
 		} else {
 			grpcSrv = srv
 			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("[CRITICAL] gRPC server goroutine panicked: %v\nStack: %s", r, debug.Stack())
+					}
+				}()
 				if err := srv.Serve(listener); err != nil {
 					log.Printf("gRPC server error: %v", err)
 				}
@@ -302,6 +330,11 @@ func main() {
 
 	// Start agent log cleanup goroutine (delete logs older than 7 days, runs daily)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[CRITICAL] Log cleanup goroutine panicked: %v\nStack: %s", r, debug.Stack())
+			}
+		}()
 		// Initial delay to let server stabilize
 		time.Sleep(5 * time.Minute)
 		ticker := time.NewTicker(24 * time.Hour)
@@ -315,6 +348,37 @@ func main() {
 				log.Printf("[LogCleanup] Cleaned up %d old agent log entries", result.RowsAffected())
 			}
 			<-ticker.C
+		}
+	}()
+
+	// Metrics retention cleanup (daily)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[CRITICAL] Metrics cleanup panicked: %v", r)
+			}
+		}()
+		// Run once on startup after a delay
+		time.Sleep(5 * time.Minute)
+		retentionDays := 90
+		var deleted int
+		err := db.Pool().QueryRow(context.Background(), "SELECT cleanup_old_metrics($1)", retentionDays).Scan(&deleted)
+		if err != nil {
+			log.Printf("[ERROR] Initial metrics cleanup: %v", err)
+		} else if deleted > 0 {
+			log.Printf("[INFO] Startup metrics cleanup: removed %d old records", deleted)
+		}
+
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			var d int
+			err := db.Pool().QueryRow(context.Background(), "SELECT cleanup_old_metrics($1)", retentionDays).Scan(&d)
+			if err != nil {
+				log.Printf("[ERROR] Metrics cleanup: %v", err)
+			} else if d > 0 {
+				log.Printf("[INFO] Daily metrics cleanup: removed %d records (retention: %d days)", d, retentionDays)
+			}
 		}
 	}()
 
@@ -372,4 +436,46 @@ func handleCommand(distHub *websocket.DistributedHub, localHub *websocket.Hub, c
 	}
 
 	return fmt.Errorf("no hub available")
+}
+
+// ensureFirstRunAdmin creates an admin user with a random password if the users table is empty.
+// This replaces the old hardcoded admin INSERT in the migration SQL.
+func ensureFirstRunAdmin(db *database.DB) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var count int
+	err := db.Pool().QueryRow(ctx, "SELECT COUNT(*) FROM users").Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to check users table: %w", err)
+	}
+
+	if count > 0 {
+		return nil // Users already exist, skip first-run setup
+	}
+
+	// Generate a cryptographically random 24-character password
+	randomBytes := make([]byte, 18) // 18 bytes = 24 base64 chars
+	if _, err := rand.Read(randomBytes); err != nil {
+		return fmt.Errorf("failed to generate random password: %w", err)
+	}
+	password := base64.URLEncoding.EncodeToString(randomBytes)
+
+	// Hash with bcrypt cost 12
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	_, err = db.Pool().Exec(ctx,
+		"INSERT INTO users (email, password_hash, first_name, last_name, role) VALUES ($1, $2, $3, $4, $5)",
+		"admin@sentinel.local", string(hash), "Admin", "User", "admin",
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert admin user: %w", err)
+	}
+
+	fmt.Printf("\n========================================\nFIRST RUN: Admin credentials\nEmail: admin@sentinel.local\nPassword: %s\nCHANGE THIS IMMEDIATELY\n========================================\n", password)
+
+	return nil
 }

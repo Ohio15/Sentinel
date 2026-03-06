@@ -59,6 +59,9 @@ func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
 		// For WebSocket connections, also check query parameter
 		if tokenString == "" {
 			tokenString = c.Query("token")
+			if tokenString != "" {
+				log.Printf("[DEPRECATION] Token in query string from %s path=%s — use Authorization header", c.ClientIP(), c.Request.URL.Path)
+			}
 		}
 
 		// Debug logging for WebSocket auth failures
@@ -139,7 +142,8 @@ func AuthOrAPIKeyMiddleware(jwtSecret, apiKey string) gin.HandlerFunc {
 			if subtle.ConstantTimeCompare([]byte(key), []byte(apiKey)) == 1 {
 				c.Set("userId", uuid.Nil)
 				c.Set("email", "api-key")
-				c.Set("role", "admin")
+				c.Set("role", "operator") // Previously "admin" — principle of least privilege
+				log.Printf("[WARN] API key used without explicit role, defaulting to operator. Set role in api_keys table.")
 				c.Next()
 				return
 			}
@@ -160,6 +164,9 @@ func AuthOrAPIKeyMiddleware(jwtSecret, apiKey string) gin.HandlerFunc {
 
 		if tokenString == "" {
 			tokenString = c.Query("token")
+			if tokenString != "" {
+				log.Printf("[DEPRECATION] Token in query string from %s path=%s — use Authorization header", c.ClientIP(), c.Request.URL.Path)
+			}
 		}
 
 		if tokenString == "" {
@@ -254,11 +261,28 @@ func NewAgentAuthMiddleware(pool *pgxpool.Pool, fallbackToken string) gin.Handle
 
 // validateDatabaseToken checks if a token is valid in the database
 func validateDatabaseToken(ctx context.Context, pool *pgxpool.Pool, token string) (bool, uuid.UUID) {
-	// Query all active tokens and check each one
+	// Fast path: try plaintext exact match for legacy tokens first (O(1) via index)
+	var legacyTokenID uuid.UUID
+	err := pool.QueryRow(ctx, `
+		SELECT id FROM enrollment_tokens
+		WHERE token = $1 AND is_active = TRUE AND is_legacy = TRUE
+		AND (expires_at IS NULL OR expires_at > NOW())
+		AND (max_uses IS NULL OR use_count < max_uses)
+		LIMIT 1
+	`, token).Scan(&legacyTokenID)
+	if err == nil {
+		log.Printf("[PERF] Enrollment token validation checked 1 tokens")
+		return true, legacyTokenID
+	}
+
+	// Slow path: check bcrypt-hashed tokens (O(n) but limited)
 	rows, err := pool.Query(ctx, `
 		SELECT id, token, token_hash, is_legacy, expires_at, max_uses, use_count
 		FROM enrollment_tokens
 		WHERE is_active = TRUE
+		AND (expires_at IS NULL OR expires_at > NOW())
+		AND (max_uses IS NULL OR use_count < max_uses)
+		LIMIT 50
 	`)
 	if err != nil {
 		log.Printf("[AUTH] Failed to query enrollment tokens: %v", err)
@@ -266,6 +290,7 @@ func validateDatabaseToken(ctx context.Context, pool *pgxpool.Pool, token string
 	}
 	defer rows.Close()
 
+	count := 0
 	for rows.Next() {
 		var tokenID uuid.UUID
 		var plainToken *string
@@ -280,16 +305,7 @@ func validateDatabaseToken(ctx context.Context, pool *pgxpool.Pool, token string
 			log.Printf("[AUTH] Error scanning token row: %v", err)
 			continue
 		}
-
-		// Check expiration
-		if expiresAt != nil && time.Now().After(*expiresAt) {
-			continue
-		}
-
-		// Check usage limits
-		if maxUses != nil && useCount >= *maxUses {
-			continue
-		}
+		count++
 
 		// Validate token based on type
 		var valid bool
@@ -304,9 +320,11 @@ func validateDatabaseToken(ctx context.Context, pool *pgxpool.Pool, token string
 		}
 
 		if valid {
+			log.Printf("[PERF] Enrollment token validation checked %d tokens", count)
 			return true, tokenID
 		}
 	}
 
+	log.Printf("[PERF] Enrollment token validation checked %d tokens", count)
 	return false, uuid.Nil
 }
