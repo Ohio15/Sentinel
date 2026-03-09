@@ -8,7 +8,13 @@
 import { useState, useEffect, FormEvent } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Loader2, Fingerprint, Smartphone, Key, ArrowLeft } from 'lucide-react';
-import { browserSupportsWebAuthn, startAuthentication } from '@simplewebauthn/browser';
+import {
+  browserSupportsWebAuthn,
+  startAuthentication,
+  base64URLStringToBuffer,
+  bufferToBase64URLString,
+  WebAuthnAbortService,
+} from '@simplewebauthn/browser';
 import { useAuthStore } from '../stores/authStore';
 import { Input } from '../components/ui';
 import { api } from '../services/api';
@@ -49,15 +55,61 @@ export function Login() {
       // go-webauthn returns { publicKey: { ... } }, but @simplewebauthn/browser expects just the publicKey contents
       const publicKeyOptions = (options as { publicKey?: Record<string, unknown> })?.publicKey || options;
 
-      // Add hints for preferred transport method
-      const authOptions = {
-        ...publicKeyOptions,
-        // For phone/QR, hint that we prefer hybrid (cross-device) transport
-        ...(preferHybrid && { hints: ['hybrid'] }),
-      } as Parameters<typeof startAuthentication>[0];
-
       // Step 2: Prompt user for authentication
-      const authResponse = await startAuthentication(authOptions);
+      let authResponse;
+
+      if (preferHybrid) {
+        // Call navigator.credentials.get() directly for the phone/QR flow.
+        // SimpleWebAuthn v10 puts hints inside publicKey, but Chrome expects
+        // hints at the top-level CredentialRequestOptions to trigger the QR dialog.
+        const optionsJSON = publicKeyOptions as Record<string, unknown>;
+
+        let allowCredentials: PublicKeyCredentialDescriptor[] | undefined;
+        const allowCreds = optionsJSON.allowCredentials as Array<{ id: string; type: string; transports?: string[] }> | undefined;
+        if (allowCreds?.length) {
+          allowCredentials = allowCreds.map((cred) => ({
+            id: base64URLStringToBuffer(cred.id),
+            type: cred.type as PublicKeyCredentialType,
+            ...(cred.transports && { transports: cred.transports as AuthenticatorTransport[] }),
+          }));
+        }
+
+        const credentialOptions: CredentialRequestOptions = {
+          publicKey: {
+            challenge: base64URLStringToBuffer(optionsJSON.challenge as string),
+            rpId: optionsJSON.rpId as string | undefined,
+            timeout: optionsJSON.timeout as number | undefined,
+            userVerification: (optionsJSON.userVerification as UserVerificationRequirement) || 'preferred',
+            allowCredentials,
+          },
+          // hints at the top level so Chrome/Windows presents the QR code dialog
+          hints: ['hybrid'],
+          signal: WebAuthnAbortService.createNewAbortSignal(),
+        } as CredentialRequestOptions & { hints: string[] };
+
+        const credential = await navigator.credentials.get(credentialOptions) as PublicKeyCredential | null;
+        if (!credential) {
+          throw new Error('Authentication was not completed');
+        }
+
+        const response = credential.response as AuthenticatorAssertionResponse;
+        authResponse = {
+          id: credential.id,
+          rawId: bufferToBase64URLString(credential.rawId),
+          response: {
+            authenticatorData: bufferToBase64URLString(response.authenticatorData),
+            clientDataJSON: bufferToBase64URLString(response.clientDataJSON),
+            signature: bufferToBase64URLString(response.signature),
+            userHandle: response.userHandle ? bufferToBase64URLString(response.userHandle) : undefined,
+          },
+          type: credential.type,
+          clientExtensionResults: credential.getClientExtensionResults(),
+          authenticatorAttachment: credential.authenticatorAttachment,
+        };
+      } else {
+        const authOptions = publicKeyOptions as Parameters<typeof startAuthentication>[0];
+        authResponse = await startAuthentication(authOptions);
+      }
 
       // Step 3: Complete authentication
       const result = await api!.finishPasskeyAuthentication({
