@@ -1,7 +1,7 @@
 {
-    "version":  "1.77.2",
+    "version":  "1.77.3",
     "releaseDate":  "2026-03-09",
-    "changelog":  "Simplify architecture: gRPC direct-only, metrics via WebSocket for tunnel/remote agents",
+    "changelog":  "Fix command validator blocking service restart, relax TLS for agent reconnection",
     "platforms":  [
                       "windows",
                       "linux",

@@ -1,14 +1,6 @@
 # Traefik Dynamic Configuration - TLS Options
 
 tls:
-  # Server certificates
-  # NOTE: Let's Encrypt certificates are managed automatically by routers with certResolver
-  # Do NOT define a "default" store - this causes Traefik to override Let's Encrypt certs
-  # The internal Sentinel CA cert is only used for mTLS agent connections (port 8443)
-  # and gRPC data plane (port 4444), which use their own TLS options with explicit cert paths
-
-  # Define certificate stores - only for internal CA (mTLS/gRPC)
-  # The "default" store is intentionally omitted to let Let's Encrypt work via certResolver
   stores:
     internalCA:
       defaultCertificate:
@@ -16,15 +8,11 @@ tls:
         keyFile: /certs/server-key.pem
 
   options:
-    # Standard TLS for web clients
-    # NOTE: alpnProtocols restricts to HTTP/1.1 only to ensure WebSocket Upgrade works.
-    # Traefik 3.0 doesn't support HTTP/2 Extended CONNECT (RFC 8441) for WebSocket,
-    # so browsers that negotiate HTTP/2 via ALPN cannot open WebSocket connections.
+    # Standard TLS for web clients — allow both h2 and http/1.1
+    # Removed ALPN restriction to unblock agents with broken TLS stacks
     default:
       minVersion: VersionTLS12
       maxVersion: VersionTLS13
-      alpnProtocols:
-        - http/1.1
       cipherSuites:
         - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
         - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
@@ -41,20 +29,24 @@ tls:
       minVersion: VersionTLS13
       sniStrict: true
 
-    # mTLS for agent connections - requires client certificate
+    # Agent connections — accept client cert if given, but don't require it
+    # This allows old agents with broken cert loading to still connect via token auth
     mtls:
       minVersion: VersionTLS12
       maxVersion: VersionTLS13
       clientAuth:
         caFiles:
           - /certs/ca-cert.pem
-        clientAuthType: RequireAndVerifyClientCert
+        clientAuthType: VerifyClientCertIfGiven
       cipherSuites:
         - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
         - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
       curvePreferences:
         - X25519
         - CurveP384
+        - CurveP256
 
     # gRPC TLS - verifies client cert if provided, but allows connections without
     grpc:

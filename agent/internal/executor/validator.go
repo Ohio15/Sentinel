@@ -216,8 +216,9 @@ func getDangerousPatterns() []*regexp.Regexp {
 		`base64\s+-d`,
 		`[a-zA-Z0-9+/]{100,}`,
 
-		// Multiple command separators
-		`[;&|]{2,}`,
+		// Suspicious command separators (but allow || for fallback chains and && for sequential)
+		`;\s*;\s*;`,  // Triple semicolons
+		`\|\s*\|\s*\|`, // Triple pipes (not logical OR fallback)
 	}
 
 	var compiled []*regexp.Regexp
