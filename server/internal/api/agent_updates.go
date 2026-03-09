@@ -568,6 +568,19 @@ func isNewerVersion(latest, current string) bool {
 	return false
 }
 
+// hasRecentUpdateFailure checks whether the given agent has a failed or rolled-back
+// update to targetVersion within the last 30 minutes. Used to suppress update
+// notifications so agents don't enter a download-fail-retry loop every heartbeat.
+func (r *Router) hasRecentUpdateFailure(ctx context.Context, agentID, targetVersion string) bool {
+	var failedAt time.Time
+	err := r.db.Pool().QueryRow(ctx, `
+		SELECT completed_at FROM agent_updates
+		WHERE agent_id = $1 AND to_version = $2 AND status IN ('failed', 'rolled_back')
+		ORDER BY completed_at DESC LIMIT 1
+	`, agentID, targetVersion).Scan(&failedAt)
+	return err == nil && time.Since(failedAt) < 30*time.Minute
+}
+
 func parseVersion(v string) [3]int {
 	var parts [3]int
 	split := strings.Split(strings.TrimPrefix(v, "v"), ".")

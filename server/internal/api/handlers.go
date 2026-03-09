@@ -413,6 +413,8 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 				// update notifications — they just trigger a useless download storm.
 				if osType == "linux" && !isNewerVersion(agentVersion, "1.71.99") {
 					log.Printf("Suppressing update notification for agent %s (Linux v%s < v1.72.0, requires manual update)", authPayload.AgentID, agentVersion)
+				} else if r.hasRecentUpdateFailure(ctx, authPayload.AgentID, latestVersion) {
+					log.Printf("Suppressing update notification for agent %s (recent update failure, 30min cooldown)", authPayload.AgentID)
 				} else {
 					ackMsg, _ := json.Marshal(map[string]interface{}{
 						"type": ws.MsgTypeHeartbeatAck,
@@ -704,13 +706,23 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 			// self-update is broken and notifications just cause download storms.
 			var deviceOSType string
 			_ = r.db.Pool().QueryRow(ctx, "SELECT COALESCE(os_type, '') FROM devices WHERE id = $1", deviceID).Scan(&deviceOSType)
+
+			// Suppress update notification for 30 minutes after a failed update attempt.
+			// Without this, agents that fail an update get told to try again every heartbeat
+			// (~10s), hammering the download endpoint with 429s in an endless loop.
+			recentFailure := r.hasRecentUpdateFailure(ctx, agentID, latestVersion)
+
 			if deviceOSType == "linux" && !isNewerVersion(heartbeat.AgentVersion, "1.71.99") {
 				// Don't tell this agent about updates — it can't apply them
+			} else if recentFailure {
+				// Don't tell this agent about updates — it recently failed, back off
+				log.Printf("Agent %s update suppressed for 30min (recent failure)", agentID)
 			} else {
 				ackPayload["updateAvailable"] = true
 				ackPayload["latestVersion"] = latestVersion
 			}
-			log.Printf("Agent %s has update available: %s -> %s (os=%s, suppressed=%v)", agentID, heartbeat.AgentVersion, latestVersion, deviceOSType, deviceOSType == "linux" && !isNewerVersion(heartbeat.AgentVersion, "1.71.99"))
+			suppressed := (deviceOSType == "linux" && !isNewerVersion(heartbeat.AgentVersion, "1.71.99")) || recentFailure
+			log.Printf("Agent %s has update available: %s -> %s (os=%s, suppressed=%v)", agentID, heartbeat.AgentVersion, latestVersion, deviceOSType, suppressed)
 		} else if heartbeat.AgentVersion != "" {
 			// Agent is at latest version — auto-resolve any stale update failure alerts
 			if result, err := r.db.Pool().Exec(ctx, `

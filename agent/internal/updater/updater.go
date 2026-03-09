@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -14,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
@@ -21,6 +23,16 @@ import (
 	"github.com/sentinel/agent/internal/mtls"
 	"github.com/sentinel/agent/internal/protection"
 )
+
+// ErrRateLimited is returned when the server responds with 429 Too Many Requests.
+// Callers should inspect RetryAfter for the server-suggested wait duration.
+type ErrRateLimited struct {
+	RetryAfter time.Duration
+}
+
+func (e *ErrRateLimited) Error() string {
+	return fmt.Sprintf("rate limited by server, retry after %v", e.RetryAfter)
+}
 
 const (
 	StateIdle        = "idle"
@@ -352,6 +364,22 @@ func (u *Updater) DownloadUpdate(ctx context.Context, info *VersionInfo) (string
 		if err == nil {
 			return path, nil
 		}
+
+		// If the server rate-limited us, wait the specified duration and
+		// do NOT count this as a real failure attempt.
+		var rateLimitErr *ErrRateLimited
+		if errors.As(err, &rateLimitErr) {
+			log.Printf("[Updater] Rate limited, waiting %v before retry", rateLimitErr.RetryAfter)
+			u.updateStatus(StateDownloading, fmt.Sprintf("Server cooldown, retrying in %v...", rateLimitErr.RetryAfter), 0)
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(rateLimitErr.RetryAfter):
+			}
+			attempt-- // Don't count rate-limit as a failure attempt
+			continue
+		}
+
 		lastErr = err
 		log.Printf("Download attempt %d failed: %v", attempt+1, err)
 	}
@@ -362,13 +390,22 @@ func (u *Updater) DownloadUpdate(ctx context.Context, info *VersionInfo) (string
 func (u *Updater) downloadOnce(ctx context.Context, info *VersionInfo, tempFile string) (string, error) {
 	// Try primary URL first
 	path, err := u.downloadFromURL(ctx, info.DownloadURL, tempFile, info)
-	if err != nil && u.serverURL != "" {
-		// Fallback: construct URL from agent's own server URL
-		fallbackURL := fmt.Sprintf("%s/api/agent/update/download?platform=%s&arch=%s",
-			u.serverURL, runtime.GOOS, runtime.GOARCH)
-		if fallbackURL != info.DownloadURL {
-			log.Printf("[Updater] Primary download failed, trying fallback URL: %s", fallbackURL)
-			path, err = u.downloadFromURL(ctx, fallbackURL, tempFile, info)
+	if err != nil {
+		// If rate-limited, propagate immediately — fallback URL hits the same
+		// server and will return the same 429.
+		var rateLimitErr *ErrRateLimited
+		if errors.As(err, &rateLimitErr) {
+			return "", err
+		}
+
+		if u.serverURL != "" {
+			// Fallback: construct URL from agent's own server URL
+			fallbackURL := fmt.Sprintf("%s/api/agent/update/download?platform=%s&arch=%s",
+				u.serverURL, runtime.GOOS, runtime.GOARCH)
+			if fallbackURL != info.DownloadURL {
+				log.Printf("[Updater] Primary download failed, trying fallback URL: %s", fallbackURL)
+				path, err = u.downloadFromURL(ctx, fallbackURL, tempFile, info)
+			}
 		}
 	}
 	return path, err
@@ -385,6 +422,19 @@ func (u *Updater) downloadFromURL(ctx context.Context, downloadURL, tempFile str
 		return "", fmt.Errorf("download failed: %w", err)
 	}
 	defer resp.Body.Close()
+
+	// Handle 429 rate limit: parse Retry-After and return a typed error so the
+	// caller can wait the server-specified duration instead of hammering retries.
+	if resp.StatusCode == http.StatusTooManyRequests {
+		retryAfter := 5 * time.Minute // safe default matching server cooldown
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			if seconds, parseErr := strconv.Atoi(ra); parseErr == nil && seconds > 0 {
+				retryAfter = time.Duration(seconds) * time.Second
+			}
+		}
+		log.Printf("[Updater] Server returned 429, will retry after %v", retryAfter)
+		return "", &ErrRateLimited{RetryAfter: retryAfter}
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("download returned status %d", resp.StatusCode)
@@ -665,7 +715,7 @@ echo [%%date%% %%time%%] Cleanup complete >> "%%LOG_FILE%%"
 
 func (u *Updater) applyUpdateUnix(currentExe, downloadPath string) error {
 	u.updateStatus(StateRestarting, "Installing update...", 50)
-	backupPath := currentExe + ".old"
+	backupPath := filepath.Join(filepath.Dir(currentExe), "sentinel-agent.bak")
 
 	// Set executable permissions on downloaded file
 	if err := os.Chmod(downloadPath, 0755); err != nil {
@@ -1148,7 +1198,7 @@ func (u *Updater) reportStatus(ctx context.Context) {
 func (u *Updater) Rollback() error {
 	currentExe, _ := os.Executable()
 	currentExe, _ = filepath.EvalSymlinks(currentExe)
-	backupPath := currentExe + ".old"
+	backupPath := filepath.Join(filepath.Dir(currentExe), "sentinel-agent.bak")
 
 	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
 		return fmt.Errorf("no backup available for rollback")

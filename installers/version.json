@@ -1,7 +1,7 @@
 {
-    "version":  "1.76.14",
-    "releaseDate":  "2026-03-06",
-    "changelog":  "Terminal security: input validation (4KB limit, null byte rejection), audit log rotation, configurable audit log path",
+    "version":  "1.76.15",
+    "releaseDate":  "2026-03-09",
+    "changelog":  "Fix cascading .old backup bug, agent respects Retry-After on 429, server suppresses update notifications after recent failure",
     "platforms":  [
                       "windows",
                       "linux",
