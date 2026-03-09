@@ -329,6 +329,26 @@ func main() {
 				}
 			}()
 		}
+
+		// Start plaintext gRPC server for Cloudflare tunnel connections
+		if cfg.GRPCPlaintextPort > 0 {
+			log.Printf("Starting plaintext gRPC server on port %d (CF tunnel)...", cfg.GRPCPlaintextPort)
+			ptSrv, ptListener, ptErr := grpcserver.StartPlaintextServer(cfg.GRPCPlaintextPort, grpcServer, nil)
+			if ptErr != nil {
+				log.Printf("Warning: Failed to start plaintext gRPC server: %v", ptErr)
+			} else {
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							logger.Error("Plaintext gRPC server goroutine panicked", "panic", r, "stack", string(debug.Stack()))
+						}
+					}()
+					if err := ptSrv.Serve(ptListener); err != nil {
+						log.Printf("Plaintext gRPC server error: %v", err)
+					}
+				}()
+			}
+		}
 	}
 
 	// Start agent log cleanup goroutine (delete logs older than 7 days, runs daily)

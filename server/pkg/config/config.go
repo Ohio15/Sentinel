@@ -58,9 +58,10 @@ type Config struct {
 	CertValidityYears   int    // Certificate validity period in years
 
 	// gRPC Data Plane
-	GRPCPort    int    // gRPC server port (0 to disable)
-	TLSCertPath string // Path to server TLS certificate
-	TLSKeyPath  string // Path to server TLS private key
+	GRPCPort          int    // gRPC server port (0 to disable)
+	GRPCPlaintextPort int    // Plaintext gRPC port for CF tunnel connections (0 to disable)
+	TLSCertPath       string // Path to server TLS certificate
+	TLSKeyPath        string // Path to server TLS private key
 
 	// WebAuthn / Passkey Authentication
 	WebAuthnRPID             string   // Relying Party ID (domain name)
@@ -135,9 +136,10 @@ func Load() (*Config, error) {
 		CertValidityYears: getEnvInt("CERT_VALIDITY_YEARS", 2),
 
 		// gRPC Data Plane
-		GRPCPort:    getEnvInt("GRPC_PORT", 4444),
-		TLSCertPath: getEnv("TLS_CERT_PATH", "/certs/server-cert.pem"),
-		TLSKeyPath:  getEnv("TLS_KEY_PATH", "/certs/server-key.pem"),
+		GRPCPort:          getEnvInt("GRPC_PORT", 4444),
+		GRPCPlaintextPort: getEnvInt("GRPC_PLAINTEXT_PORT", 0),
+		TLSCertPath:       getEnv("TLS_CERT_PATH", "/certs/server-cert.pem"),
+		TLSKeyPath:        getEnv("TLS_KEY_PATH", "/certs/server-key.pem"),
 
 		// WebAuthn / Passkey Authentication
 		WebAuthnRPID:             getEnv("WEBAUTHN_RP_ID", "localhost"),

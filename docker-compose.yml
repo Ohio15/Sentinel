@@ -43,6 +43,7 @@ services:
     # Port 8090 for local development only - in production, only Traefik exposes ports
     ports:
       - "127.0.0.1:8090:8080"
+      - "127.0.0.1:4445:4445"  # Plaintext gRPC for CF tunnel (localhost only)
     expose:
       - "4444"   # gRPC Data Plane (exposed via Traefik, not directly to host)
     restart: unless-stopped
@@ -65,6 +66,7 @@ services:
       - CERT_VALIDITY_YEARS=${CERT_VALIDITY_YEARS:-2}
       # gRPC Data Plane
       - GRPC_PORT=4444
+      - GRPC_PLAINTEXT_PORT=4445
       - TLS_CERT_PATH=/certs/server-cert.pem
       - TLS_KEY_PATH=/certs/server-key.pem
       # WebAuthn / Passkey Authentication
