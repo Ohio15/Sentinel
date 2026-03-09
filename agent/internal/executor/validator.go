@@ -41,7 +41,7 @@ func getWhitelistedCommands() map[string]bool {
 		"tasklist", "taskkill", "wmic",
 
 		// Windows Service Management
-		"sc", "net",
+		"sc", "sc.exe", "net",
 
 		// Windows Network
 		"ipconfig", "netstat", "ping", "tracert", "nslookup", "route",

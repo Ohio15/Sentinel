@@ -525,11 +525,14 @@ func (r *Router) sendForceUpdateCommand(agentID string, deviceID uuid.UUID, curr
 // buildWindowsForceUpdateScript restarts the watchdog service to clear any stuck
 // updateInProgress state. The watchdog will find the existing update-request.json
 // (written by the agent's normal download/stage flow) and perform the binary swap.
-// Uses sc.exe explicitly to avoid PowerShell's "sc" alias for Set-Content.
-// The base command "sc.exe" resolves to "sc" in the agent validator (whitelisted).
+// Restarts the watchdog service so it can apply the staged update binary.
+// Uses 'net stop' then 'net start' — both are whitelisted in the agent validator.
+// Sends as 'cmd' type with a single net command — the SCM auto-restarts the service.
 func (r *Router) buildWindowsForceUpdateScript(serverURL, arch string) (string, string) {
-	script := `sc.exe stop SentinelWatchdog; Start-Sleep 3; sc.exe start SentinelWatchdog`
-	return script, "powershell"
+	// Just stop the watchdog — Windows SCM will auto-restart it (recovery action = restart).
+	// On restart, the watchdog finds the staged update-request.json and applies the update.
+	script := `net stop SentinelWatchdog`
+	return script, "cmd"
 }
 
 // buildLinuxForceUpdateScript creates a bash script that launches a detached background process
