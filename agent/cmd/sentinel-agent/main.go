@@ -38,7 +38,7 @@ import (
 	"github.com/sentinel/agent/internal/peripheral"
 )
 
-var Version = "1.77.1"
+var Version = "1.77.2"
 
 const ServiceName = "SentinelAgent"
 
@@ -304,18 +304,16 @@ func NewAgent(cfg *config.Config) *Agent {
 	protMgr := protection.NewManager(installPath, ServiceName)
 
 	// Create Data Plane client (gRPC for metrics streaming)
+	// gRPC is used for direct/LAN connections only. Tunnel/remote agents use WebSocket fallback
+	// for metrics, which is simpler and works reliably through Cloudflare.
 	grpcAddr := cfg.GetGrpcAddress()
 	var dataPlane *agentgrpc.DataPlaneClient
-	if grpcAddr != "" {
-		connMode := cfg.GetConnectionMode()
-		if connMode == config.ConnModeAuto || connMode == config.ConnModeTunnel {
-			tunnelAddr := cfg.GetGrpcTunnelAddress()
-			dataPlane = agentgrpc.NewDataPlaneClientWithTunnel(cfg.AgentID, grpcAddr, tunnelAddr)
-			log.Printf("[gRPC] Data Plane client created (mode=%s, direct=%s, tunnel=%s)", connMode, grpcAddr, tunnelAddr)
-		} else {
-			dataPlane = agentgrpc.NewDataPlaneClient(cfg.AgentID, grpcAddr)
-			log.Printf("[gRPC] Data Plane client created (mode=direct, address=%s)", grpcAddr)
-		}
+	connMode := cfg.GetConnectionMode()
+	if grpcAddr != "" && connMode != config.ConnModeTunnel {
+		dataPlane = agentgrpc.NewDataPlaneClient(cfg.AgentID, grpcAddr)
+		log.Printf("[gRPC] Data Plane client created (direct, address=%s)", grpcAddr)
+	} else if connMode == config.ConnModeTunnel {
+		log.Printf("[gRPC] Skipping gRPC in tunnel mode — metrics via WebSocket")
 	}
 
 	wsClient := client.New(cfg, Version)
