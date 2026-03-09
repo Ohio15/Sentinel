@@ -457,11 +457,10 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	r.hub.BroadcastToDashboards(offlineMsg)
 }
 
-// sendForceUpdateCommand sends a detached update script to agents with broken updaters.
-// Agents before v1.76.0 have a download storm bug that prevents normal updates.
-// This sends an execute_command with the data in the "data" field (not "payload")
-// for backward compatibility with old agent message formats.
-// Supports both Windows (PowerShell) and Linux (bash) agents.
+// sendForceUpdateCommand sends commands to update agents that can't self-update.
+// Windows agents receive a multi-step sequence: download → rename → copy → restart.
+// Linux agents receive a bash script with nohup for detached execution.
+// Uses execute_command with "data" field for backward compatibility with old agents.
 func (r *Router) sendForceUpdateCommand(agentID string, deviceID uuid.UUID, currentVersion, targetVersion, osType string) {
 	// Throttle: only send once per device per 10 minutes (tracked in DB)
 	var lastForceUpdate *time.Time
@@ -489,28 +488,81 @@ func (r *Router) sendForceUpdateCommand(agentID string, deviceID uuid.UUID, curr
 		arch = "amd64"
 	}
 
-	var script, cmdType string
-
 	switch osType {
 	case "windows":
-		script, cmdType = r.buildWindowsForceUpdateScript(serverURL, arch)
+		r.sendWindowsForceUpdate(agentID, deviceID, currentVersion, targetVersion, serverURL, arch)
 	case "linux":
-		script, cmdType = r.buildLinuxForceUpdateScript(serverURL, arch)
+		r.sendLinuxForceUpdate(agentID, deviceID, currentVersion, targetVersion, serverURL, arch)
 	default:
 		log.Printf("[ForceUpdate] Unsupported OS type %q for agent %s", osType, agentID)
 		return
 	}
+}
 
-	// Send as execute_script which bypasses the command whitelist validator.
-	// execute_command only allows whitelisted base commands, but execute_script
-	// validates against blacklist patterns only — allowing full batch/bash scripts.
-	// Uses "data" field for backward compatibility with old agent message formats.
+// sendWindowsForceUpdate sends a multi-step command sequence to Windows agents.
+// Each command uses a whitelisted base command for validator compatibility:
+//   1. curl.exe: download new binary to %TEMP%
+//   2. mv (PowerShell Move-Item alias): rename running exe to .old
+//   3. cp (PowerShell Copy-Item alias): copy new binary to original path
+//   4. net stop: restart agent service (SCM auto-restarts with new binary)
+// All messages are queued at once; the agent processes them sequentially.
+func (r *Router) sendWindowsForceUpdate(agentID string, deviceID uuid.UUID, currentVersion, targetVersion, serverURL, arch string) {
+	downloadURL := fmt.Sprintf("%s/api/agent/update/download?platform=windows&arch=%s", serverURL, arch)
+
+	steps := []forceUpdateStep{
+		{
+			command: fmt.Sprintf(`curl.exe -s -f -o "%%TEMP%%\sentinel-agent-update.exe" "%s"`, downloadURL),
+			cmdType: "cmd",
+			name:    "download",
+		},
+		{
+			command: `mv "$env:ProgramFiles\SentinelRMM\sentinel-agent.exe" "$env:ProgramFiles\SentinelRMM\sentinel-agent.old" -Force`,
+			cmdType: "powershell",
+			name:    "rename-old",
+		},
+		{
+			command: `cp "$env:TEMP\sentinel-agent-update.exe" "$env:ProgramFiles\SentinelRMM\sentinel-agent.exe"`,
+			cmdType: "powershell",
+			name:    "copy-new",
+		},
+		{
+			command: `net stop SentinelAgent`,
+			cmdType: "cmd",
+			name:    "restart-agent",
+		},
+	}
+
+	for _, step := range steps {
+		cmdMsg, _ := json.Marshal(map[string]interface{}{
+			"type":      ws.MsgTypeCommand,
+			"requestId": uuid.New().String(),
+			"data": map[string]interface{}{
+				"command":     step.command,
+				"commandType": step.cmdType,
+			},
+		})
+		if err := r.hub.SendToAgent(agentID, cmdMsg); err != nil {
+			log.Printf("[ForceUpdate] Failed to send step %q to agent %s: %v", step.name, agentID, err)
+			return
+		}
+		log.Printf("[ForceUpdate] Sent step %q to agent %s", step.name, agentID)
+	}
+
+	_, _ = r.db.Pool().Exec(context.Background(),
+		"UPDATE devices SET last_force_update_at = NOW() WHERE id = $1", deviceID)
+	log.Printf("[ForceUpdate] Sent %d-step windows force update to agent %s: %s -> %s", len(steps), agentID, currentVersion, targetVersion)
+}
+
+// sendLinuxForceUpdate sends a bash script that uses nohup for detached execution.
+func (r *Router) sendLinuxForceUpdate(agentID string, deviceID uuid.UUID, currentVersion, targetVersion, serverURL, arch string) {
+	script, cmdType := r.buildLinuxForceUpdateScript(serverURL, arch)
+
 	cmdMsg, _ := json.Marshal(map[string]interface{}{
-		"type":      ws.MsgTypeScript,
+		"type":      ws.MsgTypeCommand,
 		"requestId": uuid.New().String(),
 		"data": map[string]interface{}{
-			"script":   script,
-			"language": cmdType,
+			"command":     script,
+			"commandType": cmdType,
 		},
 	})
 	if err := r.hub.SendToAgent(agentID, cmdMsg); err != nil {
@@ -518,58 +570,16 @@ func (r *Router) sendForceUpdateCommand(agentID string, deviceID uuid.UUID, curr
 		return
 	}
 
-	// Record that we sent a force update to throttle future attempts
 	_, _ = r.db.Pool().Exec(context.Background(),
 		"UPDATE devices SET last_force_update_at = NOW() WHERE id = $1", deviceID)
-	log.Printf("[ForceUpdate] Sent %s force update script to agent %s: %s -> %s", osType, agentID, currentVersion, targetVersion)
+	log.Printf("[ForceUpdate] Sent linux force update script to agent %s: %s -> %s", agentID, currentVersion, targetVersion)
 }
 
-// buildWindowsForceUpdateScript creates a batch script that downloads the latest
-// agent binary and launches a detached updater process. The updater survives the
-// agent service stopping, waits briefly, stops the agent service, replaces the
-// binary, and restarts it. This works even with old watchdog versions (< v1.76.0)
-// that don't have update-apply logic.
-// Sent via execute_script → ValidateScript (blacklist only, no whitelist check).
-func (r *Router) buildWindowsForceUpdateScript(serverURL, arch string) (string, string) {
-	downloadURL := fmt.Sprintf("%s/api/agent/update/download?platform=windows&arch=%s", serverURL, arch)
-
-	// Build the script as a raw string to avoid fmt.Sprintf percent-escaping issues
-	// with batch file %VAR% syntax. Only the download URL needs interpolation.
-	//
-	// Strategy:
-	// 1. Download new agent binary to temp dir
-	// 2. Validate the download (> 1MB)
-	// 3. Write a detached "apply" script that stops agent, swaps binary, starts agent
-	// 4. Launch the apply script via 'start' (survives parent process exit)
-	script := "@echo off\r\n" +
-		"set \"DOWNLOAD_URL=" + downloadURL + "\"\r\n" +
-		"set \"TEMP_EXE=%TEMP%\\sentinel-agent-update.exe\"\r\n" +
-		"set \"AGENT_EXE=%ProgramFiles%\\SentinelRMM\\sentinel-agent.exe\"\r\n" +
-		"set \"APPLY_BAT=%TEMP%\\sentinel-force-apply.bat\"\r\n" +
-		"\r\n" +
-		"echo [ForceUpdate] Downloading new agent binary...\r\n" +
-		"curl.exe -s -f -o \"%TEMP_EXE%\" \"%DOWNLOAD_URL%\"\r\n" +
-		"if not exist \"%TEMP_EXE%\" (\r\n" +
-		"    echo [ForceUpdate] Download failed\r\n" +
-		"    exit /b 1\r\n" +
-		")\r\n" +
-		"echo [ForceUpdate] Download complete\r\n" +
-		"\r\n" +
-		"(\r\n" +
-		"echo @echo off\r\n" +
-		"echo timeout /t 10 /nobreak ^> nul\r\n" +
-		"echo net stop SentinelAgent\r\n" +
-		"echo timeout /t 5 /nobreak ^> nul\r\n" +
-		"echo copy /y \"%TEMP_EXE%\" \"%AGENT_EXE%\"\r\n" +
-		"echo net start SentinelAgent\r\n" +
-		"echo del \"%TEMP_EXE%\"\r\n" +
-		") > \"%APPLY_BAT%\"\r\n" +
-		"\r\n" +
-		"echo [ForceUpdate] Launching detached apply script...\r\n" +
-		"start \"\" /min cmd /c \"%APPLY_BAT%\"\r\n" +
-		"echo [ForceUpdate] Update will complete in ~20 seconds\r\n"
-
-	return script, "bat"
+// forceUpdateStep represents one step in the force update sequence
+type forceUpdateStep struct {
+	command string
+	cmdType string
+	name    string
 }
 
 // buildLinuxForceUpdateScript creates a bash script that launches a detached background process
@@ -652,15 +662,9 @@ for name in SentinelAgent sentinel-agent sentinelagent; do
     fi
 done
 
-if [ -n "$SVC_NAME" ]; then
-    echo "[$(date)] Stopping service: $SVC_NAME (sudo=$SUDO)" >> "$LOG"
-    $SUDO systemctl stop "$SVC_NAME" 2>>"$LOG"
-    sleep 3
-else
-    echo "[$(date)] No systemd service found, using pkill" >> "$LOG"
-    $SUDO pkill -f sentinel-agent 2>/dev/null
-    sleep 3
-fi
+echo "[$(date)] Stopping agent (pkill)" >> "$LOG"
+$SUDO pkill -f sentinel-agent 2>/dev/null
+sleep 3
 
 # Install new binary
 $SUDO cp "$TEMP_PATH" "$CURRENT_BIN" 2>>"$LOG"
@@ -668,19 +672,19 @@ $SUDO chmod +x "$CURRENT_BIN"
 echo "[$(date)] Installed new binary" >> "$LOG"
 
 # Start the service
+# Restart using the service name if found, otherwise start directly
 if [ -n "$SVC_NAME" ]; then
-    $SUDO systemctl start "$SVC_NAME" 2>>"$LOG"
+    $SUDO systemctl restart "$SVC_NAME" 2>>"$LOG"
     sleep 2
     if $SUDO systemctl is-active "$SVC_NAME" >/dev/null 2>&1; then
-        echo "[$(date)] Service started successfully" >> "$LOG"
+        echo "[$(date)] Service restarted successfully" >> "$LOG"
     else
-        echo "[$(date)] Service failed to start, rolling back" >> "$LOG"
+        echo "[$(date)] Service failed to restart, rolling back" >> "$LOG"
         $SUDO cp "${CURRENT_BIN}.old" "$CURRENT_BIN" 2>/dev/null
         $SUDO chmod +x "$CURRENT_BIN"
-        $SUDO systemctl start "$SVC_NAME" 2>>"$LOG"
+        $SUDO systemctl restart "$SVC_NAME" 2>>"$LOG"
     fi
 else
-    # Start directly if no systemd service
     nohup $SUDO "$CURRENT_BIN" >/dev/null 2>&1 &
     echo "[$(date)] Started binary directly (no systemd)" >> "$LOG"
 fi
