@@ -416,6 +416,9 @@ func (u *Updater) downloadFromURL(ctx context.Context, downloadURL, tempFile str
 	if err != nil {
 		return "", fmt.Errorf("failed to create download request: %w", err)
 	}
+	if u.agentID != "" {
+		req.Header.Set("X-Agent-ID", u.agentID)
+	}
 
 	resp, err := u.httpClient.Do(req)
 	if err != nil {

@@ -261,9 +261,13 @@ func (r *Router) downloadAgentUpdate(c *gin.Context) {
 	platform := c.Query("platform")
 	arch := c.Query("arch")
 
-	// Per-IP download cooldown: one download per platform per 5 minutes
-	// This protects against old agents that spawn concurrent download goroutines
-	cooldownKey := fmt.Sprintf("%s-%s-%s", c.ClientIP(), platform, arch)
+	// Per-agent download cooldown: one download per agent per platform per 5 minutes.
+	// Use X-Agent-ID header (set by agent) with IP fallback for old agents.
+	cooldownID := c.GetHeader("X-Agent-ID")
+	if cooldownID == "" {
+		cooldownID = c.ClientIP()
+	}
+	cooldownKey := fmt.Sprintf("%s-%s-%s", cooldownID, platform, arch)
 	if lastDownload, ok := downloadCooldown.Load(cooldownKey); ok {
 		if time.Since(lastDownload.(time.Time)) < 5*time.Minute {
 			remaining := 5*time.Minute - time.Since(lastDownload.(time.Time))
@@ -574,9 +578,9 @@ func isNewerVersion(latest, current string) bool {
 func (r *Router) hasRecentUpdateFailure(ctx context.Context, agentID, targetVersion string) bool {
 	var failedAt time.Time
 	err := r.db.Pool().QueryRow(ctx, `
-		SELECT completed_at FROM agent_updates
+		SELECT COALESCE(completed_at, created_at) FROM agent_updates
 		WHERE agent_id = $1 AND to_version = $2 AND status IN ('failed', 'rolled_back')
-		ORDER BY completed_at DESC LIMIT 1
+		ORDER BY COALESCE(completed_at, created_at) DESC LIMIT 1
 	`, agentID, targetVersion).Scan(&failedAt)
 	return err == nil && time.Since(failedAt) < 30*time.Minute
 }
