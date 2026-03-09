@@ -22,6 +22,7 @@ import (
 type DataPlaneClient struct {
 	agentID       string
 	serverAddress string
+	tunnelAddress string // CF tunnel gRPC address (grpc.hostname:443)
 	conn          *grpc.ClientConn
 	client        pb.DataPlaneServiceClient
 	connected     bool
@@ -29,6 +30,7 @@ type DataPlaneClient struct {
 	stopCh        chan struct{}
 	useTLS        bool
 	caCertPath    string
+	useTunnel     bool // If true, try tunnel connection first
 
 	// Metrics streaming
 	metricsStream pb.DataPlaneService_StreamMetricsClient
@@ -38,6 +40,20 @@ type DataPlaneClient struct {
 // NewDataPlaneClient creates a new Data Plane gRPC client
 func NewDataPlaneClient(agentID, serverAddress string) *DataPlaneClient {
 	return NewDataPlaneClientWithTLS(agentID, serverAddress, true, "")
+}
+
+// NewDataPlaneClientWithTunnel creates a gRPC client that tries CF tunnel first, falls back to direct
+func NewDataPlaneClientWithTunnel(agentID, serverAddress, tunnelAddress string) *DataPlaneClient {
+	caCertPath := findCACertificate()
+	return &DataPlaneClient{
+		agentID:       agentID,
+		serverAddress: serverAddress,
+		tunnelAddress: tunnelAddress,
+		useTLS:        true,
+		caCertPath:    caCertPath,
+		useTunnel:     tunnelAddress != "",
+		stopCh:        make(chan struct{}),
+	}
 }
 
 // NewDataPlaneClientWithTLS creates a new Data Plane gRPC client with TLS configuration
@@ -94,7 +110,23 @@ func (c *DataPlaneClient) Connect() error {
 		return nil
 	}
 
-	log.Printf("[gRPC] Connecting to Data Plane at %s...", c.serverAddress)
+	// Try tunnel first if configured
+	if c.useTunnel && c.tunnelAddress != "" {
+		err := c.connectToAddress(c.tunnelAddress, true)
+		if err == nil {
+			log.Printf("[gRPC] Connected via tunnel at %s", c.tunnelAddress)
+			return nil
+		}
+		log.Printf("[gRPC] Tunnel connection to %s failed, falling back to direct: %v", c.tunnelAddress, err)
+	}
+
+	// Direct connection
+	return c.connectToAddress(c.serverAddress, false)
+}
+
+// connectToAddress connects to a specific gRPC address
+func (c *DataPlaneClient) connectToAddress(address string, tunnelMode bool) error {
+	log.Printf("[gRPC] Connecting to Data Plane at %s...", address)
 
 	// Configure keepalive
 	kacp := keepalive.ClientParameters{
@@ -107,32 +139,42 @@ func (c *DataPlaneClient) Connect() error {
 	defer cancel()
 
 	// Create transport credentials
-	creds, err := c.createTransportCredentials()
-	if err != nil {
-		return fmt.Errorf("failed to create credentials: %w", err)
+	var creds credentials.TransportCredentials
+	var err error
+	if tunnelMode {
+		// Tunnel mode: use system root CAs (CF provides publicly-signed cert)
+		creds = credentials.NewTLS(&tls.Config{
+			MinVersion: tls.VersionTLS12,
+			// RootCAs: nil = system root CA pool
+		})
+	} else {
+		creds, err = c.createTransportCredentials()
+		if err != nil {
+			return fmt.Errorf("failed to create credentials: %w", err)
+		}
 	}
 
 	// Dial with options
 	conn, err := grpc.DialContext(
 		ctx,
-		c.serverAddress,
+		address,
 		grpc.WithTransportCredentials(creds),
 		grpc.WithKeepaliveParams(kacp),
 		grpc.WithBlock(),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to connect to gRPC server: %w", err)
+		return fmt.Errorf("failed to connect to gRPC server at %s: %w", address, err)
 	}
 
 	c.conn = conn
 	c.client = pb.NewDataPlaneServiceClient(conn)
 	c.connected = true
 
-	securityMode := "insecure"
-	if c.useTLS {
-		securityMode = "TLS"
+	mode := "direct"
+	if tunnelMode {
+		mode = "tunnel"
 	}
-	log.Printf("[gRPC] Connected to Data Plane at %s (%s)", c.serverAddress, securityMode)
+	log.Printf("[gRPC] Connected to Data Plane at %s (%s)", address, mode)
 
 	return nil
 }

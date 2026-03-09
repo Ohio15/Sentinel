@@ -289,3 +289,28 @@ func (c *Config) GetGrpcAddress() string {
 	// No port specified, assume default 8081, so gRPC is 8082
 	return host + ":8082"
 }
+
+// GetGrpcTunnelAddress returns the gRPC address for Cloudflare tunnel connections.
+// Uses grpc.<hostname>:443 for tunnel mode.
+func (c *Config) GetGrpcTunnelAddress() string {
+	serverURL := c.ServerURL
+	if serverURL == "" {
+		return ""
+	}
+
+	// Extract hostname from server URL
+	host := serverURL
+	host = strings.TrimPrefix(host, "http://")
+	host = strings.TrimPrefix(host, "https://")
+	host = strings.TrimPrefix(host, "ws://")
+	host = strings.TrimPrefix(host, "wss://")
+
+	if idx := strings.Index(host, "/"); idx != -1 {
+		host = host[:idx]
+	}
+	if idx := strings.Index(host, ":"); idx != -1 {
+		host = host[:idx]
+	}
+
+	return fmt.Sprintf("grpc.%s:443", host)
+}

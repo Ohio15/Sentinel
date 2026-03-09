@@ -38,7 +38,7 @@ import (
 	"github.com/sentinel/agent/internal/peripheral"
 )
 
-var Version = "1.77.0"
+var Version = "1.77.1"
 
 const ServiceName = "SentinelAgent"
 
@@ -307,7 +307,15 @@ func NewAgent(cfg *config.Config) *Agent {
 	grpcAddr := cfg.GetGrpcAddress()
 	var dataPlane *agentgrpc.DataPlaneClient
 	if grpcAddr != "" {
-		dataPlane = agentgrpc.NewDataPlaneClient(cfg.AgentID, grpcAddr)
+		connMode := cfg.GetConnectionMode()
+		if connMode == config.ConnModeAuto || connMode == config.ConnModeTunnel {
+			tunnelAddr := cfg.GetGrpcTunnelAddress()
+			dataPlane = agentgrpc.NewDataPlaneClientWithTunnel(cfg.AgentID, grpcAddr, tunnelAddr)
+			log.Printf("[gRPC] Data Plane client created (mode=%s, direct=%s, tunnel=%s)", connMode, grpcAddr, tunnelAddr)
+		} else {
+			dataPlane = agentgrpc.NewDataPlaneClient(cfg.AgentID, grpcAddr)
+			log.Printf("[gRPC] Data Plane client created (mode=direct, address=%s)", grpcAddr)
+		}
 	}
 
 	wsClient := client.New(cfg, Version)

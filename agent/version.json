@@ -1,7 +1,7 @@
 {
-    "version":  "1.77.0",
+    "version":  "1.77.1",
     "releaseDate":  "2026-03-09",
-    "changelog":  "Phase 2: Cloudflare tunnel support - agent auto-mode tries tunnel (443) before direct (8443), plaintext gRPC listener for tunnel",
+    "changelog":  "Phase 3: gRPC through Cloudflare tunnel - agent auto-connects gRPC via grpc.sentinelrmm.us:443",
     "platforms":  [
                       "windows",
                       "linux",
