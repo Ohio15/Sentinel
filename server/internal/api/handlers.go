@@ -582,119 +582,14 @@ type forceUpdateStep struct {
 	name    string
 }
 
-// buildLinuxForceUpdateScript creates a bash script that launches a detached background process
-// to download the new binary, stop the systemd service, swap the binary, and restart.
-// Uses nohup + disown to survive the parent agent process stopping.
+// buildLinuxForceUpdateScript returns a simple systemctl restart command.
+// Linux agents at v1.72.0+ have working self-update: they stage the new binary
+// and write update-request.json. The watchdog applies it on the next check cycle.
+// Restarting the agent triggers the watchdog to notice and apply the staged update.
+// Base command: systemctl (whitelisted). 'restart' is NOT in the blacklist
+// (only stop|disable|mask are blocked).
 func (r *Router) buildLinuxForceUpdateScript(serverURL, arch string) (string, string) {
-	downloadURL := fmt.Sprintf("%s/api/agent/update/download?platform=linux&arch=%s", serverURL, arch)
-
-	// The outer script launches the update logic in a fully detached background process
-	// so it survives the agent stopping. The inner script:
-	// 1. Waits 10s for the agent to settle
-	// 2. Downloads the new binary to a temp path
-	// 3. Validates the download (size > 1MB)
-	// 4. Finds the running agent binary path
-	// 5. Stops the service (tries systemctl, then pkill)
-	// 6. Backs up old binary, installs new one
-	// 7. Restarts the service
-	// 8. Rolls back on failure
-	script := fmt.Sprintf(`nohup bash -c '
-sleep 10
-DOWNLOAD_URL="%s"
-TEMP_PATH="/tmp/sentinel-agent-force-update"
-LOG="/tmp/sentinel-force-update.log"
-echo "[$(date)] Force update starting" > "$LOG"
-
-# Download new binary
-if command -v curl >/dev/null 2>&1; then
-    curl -sS -o "$TEMP_PATH" --connect-timeout 30 --max-time 120 "$DOWNLOAD_URL" 2>>"$LOG"
-elif command -v wget >/dev/null 2>&1; then
-    wget -q -O "$TEMP_PATH" --timeout=120 "$DOWNLOAD_URL" 2>>"$LOG"
-else
-    echo "[$(date)] No curl or wget available" >> "$LOG"
-    exit 1
-fi
-
-# Validate download
-if [ ! -f "$TEMP_PATH" ] || [ "$(stat -c%%s "$TEMP_PATH" 2>/dev/null || stat -f%%z "$TEMP_PATH" 2>/dev/null)" -lt 1000000 ]; then
-    echo "[$(date)] Download failed or file too small" >> "$LOG"
-    rm -f "$TEMP_PATH"
-    exit 1
-fi
-chmod +x "$TEMP_PATH"
-echo "[$(date)] Download successful ($(stat -c%%s "$TEMP_PATH" 2>/dev/null || stat -f%%z "$TEMP_PATH" 2>/dev/null) bytes)" >> "$LOG"
-
-# Find current binary path
-CURRENT_BIN=$(readlink -f /proc/$(pgrep -f sentinel-agent | head -1)/exe 2>/dev/null)
-if [ -z "$CURRENT_BIN" ]; then
-    CURRENT_BIN=$(which sentinel-agent 2>/dev/null)
-fi
-if [ -z "$CURRENT_BIN" ]; then
-    # Common install locations
-    for p in /usr/local/bin/sentinel-agent /opt/sentinel/sentinel-agent /usr/bin/sentinel-agent; do
-        if [ -f "$p" ]; then CURRENT_BIN="$p"; break; fi
-    done
-fi
-if [ -z "$CURRENT_BIN" ]; then
-    echo "[$(date)] Cannot find sentinel-agent binary" >> "$LOG"
-    rm -f "$TEMP_PATH"
-    exit 1
-fi
-echo "[$(date)] Current binary: $CURRENT_BIN" >> "$LOG"
-
-# Backup current binary
-cp "$CURRENT_BIN" "${CURRENT_BIN}.old" 2>/dev/null
-
-# Determine if we need sudo (check if we are root)
-SUDO=""
-if [ "$(id -u)" -ne 0 ]; then
-    if command -v sudo >/dev/null 2>&1; then
-        SUDO="sudo"
-    fi
-fi
-
-# Stop the service
-SVC_NAME=""
-for name in SentinelAgent sentinel-agent sentinelagent; do
-    if $SUDO systemctl is-active "$name" >/dev/null 2>&1 || $SUDO systemctl list-unit-files "$name.service" >/dev/null 2>&1; then
-        SVC_NAME="$name"
-        break
-    fi
-done
-
-echo "[$(date)] Stopping agent (pkill)" >> "$LOG"
-$SUDO pkill -f sentinel-agent 2>/dev/null
-sleep 3
-
-# Install new binary
-$SUDO cp "$TEMP_PATH" "$CURRENT_BIN" 2>>"$LOG"
-$SUDO chmod +x "$CURRENT_BIN"
-echo "[$(date)] Installed new binary" >> "$LOG"
-
-# Start the service
-# Restart using the service name if found, otherwise start directly
-if [ -n "$SVC_NAME" ]; then
-    $SUDO systemctl restart "$SVC_NAME" 2>>"$LOG"
-    sleep 2
-    if $SUDO systemctl is-active "$SVC_NAME" >/dev/null 2>&1; then
-        echo "[$(date)] Service restarted successfully" >> "$LOG"
-    else
-        echo "[$(date)] Service failed to restart, rolling back" >> "$LOG"
-        $SUDO cp "${CURRENT_BIN}.old" "$CURRENT_BIN" 2>/dev/null
-        $SUDO chmod +x "$CURRENT_BIN"
-        $SUDO systemctl restart "$SVC_NAME" 2>>"$LOG"
-    fi
-else
-    nohup $SUDO "$CURRENT_BIN" >/dev/null 2>&1 &
-    echo "[$(date)] Started binary directly (no systemd)" >> "$LOG"
-fi
-
-rm -f "$TEMP_PATH"
-echo "[$(date)] Force update complete" >> "$LOG"
-' >/dev/null 2>&1 &
-disown`, downloadURL)
-
-	return script, "bash"
+	return `systemctl restart sentinel-agent`, "bash"
 }
 
 func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message []byte) {
