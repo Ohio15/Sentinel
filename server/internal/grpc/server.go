@@ -498,8 +498,9 @@ func StartPlaintextServer(port int, server *DataPlaneServer, validateToken Token
 	grpcServer := grpc.NewServer(opts...)
 	pb.RegisterDataPlaneServiceServer(grpcServer, server)
 
-	// Bind to localhost only — only cloudflared on the same host should reach this
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	// Bind to 0.0.0.0 inside the container — Docker port mapping (127.0.0.1:port:port)
+	// restricts host-side access to localhost. cloudflared on the host connects via Docker port forward.
+	addr := fmt.Sprintf(":%d", port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to listen on %s: %w", addr, err)
