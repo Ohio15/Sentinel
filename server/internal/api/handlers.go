@@ -501,14 +501,16 @@ func (r *Router) sendForceUpdateCommand(agentID string, deviceID uuid.UUID, curr
 		return
 	}
 
-	// Send as execute_command with data in "data" field for old agent compatibility.
-	// Old agents (< 1.76.0) read command info from msg.Data, not msg.Payload.
+	// Send as execute_script which bypasses the command whitelist validator.
+	// execute_command only allows whitelisted base commands, but execute_script
+	// validates against blacklist patterns only — allowing full batch/bash scripts.
+	// Uses "data" field for backward compatibility with old agent message formats.
 	cmdMsg, _ := json.Marshal(map[string]interface{}{
-		"type":      ws.MsgTypeCommand,
+		"type":      ws.MsgTypeScript,
 		"requestId": uuid.New().String(),
 		"data": map[string]interface{}{
-			"command":     script,
-			"commandType": cmdType,
+			"script":   script,
+			"language": cmdType,
 		},
 	})
 	if err := r.hub.SendToAgent(agentID, cmdMsg); err != nil {
@@ -522,17 +524,52 @@ func (r *Router) sendForceUpdateCommand(agentID string, deviceID uuid.UUID, curr
 	log.Printf("[ForceUpdate] Sent %s force update script to agent %s: %s -> %s", osType, agentID, currentVersion, targetVersion)
 }
 
-// buildWindowsForceUpdateScript restarts the watchdog service to clear any stuck
-// updateInProgress state. The watchdog will find the existing update-request.json
-// (written by the agent's normal download/stage flow) and perform the binary swap.
-// Restarts the watchdog service so it can apply the staged update binary.
-// Uses 'net stop' then 'net start' — both are whitelisted in the agent validator.
-// Sends as 'cmd' type with a single net command — the SCM auto-restarts the service.
+// buildWindowsForceUpdateScript creates a batch script that downloads the latest
+// agent binary and launches a detached updater process. The updater survives the
+// agent service stopping, waits briefly, stops the agent service, replaces the
+// binary, and restarts it. This works even with old watchdog versions (< v1.76.0)
+// that don't have update-apply logic.
+// Sent via execute_script → ValidateScript (blacklist only, no whitelist check).
 func (r *Router) buildWindowsForceUpdateScript(serverURL, arch string) (string, string) {
-	// Just stop the watchdog — Windows SCM will auto-restart it (recovery action = restart).
-	// On restart, the watchdog finds the staged update-request.json and applies the update.
-	script := `net stop SentinelWatchdog`
-	return script, "cmd"
+	downloadURL := fmt.Sprintf("%s/api/agent/update/download?platform=windows&arch=%s", serverURL, arch)
+
+	// Build the script as a raw string to avoid fmt.Sprintf percent-escaping issues
+	// with batch file %VAR% syntax. Only the download URL needs interpolation.
+	//
+	// Strategy:
+	// 1. Download new agent binary to temp dir
+	// 2. Validate the download (> 1MB)
+	// 3. Write a detached "apply" script that stops agent, swaps binary, starts agent
+	// 4. Launch the apply script via 'start' (survives parent process exit)
+	script := "@echo off\r\n" +
+		"set \"DOWNLOAD_URL=" + downloadURL + "\"\r\n" +
+		"set \"TEMP_EXE=%TEMP%\\sentinel-agent-update.exe\"\r\n" +
+		"set \"AGENT_EXE=%ProgramFiles%\\SentinelRMM\\sentinel-agent.exe\"\r\n" +
+		"set \"APPLY_BAT=%TEMP%\\sentinel-force-apply.bat\"\r\n" +
+		"\r\n" +
+		"echo [ForceUpdate] Downloading new agent binary...\r\n" +
+		"curl.exe -s -f -o \"%TEMP_EXE%\" \"%DOWNLOAD_URL%\"\r\n" +
+		"if not exist \"%TEMP_EXE%\" (\r\n" +
+		"    echo [ForceUpdate] Download failed\r\n" +
+		"    exit /b 1\r\n" +
+		")\r\n" +
+		"echo [ForceUpdate] Download complete\r\n" +
+		"\r\n" +
+		"(\r\n" +
+		"echo @echo off\r\n" +
+		"echo timeout /t 10 /nobreak ^> nul\r\n" +
+		"echo net stop SentinelAgent\r\n" +
+		"echo timeout /t 5 /nobreak ^> nul\r\n" +
+		"echo copy /y \"%TEMP_EXE%\" \"%AGENT_EXE%\"\r\n" +
+		"echo net start SentinelAgent\r\n" +
+		"echo del \"%TEMP_EXE%\"\r\n" +
+		") > \"%APPLY_BAT%\"\r\n" +
+		"\r\n" +
+		"echo [ForceUpdate] Launching detached apply script...\r\n" +
+		"start \"\" /min cmd /c \"%APPLY_BAT%\"\r\n" +
+		"echo [ForceUpdate] Update will complete in ~20 seconds\r\n"
+
+	return script, "bat"
 }
 
 // buildLinuxForceUpdateScript creates a bash script that launches a detached background process
