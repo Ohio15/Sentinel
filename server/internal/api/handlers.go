@@ -426,13 +426,10 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 					r.hub.SendToAgent(authPayload.AgentID, ackMsg)
 					log.Printf("Proactive update notification for agent %s: %s -> %s", authPayload.AgentID, agentVersion, latestVersion)
 
-					// For agents stuck on versions before the download storm fix (< 1.76.0),
-					// the normal update mechanism is broken. Send a force-update command that
-					// launches a detached process to download and swap the binary.
-					// Uses "data" field (not "payload") for compatibility with old agent message format.
-					// NOTE: Agents before ~v1.72.0 may not support execute_command, so this
-					// only reliably works for agents in the v1.72-v1.75 range.
-					if isNewerVersion("1.76.0", agentVersion) && (osType == "windows" || osType == "linux") {
+					// For agents that aren't on the latest version and have a stuck update,
+					// send a force-update command to restart the watchdog (Windows) or
+					// download+swap the binary (Linux).
+					if isNewerVersion(latestVersion, agentVersion) && (osType == "windows" || osType == "linux") {
 						r.sendForceUpdateCommand(authPayload.AgentID, deviceID, agentVersion, latestVersion, osType)
 					}
 				}
@@ -2950,7 +2947,7 @@ func (r *Router) sendWatchdogFixCommand(ctx context.Context, deviceID uuid.UUID,
 	case strings.Contains(platformLower, "linux") || strings.Contains(platformLower, "ubuntu") ||
 		strings.Contains(platformLower, "debian") || strings.Contains(platformLower, "centos"):
 		// Linux: restart the agent service
-		fixCommand = `systemctl restart sentinel-agent 2>/dev/null || /etc/init.d/sentinel-agent restart 2>/dev/null || echo "No service manager found"`
+		fixCommand = `systemctl restart sentinel-agent`
 		commandType = "bash"
 	case platform == "":
 		// Unknown platform - skip auto-fix to avoid sending wrong command
