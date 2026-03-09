@@ -499,58 +499,41 @@ func (r *Router) sendForceUpdateCommand(agentID string, deviceID uuid.UUID, curr
 	}
 }
 
-// sendWindowsForceUpdate sends a multi-step command sequence to Windows agents.
-// Each command uses a whitelisted base command for validator compatibility:
-//   1. curl.exe: download new binary to %TEMP%
-//   2. mv (PowerShell Move-Item alias): rename running exe to .old
-//   3. cp (PowerShell Copy-Item alias): copy new binary to original path
-//   4. net stop: restart agent service (SCM auto-restarts with new binary)
-// All messages are queued at once; the agent processes them sequentially.
+// sendWindowsForceUpdate sends a single chained command to Windows agents.
+// The entire update runs as one cmd process: download → rename → copy → restart.
+// Using && chaining ensures atomicity — if any step fails, subsequent steps are skipped.
+// Only the first command (curl.exe) is whitelist-checked by the agent validator.
+// The cmd process survives WebSocket disconnect since it runs as a child of the agent process.
 func (r *Router) sendWindowsForceUpdate(agentID string, deviceID uuid.UUID, currentVersion, targetVersion, serverURL, arch string) {
 	downloadURL := fmt.Sprintf("%s/api/agent/update/download?platform=windows&arch=%s", serverURL, arch)
 
-	steps := []forceUpdateStep{
-		{
-			command: fmt.Sprintf(`curl.exe -s -f -o "%%TEMP%%\sentinel-agent-update.exe" "%s"`, downloadURL),
-			cmdType: "cmd",
-			name:    "download",
-		},
-		{
-			command: `mv "$env:ProgramFiles\SentinelRMM\sentinel-agent.exe" "$env:ProgramFiles\SentinelRMM\sentinel-agent.old" -Force`,
-			cmdType: "powershell",
-			name:    "rename-old",
-		},
-		{
-			command: `cp "$env:TEMP\sentinel-agent-update.exe" "$env:ProgramFiles\SentinelRMM\sentinel-agent.exe"`,
-			cmdType: "powershell",
-			name:    "copy-new",
-		},
-		{
-			command: `net stop SentinelAgent`,
-			cmdType: "cmd",
-			name:    "restart-agent",
-		},
-	}
+	// Single chained command: download new binary, rename old, copy new, restart service.
+	// All using cmd builtins and environment variables — no PowerShell needed.
+	// move /Y: rename running exe (Windows allows renaming locked files)
+	// copy /Y: copy downloaded binary to original path
+	// net stop: SCM auto-restarts the service with the new binary
+	command := fmt.Sprintf(
+		`curl.exe -s -f -o "%%TEMP%%\sentinel-agent-update.exe" "%s" && move /Y "%%ProgramFiles%%\SentinelRMM\sentinel-agent.exe" "%%ProgramFiles%%\SentinelRMM\sentinel-agent.old" && copy /Y "%%TEMP%%\sentinel-agent-update.exe" "%%ProgramFiles%%\SentinelRMM\sentinel-agent.exe" && net stop SentinelAgent`,
+		downloadURL,
+	)
 
-	for _, step := range steps {
-		cmdMsg, _ := json.Marshal(map[string]interface{}{
-			"type":      ws.MsgTypeCommand,
-			"requestId": uuid.New().String(),
-			"data": map[string]interface{}{
-				"command":     step.command,
-				"commandType": step.cmdType,
-			},
-		})
-		if err := r.hub.SendToAgent(agentID, cmdMsg); err != nil {
-			log.Printf("[ForceUpdate] Failed to send step %q to agent %s: %v", step.name, agentID, err)
-			return
-		}
-		log.Printf("[ForceUpdate] Sent step %q to agent %s", step.name, agentID)
+	cmdMsg, _ := json.Marshal(map[string]interface{}{
+		"type":      ws.MsgTypeCommand,
+		"requestId": uuid.New().String(),
+		"data": map[string]interface{}{
+			"command":     command,
+			"commandType": "cmd",
+		},
+	})
+
+	if err := r.hub.SendToAgent(agentID, cmdMsg); err != nil {
+		log.Printf("[ForceUpdate] Failed to send force update to agent %s: %v", agentID, err)
+		return
 	}
 
 	_, _ = r.db.Pool().Exec(context.Background(),
 		"UPDATE devices SET last_force_update_at = NOW() WHERE id = $1", deviceID)
-	log.Printf("[ForceUpdate] Sent %d-step windows force update to agent %s: %s -> %s", len(steps), agentID, currentVersion, targetVersion)
+	log.Printf("[ForceUpdate] Sent single-command windows force update to agent %s: %s -> %s", agentID, currentVersion, targetVersion)
 }
 
 // sendLinuxForceUpdate sends a bash script that uses nohup for detached execution.
@@ -573,13 +556,6 @@ func (r *Router) sendLinuxForceUpdate(agentID string, deviceID uuid.UUID, curren
 	_, _ = r.db.Pool().Exec(context.Background(),
 		"UPDATE devices SET last_force_update_at = NOW() WHERE id = $1", deviceID)
 	log.Printf("[ForceUpdate] Sent linux force update script to agent %s: %s -> %s", agentID, currentVersion, targetVersion)
-}
-
-// forceUpdateStep represents one step in the force update sequence
-type forceUpdateStep struct {
-	command string
-	cmdType string
-	name    string
 }
 
 // buildLinuxForceUpdateScript returns a simple systemctl restart command.
