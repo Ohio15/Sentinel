@@ -46,6 +46,13 @@ func GetEmbeddedConfig() (serverURL, token string, hasEmbedded bool) {
 	return
 }
 
+// Connection mode constants
+const (
+	ConnModeAuto   = "auto"   // Try tunnel (443) first, fall back to direct (8443)
+	ConnModeTunnel = "tunnel" // Only use CF tunnel on port 443
+	ConnModeDirect = "direct" // Only use direct mTLS on port 8443
+)
+
 // Config holds the agent configuration
 type Config struct {
 	AgentID           string `json:"agent_id"`
@@ -57,6 +64,17 @@ type Config struct {
 	Enrolled          bool   `json:"enrolled"`
 	DeviceID          string `json:"device_id"`
 	AuditLogDir       string `json:"audit_log_dir"`      // directory for terminal audit logs (default: platform log path)
+	ConnectionMode    string `json:"connection_mode"`     // "auto", "tunnel", or "direct" (default: "auto")
+}
+
+// GetConnectionMode returns the effective connection mode, defaulting to "auto"
+func (c *Config) GetConnectionMode() string {
+	switch c.ConnectionMode {
+	case ConnModeTunnel, ConnModeDirect:
+		return c.ConnectionMode
+	default:
+		return ConnModeAuto
+	}
 }
 
 // GetAuditLogDir returns the configured audit log directory, or the platform default

@@ -2,10 +2,12 @@ package client
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -311,10 +313,26 @@ func (c *Client) waitForServer(ctx context.Context) bool {
 
 // Connect establishes a WebSocket connection to the server
 func (c *Client) Connect(ctx context.Context) error {
-	wsURL := c.config.ServerURL
-	if wsURL == "" {
+	if c.config.ServerURL == "" {
 		return fmt.Errorf("server URL not configured")
 	}
+
+	connMode := c.config.GetConnectionMode()
+
+	// In auto or tunnel mode, try the Cloudflare tunnel path first (port 443, token auth)
+	if connMode == config.ConnModeAuto || connMode == config.ConnModeTunnel {
+		err := c.connectViaTunnel(ctx)
+		if err == nil {
+			return nil
+		}
+		if connMode == config.ConnModeTunnel {
+			return fmt.Errorf("tunnel connection failed: %w", err)
+		}
+		log.Printf("[Tunnel] Connection failed, falling back to direct: %v", err)
+	}
+
+	// Direct mode: use existing mTLS / token auth flow
+	wsURL := c.config.ServerURL
 
 	// Check if we have mTLS certificates for certificate-based auth
 	useMTLS := mtls.HasMTLS()
@@ -508,6 +526,83 @@ func (c *Client) connectWithToken(ctx context.Context) error {
 		conn.Close()
 		return fmt.Errorf("failed to send auth: %w", err)
 	}
+
+	go c.readLoop(ctx)
+	go c.writeLoop(ctx)
+	go c.pingLoop(ctx)
+
+	if c.onConnect != nil {
+		c.onConnect()
+	}
+
+	return nil
+}
+
+// connectViaTunnel connects through the Cloudflare tunnel on port 443 using token auth.
+// This uses standard HTTPS with system root CAs (CF provides a publicly-signed cert).
+func (c *Client) connectViaTunnel(ctx context.Context) error {
+	// Build tunnel URL: wss://hostname:443/ws/agent
+	parsed, err := url.Parse(c.config.ServerURL)
+	if err != nil {
+		return fmt.Errorf("failed to parse server URL: %w", err)
+	}
+
+	tunnelURL := fmt.Sprintf("wss://%s/ws/agent", parsed.Hostname())
+	log.Printf("[Tunnel] Connecting via Cloudflare tunnel: %s", tunnelURL)
+
+	// Use system root CAs — Cloudflare presents a publicly-signed certificate
+	dialer := websocket.Dialer{
+		HandshakeTimeout: 10 * time.Second,
+		TLSClientConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			// RootCAs: nil means use system root CA pool
+		},
+	}
+
+	conn, _, err := dialer.DialContext(ctx, tunnelURL, nil)
+	if err != nil {
+		return fmt.Errorf("tunnel dial failed: %w", err)
+	}
+
+	c.mu.Lock()
+	c.conn = conn
+	c.connected = true
+	c.lastPong = time.Now()
+	c.mu.Unlock()
+
+	conn.SetPongHandler(func(appData string) error {
+		c.mu.Lock()
+		c.lastPong = time.Now()
+		c.mu.Unlock()
+		return nil
+	})
+
+	// Token auth — same as connectWithToken
+	c.mu.RLock()
+	deviceInfo := c.deviceInfo
+	c.mu.RUnlock()
+
+	authPayload := map[string]interface{}{
+		"agentId":       c.config.AgentID,
+		"token":         c.config.EnrollmentToken,
+		"caCertHash":    paths.GetCACertHash(),
+		"hasClientCert": mtls.HasMTLS(),
+	}
+	if deviceInfo != nil {
+		authPayload["deviceInfo"] = deviceInfo
+	}
+
+	authMsg := map[string]interface{}{
+		"type":    MsgTypeAuth,
+		"payload": authPayload,
+	}
+	authData, _ := json.Marshal(authMsg)
+	if err := conn.WriteMessage(websocket.TextMessage, authData); err != nil {
+		conn.Close()
+		return fmt.Errorf("failed to send auth: %w", err)
+	}
+
+	log.Printf("[Tunnel] Connected via Cloudflare tunnel, auth sent")
 
 	go c.readLoop(ctx)
 	go c.writeLoop(ctx)

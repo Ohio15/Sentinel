@@ -1,7 +1,7 @@
 {
-    "version":  "1.76.15",
+    "version":  "1.77.0",
     "releaseDate":  "2026-03-09",
-    "changelog":  "Fix cascading .old backup bug, agent respects Retry-After on 429, server suppresses update notifications after recent failure",
+    "changelog":  "Phase 2: Cloudflare tunnel support - agent auto-mode tries tunnel (443) before direct (8443), plaintext gRPC listener for tunnel",
     "platforms":  [
                       "windows",
                       "linux",
