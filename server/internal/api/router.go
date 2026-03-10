@@ -275,7 +275,9 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 		}
 
 		// Bootstrap routes (public - for bootstrapper-based installation)
+		// I-04: Rate limit bootstrap endpoints to prevent bandwidth exhaustion (30 req/min per IP)
 		bootstrap := api.Group("/bootstrap")
+		bootstrap.Use(rateLimitMiddleware(services.Redis, 30, 60, "bootstrap"))
 		{
 			bootstrap.GET("/agent-info", getBootstrapAgentInfoHandler(services))
 			bootstrap.GET("/download", downloadBootstrapHandler(services))

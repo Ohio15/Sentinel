@@ -9,12 +9,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/sentinel/server/internal/middleware"
 )
 
 // BootstrapAgentInfo contains agent version and binary information
@@ -35,6 +37,49 @@ const (
 	agentTokenPlaceholder      = "SENTINEL_EMBEDDED_TOKEN:________________________________________________________________:END"
 )
 
+// validPlatforms and validArchitectures define strict whitelists for path traversal prevention
+var validPlatforms = map[string]bool{
+	"windows": true,
+	"linux":   true,
+	"darwin":  true,
+}
+
+var validArchitectures = map[string]bool{
+	"amd64": true,
+	"arm64": true,
+	"386":   true,
+	"arm":   true,
+}
+
+// validatePlatformArch checks platform and arch against strict whitelists.
+// Returns an error string if invalid, empty string if valid.
+func validatePlatformArch(platform, arch string) string {
+	if !validPlatforms[platform] {
+		return fmt.Sprintf("Invalid platform: %q. Supported: windows, linux, darwin", platform)
+	}
+	if !validArchitectures[arch] {
+		return fmt.Sprintf("Invalid architecture: %q. Supported: amd64, arm64, 386, arm", arch)
+	}
+	return ""
+}
+
+// safeShellEmbedPattern matches only characters safe for embedding in shell scripts:
+// alphanumeric, colon, slash, dot, underscore, hyphen
+var safeShellEmbedPattern = regexp.MustCompile(`^[a-zA-Z0-9:/._-]+$`)
+
+// sanitizeForShellEmbed validates that a string contains only safe characters for
+// embedding in shell scripts (PowerShell or Bash). Returns the string and nil if safe,
+// or empty string and an error if unsafe characters are detected.
+func sanitizeForShellEmbed(s string) (string, error) {
+	if s == "" {
+		return "", fmt.Errorf("empty value not allowed for shell embedding")
+	}
+	if !safeShellEmbedPattern.MatchString(s) {
+		return "", fmt.Errorf("value contains unsafe characters for shell embedding: %q", s)
+	}
+	return s, nil
+}
+
 // getBootstrapAgentInfoHandler returns agent version info for a platform/arch
 func getBootstrapAgentInfoHandler(services *Services) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -51,6 +96,12 @@ func getBootstrapAgentInfoHandler(services *Services) gin.HandlerFunc {
 		// Normalize platform/arch
 		platform = strings.ToLower(platform)
 		arch = strings.ToLower(arch)
+
+		// Validate platform/arch against whitelist (path traversal prevention)
+		if errMsg := validatePlatformArch(platform, arch); errMsg != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+			return
+		}
 
 		// Get agent binary path
 		agentPath := getAgentBinaryPath(services, platform, arch)
@@ -88,7 +139,11 @@ func downloadBootstrapHandler(services *Services) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		platform := c.Query("platform")
 		arch := c.Query("arch")
-		token := c.Query("token")
+		// I-05: Check X-Enrollment-Token header first, fall back to query param for backwards compat
+		token := c.GetHeader("X-Enrollment-Token")
+		if token == "" {
+			token = c.Query("token") // Backwards compat with older installers
+		}
 
 		if platform == "" {
 			platform = "windows"
@@ -101,10 +156,16 @@ func downloadBootstrapHandler(services *Services) gin.HandlerFunc {
 		platform = strings.ToLower(platform)
 		arch = strings.ToLower(arch)
 
+		// Validate platform/arch against whitelist (path traversal prevention)
+		if errMsg := validatePlatformArch(platform, arch); errMsg != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+			return
+		}
+
 		// Token is optional for bootstrapper download (can be embedded or passed at runtime)
 		// But we validate if provided
 		if token != "" {
-			if err := validateEnrollmentToken(c, services, token); err != nil {
+			if _, err := validateEnrollmentToken(c, services, token); err != nil {
 				return // Error already sent
 			}
 		}
@@ -162,7 +223,11 @@ func downloadBootstrapAgentHandler(services *Services) gin.HandlerFunc {
 
 		platform := c.Query("platform")
 		arch := c.Query("arch")
-		token := c.Query("token")
+		// I-05: Check X-Enrollment-Token header first, fall back to query param for backwards compat
+		token := c.GetHeader("X-Enrollment-Token")
+		if token == "" {
+			token = c.Query("token") // Backwards compat with older installers
+		}
 
 		if platform == "" {
 			platform = "windows"
@@ -175,14 +240,21 @@ func downloadBootstrapAgentHandler(services *Services) gin.HandlerFunc {
 		platform = strings.ToLower(platform)
 		arch = strings.ToLower(arch)
 
+		// Validate platform/arch against whitelist (path traversal prevention)
+		if errMsg := validatePlatformArch(platform, arch); errMsg != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+			return
+		}
+
 		// Token validation (optional but recommended)
 		if token != "" {
-			if err := validateEnrollmentToken(c, services, token); err != nil {
+			tokenID, err := validateEnrollmentToken(c, services, token)
+			if err != nil {
 				return // Error already sent
 			}
 
 			// Increment token use count
-			incrementTokenUseCount(c, services, token)
+			incrementTokenUseCount(c, services, tokenID)
 		}
 
 		// Get agent binary path
@@ -356,45 +428,25 @@ func replaceInBinary(data []byte, old, new string) []byte {
 	return []byte(strings.Replace(string(data), old, new, 1))
 }
 
-func validateEnrollmentToken(c *gin.Context, services *Services, token string) error {
-	var tokenID uuid.UUID
-	var isActive bool
-	var expiresAt *time.Time
-	var maxUses *int
-	var useCount int
-
-	err := services.DB.Pool().QueryRow(c.Request.Context(), `
-		SELECT id, is_active, expires_at, max_uses, use_count
-		FROM enrollment_tokens WHERE token = $1
-	`, token).Scan(&tokenID, &isActive, &expiresAt, &maxUses, &useCount)
-
-	if err != nil {
+// validateEnrollmentToken validates an enrollment token against the database.
+// I-03: Delegates to middleware.ValidateDatabaseToken which supports both
+// legacy plaintext and bcrypt-hashed tokens, instead of doing a plaintext-only SQL lookup.
+// Returns the token's database UUID on success for use in subsequent operations.
+func validateEnrollmentToken(c *gin.Context, services *Services, token string) (uuid.UUID, error) {
+	valid, tokenID := middleware.ValidateDatabaseToken(c.Request.Context(), services.DB.Pool(), token)
+	if !valid {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid enrollment token"})
-		return err
+		return uuid.Nil, fmt.Errorf("invalid enrollment token")
 	}
-
-	if !isActive {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Enrollment token is disabled"})
-		return fmt.Errorf("token disabled")
-	}
-
-	if expiresAt != nil && time.Now().After(*expiresAt) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Enrollment token has expired"})
-		return fmt.Errorf("token expired")
-	}
-
-	if maxUses != nil && useCount >= *maxUses {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Enrollment token has reached maximum uses"})
-		return fmt.Errorf("token max uses reached")
-	}
-
-	return nil
+	return tokenID, nil
 }
 
-func incrementTokenUseCount(c *gin.Context, services *Services, token string) {
+// incrementTokenUseCount increments the use count for a validated enrollment token.
+// I-03: Uses token UUID (from ValidateDatabaseToken) instead of plaintext token match.
+func incrementTokenUseCount(c *gin.Context, services *Services, tokenID uuid.UUID) {
 	_, err := services.DB.Pool().Exec(c.Request.Context(), `
-		UPDATE enrollment_tokens SET use_count = use_count + 1 WHERE token = $1
-	`, token)
+		UPDATE enrollment_tokens SET use_count = use_count + 1 WHERE id = $1
+	`, tokenID)
 	if err != nil {
 		log.Printf("Error incrementing token use count: %v", err)
 	}
@@ -422,6 +474,12 @@ func downloadBootstrapWatchdogHandler(services *Services) gin.HandlerFunc {
 		// Normalize
 		platform = strings.ToLower(platform)
 		arch = strings.ToLower(arch)
+
+		// Validate platform/arch against whitelist (path traversal prevention)
+		if errMsg := validatePlatformArch(platform, arch); errMsg != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+			return
+		}
 
 		// Get watchdog binary path
 		watchdogPath := getWatchdogBinaryPath(services, platform, arch)
@@ -490,6 +548,12 @@ func downloadBootstrapDesktopHelperHandler(services *Services) gin.HandlerFunc {
 		// Normalize
 		platform = strings.ToLower(platform)
 		arch = strings.ToLower(arch)
+
+		// Validate platform/arch against whitelist (path traversal prevention)
+		if errMsg := validatePlatformArch(platform, arch); errMsg != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+			return
+		}
 
 		// Only Windows is supported for desktop helper
 		if platform != "windows" {
@@ -766,6 +830,18 @@ func padRightStr(s string, length int, pad rune) string {
 
 // generateWindowsInstaller creates a PowerShell script with UAC auto-elevation and embedded config
 func generateWindowsInstaller(serverURL, token string) string {
+	// Sanitize inputs to prevent command injection in embedded shell scripts
+	safeServerURL, err := sanitizeForShellEmbed(serverURL)
+	if err != nil {
+		log.Printf("[Installer] Rejecting unsafe serverURL for Windows installer: %v", err)
+		return "# ERROR: Invalid server URL - contains unsafe characters\nexit 1"
+	}
+	safeToken, err := sanitizeForShellEmbed(token)
+	if err != nil {
+		log.Printf("[Installer] Rejecting unsafe token for Windows installer: %v", err)
+		return "# ERROR: Invalid token - contains unsafe characters\nexit 1"
+	}
+
 	// Note: Using string concatenation because Go raw strings can't contain backticks
 	// PowerShell backticks are replaced with [char]96 or alternative syntax
 	script := `#Requires -Version 5.1
@@ -778,8 +854,8 @@ param(
 )
 
 # Configuration (pre-embedded from server)
-$Script:Server = "` + serverURL + `"
-$Script:Token = "` + token + `"
+$Script:Server = "` + safeServerURL + `"
+$Script:Token = "` + safeToken + `"
 
 # Check if running as administrator
 function Test-Administrator {
@@ -928,6 +1004,18 @@ exit 0
 
 // generateLinuxInstaller creates a bash script with sudo handling and embedded config
 func generateLinuxInstaller(serverURL, token string) string {
+	// Sanitize inputs to prevent command injection in embedded shell scripts
+	safeServerURL, err := sanitizeForShellEmbed(serverURL)
+	if err != nil {
+		log.Printf("[Installer] Rejecting unsafe serverURL for Linux installer: %v", err)
+		return "#!/bin/bash\n# ERROR: Invalid server URL - contains unsafe characters\nexit 1"
+	}
+	safeToken, err := sanitizeForShellEmbed(token)
+	if err != nil {
+		log.Printf("[Installer] Rejecting unsafe token for Linux installer: %v", err)
+		return "#!/bin/bash\n# ERROR: Invalid token - contains unsafe characters\nexit 1"
+	}
+
 	return fmt.Sprintf(`#!/bin/bash
 # Sentinel Agent Installer - Pre-configured for direct download
 # This script will automatically request root privileges if needed
@@ -1038,11 +1126,23 @@ else
     echo -e "${RED}[!] Service failed to start. Check logs: journalctl -u sentinel-agent${NC}"
     exit 1
 fi
-`, serverURL, token)
+`, safeServerURL, safeToken)
 }
 
 // generateSynologyInstaller creates a bash script optimized for Synology NAS devices
 func generateSynologyInstaller(serverURL, token string) string {
+	// Sanitize inputs to prevent command injection in embedded shell scripts
+	safeServerURL, err := sanitizeForShellEmbed(serverURL)
+	if err != nil {
+		log.Printf("[Installer] Rejecting unsafe serverURL for Synology installer: %v", err)
+		return "#!/bin/bash\n# ERROR: Invalid server URL - contains unsafe characters\nexit 1"
+	}
+	safeToken, err := sanitizeForShellEmbed(token)
+	if err != nil {
+		log.Printf("[Installer] Rejecting unsafe token for Synology installer: %v", err)
+		return "#!/bin/bash\n# ERROR: Invalid token - contains unsafe characters\nexit 1"
+	}
+
 	return fmt.Sprintf(`#!/bin/bash
 # Sentinel Agent Installer for Synology NAS
 # This script installs the Sentinel RMM agent on Synology DSM
@@ -1275,7 +1375,7 @@ else
     echo -e "${RED}[!] Agent failed to start. Check logs: $LOG_DIR/agent.log${NC}"
     exit 1
 fi
-`, serverURL, token)
+`, safeServerURL, safeToken)
 }
 
 // downloadBootstrapOpenH264Handler serves the OpenH264 DLL for video encoding
@@ -1294,6 +1394,12 @@ func downloadBootstrapOpenH264Handler(services *Services) gin.HandlerFunc {
 		// Normalize
 		platform = strings.ToLower(platform)
 		arch = strings.ToLower(arch)
+
+		// Validate platform/arch against whitelist (path traversal prevention)
+		if errMsg := validatePlatformArch(platform, arch); errMsg != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+			return
+		}
 
 		// Only Windows x64 is supported
 		if platform != "windows" || arch != "amd64" {

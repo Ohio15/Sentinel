@@ -8,7 +8,9 @@ import (
 // RegisterAgentLinkRoutes registers all routes for the agent installation link system
 func RegisterAgentLinkRoutes(api *gin.RouterGroup, protected *gin.RouterGroup, services *Services) {
 	// Public installation portal routes (no auth - accessed via download token)
+	// I-09: Rate limit public install routes to prevent brute-force of download tokens
 	publicInstall := api.Group("/public/install")
+	publicInstall.Use(rateLimitMiddleware(services.Redis, 20, 60, "public-install"))
 	{
 		publicInstall.GET("/:downloadToken", validatePublicLinkHandler(services))
 		publicInstall.GET("/:downloadToken/download", downloadInstallerHandler(services))
@@ -16,7 +18,10 @@ func RegisterAgentLinkRoutes(api *gin.RouterGroup, protected *gin.RouterGroup, s
 	}
 
 	// Public installation code validation (no auth - used by installer)
-	api.GET("/public/install/validate-code", validateInstallationCodeHandler(services))
+	// I-09: Restrictive rate limit (10 req/min per IP) to prevent brute-force of 8-char install codes
+	api.GET("/public/install/validate-code",
+		rateLimitMiddleware(services.Redis, 10, 60, "install-code-validate"),
+		validateInstallationCodeHandler(services))
 
 	// Public generic installer download (no auth)
 	api.GET("/download/agent", serveGenericInstallerHandler(services))

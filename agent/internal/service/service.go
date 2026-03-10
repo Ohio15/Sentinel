@@ -1,18 +1,20 @@
 ﻿package service
 
 import (
-	"os/exec"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"time"
 
 	"github.com/kardianos/service"
+	"github.com/sentinel/agent/internal/ipc"
+	"github.com/sentinel/agent/internal/paths"
 	"github.com/sentinel/agent/internal/protection"
 )
 
@@ -269,8 +271,10 @@ func UninstallWithToken(serverURL, deviceID, uninstallToken string) error {
 	log.Println("Stopping watchdog service first...")
 	stopWatchdog()
 
-	// Brief delay to ensure watchdog is fully stopped
-	time.Sleep(1 * time.Second)
+	// Poll for watchdog to fully stop (up to 10 seconds)
+	if err := waitForWatchdogStopped(10*time.Second, 500*time.Millisecond); err != nil {
+		log.Printf("Warning: watchdog may not be fully stopped: %v", err)
+	}
 
 	svc, err := New(nil, nil)
 	if err != nil {
@@ -286,6 +290,10 @@ func UninstallWithToken(serverURL, deviceID, uninstallToken string) error {
 	}
 
 	log.Println("Service uninstalled successfully")
+
+	// Best-effort cleanup of sensitive files
+	cleanupSensitiveFiles()
+
 	return nil
 }
 
@@ -340,6 +348,70 @@ func stopWatchdog() {
 		svc.Stop()
 	}
 	svc.Uninstall()
+}
+
+// cleanupSensitiveFiles removes sensitive credential and state files after uninstall.
+// The logs/ directory is intentionally preserved for post-uninstall inspection.
+// This is best-effort: errors are logged but do not fail the uninstall.
+func cleanupSensitiveFiles() {
+	dataDir := paths.DataDir()
+	log.Printf("Cleaning up sensitive files in %s...", dataDir)
+
+	// Individual sensitive files to remove
+	sensitiveFiles := []string{
+		paths.ConfigPath(),                                   // config.json (encrypted enrollment config)
+		filepath.Join(dataDir, "ipc-key.dat"),                // HMAC signing key
+		filepath.Join(dataDir, ipc.UpdateRequestFile),        // update-request.json
+		filepath.Join(dataDir, ipc.UpdateStatusFile),         // update-status.json
+		filepath.Join(dataDir, ipc.AgentInfoFile),            // agent-info.json
+		filepath.Join(dataDir, ipc.WatchdogUpdateRequestFile), // watchdog-update-request.json
+		filepath.Join(dataDir, ipc.WatchdogUpdateStatusFile), // watchdog-update-status.json
+		filepath.Join(dataDir, ipc.WatchdogInfoFile),         // watchdog-info.json
+		filepath.Join(dataDir, "pending-alert.json"),         // AlertFile
+		paths.AgentInfoPath(),                                // agent-info.json (paths version)
+	}
+
+	for _, f := range sensitiveFiles {
+		if err := os.Remove(f); err != nil {
+			if !os.IsNotExist(err) {
+				log.Printf("Warning: failed to remove %s: %v", f, err)
+			}
+		} else {
+			log.Printf("Removed: %s", f)
+		}
+	}
+
+	// Remove .sig files (HMAC signatures)
+	sigFiles, err := filepath.Glob(filepath.Join(dataDir, "*.sig"))
+	if err == nil {
+		for _, f := range sigFiles {
+			if err := os.Remove(f); err != nil {
+				if !os.IsNotExist(err) {
+					log.Printf("Warning: failed to remove signature file %s: %v", f, err)
+				}
+			} else {
+				log.Printf("Removed: %s", f)
+			}
+		}
+	}
+
+	// Remove certs/ directory recursively (mTLS certificates and private keys)
+	certsDir := paths.CertsDir()
+	if err := os.RemoveAll(certsDir); err != nil {
+		log.Printf("Warning: failed to remove certs directory %s: %v", certsDir, err)
+	} else {
+		log.Printf("Removed directory: %s", certsDir)
+	}
+
+	// Remove update/ directory recursively (staging area)
+	updateDir := paths.UpdateDir()
+	if err := os.RemoveAll(updateDir); err != nil {
+		log.Printf("Warning: failed to remove update directory %s: %v", updateDir, err)
+	} else {
+		log.Printf("Removed directory: %s", updateDir)
+	}
+
+	log.Println("Sensitive file cleanup complete (logs/ preserved)")
 }
 
 // Start starts the service
