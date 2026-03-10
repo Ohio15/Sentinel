@@ -92,6 +92,16 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 			agentUpdate.POST("/update/status", router.reportUpdateStatus)
 		}
 
+		// Agent uninstall token routes (requires agent auth)
+		// I-06: Agents request a short-lived, single-use token to authorize self-uninstall
+		agentUninstall := api.Group("/agent")
+		agentUninstall.Use(rateLimitMiddleware(cache, 10, 60, "agent-uninstall"))
+		agentUninstall.Use(middleware.NewAgentAuthMiddleware(db.Pool(), cfg.EnrollmentToken))
+		{
+			agentUninstall.POST("/request-uninstall-token", router.requestUninstallToken)
+			agentUninstall.POST("/validate-uninstall-token", router.validateUninstallToken)
+		}
+
 		// Agent download routes (public with token validation)
 		agents := api.Group("/agents")
 		{
@@ -265,6 +275,16 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 		{
 			agentUpdate.GET("/update/download", downloadAgentUpdateHandler(services))
 			agentUpdate.POST("/update/status", reportUpdateStatusHandler(services))
+		}
+
+		// Agent uninstall token routes (requires agent auth)
+		// I-06: Agents request a short-lived, single-use token to authorize self-uninstall
+		agentUninstall := api.Group("/agent")
+		agentUninstall.Use(rateLimitMiddleware(services.Redis, 10, 60, "agent-uninstall")) // 10/min per IP
+		agentUninstall.Use(middleware.NewAgentAuthMiddleware(services.DB.Pool(), services.Config.EnrollmentToken))
+		{
+			agentUninstall.POST("/request-uninstall-token", requestUninstallTokenHandler(services))
+			agentUninstall.POST("/validate-uninstall-token", validateUninstallTokenHandler(services))
 		}
 
 		// Agent download routes (public with token validation)

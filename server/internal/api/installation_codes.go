@@ -317,6 +317,20 @@ func validateInstallationCodeHandler(services *Services) gin.HandlerFunc {
 			log.Printf("Failed to mark code as used: %v", err)
 		}
 
+		// I-11: Tighten enrollment token expiry to 15 minutes from validation.
+		// The token was created with the install code's long expiry (up to 30 days),
+		// but once a code is validated the agent should enroll within minutes.
+		// This limits the window for token interception/reuse.
+		shortExpiry := time.Now().Add(15 * time.Minute)
+		_, err = services.DB.Pool().Exec(c.Request.Context(), `
+			UPDATE enrollment_tokens
+			SET expires_at = LEAST(expires_at, $1)
+			WHERE id = $2
+		`, shortExpiry, link.EnrollmentTokenID)
+		if err != nil {
+			log.Printf("Warning: failed to tighten enrollment token expiry: %v", err)
+		}
+
 		// Log successful validation
 		logCodeValidation(services, code, c.ClientIP(), c.Request.UserAgent(), true, nil)
 

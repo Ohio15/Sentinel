@@ -5,6 +5,7 @@ package service
 import (
 	"fmt"
 	"log"
+	"os/exec"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -74,4 +75,29 @@ func waitForWatchdogStopped(timeout, interval time.Duration) error {
 	}
 
 	return fmt.Errorf("watchdog did not stop within %v", timeout)
+}
+
+// removeDefenderExclusions removes Windows Defender exclusions that were added during install.
+// This is best-effort: failures are logged but do not block the uninstall. (I-10)
+func removeDefenderExclusions(installPath string) {
+	log.Printf("Removing Windows Defender exclusions for %s...", installPath)
+
+	// Remove folder exclusion
+	cmd := exec.Command("powershell", "-Command",
+		fmt.Sprintf("Remove-MpPreference -ExclusionPath '%s' -ErrorAction SilentlyContinue", installPath))
+	if err := cmd.Run(); err != nil {
+		log.Printf("Warning: failed to remove Defender path exclusion: %v", err)
+	}
+
+	// Remove process exclusions
+	if err := exec.Command("powershell", "-Command",
+		"Remove-MpPreference -ExclusionProcess 'sentinel-agent.exe' -ErrorAction SilentlyContinue").Run(); err != nil {
+		log.Printf("Warning: failed to remove Defender process exclusion for sentinel-agent.exe: %v", err)
+	}
+	if err := exec.Command("powershell", "-Command",
+		"Remove-MpPreference -ExclusionProcess 'sentinel-watchdog.exe' -ErrorAction SilentlyContinue").Run(); err != nil {
+		log.Printf("Warning: failed to remove Defender process exclusion for sentinel-watchdog.exe: %v", err)
+	}
+
+	log.Println("Windows Defender exclusion removal complete")
 }

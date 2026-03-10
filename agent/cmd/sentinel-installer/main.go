@@ -772,9 +772,29 @@ func setConsoleTitle(title string) {
 	setConsoleTitleW.Call(uintptr(unsafe.Pointer(titlePtr)))
 }
 
+// isAdmin checks if the current process has administrator privileges using
+// proper Windows SID-based detection (S-1-5-32-544 = Administrators group).
+// Previously used PHYSICALDRIVE0 open test which is unreliable.
 func isAdmin() bool {
-	_, err := os.Open("\\\\.\\PHYSICALDRIVE0")
-	return err == nil
+	var sid *windows.SID
+	err := windows.AllocateAndInitializeSid(
+		&windows.SECURITY_NT_AUTHORITY,
+		2,
+		windows.SECURITY_BUILTIN_DOMAIN_RID,
+		windows.DOMAIN_ALIAS_RID_ADMINS,
+		0, 0, 0, 0, 0, 0,
+		&sid)
+	if err != nil {
+		return false
+	}
+	defer windows.FreeSid(sid)
+
+	token := windows.Token(0)
+	member, err := token.IsMember(sid)
+	if err != nil {
+		return false
+	}
+	return member
 }
 
 func runAsAdmin() error {

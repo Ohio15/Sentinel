@@ -15,3 +15,9 @@ func waitForWatchdogStopped(timeout, interval time.Duration) error {
 	time.Sleep(1 * time.Second)
 	return nil
 }
+
+// removeDefenderExclusions is a no-op on non-Windows systems.
+// Windows Defender is only present on Windows. (I-10)
+func removeDefenderExclusions(installPath string) {
+	// No-op: Windows Defender exclusions only apply to Windows
+}

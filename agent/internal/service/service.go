@@ -294,6 +294,9 @@ func UninstallWithToken(serverURL, deviceID, uninstallToken string) error {
 	// Best-effort cleanup of sensitive files
 	cleanupSensitiveFiles()
 
+	// Best-effort removal of Windows Defender exclusions (I-10)
+	removeDefenderExclusions(installPath)
+
 	return nil
 }
 
