@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -108,6 +109,62 @@ func logMsg(format string, args ...interface{}) {
 	}
 }
 
+// redactToken returns a redacted version of a token for safe logging.
+// Shows only the first 4 characters followed by asterisks.
+func redactToken(token string) string {
+	if len(token) <= 4 {
+		return "****"
+	}
+	return token[:4] + "****"
+}
+
+// cleanupInstallerLog removes the installer log file from %TEMP%.
+// Called after successful installation to avoid leaving sensitive data on disk.
+func cleanupInstallerLog() {
+	logPath := filepath.Join(os.TempDir(), "sentinel-installer.log")
+	if logFile != nil {
+		logFile.Close()
+		logFile = nil
+	}
+	if err := os.Remove(logPath); err != nil && !os.IsNotExist(err) {
+		// Best effort - don't fail installation over log cleanup
+		fmt.Fprintf(os.Stderr, "  [WARN] Could not remove installer log at %s: %v\n", logPath, err)
+	}
+}
+
+// warnInstallerLogExists logs a warning that the installer log exists and may contain
+// sensitive information. Called on failed installation to aid debugging while informing
+// the user about the file's existence.
+func warnInstallerLogExists() {
+	logPath := filepath.Join(os.TempDir(), "sentinel-installer.log")
+	if _, err := os.Stat(logPath); err == nil {
+		fmt.Fprintf(os.Stderr, "\n  [WARN] Installer log exists at: %s\n", logPath)
+		fmt.Fprintf(os.Stderr, "  [WARN] This file may contain server URLs and partial configuration data.\n")
+		fmt.Fprintf(os.Stderr, "  [WARN] Delete it manually after troubleshooting: del \"%s\"\n", logPath)
+	}
+}
+
+// isPermissionError checks whether an error is a permission-denied error
+// that should not be retried (e.g., access denied, insufficient privileges).
+func isPermissionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, os.ErrPermission) {
+		return true
+	}
+	// Check for Windows-specific access denied errors
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		if errors.Is(pathErr.Err, syscall.ERROR_ACCESS_DENIED) {
+			return true
+		}
+	}
+	// Also check the error message as a fallback for wrapped errors
+	errMsg := strings.ToLower(err.Error())
+	return strings.Contains(errMsg, "access is denied")
+}
+
 // Version is set at build time
 var Version = "1.0.0"
 
@@ -172,7 +229,7 @@ func readEmbeddedConfig() *EmbeddedConfig {
 	token := strings.TrimRight(string(configBlock[59:112]), "_\x00")
 	if token != "" && !strings.Contains(token, "placeholder") {
 		config.EnrollmentToken = token
-		logMsg("[DEBUG] Found embedded token: %s...", token[:min(10, len(token))])
+		logMsg("[DEBUG] Found embedded token: %s", redactToken(token))
 	}
 
 	// Extract code (bytes 112-121, 9 chars, trimmed)
@@ -532,6 +589,7 @@ func proceedWithInstall(config *InstallConfig) {
 	if err := prepareInstallDirectory(installPath, agentExe, watchdogExe); err != nil {
 		printError("Failed to prepare installation directory: %v", err)
 		printError("Please restart your computer and try again.")
+		warnInstallerLogExists()
 		if !*flagSilent {
 			waitForKey()
 		}
@@ -545,6 +603,7 @@ func proceedWithInstall(config *InstallConfig) {
 	if err != nil {
 		printError("Failed to connect to server: %v", err)
 		printError("Please check your network connection and try again.")
+		warnInstallerLogExists()
 		if !*flagSilent {
 			waitForKey()
 		}
@@ -557,6 +616,7 @@ func proceedWithInstall(config *InstallConfig) {
 	tempPath := filepath.Join(os.TempDir(), "sentinel-agent-download.exe")
 	if err := downloadAgent(serverURL, token, tempPath, agentInfo); err != nil {
 		printError("Download failed: %v", err)
+		warnInstallerLogExists()
 		if !*flagSilent {
 			waitForKey()
 		}
@@ -581,6 +641,7 @@ func proceedWithInstall(config *InstallConfig) {
 		printInfo("Verifying checksum...")
 		if err := verifyChecksum(tempPath, agentInfo.Checksum); err != nil {
 			printError("Checksum verification failed: %v", err)
+			warnInstallerLogExists()
 			if !*flagSilent {
 				waitForKey()
 			}
@@ -602,6 +663,7 @@ func proceedWithInstall(config *InstallConfig) {
 		if err := robustFileCopy(tempPath, agentExe); err != nil {
 			printError("Installation failed after emergency cleanup: %v", err)
 			printError("Please restart your computer and try again.")
+			warnInstallerLogExists()
 			if !*flagSilent {
 				waitForKey()
 			}
@@ -626,7 +688,7 @@ func proceedWithInstall(config *InstallConfig) {
 
 	// Run agent install command
 	printInfo("Configuring service...")
-	logMsg("[DEBUG] Running: %s --install --server=%s --token=%s...", agentExe, serverURL, token[:min(10, len(token))])
+	logMsg("[DEBUG] Running: %s --install --server=%s --token=%s", agentExe, serverURL, redactToken(token))
 	cmd := exec.Command(agentExe, "--install", "--server="+serverURL, "--token="+token)
 
 	var stdout, stderr strings.Builder
@@ -637,6 +699,7 @@ func proceedWithInstall(config *InstallConfig) {
 		logMsg("[DEBUG] Agent install stdout: %s", stdout.String())
 		logMsg("[DEBUG] Agent install stderr: %s", stderr.String())
 		printError("Service installation failed: %v", err)
+		warnInstallerLogExists()
 		if !*flagSilent {
 			waitForKey()
 		}
@@ -663,6 +726,9 @@ func proceedWithInstall(config *InstallConfig) {
 	} else {
 		printWarning("SentinelWatchdog service is not running")
 	}
+
+	// Cleanup installer log on success - no sensitive data left in %TEMP%
+	cleanupInstallerLog()
 
 	// Show completion
 	if !*flagSilent {
@@ -1593,12 +1659,16 @@ func forceRemoveFile(path string) {
 	}
 }
 
-// robustFileCopy copies a file with retries and error handling
+// robustFileCopy copies a file with retries and error handling.
+// Permission errors (access denied) fail immediately without retrying,
+// since retries cannot resolve permission issues. Transient errors
+// (file busy/locked) are retried with exponential backoff.
 func robustFileCopy(src, dst string) error {
+	const maxRetries = 5
 	var lastErr error
 
-	for attempt := 1; attempt <= 5; attempt++ {
-		logMsg("[DEBUG] Copy attempt %d: %s -> %s", attempt, src, dst)
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		logMsg("[DEBUG] Copy attempt %d/%d: %s -> %s", attempt, maxRetries, src, dst)
 
 		// Ensure destination doesn't exist
 		forceRemoveFile(dst)
@@ -1617,6 +1687,13 @@ func robustFileCopy(src, dst string) error {
 			lastErr = fmt.Errorf("size mismatch after copy")
 		} else {
 			lastErr = err
+			// Permission errors are permanent - fail immediately, no retry
+			if isPermissionError(err) {
+				logMsg("[ERROR] Permanent permission error (not retrying): %v", err)
+				return fmt.Errorf("permission denied (not retryable): %w", err)
+			}
+			// Log transient error - these are worth retrying
+			logMsg("[DEBUG] Transient error on attempt %d/%d (will retry): %v", attempt, maxRetries, err)
 		}
 
 		logMsg("[DEBUG] Copy attempt %d failed: %v", attempt, lastErr)
@@ -1625,7 +1702,7 @@ func robustFileCopy(src, dst string) error {
 		time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
 	}
 
-	return fmt.Errorf("failed after 5 attempts: %w", lastErr)
+	return fmt.Errorf("failed after %d attempts (last error: %w)", maxRetries, lastErr)
 }
 
 // copyFileWithSync copies a file and syncs to disk
