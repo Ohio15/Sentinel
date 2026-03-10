@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -134,12 +135,15 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 		return
 	}
 
-	// Wait for auth message
+	// Wait for auth message with deadline to prevent resource exhaustion (H-01)
+	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	_, message, err := conn.ReadMessage()
 	if err != nil {
 		conn.Close()
 		return
 	}
+	// Clear deadline for normal operation
+	conn.SetReadDeadline(time.Time{})
 
 	var authMsg ws.Message
 	if err := json.Unmarshal(message, &authMsg); err != nil || authMsg.Type != ws.MsgTypeAuth {
@@ -190,44 +194,35 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 		return
 	}
 
-	// Verify token against database (enrollment_tokens table)
-	// Tokens can be either:
-	// 1. Legacy ENROLLMENT_TOKEN env var (36-char UUID)
-	// 2. Installation link tokens (64-char hex from enrollment_tokens table)
+	// Verify token using shared validation (handles both legacy plaintext and bcrypt-hashed tokens)
+	// H-08: ValidateDatabaseToken checks is_active = TRUE, expires_at, and max_uses,
+	// so deactivating a token (is_active = FALSE) will reject reconnecting agents.
+	// This applies to BOTH new enrollments and WebSocket reconnections.
+	//
+	// FUTURE: Add bulk device disable by enrollment token — when a token is revoked,
+	// optionally disable all devices that were enrolled with that token. This would
+	// handle the case where agents are already connected and won't re-authenticate
+	// until their next reconnection attempt.
 	tokenValid := false
 
-	// First check against database (primary method for installation links)
-	var tokenID uuid.UUID
-	var isActive bool
-	var expiresAt *time.Time
-
-	err = r.db.Pool().QueryRow(context.Background(), `
-		SELECT id, is_active, expires_at
-		FROM enrollment_tokens WHERE token = $1
-	`, authPayload.Token).Scan(&tokenID, &isActive, &expiresAt)
-
-	if err == nil {
-		// Token found in database - validate it
-		if !isActive {
-			log.Printf("[WS] Token disabled for agent %s from %s", authPayload.AgentID, c.ClientIP())
-			conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Token is disabled"}`)})
-			conn.Close()
-			return
+	// Use the same token validation as the enrollment middleware (CW-003 compliant)
+	// This handles both legacy plaintext and bcrypt-hashed tokens correctly
+	if r.db.Pool() != nil {
+		valid, _ := middleware.ValidateDatabaseToken(context.Background(), r.db.Pool(), authPayload.Token)
+		if valid {
+			tokenValid = true
 		}
-		// NOTE: We do NOT check expiry or max_uses for WebSocket connections.
-		// These limits restrict how many NEW devices can enroll using one link.
-		// Once an agent is installed with a token, it can reconnect unlimited times
-		// regardless of whether the enrollment token has since expired.
-		tokenValid = true
-	} else {
-		// Token not found in database - check legacy env var
-		if r.config.EnrollmentToken != "" && subtle.ConstantTimeCompare([]byte(authPayload.Token), []byte(r.config.EnrollmentToken)) == 1 {
+	}
+
+	// Fallback to static env var token
+	if !tokenValid && r.config.EnrollmentToken != "" {
+		if subtle.ConstantTimeCompare([]byte(authPayload.Token), []byte(r.config.EnrollmentToken)) == 1 {
 			tokenValid = true
 		}
 	}
 
 	if !tokenValid {
-		log.Printf("[WS] Invalid token from %s for agent %s", c.ClientIP(), authPayload.AgentID)
+		log.Printf("[WS] Invalid/revoked token from %s for agent %s", c.ClientIP(), authPayload.AgentID)
 		conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Invalid token"}`)})
 		conn.Close()
 		return
@@ -488,6 +483,20 @@ func (r *Router) sendForceUpdateCommand(agentID string, deviceID uuid.UUID, curr
 		arch = "amd64"
 	}
 
+	// Validate arch to prevent command injection via DB-sourced values
+	validArchs := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
+	if !validArchs[arch] {
+		log.Printf("[ForceUpdate] WARNING: Invalid architecture %q for agent %s, rejecting force update", arch, agentID)
+		return
+	}
+
+	// Validate platform/osType to prevent command injection
+	validPlatforms := map[string]bool{"windows": true, "linux": true, "darwin": true}
+	if !validPlatforms[osType] {
+		log.Printf("[ForceUpdate] WARNING: Invalid platform %q for agent %s, rejecting force update", osType, agentID)
+		return
+	}
+
 	switch osType {
 	case "windows":
 		r.sendWindowsForceUpdate(agentID, deviceID, currentVersion, targetVersion, serverURL, arch)
@@ -505,7 +514,7 @@ func (r *Router) sendForceUpdateCommand(agentID string, deviceID uuid.UUID, curr
 // Only the first command (curl.exe) is whitelist-checked by the agent validator.
 // The cmd process survives WebSocket disconnect since it runs as a child of the agent process.
 func (r *Router) sendWindowsForceUpdate(agentID string, deviceID uuid.UUID, currentVersion, targetVersion, serverURL, arch string) {
-	downloadURL := fmt.Sprintf("%s/api/agent/update/download?platform=windows&arch=%s", serverURL, arch)
+	downloadURL := fmt.Sprintf("%s/api/agent/update/download?platform=windows&arch=%s", serverURL, url.QueryEscape(arch))
 
 	// Single chained command: download new binary, rename old, copy new, restart service.
 	// All using cmd builtins and environment variables — no PowerShell needed.

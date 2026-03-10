@@ -224,6 +224,16 @@ func (h *Hub) Run() {
 			h.connections[client.connectionID] = client
 
 			if client.isAgent {
+				// Close existing connection for this agent (agent reconnected or cloned) (H-05)
+				if existing, ok := h.agents[client.agentID]; ok {
+					log.Printf("[Hub] Agent %s reconnected — closing old connection %s", client.agentID, existing.connectionID)
+					delete(h.connections, existing.connectionID)
+					if h.registry != nil {
+						h.registry.Unregister(existing.connectionID)
+					}
+					close(existing.send)
+					go existing.conn.Close()
+				}
 				h.agents[client.agentID] = client
 				h.totalAgentConnections.Add(1)
 				log.Printf("Agent connected: %s (conn: %s)", client.agentID, client.connectionID)

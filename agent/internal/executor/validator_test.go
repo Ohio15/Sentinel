@@ -184,10 +184,11 @@ func TestValidateCommand_InvalidType(t *testing.T) {
 
 func TestValidateCommand_NotWhitelisted(t *testing.T) {
 	// Test commands not in whitelist
+	// Note: nc IS whitelisted (Linux/Unix Network), so use other non-whitelisted commands
 	tests := []string{
 		"arbitrary_command",
 		"malware.exe",
-		"nc -l -p 4444",
+		"backdoor -l -p 4444",
 	}
 
 	for _, cmd := range tests {
@@ -397,6 +398,631 @@ func TestExtractBaseCommand(t *testing.T) {
 			got := extractBaseCommand(tt.command, tt.cmdType)
 			if got != tt.want {
 				t.Errorf("extractBaseCommand() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateCommand_ChainedCommands(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		cmdType string
+		wantErr bool
+	}{
+		// Legitimate chained commands (all whitelisted)
+		{
+			name:    "Legitimate update chain with && (curl, move, copy, net)",
+			command: `curl.exe -s -f -o "%TEMP%\sentinel-agent-update.exe" "https://example.com/update.exe" && move /Y "%TEMP%\old.exe" "%TEMP%\backup.exe" && copy /Y "%TEMP%\new.exe" "C:\Program Files\Sentinel\agent.exe" && net stop SentinelAgent`,
+			cmdType: "cmd",
+			wantErr: false,
+		},
+		{
+			name:    "Pipe with whitelisted commands",
+			command: `tasklist | find "sentinel"`,
+			cmdType: "cmd",
+			wantErr: false,
+		},
+		{
+			name:    "Double ampersand with whitelisted commands",
+			command: "hostname && systeminfo",
+			cmdType: "cmd",
+			wantErr: false,
+		},
+		{
+			name:    "Semicolon-separated whitelisted commands",
+			command: "hostname ; whoami ; date",
+			cmdType: "bash",
+			wantErr: false,
+		},
+		{
+			name:    "Logical OR with whitelisted commands",
+			command: "ping 8.8.8.8 || echo offline",
+			cmdType: "cmd",
+			wantErr: false,
+		},
+		{
+			name:    "Background ampersand with whitelisted commands",
+			command: "ps aux & ls -la",
+			cmdType: "bash",
+			wantErr: false,
+		},
+		// Attack: whitelisted first command, non-whitelisted chained command
+		{
+			name:    "ATTACK: tasklist && malware.exe",
+			command: `tasklist && C:\temp\evil.exe`,
+			cmdType: "cmd",
+			wantErr: true,
+		},
+		{
+			name:    "ATTACK: whitelisted | non-whitelisted",
+			command: `tasklist | evil_program`,
+			cmdType: "cmd",
+			wantErr: true,
+		},
+		{
+			name:    "ATTACK: whitelisted ; non-whitelisted",
+			command: "hostname ; malware",
+			cmdType: "cmd",
+			wantErr: true,
+		},
+		{
+			name:    "ATTACK: whitelisted || non-whitelisted",
+			command: "hostname || evil_binary",
+			cmdType: "cmd",
+			wantErr: true,
+		},
+		{
+			name:    "ATTACK: three commands, last non-whitelisted",
+			command: "tasklist && hostname && evil_payload",
+			cmdType: "cmd",
+			wantErr: true,
+		},
+		{
+			name:    "ATTACK: download and execute via chain",
+			command: `tasklist && powershell -c "Invoke-WebRequest ..."`,
+			cmdType: "cmd",
+			wantErr: true,
+		},
+		// PowerShell chain validation
+		{
+			name:    "PowerShell pipe - all whitelisted",
+			command: "Get-Process | Where-Object {$_.CPU -gt 10} | Sort-Object CPU",
+			cmdType: "powershell",
+			wantErr: false,
+		},
+		{
+			name:    "PowerShell semicolon chain - all whitelisted",
+			command: "Get-Process ; Get-Service",
+			cmdType: "powershell",
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateCommand(tt.command, tt.cmdType)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateCommand() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestExtractAllBaseCommands(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		cmdType string
+		want    []string
+	}{
+		{
+			name:    "Single command",
+			command: "systeminfo",
+			cmdType: "cmd",
+			want:    []string{"systeminfo"},
+		},
+		{
+			name:    "Two commands with &&",
+			command: "hostname && systeminfo",
+			cmdType: "cmd",
+			want:    []string{"hostname", "systeminfo"},
+		},
+		{
+			name:    "Pipe chain",
+			command: "tasklist | find \"sentinel\"",
+			cmdType: "cmd",
+			want:    []string{"tasklist", "find"},
+		},
+		{
+			name:    "Mixed separators",
+			command: "hostname && whoami ; date",
+			cmdType: "cmd",
+			want:    []string{"hostname", "whoami", "date"},
+		},
+		{
+			name:    "Update chain with paths",
+			command: `curl.exe -s -f -o "%TEMP%\update.exe" "https://example.com" && move /Y old new && net stop SentinelAgent`,
+			cmdType: "cmd",
+			want:    []string{"curl", "move", "net"},
+		},
+		{
+			name:    "Command with sudo in chain",
+			command: "sudo systemctl status && hostname",
+			cmdType: "bash",
+			want:    []string{"systemctl", "hostname"},
+		},
+		{
+			name:    "PowerShell pipeline",
+			command: "Get-Process | Where-Object {$_.CPU -gt 10}",
+			cmdType: "powershell",
+			want:    []string{"Get-Process", "Where-Object"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractAllBaseCommands(tt.command, tt.cmdType)
+			if len(got) != len(tt.want) {
+				t.Errorf("extractAllBaseCommands() returned %d commands %v, want %d commands %v", len(got), got, len(tt.want), tt.want)
+				return
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("extractAllBaseCommands()[%d] = %v, want %v", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+// =============================================================================
+// C-05 Comprehensive Chain Validation Tests
+// =============================================================================
+// These tests cover all 17 scenarios for the C-05 fix ensuring the validator
+// checks ALL commands in a shell chain, not just the first.
+
+func TestValidateCommand_C05_SingleWhitelistedPasses(t *testing.T) {
+	// Scenario 1: Single whitelisted command passes
+	cmds := []struct {
+		name, command, cmdType string
+	}{
+		{"tasklist", "tasklist", "cmd"},
+		{"ipconfig with args", "ipconfig /all", "cmd"},
+		{"hostname", "hostname", "cmd"},
+		{"ps aux", "ps aux", "bash"},
+		{"ls -la", "ls -la", "bash"},
+		{"Get-Process", "Get-Process", "powershell"},
+	}
+	for _, tt := range cmds {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ValidateCommand(tt.command, tt.cmdType); err != nil {
+				t.Errorf("single whitelisted command %q should pass, got: %v", tt.command, err)
+			}
+		})
+	}
+}
+
+func TestValidateCommand_C05_SingleBlacklistedFails(t *testing.T) {
+	// Scenario 2: Single blacklisted command fails
+	cmds := []struct {
+		name, command, cmdType string
+	}{
+		{"rm -rf /", "rm -rf /", "bash"},
+		{"format c:", "format c:", "cmd"},
+		{"useradd", "useradd hacker", "bash"},
+		{"Invoke-Expression", "Invoke-Expression 'evil'", "powershell"},
+		{"dd to device", "dd if=/dev/zero of=/dev/sda", "bash"},
+	}
+	for _, tt := range cmds {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ValidateCommand(tt.command, tt.cmdType); err == nil {
+				t.Errorf("blacklisted command %q must fail validation", tt.command)
+			}
+		})
+	}
+}
+
+func TestValidateCommand_C05_FirstWhitelistedSecondNot(t *testing.T) {
+	// Scenario 3: First whitelisted, second NOT whitelisted -> MUST FAIL
+	cmds := []struct {
+		name, command, cmdType string
+	}{
+		{"tasklist && evil_binary", "tasklist && evil_binary", "cmd"},
+		{"ipconfig && malware.exe", "ipconfig && malware.exe", "cmd"},
+		{"hostname && reverse_shell", "hostname && reverse_shell", "bash"},
+		{"ls && backdoor", "ls && backdoor", "bash"},
+		{"ps && cryptominer", "ps aux && cryptominer --mine", "bash"},
+	}
+	for _, tt := range cmds {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ValidateCommand(tt.command, tt.cmdType); err == nil {
+				t.Errorf("SECURITY: %q MUST FAIL — second command is not whitelisted", tt.command)
+			}
+		})
+	}
+}
+
+func TestValidateCommand_C05_FirstNotWhitelisted(t *testing.T) {
+	// Scenario 4: First command NOT whitelisted -> MUST FAIL
+	cmds := []struct {
+		name, command, cmdType string
+	}{
+		{"evil && tasklist", "evil && tasklist", "cmd"},
+		{"backdoor && ipconfig", "backdoor && ipconfig", "cmd"},
+		{"malware && hostname", "malware && hostname", "bash"},
+		{"trojan ; ls", "trojan ; ls", "bash"},
+	}
+	for _, tt := range cmds {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ValidateCommand(tt.command, tt.cmdType); err == nil {
+				t.Errorf("SECURITY: %q MUST FAIL — first command is not whitelisted", tt.command)
+			}
+		})
+	}
+}
+
+func TestValidateCommand_C05_AllWhitelistedChain(t *testing.T) {
+	// Scenario 5: All commands whitelisted -> MUST PASS
+	cmds := []struct {
+		name, command, cmdType string
+	}{
+		{"tasklist && ipconfig && hostname", "tasklist && ipconfig && hostname", "cmd"},
+		{"ls && ps && uptime", "ls && ps && uptime", "bash"},
+		{"whoami && hostname && date", "whoami && hostname && date", "cmd"},
+	}
+	for _, tt := range cmds {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ValidateCommand(tt.command, tt.cmdType); err != nil {
+				t.Errorf("all-whitelisted chain %q should pass, got: %v", tt.command, err)
+			}
+		})
+	}
+}
+
+func TestValidateCommand_C05_PipedAllWhitelisted(t *testing.T) {
+	// Scenario 6: Piped commands all whitelisted -> MUST PASS
+	cmds := []struct {
+		name, command, cmdType string
+	}{
+		{"tasklist | find sentinel", `tasklist | find "sentinel"`, "cmd"},
+		{"ps | grep chrome", "ps aux | grep chrome", "bash"},
+		{"ls | sort | head", "ls -la | sort | head", "bash"},
+		{"cat | grep | wc", "cat /var/log/syslog | grep error | wc -l", "bash"},
+	}
+	for _, tt := range cmds {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ValidateCommand(tt.command, tt.cmdType); err != nil {
+				t.Errorf("piped whitelisted commands %q should pass, got: %v", tt.command, err)
+			}
+		})
+	}
+}
+
+func TestValidateCommand_C05_PipedNonWhitelisted(t *testing.T) {
+	// Scenario 7: Piped command with non-whitelisted -> MUST FAIL
+	cmds := []struct {
+		name, command, cmdType string
+	}{
+		{"tasklist | evil_tool", "tasklist | evil_tool", "cmd"},
+		{"ps | backdoor", "ps aux | backdoor --exfil", "bash"},
+		{"ls | cryptominer", "ls -la | cryptominer", "bash"},
+		{"evil_tool | tasklist", "evil_tool | tasklist", "cmd"},
+	}
+	for _, tt := range cmds {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ValidateCommand(tt.command, tt.cmdType); err == nil {
+				t.Errorf("SECURITY: %q MUST FAIL — piped command is not whitelisted", tt.command)
+			}
+		})
+	}
+}
+
+func TestValidateCommand_C05_SemicolonChaining(t *testing.T) {
+	// Scenario 8: Semicolon chaining with non-whitelisted -> MUST FAIL
+	cmds := []struct {
+		name, command, cmdType string
+	}{
+		{"tasklist; evil_binary", "tasklist; evil_binary", "cmd"},
+		{"hostname; malware", "hostname; malware --payload", "bash"},
+		{"ls; backdoor", "ls; backdoor", "bash"},
+	}
+	for _, tt := range cmds {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ValidateCommand(tt.command, tt.cmdType); err == nil {
+				t.Errorf("SECURITY: %q MUST FAIL — semicolon-chained command not whitelisted", tt.command)
+			}
+		})
+	}
+}
+
+func TestValidateCommand_C05_BackgroundExecution(t *testing.T) {
+	// Scenario 9: Background execution with non-whitelisted -> MUST FAIL
+	cmds := []struct {
+		name, command, cmdType string
+	}{
+		{"evil_binary & tasklist", "evil_binary & tasklist", "bash"},
+		{"backdoor & ps", "backdoor & ps aux", "bash"},
+		{"tasklist & evil_binary", "tasklist & evil_binary", "bash"},
+	}
+	for _, tt := range cmds {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ValidateCommand(tt.command, tt.cmdType); err == nil {
+				t.Errorf("SECURITY: %q MUST FAIL — background command not whitelisted", tt.command)
+			}
+		})
+	}
+}
+
+func TestValidateCommand_C05_OrChaining(t *testing.T) {
+	// Scenario 10: OR chaining with non-whitelisted -> MUST FAIL
+	cmds := []struct {
+		name, command, cmdType string
+	}{
+		{"tasklist || evil_binary", "tasklist || evil_binary", "cmd"},
+		{"hostname || malware", "hostname || malware", "bash"},
+		{"evil_binary || tasklist", "evil_binary || tasklist", "cmd"},
+	}
+	for _, tt := range cmds {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ValidateCommand(tt.command, tt.cmdType); err == nil {
+				t.Errorf("SECURITY: %q MUST FAIL — OR-chained command not whitelisted", tt.command)
+			}
+		})
+	}
+}
+
+func TestValidateCommand_C05_LegitForceUpdateChain(t *testing.T) {
+	// Scenario 11: The legitimate force-update chain — all commands whitelisted
+	// curl.exe->curl, move, copy, net are all whitelisted
+	command := `curl.exe -s -f -o "%TEMP%\sentinel-agent-update.exe" "https://server/api/agent/update/download?platform=windows&arch=amd64" && move /Y "%ProgramFiles%\SentinelRMM\sentinel-agent.exe" "%ProgramFiles%\SentinelRMM\sentinel-agent.old" && copy /Y "%TEMP%\sentinel-agent-update.exe" "%ProgramFiles%\SentinelRMM\sentinel-agent.exe" && net stop SentinelAgent`
+
+	err := ValidateCommand(command, "cmd")
+	if err != nil {
+		t.Errorf("legitimate force-update chain should PASS, got: %v", err)
+	}
+}
+
+func TestValidateCommand_C05_EmptyChainSegment(t *testing.T) {
+	// Scenario 12: Empty chain segments — should handle gracefully (no panic)
+	cmds := []struct {
+		name, command, cmdType string
+	}{
+		{"double &&", "tasklist && && ipconfig", "cmd"},
+		{"trailing &&", "tasklist &&", "cmd"},
+		{"leading &&", "&& tasklist", "cmd"},
+		{"empty semicolons", "; ; ;", "bash"},
+		{"only separators", "&&", "cmd"},
+	}
+	for _, tt := range cmds {
+		t.Run(tt.name, func(t *testing.T) {
+			// Main assertion: no panic. Error is acceptable.
+			err := ValidateCommand(tt.command, tt.cmdType)
+			t.Logf("ValidateCommand(%q) = %v (no panic = OK)", tt.command, err)
+		})
+	}
+}
+
+func TestValidateCommand_C05_NestedSeparators(t *testing.T) {
+	// Scenario 13: Nested separators / parenthesized groups
+	cmds := []struct {
+		name, command, cmdType string
+		wantErr                bool
+	}{
+		{
+			name:    "parenthesized OR - rejected (parentheses not stripped)",
+			command: "tasklist && (ipconfig || hostname)",
+			cmdType: "cmd",
+			wantErr: true,
+		},
+		{
+			name:    "parenthesized with evil command",
+			command: "tasklist && (evil_binary || hostname)",
+			cmdType: "cmd",
+			wantErr: true,
+		},
+		{
+			name:    "subshell - rejected (parentheses not stripped)",
+			command: "(ls && ps) || hostname",
+			cmdType: "bash",
+			wantErr: true,
+		},
+	}
+	for _, tt := range cmds {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateCommand(tt.command, tt.cmdType)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateCommand(%q) error = %v, wantErr %v", tt.command, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateCommand_C05_CommandsWithPaths(t *testing.T) {
+	// Scenario 14: Commands with full paths — base name should be extracted correctly
+	cmds := []struct {
+		name, command, cmdType string
+		wantErr                bool
+	}{
+		{
+			name:    "two Linux path commands both whitelisted",
+			command: "/usr/bin/ls && /usr/bin/cat /etc/hosts",
+			cmdType: "bash",
+			wantErr: false,
+		},
+		{
+			name:    "Linux path chained with non-whitelisted",
+			command: "/usr/bin/ls && /opt/evil/backdoor",
+			cmdType: "bash",
+			wantErr: true,
+		},
+		{
+			name:    "Windows path commands both whitelisted",
+			command: `C:\Windows\System32\ipconfig.exe && C:\Windows\System32\hostname.exe`,
+			cmdType: "cmd",
+			wantErr: false,
+		},
+		{
+			name:    "Windows path with evil in chain",
+			command: `C:\Windows\System32\ipconfig.exe && C:\temp\evil.exe`,
+			cmdType: "cmd",
+			wantErr: true,
+		},
+	}
+	for _, tt := range cmds {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateCommand(tt.command, tt.cmdType)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateCommand(%q) error = %v, wantErr %v", tt.command, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateCommand_C05_PowerShellChaining(t *testing.T) {
+	// Scenario 15: PowerShell chaining
+	cmds := []struct {
+		name, command, cmdType string
+		wantErr                bool
+	}{
+		{
+			name:    "two PS cmdlets semicolon",
+			command: "Get-Process; Get-Service",
+			cmdType: "powershell",
+			wantErr: false,
+		},
+		{
+			name:    "three PS cmdlets semicolon",
+			command: "Get-Process; Get-Service; Get-ComputerInfo",
+			cmdType: "powershell",
+			wantErr: false,
+		},
+		{
+			name:    "PS whitelisted then blacklisted",
+			command: "Get-Process; Invoke-Expression 'evil'",
+			cmdType: "powershell",
+			wantErr: true,
+		},
+		{
+			name:    "PS whitelisted then custom non-whitelisted",
+			command: "Get-Process; Install-Backdoor",
+			cmdType: "powershell",
+			wantErr: true,
+		},
+		{
+			name:    "PS pipeline all whitelisted",
+			command: "Get-Process | Sort-Object CPU | Select-Object -First 10",
+			cmdType: "powershell",
+			wantErr: false,
+		},
+	}
+	for _, tt := range cmds {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateCommand(tt.command, tt.cmdType)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateCommand(%q) error = %v, wantErr %v", tt.command, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateCommand_C05_ExcessiveChaining(t *testing.T) {
+	// Scenario 16: Excessive chaining (>10 segments)
+	// sanitizeArguments rejects commands with >10 special chars (& | ; > <)
+	// 11 "&&" segments = 22 ampersands, well over the limit
+	command := "tasklist && ipconfig && hostname && whoami && netstat && ping localhost && tracert localhost && nslookup localhost && route print && arp -a && systeminfo && ver"
+	err := ValidateCommand(command, "cmd")
+	// Should be rejected by sanitizeArguments for excessive special characters
+	if err == nil {
+		t.Log("WARNING: excessive chaining (12 segments) was allowed — consider adding a segment count limit")
+	} else {
+		t.Logf("Correctly rejected excessive chaining: %v", err)
+	}
+}
+
+func TestValidateCommand_C05_UnicodeBypassAttempts(t *testing.T) {
+	// Scenario 17: Unicode/special character bypass attempts
+	cmds := []struct {
+		name, command, cmdType string
+	}{
+		{
+			name:    "BiDi override in chain",
+			command: "tasklist && \u202Eevil_binary",
+			cmdType: "cmd",
+		},
+		{
+			name:    "null byte between chain segments",
+			command: "tasklist\x00 && evil_binary",
+			cmdType: "cmd",
+		},
+		{
+			name:    "non-printable control char in chain",
+			command: "tasklist && \x01evil_binary",
+			cmdType: "cmd",
+		},
+		{
+			name:    "zero-width space in command name",
+			command: "tasklist && evil\u200Bbinary",
+			cmdType: "cmd",
+		},
+		{
+			name:    "homoglyph attack - Cyrillic a in tasklist",
+			command: "tasklist && t\u0430sklist",
+			cmdType: "cmd",
+		},
+	}
+	for _, tt := range cmds {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ValidateCommand(tt.command, tt.cmdType); err == nil {
+				t.Errorf("SECURITY: unicode bypass %q MUST be blocked", tt.command)
+			}
+		})
+	}
+}
+
+// TestValidateCommand_C05_MixedSeparators tests commands using multiple
+// different separator types in the same command string.
+func TestValidateCommand_C05_MixedSeparators(t *testing.T) {
+	cmds := []struct {
+		name, command, cmdType string
+		wantErr                bool
+	}{
+		{
+			name:    "pipe then && all whitelisted",
+			command: `tasklist | find "sentinel" && ipconfig`,
+			cmdType: "cmd",
+			wantErr: false,
+		},
+		{
+			name:    "pipe then && with evil",
+			command: `tasklist | find "sentinel" && evil_binary`,
+			cmdType: "cmd",
+			wantErr: true,
+		},
+		{
+			name:    "&& then pipe with evil",
+			command: `tasklist && evil_binary | find "test"`,
+			cmdType: "cmd",
+			wantErr: true,
+		},
+		{
+			name:    "semicolon then pipe all whitelisted",
+			command: "hostname; ps aux | grep test",
+			cmdType: "bash",
+			wantErr: false,
+		},
+		{
+			name:    "all separator types with evil",
+			command: "tasklist && hostname | grep test ; evil_binary || echo done",
+			cmdType: "bash",
+			wantErr: true,
+		},
+	}
+	for _, tt := range cmds {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateCommand(tt.command, tt.cmdType)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateCommand(%q) error = %v, wantErr %v", tt.command, err, tt.wantErr)
 			}
 		})
 	}

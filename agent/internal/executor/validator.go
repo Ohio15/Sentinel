@@ -47,8 +47,8 @@ func getWhitelistedCommands() map[string]bool {
 		"ipconfig", "netstat", "ping", "tracert", "nslookup", "route",
 		"arp", "netsh",
 
-		// Windows File Operations (read-only)
-		"dir", "tree", "where", "attrib",
+		// Windows File Operations
+		"dir", "tree", "where", "attrib", "move", "copy",
 
 		// Windows Disk Info
 		"diskpart", "fsutil", "chkdsk",
@@ -280,13 +280,15 @@ func (cv *CommandValidator) Validate(command string, cmdType string) error {
 		}
 	}
 
-	// Extract base command (first word after stripping common prefixes)
-	baseCmd := extractBaseCommand(command, cmdType)
+	// Extract ALL base commands from the full command string (including chained commands)
+	baseCmds := extractAllBaseCommands(command, cmdType)
 
-	// If base command is extracted, check against whitelist
-	if baseCmd != "" {
-		if !cv.whitelistedCommands[strings.ToLower(baseCmd)] {
-			return fmt.Errorf("command '%s' is not in the whitelist of allowed commands", baseCmd)
+	// Every sub-command must be whitelisted; reject if any fails
+	for _, baseCmd := range baseCmds {
+		if baseCmd != "" {
+			if !cv.whitelistedCommands[strings.ToLower(baseCmd)] {
+				return fmt.Errorf("command '%s' is not in the whitelist of allowed commands", baseCmd)
+			}
 		}
 	}
 
@@ -298,45 +300,96 @@ func (cv *CommandValidator) Validate(command string, cmdType string) error {
 	return nil
 }
 
-// extractBaseCommand extracts the base command from a full command string
-func extractBaseCommand(command string, cmdType string) string {
+// shellSeparatorPattern matches shell command separators: &&, ||, ;, |
+// and standalone & (background operator). Order matters: longer operators
+// must come before shorter ones to avoid partial matches.
+// IMPORTANT: Bare & is matched only when preceded by whitespace or start-of-string
+// to avoid splitting on & inside URLs (e.g., "?platform=windows&arch=amd64").
+// The ; and | are always separators regardless of context.
+var shellSeparatorPattern = regexp.MustCompile(`\s*(\|\||&&)\s*|(?:^|\s)(&)(?:\s|$)|\s*([;|])\s*`)
+
+// extractAllBaseCommands splits a command string on shell separators and extracts
+// the base command from each sub-command. This ensures every command in a chain
+// like "tasklist && curl ... && evil.exe" is individually validated.
+func extractAllBaseCommands(command string, cmdType string) []string {
 	command = strings.TrimSpace(command)
 
-	// Handle PowerShell cmdlets
+	// For PowerShell, pipes are part of the pipeline (e.g., Get-Process | Where-Object).
+	// PowerShell cmdlets connected by pipes are still PowerShell — validate each segment.
 	if cmdType == "powershell" {
-		// Extract first PowerShell cmdlet
-		parts := strings.Fields(command)
-		for _, part := range parts {
-			// Skip common PowerShell parameters
-			if strings.HasPrefix(part, "-") || strings.HasPrefix(part, "$") {
-				continue
-			}
-			// PowerShell cmdlets typically have Verb-Noun format
-			if strings.Contains(part, "-") && !strings.HasPrefix(part, "-") {
-				return part
-			}
-			// Or simple commands
-			if !strings.Contains(part, "=") && !strings.Contains(part, "|") {
-				return part
-			}
-		}
+		return extractAllPowerShellCommands(command)
 	}
 
-	// For other shells, extract first command
+	// Split the full command on all shell separators
+	segments := shellSeparatorPattern.Split(command, -1)
+
+	var baseCmds []string
+	for _, seg := range segments {
+		seg = strings.TrimSpace(seg)
+		if seg == "" {
+			continue
+		}
+		baseCmd := extractBaseCommandSingle(seg)
+		if baseCmd != "" {
+			baseCmds = append(baseCmds, baseCmd)
+		}
+	}
+	return baseCmds
+}
+
+// extractAllPowerShellCommands handles PowerShell command chains.
+// PowerShell uses | for pipelines and ; for statement separation.
+// && and || are also supported in PowerShell 7+.
+func extractAllPowerShellCommands(command string) []string {
+	// Split on PowerShell separators
+	segments := shellSeparatorPattern.Split(command, -1)
+
+	var baseCmds []string
+	for _, seg := range segments {
+		seg = strings.TrimSpace(seg)
+		if seg == "" {
+			continue
+		}
+		baseCmd := extractPowerShellCmdlet(seg)
+		if baseCmd != "" {
+			baseCmds = append(baseCmds, baseCmd)
+		}
+	}
+	return baseCmds
+}
+
+// extractPowerShellCmdlet extracts the cmdlet or command name from a single
+// PowerShell command segment (no separators).
+func extractPowerShellCmdlet(segment string) string {
+	parts := strings.Fields(segment)
+	for _, part := range parts {
+		// Skip common PowerShell parameters
+		if strings.HasPrefix(part, "-") || strings.HasPrefix(part, "$") {
+			continue
+		}
+		// PowerShell cmdlets typically have Verb-Noun format
+		if strings.Contains(part, "-") && !strings.HasPrefix(part, "-") {
+			return part
+		}
+		// Or simple commands
+		if !strings.Contains(part, "=") && !strings.Contains(part, "|") {
+			return part
+		}
+	}
+	return ""
+}
+
+// extractBaseCommandSingle extracts the base command name from a single command
+// segment (no shell separators). This handles sudo prefixes, paths, and extensions.
+func extractBaseCommandSingle(segment string) string {
+	segment = strings.TrimSpace(segment)
+
 	// Remove common prefixes
-	command = strings.TrimPrefix(command, "sudo ")
-	command = strings.TrimPrefix(command, "sudo\t")
-
-	// Split on common separators and get first part
-	separators := []string{"|", ";", "&&", "||", "&"}
-	for _, sep := range separators {
-		if idx := strings.Index(command, sep); idx > 0 {
-			command = command[:idx]
-		}
-	}
+	segment = strings.TrimPrefix(segment, "sudo ")
+	segment = strings.TrimPrefix(segment, "sudo\t")
 
 	// Get first word
-	parts := strings.Fields(command)
+	parts := strings.Fields(segment)
 	if len(parts) > 0 {
 		baseCmd := parts[0]
 		// CW-002: Clean path before extracting base to prevent traversal bypass
@@ -356,6 +409,17 @@ func extractBaseCommand(command string, cmdType string) string {
 		return baseCmd
 	}
 
+	return ""
+}
+
+// extractBaseCommand extracts the base command from the FIRST segment only.
+// Deprecated: Use extractAllBaseCommands for security — this only returns the first command.
+// Kept for backward compatibility with tests.
+func extractBaseCommand(command string, cmdType string) string {
+	cmds := extractAllBaseCommands(command, cmdType)
+	if len(cmds) > 0 {
+		return cmds[0]
+	}
 	return ""
 }
 

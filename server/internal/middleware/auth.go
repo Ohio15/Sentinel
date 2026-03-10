@@ -240,7 +240,7 @@ func NewAgentAuthMiddleware(pool *pgxpool.Pool, fallbackToken string) gin.Handle
 
 		// Try database validation first
 		if pool != nil {
-			valid, tokenID := validateDatabaseToken(c.Request.Context(), pool, token)
+			valid, tokenID := ValidateDatabaseToken(c.Request.Context(), pool, token)
 			if valid {
 				c.Set("enrollmentTokenID", tokenID)
 				c.Next()
@@ -259,8 +259,51 @@ func NewAgentAuthMiddleware(pool *pgxpool.Pool, fallbackToken string) gin.Handle
 	}
 }
 
-// validateDatabaseToken checks if a token is valid in the database
-func validateDatabaseToken(ctx context.Context, pool *pgxpool.Pool, token string) (bool, uuid.UUID) {
+// OptionalAgentAuthMiddleware checks for agent auth headers but does NOT reject unauthenticated requests.
+// Phase 1 (C-02): Log auth presence for audit trail. Phase 2 will enforce mandatory auth.
+func OptionalAgentAuthMiddleware(pool *pgxpool.Pool, fallbackToken string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token := c.GetHeader("X-Enrollment-Token")
+		if token == "" {
+			token = c.GetHeader("X-Agent-Token")
+		}
+
+		if token == "" {
+			log.Printf("[AUTH-AUDIT] Unauthenticated agent request to %s from %s", c.Request.URL.Path, c.ClientIP())
+			c.Set("agentAuthenticated", false)
+			c.Next()
+			return
+		}
+
+		// Try database validation first
+		if pool != nil {
+			valid, tokenID := ValidateDatabaseToken(c.Request.Context(), pool, token)
+			if valid {
+				c.Set("agentAuthenticated", true)
+				c.Set("enrollmentTokenID", tokenID)
+				log.Printf("[AUTH-AUDIT] Authenticated agent request to %s from %s (tokenID=%s)", c.Request.URL.Path, c.ClientIP(), tokenID)
+				c.Next()
+				return
+			}
+		}
+
+		// Fallback to static token for backwards compatibility
+		if fallbackToken != "" && subtle.ConstantTimeCompare([]byte(token), []byte(fallbackToken)) == 1 {
+			c.Set("agentAuthenticated", true)
+			log.Printf("[AUTH-AUDIT] Authenticated agent request to %s from %s (static token)", c.Request.URL.Path, c.ClientIP())
+			c.Next()
+			return
+		}
+
+		// Token was provided but invalid — log warning but do NOT abort (Phase 1)
+		log.Printf("[AUTH-AUDIT] WARNING: Invalid agent token on %s from %s", c.Request.URL.Path, c.ClientIP())
+		c.Set("agentAuthenticated", false)
+		c.Next()
+	}
+}
+
+// ValidateDatabaseToken checks if a token is valid in the database
+func ValidateDatabaseToken(ctx context.Context, pool *pgxpool.Pool, token string) (bool, uuid.UUID) {
 	// Fast path: try plaintext exact match for legacy tokens first (O(1) via index)
 	var legacyTokenID uuid.UUID
 	err := pool.QueryRow(ctx, `

@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"runtime"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -80,9 +82,11 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 			agentVersion.GET("/version", router.getAgentVersion)
 		}
 
-		// Agent update download & status (no rate limiting - downloads have per-IP cooldown already)
+		// Agent update download & status (rate-limited + optional auth audit logging)
+		// C-02: Phase 1 — log auth presence but do not reject unauthenticated requests yet
 		agentUpdate := api.Group("/agent")
 		agentUpdate.Use(rateLimitMiddleware(cache, 600, 60)) // 600 requests per minute per IP (high to survive old agent goroutine storm; per-handler download cooldown prevents bandwidth abuse)
+		agentUpdate.Use(middleware.OptionalAgentAuthMiddleware(db.Pool(), cfg.EnrollmentToken))
 		{
 			agentUpdate.GET("/update/download", router.downloadAgentUpdate)
 			agentUpdate.POST("/update/status", router.reportUpdateStatus)
@@ -254,8 +258,10 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			agentVersion.GET("/version", getAgentVersionHandler(services))
 		}
 
-		// Agent update download & status (no rate limiting - downloads have per-IP cooldown already)
+		// Agent update download & status (optional auth audit logging)
+		// C-02: Phase 1 — log auth presence but do not reject unauthenticated requests yet
 		agentUpdate := api.Group("/agent")
+		agentUpdate.Use(middleware.OptionalAgentAuthMiddleware(services.DB.Pool(), services.Config.EnrollmentToken))
 		{
 			agentUpdate.GET("/update/download", downloadAgentUpdateHandler(services))
 			agentUpdate.POST("/update/status", reportUpdateStatusHandler(services))
@@ -734,19 +740,80 @@ func corsMiddleware(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
-// rateLimitMiddleware implements rate limiting using Redis.
+// inMemoryRateLimiter provides a fallback rate limiter when Redis is unavailable.
+// Uses sync.Map for lock-free concurrent access with atomic counters.
+// More restrictive than Redis-based limiting (degraded mode).
+type inMemoryRateLimiter struct {
+	// counters maps "bucket:ip" -> *inMemoryEntry
+	counters sync.Map
+}
+
+type inMemoryEntry struct {
+	count     atomic.Int64
+	expiresAt atomic.Int64 // unix timestamp in seconds
+}
+
+// maxInMemoryRequests is intentionally more restrictive than Redis (degraded mode)
+const maxInMemoryRequests = 100
+
+// inMemoryWindowSeconds is the TTL for in-memory rate limit entries
+const inMemoryWindowSeconds = 60
+
+// globalInMemoryLimiter is the singleton in-memory fallback
+var globalInMemoryLimiter = &inMemoryRateLimiter{}
+
+func init() {
+	// Background goroutine to clean up expired entries every 2 minutes
+	go func() {
+		for {
+			time.Sleep(2 * time.Minute)
+			now := time.Now().Unix()
+			globalInMemoryLimiter.counters.Range(func(key, value any) bool {
+				entry := value.(*inMemoryEntry)
+				if entry.expiresAt.Load() < now {
+					globalInMemoryLimiter.counters.Delete(key)
+				}
+				return true
+			})
+		}
+	}()
+}
+
+// checkLimit returns (count, allowed) for the given key
+func (l *inMemoryRateLimiter) checkLimit(key string) (int64, bool) {
+	now := time.Now().Unix()
+
+	val, loaded := l.counters.LoadOrStore(key, &inMemoryEntry{})
+	entry := val.(*inMemoryEntry)
+
+	if !loaded {
+		// New entry — initialize
+		entry.count.Store(1)
+		entry.expiresAt.Store(now + inMemoryWindowSeconds)
+		return 1, true
+	}
+
+	// Check if window expired — reset
+	if entry.expiresAt.Load() < now {
+		entry.count.Store(1)
+		entry.expiresAt.Store(now + inMemoryWindowSeconds)
+		return 1, true
+	}
+
+	count := entry.count.Add(1)
+	return count, count <= int64(maxInMemoryRequests)
+}
+
+// rateLimitMiddleware implements rate limiting using Redis with in-memory fallback.
 // prefix isolates rate limit buckets so different endpoint groups don't share quotas.
+// When Redis is unavailable, falls back to an in-memory limiter that is MORE restrictive
+// (100 req/min vs configured limit) since it's a degraded mode.
 func rateLimitMiddleware(cache *cache.Cache, maxRequests int, windowSeconds int, prefix ...string) gin.HandlerFunc {
 	bucket := "global"
 	if len(prefix) > 0 && prefix[0] != "" {
 		bucket = prefix[0]
 	}
 	return func(c *gin.Context) {
-		if cache == nil {
-			c.Next()
-			return
-		}
-
 		// Skip rate limiting for whitelisted IPs (localhost, private networks)
 		clientIP := c.ClientIP()
 		if middleware.IsWhitelisted(clientIP) {
@@ -756,9 +823,37 @@ func rateLimitMiddleware(cache *cache.Cache, maxRequests int, windowSeconds int,
 
 		key := "ratelimit:" + bucket + ":" + clientIP
 
+		// M-01: If Redis is nil, use in-memory fallback instead of allowing all requests
+		if cache == nil {
+			log.Printf("[RATE-LIMIT] Redis unavailable (nil), using in-memory fallback for %s to %s (degraded mode)", clientIP, c.Request.URL.Path)
+			count, allowed := globalInMemoryLimiter.checkLimit(key)
+			if !allowed {
+				c.Header("Retry-After", strconv.Itoa(inMemoryWindowSeconds))
+				c.JSON(http.StatusTooManyRequests, gin.H{
+					"error": "Rate limit exceeded. Please try again later.",
+				})
+				c.Abort()
+				return
+			}
+			_ = count
+			c.Next()
+			return
+		}
+
 		count, err := cache.Incr(c.Request.Context(), key)
 		if err != nil {
-			// If Redis fails, allow the request
+			// M-01: Redis error — use in-memory fallback instead of allowing all requests
+			log.Printf("[RATE-LIMIT] Redis unavailable (%v), using in-memory fallback for %s to %s (degraded mode)", err, clientIP, c.Request.URL.Path)
+			fallbackCount, allowed := globalInMemoryLimiter.checkLimit(key)
+			if !allowed {
+				c.Header("Retry-After", strconv.Itoa(inMemoryWindowSeconds))
+				c.JSON(http.StatusTooManyRequests, gin.H{
+					"error": "Rate limit exceeded. Please try again later.",
+				})
+				c.Abort()
+				return
+			}
+			_ = fallbackCount
 			c.Next()
 			return
 		}

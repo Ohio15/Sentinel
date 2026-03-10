@@ -82,6 +82,7 @@ type WatchdogConfig struct {
 type watchdogService struct {
 	config              *WatchdogConfig
 	restartCount        int
+	consecutiveFailCycles int // Track how many times we hit maxRestarts and cooled down
 	lastRestart         time.Time
 	mu                  sync.Mutex
 	stopChan            chan struct{}
@@ -358,6 +359,41 @@ func (ws *watchdogService) checkAndRestartAgent() {
 			// Too many restarts, wait for cooldown
 			return
 		}
+		// Completed a full fail cycle (maxRestarts reached + cooldown elapsed)
+		ws.consecutiveFailCycles++
+		logMessage(fmt.Sprintf("Restart cooldown elapsed — consecutive fail cycles: %d", ws.consecutiveFailCycles))
+
+		// If we've gone through 2+ full fail cycles, the binary is likely bad
+		if ws.consecutiveFailCycles >= 2 {
+			logMessage("CRITICAL: Agent binary appears corrupted — 2 consecutive fail cycles detected")
+
+			// Write alert for the agent/server
+			ipc.WriteAlert(&ipc.AlertRelayPayload{
+				Severity: "critical",
+				Title:    "Agent Binary Corrupted — Bootstrap Recovery Triggered",
+				Message:  fmt.Sprintf("Agent failed %d restart cycles (%d restarts each). Binary declared bad. Attempting bootstrap recovery.",
+					ws.consecutiveFailCycles, ws.config.MaxRestarts),
+			})
+
+			// Attempt bootstrap recovery
+			bootstrapPath := filepath.Join(ws.installPath, "sentinel-bootstrap.exe")
+			if _, statErr := os.Stat(bootstrapPath); statErr == nil {
+				logMessage(fmt.Sprintf("Launching bootstrap recovery: %s --repair --silent", bootstrapPath))
+				cmd := exec.Command(bootstrapPath, "--repair", "--silent")
+				cmd.Dir = ws.installPath
+				if startErr := cmd.Start(); startErr != nil {
+					logMessage(fmt.Sprintf("Failed to launch bootstrap recovery: %v", startErr))
+				} else {
+					logMessage("Bootstrap recovery process launched successfully")
+				}
+			} else {
+				logMessage(fmt.Sprintf("Bootstrap binary not found at %s — cannot auto-recover", bootstrapPath))
+			}
+
+			// Reset cycles so we don't spam recovery attempts every cooldown
+			ws.consecutiveFailCycles = 0
+		}
+
 		// Reset counter after cooldown
 		ws.restartCount = 0
 	}
@@ -387,6 +423,7 @@ func (ws *watchdogService) checkAndRestartAgent() {
 	} else {
 		logMessage("Agent service restarted successfully")
 		ws.restartCount = 0
+		ws.consecutiveFailCycles = 0 // Successful restart resets fail cycle tracking
 	}
 }
 
@@ -725,6 +762,13 @@ func (ws *watchdogService) checkForPendingUpdate() {
 	logMessage(fmt.Sprintf("[StartupCheck] Found pending update request: version=%s staged=%s target=%s requestedAt=%s",
 		request.Version, request.StagedPath, request.TargetPath, request.RequestedAt.Format(time.RFC3339)))
 
+	// Reject stale requests older than 1 hour — prevents old/tampered requests from being applied
+	if !request.RequestedAt.IsZero() && time.Since(request.RequestedAt) > 1*time.Hour {
+		logMessage(fmt.Sprintf("[StartupCheck] REJECTED: Update request is stale (age: %v) — deleting for security", time.Since(request.RequestedAt).Round(time.Second)))
+		ipc.DeleteUpdateRequest()
+		return
+	}
+
 	// Check if this update was already applied (agent is running new version)
 	infoPath := ipc.AgentInfoPath()
 	info, infoErr := ipc.ReadAgentInfo()
@@ -905,6 +949,14 @@ func (ws *watchdogService) updateChecker() {
 			logMessage(fmt.Sprintf("[UpdateChecker]   targetPath:  %s", request.TargetPath))
 			logMessage(fmt.Sprintf("[UpdateChecker]   requestedAt: %s", request.RequestedAt.Format(time.RFC3339)))
 			logMessage(fmt.Sprintf("[UpdateChecker]   requestedBy: %s", request.RequestedBy))
+
+			// Reject stale requests older than 1 hour — prevents old/tampered requests from being applied
+			if !request.RequestedAt.IsZero() && time.Since(request.RequestedAt) > 1*time.Hour {
+				logMessage(fmt.Sprintf("[UpdateChecker] poll #%d: REJECTED — update request is stale (age: %v) — deleting for security",
+					pollCount, time.Since(request.RequestedAt).Round(time.Second)))
+				ipc.DeleteUpdateRequest()
+				continue
+			}
 
 			// Verify staged file exists before starting update
 			stagedInfo, statErr := os.Stat(request.StagedPath)
@@ -1187,29 +1239,34 @@ func (ws *watchdogService) verifyStagedFile(request *ipc.UpdateRequest) error {
 		return fmt.Errorf("staged file is empty")
 	}
 
-	// Verify checksum if provided
-	if request.Checksum != "" {
-		file, err := os.Open(request.StagedPath)
-		if err != nil {
-			return fmt.Errorf("failed to open staged file: %w", err)
-		}
-		defer file.Close()
+	// Reject requests with empty checksum — all updates must have integrity verification
+	if request.Checksum == "" {
+		return fmt.Errorf("update request missing checksum — rejecting for security")
+	}
 
-		hasher := sha256.New()
-		if _, err := io.Copy(hasher, file); err != nil {
-			return fmt.Errorf("failed to hash staged file: %w", err)
-		}
+	// Verify checksum matches staged file
+	file, err := os.Open(request.StagedPath)
+	if err != nil {
+		return fmt.Errorf("failed to open staged file: %w", err)
+	}
+	defer file.Close()
 
-		actualChecksum := hex.EncodeToString(hasher.Sum(nil))
-		if actualChecksum != request.Checksum {
-			return fmt.Errorf("checksum mismatch: expected %s, got %s", request.Checksum, actualChecksum)
-		}
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return fmt.Errorf("failed to hash staged file: %w", err)
+	}
+
+	actualChecksum := hex.EncodeToString(hasher.Sum(nil))
+	if actualChecksum != request.Checksum {
+		return fmt.Errorf("checksum mismatch: expected %s, got %s", request.Checksum, actualChecksum)
 	}
 
 	return nil
 }
 
-// createBackup creates a backup of the current binary
+// createBackup creates a backup of the current binary with integrity verification.
+// After copying, it flushes to disk and verifies SHA256 checksums match to prevent
+// corrupted backups (e.g., from power loss between copy and flush).
 func (ws *watchdogService) createBackup(targetPath string) (string, error) {
 	backupPath := targetPath + ".backup"
 
@@ -1227,13 +1284,57 @@ func (ws *watchdogService) createBackup(targetPath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to create backup: %w", err)
 	}
-	defer dst.Close()
 
 	if _, err := io.Copy(dst, src); err != nil {
+		dst.Close()
+		os.Remove(backupPath)
 		return "", fmt.Errorf("failed to copy to backup: %w", err)
 	}
 
+	// Force flush to disk before closing to prevent corruption on power loss
+	if err := dst.Sync(); err != nil {
+		dst.Close()
+		os.Remove(backupPath)
+		return "", fmt.Errorf("failed to sync backup to disk: %w", err)
+	}
+	dst.Close()
+	src.Close()
+
+	// Verify integrity: compute SHA256 of both source and backup, compare
+	srcChecksum, err := fileSHA256(targetPath)
+	if err != nil {
+		os.Remove(backupPath)
+		return "", fmt.Errorf("failed to hash source file: %w", err)
+	}
+
+	dstChecksum, err := fileSHA256(backupPath)
+	if err != nil {
+		os.Remove(backupPath)
+		return "", fmt.Errorf("failed to hash backup file: %w", err)
+	}
+
+	if srcChecksum != dstChecksum {
+		os.Remove(backupPath)
+		return "", fmt.Errorf("backup integrity check failed: source=%s backup=%s", srcChecksum, dstChecksum)
+	}
+
+	logMessage(fmt.Sprintf("[Backup] Integrity verified: %s (SHA256: %s)", backupPath, srcChecksum))
 	return backupPath, nil
+}
+
+// fileSHA256 computes the SHA256 hex digest of a file
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // stopAgentService stops the agent Windows service

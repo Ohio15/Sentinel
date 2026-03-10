@@ -132,22 +132,23 @@ func WriteAlert(alert *AlertRelayPayload) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal alert: %w", err)
 	}
-	return os.WriteFile(AlertFilePath(), data, 0644)
+	return secureWriteAndSign(AlertFilePath(), data)
 }
 
 // ReadAndDeleteAlert reads a pending alert and removes the file.
 // Returns nil, nil if no pending alert exists.
+// Verifies HMAC integrity before processing.
 func ReadAndDeleteAlert() (*AlertRelayPayload, error) {
 	path := AlertFilePath()
-	data, err := os.ReadFile(path)
+	data, err := secureReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to read alert file: %w", err)
 	}
-	// Remove the file immediately to prevent duplicate processing
-	os.Remove(path)
+	// Remove the file and its signature immediately to prevent duplicate processing
+	deleteWithSignature(path)
 
 	var alert AlertRelayPayload
 	if err := json.Unmarshal(data, &alert); err != nil {
@@ -188,12 +189,14 @@ type WatchdogInfo struct {
 }
 
 // EnsureDirectories creates the necessary directories for update coordination
+// with restrictive permissions (0700 + Windows ACLs for SYSTEM/Admins only).
 func EnsureDirectories() error {
 	dirs := []string{BaseDir, UpdateDir, StagingDir}
 	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0700); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
+		secureDirectory(dir)
 	}
 	return nil
 }
@@ -240,7 +243,7 @@ func WriteUpdateRequest(req *UpdateRequest) error {
 	}
 
 	path := UpdateRequestPath()
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := secureWriteAndSign(path, data); err != nil {
 		return fmt.Errorf("failed to write update request: %w", err)
 	}
 
@@ -249,9 +252,10 @@ func WriteUpdateRequest(req *UpdateRequest) error {
 
 // ReadUpdateRequest reads an update request from disk.
 // Returns nil, nil if no request file exists.
+// Verifies HMAC integrity before processing.
 func ReadUpdateRequest() (*UpdateRequest, error) {
 	path := UpdateRequestPath()
-	data, err := os.ReadFile(path)
+	data, err := secureReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -267,10 +271,10 @@ func ReadUpdateRequest() (*UpdateRequest, error) {
 	return &req, nil
 }
 
-// DeleteUpdateRequest removes the update request file
+// DeleteUpdateRequest removes the update request file and its signature
 func DeleteUpdateRequest() error {
 	path := UpdateRequestPath()
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+	if err := deleteWithSignature(path); err != nil {
 		return fmt.Errorf("failed to delete update request: %w", err)
 	}
 	return nil
@@ -288,7 +292,7 @@ func WriteUpdateStatus(status *UpdateStatus) error {
 	}
 
 	path := UpdateStatusPath()
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := secureWriteAndSign(path, data); err != nil {
 		return fmt.Errorf("failed to write update status: %w", err)
 	}
 
@@ -297,9 +301,10 @@ func WriteUpdateStatus(status *UpdateStatus) error {
 
 // ReadUpdateStatus reads an update status from disk.
 // Returns nil, nil if no status file exists.
+// Verifies HMAC integrity before processing.
 func ReadUpdateStatus() (*UpdateStatus, error) {
 	path := UpdateStatusPath()
-	data, err := os.ReadFile(path)
+	data, err := secureReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -315,10 +320,10 @@ func ReadUpdateStatus() (*UpdateStatus, error) {
 	return &status, nil
 }
 
-// DeleteUpdateStatus removes the update status file
+// DeleteUpdateStatus removes the update status file and its signature
 func DeleteUpdateStatus() error {
 	path := UpdateStatusPath()
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+	if err := deleteWithSignature(path); err != nil {
 		return fmt.Errorf("failed to delete update status: %w", err)
 	}
 	return nil
@@ -336,7 +341,7 @@ func WriteAgentInfo(info *AgentInfo) error {
 	}
 
 	path := AgentInfoPath()
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := secureWriteAndSign(path, data); err != nil {
 		return fmt.Errorf("failed to write agent info: %w", err)
 	}
 
@@ -345,9 +350,10 @@ func WriteAgentInfo(info *AgentInfo) error {
 
 // ReadAgentInfo reads agent info from disk.
 // Returns nil, nil if no info file exists.
+// Verifies HMAC integrity before processing.
 func ReadAgentInfo() (*AgentInfo, error) {
 	path := AgentInfoPath()
-	data, err := os.ReadFile(path)
+	data, err := secureReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -417,7 +423,7 @@ func WriteWatchdogUpdateRequest(req *WatchdogUpdateRequest) error {
 	}
 
 	path := WatchdogUpdateRequestPath()
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := secureWriteAndSign(path, data); err != nil {
 		return fmt.Errorf("failed to write watchdog update request: %w", err)
 	}
 
@@ -426,9 +432,10 @@ func WriteWatchdogUpdateRequest(req *WatchdogUpdateRequest) error {
 
 // ReadWatchdogUpdateRequest reads a watchdog update request from disk.
 // Returns nil, nil if no request file exists.
+// Verifies HMAC integrity before processing.
 func ReadWatchdogUpdateRequest() (*WatchdogUpdateRequest, error) {
 	path := WatchdogUpdateRequestPath()
-	data, err := os.ReadFile(path)
+	data, err := secureReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -444,10 +451,10 @@ func ReadWatchdogUpdateRequest() (*WatchdogUpdateRequest, error) {
 	return &req, nil
 }
 
-// DeleteWatchdogUpdateRequest removes the watchdog update request file
+// DeleteWatchdogUpdateRequest removes the watchdog update request file and its signature
 func DeleteWatchdogUpdateRequest() error {
 	path := WatchdogUpdateRequestPath()
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+	if err := deleteWithSignature(path); err != nil {
 		return fmt.Errorf("failed to delete watchdog update request: %w", err)
 	}
 	return nil
@@ -465,7 +472,7 @@ func WriteWatchdogUpdateStatus(status *WatchdogUpdateStatus) error {
 	}
 
 	path := WatchdogUpdateStatusPath()
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := secureWriteAndSign(path, data); err != nil {
 		return fmt.Errorf("failed to write watchdog update status: %w", err)
 	}
 
@@ -474,9 +481,10 @@ func WriteWatchdogUpdateStatus(status *WatchdogUpdateStatus) error {
 
 // ReadWatchdogUpdateStatus reads a watchdog update status from disk.
 // Returns nil, nil if no status file exists.
+// Verifies HMAC integrity before processing.
 func ReadWatchdogUpdateStatus() (*WatchdogUpdateStatus, error) {
 	path := WatchdogUpdateStatusPath()
-	data, err := os.ReadFile(path)
+	data, err := secureReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -492,10 +500,10 @@ func ReadWatchdogUpdateStatus() (*WatchdogUpdateStatus, error) {
 	return &status, nil
 }
 
-// DeleteWatchdogUpdateStatus removes the watchdog update status file
+// DeleteWatchdogUpdateStatus removes the watchdog update status file and its signature
 func DeleteWatchdogUpdateStatus() error {
 	path := WatchdogUpdateStatusPath()
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+	if err := deleteWithSignature(path); err != nil {
 		return fmt.Errorf("failed to delete watchdog update status: %w", err)
 	}
 	return nil
@@ -513,7 +521,7 @@ func WriteWatchdogInfo(info *WatchdogInfo) error {
 	}
 
 	path := WatchdogInfoPath()
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := secureWriteAndSign(path, data); err != nil {
 		return fmt.Errorf("failed to write watchdog info: %w", err)
 	}
 
@@ -522,9 +530,10 @@ func WriteWatchdogInfo(info *WatchdogInfo) error {
 
 // ReadWatchdogInfo reads watchdog info from disk.
 // Returns nil, nil if no info file exists.
+// Verifies HMAC integrity before processing.
 func ReadWatchdogInfo() (*WatchdogInfo, error) {
 	path := WatchdogInfoPath()
-	data, err := os.ReadFile(path)
+	data, err := secureReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil

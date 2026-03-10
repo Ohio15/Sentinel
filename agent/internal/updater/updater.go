@@ -527,18 +527,18 @@ func (u *Updater) ApplyUpdate(ctx context.Context, downloadPath string, info *Ve
 	u.reportStatus(ctx)
 
 	if runtime.GOOS == "windows" {
-		return u.applyUpdateWindows(currentExe, downloadPath, info.Version)
+		return u.applyUpdateWindows(currentExe, downloadPath, info.Version, info.Checksum)
 	}
 	return u.applyUpdateUnix(currentExe, downloadPath)
 }
 
-func (u *Updater) applyUpdateWindows(currentExe, downloadPath, newVersion string) error {
+func (u *Updater) applyUpdateWindows(currentExe, downloadPath, newVersion, checksum string) error {
 	u.updateStatus(StateRestarting, "Signaling watchdog for update...", 50)
 
 	// Check if watchdog pipe is available (new watchdog with update orchestration)
 	if ipc.IsPipeAvailable() {
 		log.Println("Watchdog pipe available, using watchdog-orchestrated update")
-		return u.applyUpdateViaWatchdog(currentExe, downloadPath, newVersion)
+		return u.applyUpdateViaWatchdog(currentExe, downloadPath, newVersion, checksum)
 	}
 
 	// Fallback: old watchdog without pipe support - use legacy batch approach
@@ -547,7 +547,7 @@ func (u *Updater) applyUpdateWindows(currentExe, downloadPath, newVersion string
 }
 
 // applyUpdateViaWatchdog uses the new watchdog-orchestrated update mechanism
-func (u *Updater) applyUpdateViaWatchdog(currentExe, downloadPath, newVersion string) error {
+func (u *Updater) applyUpdateViaWatchdog(currentExe, downloadPath, newVersion, checksum string) error {
 	log.Printf("[Handoff] === BEGIN WATCHDOG HANDOFF === version=%s", newVersion)
 	log.Printf("[Handoff] currentExe=%q downloadPath=%q", currentExe, downloadPath)
 
@@ -585,11 +585,28 @@ func (u *Updater) applyUpdateViaWatchdog(currentExe, downloadPath, newVersion st
 		log.Printf("[Handoff] No watchdog-update-request.json (good — no self-update gate)")
 	}
 
+	// Ensure checksum is populated — compute from staged file if server didn't provide one
+	if checksum == "" {
+		log.Printf("[Handoff] Checksum not provided by server — computing from staged file")
+		f, hashErr := os.Open(downloadPath)
+		if hashErr != nil {
+			return fmt.Errorf("failed to open staged file for checksum: %w", hashErr)
+		}
+		h := sha256.New()
+		if _, hashErr = io.Copy(h, f); hashErr != nil {
+			f.Close()
+			return fmt.Errorf("failed to hash staged file: %w", hashErr)
+		}
+		f.Close()
+		checksum = hex.EncodeToString(h.Sum(nil))
+		log.Printf("[Handoff] Computed checksum: %s", checksum)
+	}
+
 	// Create update request for the watchdog
 	request := &ipc.UpdateRequest{
 		Version:     newVersion,
 		StagedPath:  downloadPath,
-		Checksum:    "", // Already verified during download
+		Checksum:    checksum,
 		RequestedAt: time.Now(),
 		RequestedBy: u.deviceID,
 		TargetPath:  currentExe,
