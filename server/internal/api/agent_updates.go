@@ -258,10 +258,6 @@ func (r *Router) downloadAgentUpdate(c *gin.Context) {
 		log.Printf("[AgentUpdate] Warning: failed to extend write deadline: %v", err)
 	}
 
-	// C-02: Log whether the download request was authenticated (Phase 1 audit)
-	authenticated, _ := c.Get("agentAuthenticated")
-	log.Printf("[AgentUpdate] Download request from %s, authenticated=%v", c.ClientIP(), authenticated)
-
 	platform := c.Query("platform")
 	arch := c.Query("arch")
 
@@ -453,10 +449,8 @@ func (r *Router) reportUpdateStatus(c *gin.Context) {
 		return
 	}
 
-	// C-02: Log whether the status report was authenticated (Phase 1 audit)
-	authenticated, _ := c.Get("agentAuthenticated")
-	log.Printf("[UpdateStatus] agent=%s status=%s from=%s to=%s error=%q ip=%s authenticated=%v",
-		req.AgentID, req.Status, req.FromVersion, req.ToVersion, req.Error, c.ClientIP(), authenticated)
+	log.Printf("[UpdateStatus] agent=%s status=%s from=%s to=%s error=%q ip=%s",
+		req.AgentID, req.Status, req.FromVersion, req.ToVersion, req.Error, c.ClientIP())
 
 	// Validate status enum
 	validStatuses := map[string]bool{

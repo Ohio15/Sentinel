@@ -128,10 +128,8 @@ func verifySignature(filePath string, data []byte) error {
 
 // secureReadFile reads a file and verifies its HMAC integrity.
 // Returns the file data if the signature is valid.
-// During rolling upgrades, files written by older agents may lack a .sig file.
-// In that case, the data is returned with a warning log but NOT rejected,
-// allowing backwards compatibility. Once all agents are updated, this grace
-// period can be removed by setting strictMode = true.
+// All IPC files MUST have a valid .sig companion — missing or invalid signatures
+// are treated as tampering and rejected with a hard error.
 func secureReadFile(filePath string) ([]byte, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
@@ -139,14 +137,6 @@ func secureReadFile(filePath string) ([]byte, error) {
 	}
 
 	if err := verifySignature(filePath, data); err != nil {
-		sigPath := filePath + sigSuffix
-		if _, statErr := os.Stat(sigPath); os.IsNotExist(statErr) {
-			// Grace period: .sig file missing — file was written by an older agent/watchdog.
-			// Accept the data but log a warning. Remove this fallback after fleet-wide upgrade.
-			log.Printf("WARNING: IPC file %s has no signature (pre-upgrade file) — accepting with reduced trust", filePath)
-			return data, nil
-		}
-		// .sig file EXISTS but verification failed — actual tampering or corruption
 		log.Printf("CRITICAL SECURITY ALERT: %v", err)
 		return nil, err
 	}

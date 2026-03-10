@@ -82,11 +82,11 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 			agentVersion.GET("/version", router.getAgentVersion)
 		}
 
-		// Agent update download & status (rate-limited + optional auth audit logging)
-		// C-02: Phase 1 — log auth presence but do not reject unauthenticated requests yet
+		// Agent update download & status (rate-limited + mandatory auth)
+		// C-02: Phase 2 — agents now send enrollment token; reject unauthenticated requests
 		agentUpdate := api.Group("/agent")
 		agentUpdate.Use(rateLimitMiddleware(cache, 600, 60)) // 600 requests per minute per IP (high to survive old agent goroutine storm; per-handler download cooldown prevents bandwidth abuse)
-		agentUpdate.Use(middleware.OptionalAgentAuthMiddleware(db.Pool(), cfg.EnrollmentToken))
+		agentUpdate.Use(middleware.NewAgentAuthMiddleware(db.Pool(), cfg.EnrollmentToken))
 		{
 			agentUpdate.GET("/update/download", router.downloadAgentUpdate)
 			agentUpdate.POST("/update/status", router.reportUpdateStatus)
@@ -258,10 +258,10 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			agentVersion.GET("/version", getAgentVersionHandler(services))
 		}
 
-		// Agent update download & status (optional auth audit logging)
-		// C-02: Phase 1 — log auth presence but do not reject unauthenticated requests yet
+		// Agent update download & status (mandatory auth)
+		// C-02: Phase 2 — agents now send enrollment token; reject unauthenticated requests
 		agentUpdate := api.Group("/agent")
-		agentUpdate.Use(middleware.OptionalAgentAuthMiddleware(services.DB.Pool(), services.Config.EnrollmentToken))
+		agentUpdate.Use(middleware.NewAgentAuthMiddleware(services.DB.Pool(), services.Config.EnrollmentToken))
 		{
 			agentUpdate.GET("/update/download", downloadAgentUpdateHandler(services))
 			agentUpdate.POST("/update/status", reportUpdateStatusHandler(services))

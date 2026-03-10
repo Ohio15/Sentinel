@@ -390,6 +390,7 @@ func (a *Agent) Start() error {
 	// Check for and report any completed update result
 	a.updater.SetDeviceID(a.cfg.DeviceID)
 	a.updater.SetAgentID(a.cfg.AgentID)
+	a.updater.SetEnrollmentToken(a.cfg.EnrollmentToken)
 	a.updater.CheckAndReportUpdateResult(a.ctx)
 
 	// Install bootstrap recovery task (Layer 4 - last resort recovery)

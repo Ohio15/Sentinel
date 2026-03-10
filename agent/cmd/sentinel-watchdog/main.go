@@ -2088,6 +2088,23 @@ func (ws *watchdogService) getServerURL() string {
 	return "https://sentinelrmm.us"
 }
 
+// getEnrollmentToken reads the enrollment token from the agent's config file.
+// Used to authenticate update download and status report requests (C-02 Phase 2).
+func (ws *watchdogService) getEnrollmentToken() string {
+	agentConfigPath := filepath.Join(ws.installPath, "agent-config.json")
+	data, err := os.ReadFile(agentConfigPath)
+	if err != nil {
+		return ""
+	}
+	var agentConfig struct {
+		EnrollmentToken string `json:"enrollment_token"`
+	}
+	if json.Unmarshal(data, &agentConfig) == nil {
+		return agentConfig.EnrollmentToken
+	}
+	return ""
+}
+
 // buildSecureTLSConfig creates a TLS configuration with proper certificate verification.
 // It attempts to load a CA certificate from standard locations. If no custom CA cert
 // is found, it falls back to the system root CA pool (which handles Let's Encrypt
@@ -2161,7 +2178,15 @@ func (ws *watchdogService) pollServerForUpdates(serverURL string) error {
 		},
 	}
 
-	resp, err := client.Get(versionURL)
+	req, err := http.NewRequest("GET", versionURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create version check request: %w", err)
+	}
+	if token := ws.getEnrollmentToken(); token != "" {
+		req.Header.Set("X-Enrollment-Token", token)
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("HTTP request failed: %w", err)
 	}
@@ -2215,7 +2240,15 @@ func (ws *watchdogService) downloadAndStageUpdate(info *ServerVersionInfo, serve
 		},
 	}
 
-	resp, err := client.Get(downloadURL)
+	dlReq, err := http.NewRequest("GET", downloadURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create download request: %w", err)
+	}
+	if token := ws.getEnrollmentToken(); token != "" {
+		dlReq.Header.Set("X-Enrollment-Token", token)
+	}
+
+	resp, err := client.Do(dlReq)
 	if err != nil {
 		return fmt.Errorf("download request failed: %w", err)
 	}

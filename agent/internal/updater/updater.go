@@ -149,6 +149,9 @@ type Updater struct {
 	handoffTime         time.Time // When the handoff occurred
 	handoffVersion      string    // Version handed off
 
+	// Authentication
+	enrollmentToken string // Sent as X-Enrollment-Token on update endpoints
+
 	// Adaptive polling state
 	pollMu                sync.Mutex
 	consecutiveFailures   int
@@ -268,7 +271,15 @@ func (u *Updater) shouldPollAggressively() bool {
 
 func (u *Updater) SetDeviceID(deviceID string)             { u.deviceID = deviceID }
 func (u *Updater) SetAgentID(agentID string)               { u.agentID = agentID }
+func (u *Updater) SetEnrollmentToken(token string)         { u.enrollmentToken = token }
 func (u *Updater) SetCheckInterval(interval time.Duration) { u.checkInterval = interval }
+
+// setAuthHeaders adds enrollment token authentication to an HTTP request.
+func (u *Updater) setAuthHeaders(req *http.Request) {
+	if u.enrollmentToken != "" {
+		req.Header.Set("X-Enrollment-Token", u.enrollmentToken)
+	}
+}
 
 func (u *Updater) TriggerCheck() {
 	// Don't queue a check if we've already handed off to the watchdog
@@ -419,6 +430,7 @@ func (u *Updater) downloadFromURL(ctx context.Context, downloadURL, tempFile str
 	if u.agentID != "" {
 		req.Header.Set("X-Agent-ID", u.agentID)
 	}
+	u.setAuthHeaders(req)
 
 	resp, err := u.httpClient.Do(req)
 	if err != nil {
@@ -1209,6 +1221,7 @@ func (u *Updater) reportStatus(ctx context.Context) {
 	url := fmt.Sprintf("%s/api/agent/update/status", u.serverURL)
 	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonData))
 	req.Header.Set("Content-Type", "application/json")
+	u.setAuthHeaders(req)
 	resp, err := u.httpClient.Do(req)
 	if err == nil {
 		resp.Body.Close()
@@ -1522,6 +1535,7 @@ func (u *Updater) reportUpdateResult(ctx context.Context, status *ipc.UpdateStat
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
+		u.setAuthHeaders(req)
 
 		resp, err := u.httpClient.Do(req)
 		if err != nil {
