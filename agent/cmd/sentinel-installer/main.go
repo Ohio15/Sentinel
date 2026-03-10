@@ -930,14 +930,6 @@ func downloadAgent(serverURL, token, destPath string, info *AgentInfo) error {
 			serverURL, runtime.GOOS, runtime.GOARCH)
 	}
 
-	if token != "" {
-		if strings.Contains(downloadURL, "?") {
-			downloadURL += "&token=" + token
-		} else {
-			downloadURL += "?token=" + token
-		}
-	}
-
 	// Use longer timeout for downloads with proper TLS verification
 	downloadClient := &http.Client{
 		Timeout: 10 * time.Minute,
@@ -945,7 +937,14 @@ func downloadAgent(serverURL, token, destPath string, info *AgentInfo) error {
 			TLSClientConfig: buildInstallerTLSConfig(),
 		},
 	}
-	resp, err := downloadClient.Get(downloadURL)
+	req, err := http.NewRequest("GET", downloadURL, nil)
+	if err != nil {
+		return err
+	}
+	if token != "" {
+		req.Header.Set("X-Enrollment-Token", token)
+	}
+	resp, err := downloadClient.Do(req)
 	if err != nil {
 		return err
 	}

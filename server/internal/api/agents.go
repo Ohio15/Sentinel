@@ -401,13 +401,30 @@ func (r *Router) serveWindowsInstaller(c *gin.Context, installerPath, token, age
 		serverURL = fmt.Sprintf("http://%s", c.Request.Host)
 	}
 
+	// Sanitize all values before embedding in scripts/config
+	safeToken, err := sanitizeForShellEmbed(token)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid token: " + err.Error()})
+		return
+	}
+	safeServerURL, err := sanitizeForShellEmbed(serverURL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid server URL: " + err.Error()})
+		return
+	}
+	safeAgentID, err := sanitizeForShellEmbed(agentID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid agent ID: " + err.Error()})
+		return
+	}
+
 	configContent := fmt.Sprintf(`{
   "agent_id": "%s",
   "server_url": "%s",
   "enrollment_token": "%s",
   "heartbeat_interval": 30,
   "metrics_interval": 60
-}`, agentID, serverURL, token)
+}`, safeAgentID, safeServerURL, safeToken)
 
 	configWriter, _ := zipWriter.Create("config/agent.json")
 	configWriter.Write([]byte(configContent))
@@ -442,7 +459,7 @@ Start-Service -Name "Sentinel Agent"
 
 Write-Host "Sentinel Agent installed successfully!"
 Write-Host "Agent ID: %s"
-`, serverURL, token, agentID, agentID)
+`, safeServerURL, safeToken, safeAgentID, safeAgentID)
 
 	installWriter, _ := zipWriter.Create("quick-install.ps1")
 	installWriter.Write([]byte(installScript))
@@ -450,7 +467,7 @@ Write-Host "Agent ID: %s"
 	zipWriter.Close()
 
 	// Serve the modified zip
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=sentinel-agent-%s-windows-x64.zip", agentID[:8]))
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=sentinel-agent-%s-windows-x64.zip", safeAgentID[:8]))
 	c.Data(http.StatusOK, "application/zip", buf.Bytes())
 }
 
@@ -462,6 +479,23 @@ func (r *Router) serveUnixInstaller(c *gin.Context, installerPath, platform, tok
 	serverURL := r.config.ServerURL
 	if serverURL == "" {
 		serverURL = fmt.Sprintf("http://%s", c.Request.Host)
+	}
+
+	// Sanitize all values before embedding in shell scripts
+	safeToken, err := sanitizeForShellEmbed(token)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid token: " + err.Error()})
+		return
+	}
+	safeServerURL, err := sanitizeForShellEmbed(serverURL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid server URL: " + err.Error()})
+		return
+	}
+	safeAgentID, err := sanitizeForShellEmbed(agentID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid agent ID: " + err.Error()})
+		return
 	}
 
 	// Create a shell script that downloads and configures the agent
@@ -488,7 +522,7 @@ sudo mkdir -p /opt/sentinel
 sudo mkdir -p /etc/sentinel
 
 # Download agent (if not bundled)
-# curl -o /tmp/sentinel-agent "$SERVER_URL/api/agents/binary/linux/x64?token=$ENROLLMENT_TOKEN"
+# curl -H "X-Enrollment-Token: $ENROLLMENT_TOKEN" -o /tmp/sentinel-agent "$SERVER_URL/api/agents/binary/linux/x64"
 # sudo mv /tmp/sentinel-agent /opt/sentinel/sentinel-agent
 # sudo chmod +x /opt/sentinel/sentinel-agent
 
@@ -528,7 +562,7 @@ sudo systemctl start sentinel-agent
 
 echo "Sentinel Agent installed and started!"
 echo "Check status: sudo systemctl status sentinel-agent"
-`, agentID, serverURL, token, agentID)
+`, safeAgentID, safeServerURL, safeToken, safeAgentID)
 	} else {
 		// macOS
 		scriptExt = "sh"
@@ -585,10 +619,10 @@ EOF
 sudo launchctl load /Library/LaunchDaemons/io.sentinel.agent.plist
 
 echo "Sentinel Agent installed and started!"
-`, agentID, serverURL, token, agentID)
+`, safeAgentID, safeServerURL, safeToken, safeAgentID)
 	}
 
-	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=sentinel-agent-install-%s.%s", agentID[:8], scriptExt))
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=sentinel-agent-install-%s.%s", safeAgentID[:8], scriptExt))
 	c.Data(http.StatusOK, "text/plain", []byte(installCmd))
 }
 
@@ -607,6 +641,18 @@ func (r *Router) getAgentInstallScript(c *gin.Context) {
 		serverURL = fmt.Sprintf("http://%s", c.Request.Host)
 	}
 
+	// Sanitize token and serverURL before embedding in shell script
+	safeToken, err := sanitizeForShellEmbed(token)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid token: " + err.Error()})
+		return
+	}
+	safeServerURL, err := sanitizeForShellEmbed(serverURL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid server URL: " + err.Error()})
+		return
+	}
+
 	var script string
 
 	switch platform {
@@ -614,21 +660,21 @@ func (r *Router) getAgentInstallScript(c *gin.Context) {
 		script = fmt.Sprintf(`# Run in PowerShell as Administrator
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $ProgressPreference = 'SilentlyContinue'
-Invoke-WebRequest -Uri '%s/api/agents/download/windows/x64?token=%s' -OutFile sentinel-agent.zip
+Invoke-WebRequest -Uri '%s/api/agents/download/windows/x64' -Headers @{'X-Enrollment-Token'='%s'} -OutFile sentinel-agent.zip
 Expand-Archive sentinel-agent.zip -DestinationPath sentinel-agent -Force
 cd sentinel-agent
 .\quick-install.ps1
-`, serverURL, token)
+`, safeServerURL, safeToken)
 
 	case "linux":
 		script = fmt.Sprintf(`#!/bin/bash
-curl -sSL '%s/api/agents/download/linux/x64?token=%s' | sudo bash
-`, serverURL, token)
+curl -sSL -H 'X-Enrollment-Token: %s' '%s/api/agents/download/linux/x64' | sudo bash
+`, safeToken, safeServerURL)
 
 	case "macos":
 		script = fmt.Sprintf(`#!/bin/bash
-curl -sSL '%s/api/agents/download/macos/arm64?token=%s' | sudo bash
-`, serverURL, token)
+curl -sSL -H 'X-Enrollment-Token: %s' '%s/api/agents/download/macos/arm64' | sudo bash
+`, safeToken, safeServerURL)
 
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid platform"})
