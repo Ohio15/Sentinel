@@ -636,6 +636,12 @@ func proceedWithInstall(config *InstallConfig) {
 		printSuccess("Downloaded watchdog service")
 	}
 
+	// Remove Zone.Identifier ADS from downloaded temp files BEFORE checksum verification
+	// and file copy. Windows marks files downloaded via HTTP with MOTW (Mark of the Web),
+	// which can cause SmartScreen to block execution even after copying to a new location.
+	removeZoneIdentifier(tempPath)
+	removeZoneIdentifier(watchdogTempPath)
+
 	// Verify checksum if provided
 	if agentInfo.Checksum != "" {
 		printInfo("Verifying checksum...")
@@ -683,22 +689,75 @@ func proceedWithInstall(config *InstallConfig) {
 		}
 	}
 
-	// Remove Zone.Identifier from installed agent to prevent security warnings
+	// Remove Zone.Identifier ADS from ALL installed binaries to prevent SmartScreen/MOTW blocking.
+	// This MUST happen before attempting to execute the agent binary.
 	removeZoneIdentifier(agentExe)
 
-	// Run agent install command
+	// Also remove Zone.Identifier from temp downloads (in case OS propagates ADS on copy)
+	removeZoneIdentifier(tempPath)
+	removeZoneIdentifier(watchdogTempPath)
+
+	// Explicitly set full-control permissions on the installed binaries.
+	// After directory swap or file copy, permission inheritance from the parent folder
+	// may not propagate correctly, leaving binaries non-executable.
+	printInfo("Setting binary permissions...")
+	setExecutePermissions(agentExe)
+	setExecutePermissions(watchdogExe)
+
+	// Wait for any pending service deletions to complete before re-registering.
+	// If a previous service is in DELETE_PENDING state, creating a new service
+	// with the same name will fail with "Access is denied".
+	printInfo("Ensuring previous services are fully removed...")
+	waitForServiceFullyDeleted("SentinelAgent", 30*time.Second)
+	waitForServiceFullyDeleted("SentinelWatchdog", 15*time.Second)
+
+	// Run agent install command with retry logic
 	printInfo("Configuring service...")
 	logMsg("[DEBUG] Running: %s --install --server=%s --token=%s", agentExe, serverURL, redactToken(token))
-	cmd := exec.Command(agentExe, "--install", "--server="+serverURL, "--token="+token)
 
-	var stdout, stderr strings.Builder
-	cmd.Stdout = io.MultiWriter(os.Stdout, &stdout)
-	cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
+	var installErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		cmd := exec.Command(agentExe, "--install", "--server="+serverURL, "--token="+token)
 
-	if err := cmd.Run(); err != nil {
+		var stdout, stderr strings.Builder
+		cmd.Stdout = io.MultiWriter(os.Stdout, &stdout)
+		cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
+
+		installErr = cmd.Run()
+		if installErr == nil {
+			break
+		}
+
+		logMsg("[DEBUG] Agent install attempt %d/%d failed", attempt, 3)
 		logMsg("[DEBUG] Agent install stdout: %s", stdout.String())
 		logMsg("[DEBUG] Agent install stderr: %s", stderr.String())
-		printError("Service installation failed: %v", err)
+
+		if attempt < 3 {
+			errStr := stderr.String() + installErr.Error()
+			if strings.Contains(strings.ToLower(errStr), "access is denied") ||
+				strings.Contains(strings.ToLower(errStr), "already exists") ||
+				strings.Contains(strings.ToLower(errStr), "marked for deletion") {
+				// Service might still be pending deletion — force cleanup and wait
+				printWarning("Service registration blocked, retrying after cleanup (attempt %d/3)...", attempt)
+				exec.Command("sc", "stop", "SentinelAgent").Run()
+				exec.Command("sc", "delete", "SentinelAgent").Run()
+				exec.Command("sc", "stop", "SentinelWatchdog").Run()
+				exec.Command("sc", "delete", "SentinelWatchdog").Run()
+				waitForServiceFullyDeleted("SentinelAgent", 15*time.Second)
+				waitForServiceFullyDeleted("SentinelWatchdog", 10*time.Second)
+				// Re-apply permissions in case something changed
+				setExecutePermissions(agentExe)
+				removeZoneIdentifier(agentExe)
+			} else {
+				// Unknown error — still retry but with a shorter wait
+				printWarning("Service registration failed (attempt %d/3): %v", attempt, installErr)
+				time.Sleep(2 * time.Second)
+			}
+		}
+	}
+
+	if installErr != nil {
+		printError("Service installation failed after 3 attempts: %v", installErr)
 		warnInstallerLogExists()
 		if !*flagSilent {
 			waitForKey()
@@ -1328,6 +1387,86 @@ func deleteServiceAndWait(name string) {
 	}
 
 	logMsg("[DEBUG] Timeout waiting for service %s deletion", name)
+}
+
+// waitForServiceFullyDeleted waits until a service is completely removed from SCM.
+// Unlike deleteServiceAndWait, this does NOT attempt to delete the service — it only waits.
+// This is critical for reinstall scenarios: if a service is in DELETE_PENDING state,
+// attempting to create a new service with the same name fails with "Access is denied".
+// The DELETE_PENDING state clears when all handles to the service are closed (including
+// any open sc.exe, services.msc, or SCM query handles).
+func waitForServiceFullyDeleted(name string, timeout time.Duration) {
+	// Quick check: does the service exist at all?
+	cmd := exec.Command("sc", "query", name)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		outputStr := string(output)
+		if strings.Contains(outputStr, "1060") || strings.Contains(outputStr, "does not exist") {
+			logMsg("[DEBUG] Service %s does not exist — ready for install", name)
+			return
+		}
+	}
+
+	logMsg("[DEBUG] Waiting for service %s to be fully deleted (timeout: %v)", name, timeout)
+
+	// If service still exists (possibly DELETE_PENDING), try to delete it again
+	outputStr := string(output)
+	if strings.Contains(outputStr, "RUNNING") || strings.Contains(outputStr, "START_PENDING") {
+		logMsg("[DEBUG] Service %s still running — stopping it", name)
+		exec.Command("sc", "stop", name).Run()
+		time.Sleep(1 * time.Second)
+	}
+	exec.Command("sc", "delete", name).Run()
+
+	// Poll until the service is truly gone (not just DELETE_PENDING)
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		cmd := exec.Command("sc", "query", name)
+		output, err := cmd.CombinedOutput()
+		outputStr := string(output)
+
+		// Service no longer exists — this is what we want
+		if err != nil && (strings.Contains(outputStr, "1060") || strings.Contains(outputStr, "does not exist")) {
+			logMsg("[DEBUG] Service %s fully removed from SCM", name)
+			return
+		}
+
+		// Still in DELETE_PENDING — close any stale SCM handles that might block it
+		if strings.Contains(outputStr, "DELETE_PENDING") {
+			logMsg("[DEBUG] Service %s in DELETE_PENDING — waiting for handles to close", name)
+			// Kill any lingering service host processes that hold SCM handles open
+			killServiceProcess(name)
+		}
+
+		time.Sleep(1 * time.Second)
+	}
+
+	logMsg("[WARN] Timeout waiting for service %s to be fully deleted — install may fail", name)
+}
+
+// setExecutePermissions explicitly grants execute permission on a binary file.
+// On Windows, after file copy or directory swap, NTFS permission inheritance from the
+// parent may not apply correctly. This ensures the SYSTEM account and Administrators
+// have full control, which is required for service registration and execution.
+func setExecutePermissions(filePath string) {
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return
+	}
+
+	logMsg("[DEBUG] Setting execute permissions on: %s", filePath)
+
+	// First, reset permission inheritance from parent folder to get a clean slate
+	exec.Command("icacls", filePath, "/reset").Run()
+
+	// Then grant explicit permissions on top of inherited ones
+	// Full control for Administrators and SYSTEM (required for service registration)
+	exec.Command("icacls", filePath, "/grant", "Administrators:F").Run()
+	exec.Command("icacls", filePath, "/grant", "SYSTEM:F").Run()
+
+	// Read+execute for Users (for service startup under SYSTEM account)
+	exec.Command("icacls", filePath, "/grant", "Users:RX").Run()
+
+	logMsg("[DEBUG] Permissions set on: %s", filePath)
 }
 
 // scheduleDirDeleteOnReboot schedules a directory and its contents for deletion on reboot
