@@ -117,8 +117,8 @@ func createAgentLinkHandler(services *Services) gin.HandlerFunc {
 			return
 		}
 
-		// Generate download token (64-char hex)
-		tokenBytes := make([]byte, 32)
+		// Generate download token (DL- prefix + 60-char hex = 63 chars, fits VARCHAR(64))
+		tokenBytes := make([]byte, 30)
 		if _, err := rand.Read(tokenBytes); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate download token"})
 			return

@@ -128,7 +128,7 @@ func createInstallationCodeHandler(services *Services) gin.HandlerFunc {
 		}
 
 		// Generate download token (for backward compatibility and direct link access)
-		tokenBytes := make([]byte, 32)
+		tokenBytes := make([]byte, 30)
 		if _, err := rand.Read(tokenBytes); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
 			return
