@@ -16,14 +16,14 @@ const path = require('path');
 const SENTINEL_URL = process.env.SENTINEL_URL || 'https://sentinelrmm.us';
 
 // Sentinel admin credentials (used for API/agent tests that hit Sentinel)
-const SENTINEL_USER = process.env.SENTINEL_USER || 'admin@sentinelrmm.us';
+const SENTINEL_USER = process.env.SENTINEL_USER || 'admin';
 const SENTINEL_PASS = process.env.SENTINEL_PASS || '';  // Must be set via env
 
 // ---------------------------------------------------------------------------
 // APM server (Test Center submission)
 // ---------------------------------------------------------------------------
-const APM_URL = process.env.APM_URL || 'https://apm.sentinelrmm.us';
-const APM_USER = process.env.APM_USER || 'admin@sentinelrmm.us';
+const APM_URL = process.env.APM_URL || 'http://localhost:3000';
+const APM_USER = process.env.APM_USER || 'admin';
 const APM_PASS = process.env.APM_PASS || '';  // Must be set via env
 
 // Install code for agent provisioning

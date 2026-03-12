@@ -17,6 +17,22 @@
  *   0 — All tests passed (or only WARN/INFO)
  *   1 — One or more tests FAILED
  */
+// Load .env file if present (handles special chars like ! that bash mangles)
+const fs_env = require('fs');
+const path_env = require('path');
+const envPath = path_env.join(__dirname, '.env');
+if (fs_env.existsSync(envPath)) {
+  for (const line of fs_env.readFileSync(envPath, 'utf-8').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq < 0) continue;
+    const key = trimmed.substring(0, eq);
+    const val = trimmed.substring(eq + 1);
+    if (!process.env[key]) process.env[key] = val;
+  }
+}
+
 const https = require('https');
 const http = require('http');
 const { URL } = require('url');
@@ -161,7 +177,7 @@ async function submitResults(allResults, durationMs) {
     project: PROJECT_NAME,
     branch: BRANCH,
     triggerType: 'cron',
-    status: failed > 0 ? 'failed' : 'passed',
+    status: failed > 0 ? 'failed' : 'completed',
     totalTests: allResults.length,
     passed,
     failed,

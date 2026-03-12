@@ -94,7 +94,7 @@ async function getAuthToken() {
   }
 
   const res = await httpRequest('POST', `${SENTINEL_URL}/api/auth/login`, {
-    email: SENTINEL_USER,
+    identifier: SENTINEL_USER,
     password: SENTINEL_PASS,
   });
 
@@ -183,7 +183,7 @@ async function testLoginSuccess() {
 
 async function testLoginInvalidCreds() {
   const r = await timed(() => httpRequest('POST', `${SENTINEL_URL}/api/auth/login`, {
-    email: 'invalid@example.com',
+    identifier: 'invalid@example.com',
     password: 'wrongpassword123',
   }));
   if (r.error) return result('Login (invalid creds)', 'FAIL', r.error.message, r._ms);
@@ -427,21 +427,7 @@ async function testDashboardWebSocket() {
   }
 }
 
-async function testTestCenterStats() {
-  if (!SENTINEL_PASS) return result('Test Center Stats', 'WARN', 'Skipped — no credentials');
-  const t0 = Date.now();
-  try {
-    const auth = await getAuthToken();
-    const r = await httpRequest('GET', `${SENTINEL_URL}/api/admin/test-center/stats`, null, authHeaders(auth));
-    const ms = Date.now() - t0;
-    if (r.status === 200 && r.json) {
-      return result('Test Center Stats', 'PASS', JSON.stringify(r.json).substring(0, 150), ms);
-    }
-    return result('Test Center Stats', 'WARN', `HTTP ${r.status}: ${r.body.substring(0, 200)}`, ms);
-  } catch (e) {
-    return result('Test Center Stats', 'FAIL', e.message, Date.now() - t0);
-  }
-}
+// Test Center Stats removed — Test Center is in APM, not Sentinel
 
 async function testUnauthProtectedEndpoints() {
   const endpoints = [
@@ -607,7 +593,7 @@ async function runApiTests() {
   results.push(await testRateLimiting());
 
   // Test Center
-  results.push(await testTestCenterStats());
+  // Test Center Stats test removed — Test Center is in APM
 
   return results.filter(Boolean);  // Remove nulls from rate limit test
 }

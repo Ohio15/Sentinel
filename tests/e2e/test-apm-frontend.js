@@ -88,7 +88,7 @@ async function getAuth() {
   if (!SENTINEL_PASS) throw new Error('SENTINEL_PASS not set');
 
   const res = await httpRequest('POST', `${SENTINEL_URL}/api/auth/login`, {
-    email: SENTINEL_USER,
+    identifier: SENTINEL_USER,
     password: SENTINEL_PASS,
   });
 

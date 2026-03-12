@@ -66,7 +66,9 @@ function sshExec(command, timeout) {
 }
 
 function ps(cmd) {
-  return `powershell -NoProfile -NonInteractive -Command "${cmd.replace(/"/g, '\\"')}"`;
+  // Use -EncodedCommand to avoid shell escaping issues with $, !, ", etc.
+  const encoded = Buffer.from(cmd, 'utf16le').toString('base64');
+  return `powershell -NoProfile -NonInteractive -EncodedCommand ${encoded}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -122,7 +124,7 @@ async function testPrereqs() {
   try {
     // Network to Sentinel
     const net = await sshExec(ps(
-      `try { $r = Invoke-WebRequest -Uri '${SENTINEL_URL}/health' -UseBasicParsing -TimeoutSec 10; $r.StatusCode } catch { Write-Output $_.Exception.Message }`
+      `try { $r = Invoke-WebRequest -Uri '${SENTINEL_URL}/health' -UseBasicParsing -TimeoutSec 10; $r.StatusCode } catch { Write-Output 'NETWORK_ERROR' }`
     ), 20000);
     const ok = net.stdout.includes('200');
     results.push(result('Network to Sentinel', ok ? 'PASS' : 'FAIL', net.stdout || net.stderr));
@@ -141,7 +143,7 @@ async function testDownload() {
   const t0 = Date.now();
   try {
     const cmd = ps(
-      `try { Invoke-WebRequest -Uri '${SENTINEL_URL}/api/download/agent/windows' -OutFile '${INSTALLER_PATH}' -UseBasicParsing -TimeoutSec 120; (Get-Item '${INSTALLER_PATH}').Length } catch { $_.Exception.Message }`
+      `try { Invoke-WebRequest -Uri '${SENTINEL_URL}/api/download/agent/windows' -OutFile '${INSTALLER_PATH}' -UseBasicParsing -TimeoutSec 120; (Get-Item '${INSTALLER_PATH}').Length } catch { Write-Output 'DOWNLOAD_ERROR' }`
     );
     const dl = await sshExec(cmd, TIMEOUTS.download);
     const size = parseInt(dl.stdout);
