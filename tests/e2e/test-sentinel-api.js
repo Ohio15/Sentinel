@@ -237,6 +237,7 @@ async function testDevicesListAuth() {
     const ms = Date.now() - t0;
     if (r.status === 200) {
       const count = Array.isArray(r.json) ? r.json.length :
+                    r.json?.data ? r.json.data.length :
                     r.json?.devices ? r.json.devices.length :
                     r.json?.total ?? 'unknown';
       return result('Devices (auth)', 'PASS', `Device count: ${count}`, ms);

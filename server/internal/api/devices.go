@@ -113,7 +113,7 @@ func (r *Router) listDevices(c *gin.Context) {
 
 	// Return paginated response with metadata
 	c.JSON(http.StatusOK, gin.H{
-		"devices":    devices,
+		"data":       devices,
 		"total":      total,
 		"page":       page,
 		"pageSize":   pageSize,

@@ -141,15 +141,16 @@ func createAgentLinkHandler(services *Services) gin.HandlerFunc {
 		}
 
 		// Get user ID from context
-		var createdBy *int
+		var createdByInt *int
+		var createdByUUID *uuid.UUID
 		if userID, exists := c.Get("userID"); exists {
 			if uid, ok := userID.(uuid.UUID); ok {
-				// Need to get the users.id (int) from the uuid
+				createdByUUID = &uid
 				var userIntID int
 				err := services.DB.Pool().QueryRow(c.Request.Context(),
 					`SELECT id FROM users WHERE id = $1::text::int OR id::text = $1::text LIMIT 1`, uid.String()).Scan(&userIntID)
 				if err == nil {
-					createdBy = &userIntID
+					createdByInt = &userIntID
 				}
 			}
 		}
@@ -174,7 +175,7 @@ func createAgentLinkHandler(services *Services) gin.HandlerFunc {
 		`, enrollmentToken, string(tokenHash),
 			fmt.Sprintf("Install Link: %s", req.DeviceName),
 			fmt.Sprintf("Auto-generated for installation link to %s", req.UserEmail),
-			createdBy, expiresAt).Scan(&enrollmentTokenID)
+			createdByUUID, expiresAt).Scan(&enrollmentTokenID)
 		if err != nil {
 			log.Printf("Failed to create enrollment token: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create enrollment token"})
@@ -203,7 +204,7 @@ func createAgentLinkHandler(services *Services) gin.HandlerFunc {
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')
 			RETURNING id
 		`, downloadToken, installCode, req.DeviceName, req.UserEmail, req.UserName,
-			enrollmentTokenID, createdBy, expiresAt, req.Notes).Scan(&linkID)
+			enrollmentTokenID, createdByInt, expiresAt, req.Notes).Scan(&linkID)
 		if err != nil {
 			log.Printf("Failed to create installation link: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create installation link"})

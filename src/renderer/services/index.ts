@@ -58,7 +58,7 @@ export interface AlertRule {
 export const devices = {
   async list(clientId?: string): Promise<Device[]> {
     const result = await api!.getDevices();
-    return (result as any).devices || result || [];
+    return (result as any).data || (result as any).devices || result || [];
   },
 
   async get(id: string): Promise<Device> {

@@ -89,15 +89,17 @@ func createInstallationCodeHandler(services *Services) gin.HandlerFunc {
 			return
 		}
 
-		// Get user ID from context
-		var createdBy *int
+		// Get user ID from context — need both UUID (for enrollment_tokens) and int (for installation_links)
+		var createdByInt *int
+		var createdByUUID *uuid.UUID
 		if userID, exists := c.Get("userID"); exists {
 			if uid, ok := userID.(uuid.UUID); ok {
+				createdByUUID = &uid
 				var userIntID int
 				err := services.DB.Pool().QueryRow(c.Request.Context(),
 					`SELECT id FROM users WHERE id = $1::text::int OR id::text = $1::text LIMIT 1`, uid.String()).Scan(&userIntID)
 				if err == nil {
-					createdBy = &userIntID
+					createdByInt = &userIntID
 				}
 			}
 		}
@@ -158,7 +160,7 @@ func createInstallationCodeHandler(services *Services) gin.HandlerFunc {
 		`, enrollmentToken, string(tokenHash),
 			fmt.Sprintf("Install Code: %s (%s)", installCode, req.DeviceName),
 			fmt.Sprintf("Auto-generated for installation code %s", installCode),
-			createdBy, expiresAt).Scan(&enrollmentTokenID)
+			createdByUUID, expiresAt).Scan(&enrollmentTokenID)
 		if err != nil {
 			log.Printf("Failed to create enrollment token: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create enrollment token"})
@@ -174,7 +176,7 @@ func createInstallationCodeHandler(services *Services) gin.HandlerFunc {
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9)
 			RETURNING id
 		`, downloadToken, installCode, req.DeviceName, req.UserName,
-			enrollmentTokenID, createdBy, expiresAt, req.Notes, constants.CurrentOrganizationID).Scan(&linkID)
+			enrollmentTokenID, createdByInt, expiresAt, req.Notes, constants.CurrentOrganizationID).Scan(&linkID)
 		if err != nil {
 			log.Printf("Failed to create installation link: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create installation code"})
@@ -432,9 +434,11 @@ func serveGenericInstallerHandler(services *Services) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Find generic installer
 		installerPaths := []string{
+			"installers/sentinel-installer.exe",
 			"installers/sentinel-installer-generic.exe",
-			"release/agent/sentinel-installer-generic.exe",
 			"installers/sentinel-installer-template.exe",
+			"release/agent/sentinel-installer.exe",
+			"release/agent/sentinel-installer-generic.exe",
 			"release/agent/sentinel-installer-template.exe",
 		}
 
