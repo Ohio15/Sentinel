@@ -195,7 +195,7 @@ func createInstallationCodeHandler(services *Services) gin.HandlerFunc {
 			}
 			publicURL = fmt.Sprintf("%s://%s", scheme, c.Request.Host)
 		}
-		downloadURL := fmt.Sprintf("%s/download/agent", publicURL)
+		downloadURL := fmt.Sprintf("%s/api/download/agent", publicURL)
 
 		instructions := fmt.Sprintf(`1. Download the installer from: %s
 2. Run the installer

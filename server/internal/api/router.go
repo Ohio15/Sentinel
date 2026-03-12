@@ -623,9 +623,6 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 		RegisterPortalRoutes(api, protected, services)
 	}
 
-	// Public installer download (no auth - referenced by install codes)
-	r.GET("/download/agent", serveGenericInstallerHandler(services))
-
 	// WebSocket routes
 	ws := r.Group("/ws")
 	{
