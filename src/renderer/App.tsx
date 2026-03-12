@@ -26,7 +26,6 @@ const InstallationPortal = lazy(() => import('./pages/InstallationPortal'));
 const PopOutPerformance = lazy(() => import('./pages/PopOutPerformance'));
 const SupportPortal = lazy(() => import('./pages/SupportPortal'));
 const AgentInstallations = lazy(() => import('./pages/AgentInstallations'));
-const TestCenter = lazy(() => import('./pages/TestCenter'));
 import { useDeviceStore } from './stores/deviceStore';
 import { useAlertStore } from './stores/alertStore';
 import { useClientStore } from './stores/clientStore';
@@ -34,7 +33,7 @@ import { useAuthStore } from './stores/authStore';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Loader2 } from 'lucide-react';
 
-type Page = 'dashboard' | 'devices' | 'device-detail' | 'alerts' | 'scripts' | 'certificates' | 'settings' | 'tickets' | 'ticket-detail' | 'tickets-kanban' | 'tickets-calendar' | 'tickets-analytics' | 'knowledge-base' | 'clients' | 'network' | 'test-center';
+type Page = 'dashboard' | 'devices' | 'device-detail' | 'alerts' | 'scripts' | 'certificates' | 'settings' | 'tickets' | 'ticket-detail' | 'tickets-kanban' | 'tickets-calendar' | 'tickets-analytics' | 'knowledge-base' | 'clients' | 'network';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading, checkAuth } = useAuthStore();
@@ -98,7 +97,6 @@ function MainLayout() {
       case 'tickets-analytics': return <ErrorBoundary key="tickets-analytics"><TicketAnalytics onViewChange={handleTicketViewChange} /></ErrorBoundary>;
       case 'knowledge-base': return <ErrorBoundary key="knowledge-base"><KnowledgeBase /></ErrorBoundary>;
       case 'network': return <ErrorBoundary key="network"><Network /></ErrorBoundary>;
-      case 'test-center': return <ErrorBoundary key="test-center"><TestCenter /></ErrorBoundary>;
       default: return <ErrorBoundary key="dashboard-default"><Dashboard onDeviceSelect={handleDeviceSelect} /></ErrorBoundary>;
     }
   };

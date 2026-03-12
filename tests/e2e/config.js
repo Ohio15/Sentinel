@@ -15,9 +15,16 @@ const path = require('path');
 // ---------------------------------------------------------------------------
 const SENTINEL_URL = process.env.SENTINEL_URL || 'https://sentinelrmm.us';
 
-// Admin credentials for JWT auth (required for Test Center submission)
+// Sentinel admin credentials (used for API/agent tests that hit Sentinel)
 const SENTINEL_USER = process.env.SENTINEL_USER || 'admin@sentinelrmm.us';
 const SENTINEL_PASS = process.env.SENTINEL_PASS || '';  // Must be set via env
+
+// ---------------------------------------------------------------------------
+// APM server (Test Center submission)
+// ---------------------------------------------------------------------------
+const APM_URL = process.env.APM_URL || 'https://apm.sentinelrmm.us';
+const APM_USER = process.env.APM_USER || 'admin@sentinelrmm.us';
+const APM_PASS = process.env.APM_PASS || '';  // Must be set via env
 
 // Install code for agent provisioning
 const INSTALL_CODE = process.env.INSTALL_CODE || 'E2ET-ST01';
@@ -65,6 +72,9 @@ module.exports = {
   SENTINEL_URL,
   SENTINEL_USER,
   SENTINEL_PASS,
+  APM_URL,
+  APM_USER,
+  APM_PASS,
   INSTALL_CODE,
   SSH_CONFIG,
   TIMEOUTS,

@@ -73,10 +73,13 @@ if [ -f "${E2E_DIR}/.env" ]; then
   set +a
 fi
 
-# Ensure SENTINEL_PASS is set
+# Ensure credentials are set
 if [ -z "${SENTINEL_PASS:-}" ]; then
   echo "ERROR: SENTINEL_PASS not set. Create ${E2E_DIR}/.env with SENTINEL_PASS=xxx" | tee "${LOG_FILE}"
   exit 1
+fi
+if [ -z "${APM_PASS:-}" ]; then
+  echo "WARNING: APM_PASS not set — test results will not be submitted to APM Test Center" | tee "${LOG_FILE}"
 fi
 
 echo "=== E2E Test Run: $(date -Iseconds) ===" | tee "${LOG_FILE}"
@@ -101,7 +104,7 @@ chmod +x "${E2E_DIR}/run-e2e-cron.sh"
 if [ ! -f "${E2E_DIR}/.env" ]; then
   cat > "${E2E_DIR}/.env" << 'ENV_EOF'
 # Sentinel E2E Test Configuration
-# Fill in the admin password for authenticated tests and Test Center submission
+# Fill in the admin password for authenticated Sentinel API/agent tests
 SENTINEL_URL=https://sentinelrmm.us
 SENTINEL_USER=admin@sentinelrmm.us
 SENTINEL_PASS=
@@ -109,8 +112,13 @@ INSTALL_CODE=E2ET-ST01
 SSH_HOST=localhost
 SSH_PORT=2222
 SSH_USER=testadmin
+
+# APM Test Center — results are submitted here
+APM_URL=https://apm.sentinelrmm.us
+APM_USER=admin@sentinelrmm.us
+APM_PASS=
 ENV_EOF
-  echo "Created ${E2E_DIR}/.env — EDIT THIS FILE to set SENTINEL_PASS"
+  echo "Created ${E2E_DIR}/.env — EDIT THIS FILE to set SENTINEL_PASS and APM_PASS"
 fi
 
 # Install cron job (idempotent — removes existing entry first)
@@ -130,7 +138,7 @@ echo "Cron job installed:"
 crontab -l | grep sentinel-e2e
 echo ""
 echo "NEXT STEPS:"
-echo "  1. Edit ${E2E_DIR}/.env and set SENTINEL_PASS"
+echo "  1. Edit ${E2E_DIR}/.env and set SENTINEL_PASS and APM_PASS"
 echo "  2. Test manually: cd ${E2E_DIR} && source .env && node run-all.js"
 echo "  3. Logs will appear in: ${LOG_DIR}/"
 echo ""

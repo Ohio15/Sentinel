@@ -589,14 +589,6 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			// Router Network (APM) - Audit Logs (read scope)
 			protected.GET("/router/audit-logs", getAuditLogsHandler(services))
 
-			// Test Center
-			protected.POST("/admin/test-results", middleware.RequireRole("admin"), submitTestResultsHandler(services))
-			protected.GET("/admin/test-center/runs", listTestRunsHandler(services))
-			protected.GET("/admin/test-center/runs/:id", getTestRunHandler(services))
-			protected.GET("/admin/test-center/issues", listTestIssuesHandler(services))
-			protected.PATCH("/admin/test-center/issues/:id", middleware.RequireRole("admin", "operator"), updateTestIssueHandler(services))
-			protected.GET("/admin/test-center/stats", testCenterStatsHandler(services))
-
 			// Performance Recordings
 			protected.GET("/recordings", listRecordingsHandler(services))
 			protected.POST("/recordings", middleware.RequireRole("admin", "operator"), startRecordingHandler(services))

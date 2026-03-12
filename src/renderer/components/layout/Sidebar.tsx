@@ -6,7 +6,7 @@ const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '
 
 interface SidebarProps {
   currentPage: string;
-  onNavigate: (page: 'dashboard' | 'devices' | 'device-detail' | 'alerts' | 'scripts' | 'certificates' | 'settings' | 'tickets' | 'ticket-detail' | 'tickets-kanban' | 'tickets-calendar' | 'tickets-analytics' | 'knowledge-base' | 'clients' | 'network' | 'test-center') => void;
+  onNavigate: (page: 'dashboard' | 'devices' | 'device-detail' | 'alerts' | 'scripts' | 'certificates' | 'settings' | 'tickets' | 'ticket-detail' | 'tickets-kanban' | 'tickets-calendar' | 'tickets-analytics' | 'knowledge-base' | 'clients' | 'network') => void;
 }
 
 export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
@@ -20,7 +20,6 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
     { id: 'network', label: 'Network', icon: NetworkIcon },
     { id: 'certificates', label: 'Certificates', icon: CertificatesIcon },
     { id: 'knowledge-base', label: 'Knowledge Base', icon: KnowledgeBaseIcon },
-    { id: 'test-center', label: 'Test Center', icon: TestCenterIcon },
     { id: 'settings', label: 'Settings', icon: SettingsIcon },
   ];
 
@@ -169,10 +168,3 @@ function InstallationsIcon({ className }: { className?: string }) {
   );
 }
 
-function TestCenterIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-    </svg>
-  );
-}

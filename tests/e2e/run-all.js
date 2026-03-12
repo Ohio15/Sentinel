@@ -6,11 +6,11 @@
  * and prints a summary to stdout.
  *
  * Usage:
- *   SENTINEL_PASS=xxx node run-all.js
+ *   SENTINEL_PASS=xxx APM_PASS=xxx node run-all.js
  *   SENTINEL_PASS=xxx node run-all.js --suite api        # Run only API tests
  *   SENTINEL_PASS=xxx node run-all.js --suite agent       # Run only agent tests
  *   SENTINEL_PASS=xxx node run-all.js --suite frontend    # Run only frontend tests
- *   SENTINEL_PASS=xxx node run-all.js --no-submit         # Skip Test Center submission
+ *   SENTINEL_PASS=xxx node run-all.js --no-submit         # Skip APM Test Center submission
  *   SENTINEL_PASS=xxx node run-all.js --json              # Output JSON to stdout
  *
  * Exit codes:
@@ -24,6 +24,9 @@ const {
   SENTINEL_URL,
   SENTINEL_USER,
   SENTINEL_PASS,
+  APM_URL,
+  APM_USER,
+  APM_PASS,
   PROJECT_NAME,
   BRANCH,
   RUNNER,
@@ -102,26 +105,21 @@ function httpRequest(method, url, body, headers, timeout) {
 // Auth for Test Center submission
 // ---------------------------------------------------------------------------
 
-async function getAuthToken() {
-  if (!SENTINEL_PASS) return null;
+async function getApmAuthToken() {
+  if (!APM_PASS) return null;
 
-  const res = await httpRequest('POST', `${SENTINEL_URL}/api/auth/login`, {
-    email: SENTINEL_USER,
-    password: SENTINEL_PASS,
+  const res = await httpRequest('POST', `${APM_URL}/api/auth/login`, {
+    email: APM_USER,
+    password: APM_PASS,
   });
 
   if (res.status !== 200 || !res.json) {
-    log(`WARNING: Login for Test Center submission failed: HTTP ${res.status}`);
+    log(`WARNING: APM login for Test Center submission failed: HTTP ${res.status}`);
     return null;
   }
 
   return {
     token: res.json.token || res.json.accessToken,
-    csrf: res.json.csrfToken || '',
-    cookies: res.headers['set-cookie']
-      ? (Array.isArray(res.headers['set-cookie']) ? res.headers['set-cookie'] : [res.headers['set-cookie']])
-          .map(c => c.split(';')[0]).join('; ')
-      : '',
   };
 }
 
@@ -130,14 +128,14 @@ async function getAuthToken() {
 // ---------------------------------------------------------------------------
 
 async function submitResults(allResults, durationMs) {
-  if (noSubmit || !SENTINEL_PASS) {
-    log('Skipping Test Center submission (--no-submit or no credentials)');
+  if (noSubmit || !APM_PASS) {
+    log('Skipping Test Center submission (--no-submit or no APM credentials)');
     return;
   }
 
-  const auth = await getAuthToken();
+  const auth = await getApmAuthToken();
   if (!auth || !auth.token) {
-    log('WARNING: Could not authenticate for Test Center submission');
+    log('WARNING: Could not authenticate with APM for Test Center submission');
     return;
   }
 
@@ -181,19 +179,17 @@ async function submitResults(allResults, durationMs) {
     const headers = {
       'Authorization': `Bearer ${auth.token}`,
     };
-    if (auth.csrf) headers['X-CSRF-Token'] = auth.csrf;
-    if (auth.cookies) headers['Cookie'] = auth.cookies;
 
-    const res = await httpRequest('POST', `${SENTINEL_URL}/api/admin/test-results`, payload, headers);
+    const res = await httpRequest('POST', `${APM_URL}/api/test-results`, payload, headers);
 
     if (res.status === 200 || res.status === 201) {
       const runId = res.json?.id || res.json?.runId || 'unknown';
       log(`Test results submitted to Test Center (run: ${runId})`);
     } else {
-      log(`WARNING: Test Center submission returned HTTP ${res.status}: ${res.body.substring(0, 200)}`);
+      log(`WARNING: APM Test Center submission returned HTTP ${res.status}: ${res.body.substring(0, 200)}`);
     }
   } catch (e) {
-    log(`WARNING: Failed to submit to Test Center: ${e.message}`);
+    log(`WARNING: Failed to submit to APM Test Center: ${e.message}`);
   }
 }
 
