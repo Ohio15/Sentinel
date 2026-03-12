@@ -1016,7 +1016,8 @@ func (r *Router) checkAlertRules(deviceID uuid.UUID, cpu, memory, disk float64) 
 					INSERT INTO alerts (device_id, rule_id, severity, title, message, organization_id)
 							VALUES ($1, $2, $3, $4, $5, $6)
 				`, deviceID, rule.ID, rule.Severity, rule.Name,
-					rule.Metric+" is "+rule.Operator+" "+fmt.Sprintf("%.2f", rule.Threshold)); err != nil {
+					rule.Metric+" is "+rule.Operator+" "+fmt.Sprintf("%.2f", rule.Threshold),
+					constants.CurrentOrganizationID); err != nil {
 					log.Printf("Error creating alert for device %s: %v", deviceID, err)
 				}
 			}
