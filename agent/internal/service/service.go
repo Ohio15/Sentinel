@@ -130,12 +130,22 @@ func Install(serverURL, token string) error {
 		// Service exists, stop and uninstall first
 		log.Println("Service already installed, updating...")
 		svc.Stop()
+		waitForServiceStop(ServiceName)
 		svc.Uninstall()
+		waitForServiceDeletion(ServiceName)
 	}
 
-	// Install the service
-	if err := svc.Install(); err != nil {
-		return fmt.Errorf("failed to install service: %w", err)
+	// Install the service (retry if SCM hasn't fully released the name)
+	var installErr error
+	for i := 0; i < 5; i++ {
+		if installErr = svc.Install(); installErr == nil {
+			break
+		}
+		log.Printf("Service install attempt %d failed: %v, retrying...", i+1, installErr)
+		time.Sleep(2 * time.Second)
+	}
+	if installErr != nil {
+		return fmt.Errorf("failed to install service after retries: %w", installErr)
 	}
 
 	log.Println("Service installed successfully")
@@ -190,11 +200,22 @@ func installWatchdog(installPath string) {
 	status, _ := svc.Status()
 	if status == service.StatusRunning {
 		svc.Stop()
+		waitForServiceStop("SentinelWatchdog")
 	}
 	svc.Uninstall()
+	waitForServiceDeletion("SentinelWatchdog")
 
-	if err := svc.Install(); err != nil {
-		log.Printf("Warning: could not install watchdog service: %v", err)
+	// Install with retry
+	var installErr error
+	for i := 0; i < 5; i++ {
+		if installErr = svc.Install(); installErr == nil {
+			break
+		}
+		log.Printf("Watchdog install attempt %d failed: %v, retrying...", i+1, installErr)
+		time.Sleep(2 * time.Second)
+	}
+	if installErr != nil {
+		log.Printf("Warning: could not install watchdog service after retries: %v", installErr)
 		return
 	}
 
@@ -469,6 +490,44 @@ func IsElevated() bool {
 	}
 }
 
+
+// waitForServiceStop waits for a Windows service to fully stop
+func waitForServiceStop(serviceName string) {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	for i := 0; i < 15; i++ {
+		out, err := exec.Command("sc", "query", serviceName).CombinedOutput()
+		if err != nil {
+			return // Service doesn't exist or can't be queried
+		}
+		if bytes.Contains(out, []byte("STOPPED")) {
+			return
+		}
+		log.Printf("Waiting for %s to stop... (%d/15)", serviceName, i+1)
+		time.Sleep(time.Second)
+	}
+	// Force kill if still not stopped
+	log.Printf("Force stopping %s", serviceName)
+	exec.Command("taskkill", "/F", "/FI", "SERVICES eq "+serviceName).Run()
+	time.Sleep(2 * time.Second)
+}
+
+// waitForServiceDeletion waits for Windows SCM to fully release a deleted service
+func waitForServiceDeletion(serviceName string) {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	for i := 0; i < 15; i++ {
+		out, err := exec.Command("sc", "query", serviceName).CombinedOutput()
+		if err != nil || bytes.Contains(out, []byte("FAILED 1060")) || bytes.Contains(out, []byte("does not exist")) {
+			return // Service fully deleted
+		}
+		log.Printf("Waiting for %s to be deleted from SCM... (%d/15)", serviceName, i+1)
+		time.Sleep(time.Second)
+	}
+	log.Printf("Warning: %s may not have been fully deleted from SCM", serviceName)
+}
 
 // configureServiceWithSC uses native Windows SC commands to ensure proper service configuration
 func configureServiceWithSC(serviceName string) error {
