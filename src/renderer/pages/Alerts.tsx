@@ -21,6 +21,9 @@ export function Alerts() {
   const { devices } = useDeviceStore();
   const { currentClientId } = useClientStore();
 
+  const safeAlerts = Array.isArray(alerts) ? alerts : [];
+  const safeDevices = Array.isArray(devices) ? devices : [];
+
   const [activeTab, setActiveTab] = useState<'alerts' | 'rules'>('alerts');
   const [statusFilter, setStatusFilter] = useState<string>('open');
   const [showRuleModal, setShowRuleModal] = useState(false);
@@ -33,10 +36,10 @@ export function Alerts() {
 
   // Get device IDs that belong to the current client for filtering alerts
   const clientDeviceIds = currentClientId
-    ? new Set(devices.filter(d => d.clientId === currentClientId).map(d => d.id))
+    ? new Set(safeDevices.filter(d => d.clientId === currentClientId).map(d => d.id))
     : null;
 
-  const filteredAlerts = alerts.filter(alert => {
+  const filteredAlerts = safeAlerts.filter(alert => {
     // Filter by status
     const matchesStatus = statusFilter === 'all' || alert.status === statusFilter;
     // Filter by client (check if alert's device belongs to the current client)
@@ -71,7 +74,7 @@ export function Alerts() {
                 : 'border-transparent text-text-secondary hover:text-text-primary'
             }`}
           >
-            Alerts ({alerts.filter(a => a.status === 'open').length} open)
+            Alerts ({safeAlerts.filter(a => a.status === 'open').length} open)
           </button>
           <button
             onClick={() => setActiveTab('rules')}

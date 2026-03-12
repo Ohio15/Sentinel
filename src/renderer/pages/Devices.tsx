@@ -68,7 +68,8 @@ const linkStatusConfig: Record<string, { label: string; color: string }> = {
 };
 
 export function Devices({ onDeviceSelect }: DevicesProps) {
-  const { devices, loading, deleteDevice, disableDevice, enableDevice, uninstallDevice, forceUpdateDevice, updateDevice } = useDeviceStore();
+  const { devices: rawDevices, loading, deleteDevice, disableDevice, enableDevice, uninstallDevice, forceUpdateDevice, updateDevice } = useDeviceStore();
+  const devices = Array.isArray(rawDevices) ? rawDevices : [];
   const { clients, currentClientId } = useClientStore();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');

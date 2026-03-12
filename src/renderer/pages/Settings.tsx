@@ -121,7 +121,8 @@ export function Settings() {
   const [saving, setSaving] = useState(false);
   const { theme, setTheme } = useThemeStore();
   const { devices } = useDeviceStore();
-  const onlineCount = devices.filter(d => d.status === 'online').length;
+  const safeDevices = Array.isArray(devices) ? devices : [];
+  const onlineCount = safeDevices.filter(d => d.status === 'online').length;
 
   // External backend state
   const [backendUrl, setBackendUrl] = useState('');

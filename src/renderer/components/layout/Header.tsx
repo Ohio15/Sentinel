@@ -13,10 +13,12 @@ export function Header() {
   const { alerts } = useAlertStore();
   const { devices } = useDeviceStore();
   const { user, logout } = useAuthStore();
-  const openAlerts = alerts.filter(a => a.status === 'open').length;
+  const safeAlerts = Array.isArray(alerts) ? alerts : [];
+  const safeDevices = Array.isArray(devices) ? devices : [];
+  const openAlerts = safeAlerts.filter(a => a.status === 'open').length;
 
   // Derive online count from device store - single source of truth
-  const onlineCount = devices.filter(d => d.status === 'online').length;
+  const onlineCount = safeDevices.filter(d => d.status === 'online').length;
 
   useEffect(() => {
     // Check WebSocket connection status periodically

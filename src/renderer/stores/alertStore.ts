@@ -60,7 +60,8 @@ export const useAlertStore = create<AlertState>((set, get) => ({
   fetchAlerts: async () => {
     set({ loading: true, error: null });
     try {
-      const alerts = await alertsService.list();
+      const result = await alertsService.list();
+      const alerts = Array.isArray(result) ? result : [];
       set({ alerts: alerts as Alert[], loading: false });
     } catch (error: unknown) {
       set({ error: error instanceof Error ? error.message : 'Unknown error', loading: false });

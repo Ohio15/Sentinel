@@ -160,7 +160,8 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
     if (showLoading) set({ loading: true, error: null });
     try {
       // Pass undefined instead of null to get all devices
-      const devices = await devicesService.list(clientId || undefined) as unknown as Device[];
+      const result = await devicesService.list(clientId || undefined);
+      const devices = Array.isArray(result) ? result as unknown as Device[] : [];
       set({ devices, ...(showLoading && { loading: false }) });
     } catch (error: unknown) {
       set({ error: error instanceof Error ? error.message : 'Unknown error', loading: false });
