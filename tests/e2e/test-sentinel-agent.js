@@ -159,37 +159,12 @@ async function testDownload() {
 }
 
 // ---------------------------------------------------------------------------
-// Fresh Install
+// Verify Existing Install (non-destructive)
 // ---------------------------------------------------------------------------
 
-async function testFreshInstall() {
+async function testExistingInstall() {
   const results = [];
-
-  // Clean any existing install
-  try {
-    const existing = await sshExec(ps(`Test-Path '${AGENT_DIR}'`));
-    if (existing.stdout.toLowerCase().includes('true')) {
-      await sshExec(ps(
-        `Stop-Service sentinel-agent -Force -EA SilentlyContinue; ` +
-        `Stop-Service sentinel-watchdog -Force -EA SilentlyContinue; ` +
-        `Start-Sleep 2; ` +
-        `Remove-Item -Recurse -Force '${AGENT_DIR}' -EA SilentlyContinue; ` +
-        `Remove-Item -Recurse -Force '${CONFIG_DIR}' -EA SilentlyContinue`
-      ), 30000);
-    }
-  } catch (_) { /* best-effort cleanup */ }
-
   const t0 = Date.now();
-  try {
-    // Run installer
-    const install = await sshExec(ps(
-      `& '${INSTALLER_PATH}' --code=${INSTALL_CODE} --silent 2>&1; echo EXIT_CODE:$LASTEXITCODE`
-    ), TIMEOUTS.install);
-    results.push(result('Fresh Install Command', 'INFO', install.stdout.substring(0, 300), Date.now() - t0));
-  } catch (e) {
-    results.push(result('Fresh Install Command', 'FAIL', e.message, Date.now() - t0));
-    return results;
-  }
 
   // Verify binaries
   try {
@@ -208,27 +183,27 @@ async function testFreshInstall() {
 
   // Verify services
   try {
-    const agentSvc = await sshExec(ps('Get-Service sentinel-agent -EA SilentlyContinue | Select-Object -Expand Status'));
+    const agentSvc = await sshExec(ps('Get-Service SentinelAgent -EA SilentlyContinue | Select-Object -Expand Status'));
     const running = agentSvc.stdout.toLowerCase().includes('running');
-    results.push(result('Agent Service Running', running ? 'PASS' : 'WARN', agentSvc.stdout || 'Not found'));
+    results.push(result('Agent Service Running', running ? 'PASS' : 'FAIL', agentSvc.stdout || 'Not found'));
   } catch (e) {
-    results.push(result('Agent Service Running', 'WARN', e.message));
+    results.push(result('Agent Service Running', 'FAIL', e.message));
   }
 
   try {
-    const watchdogSvc = await sshExec(ps('Get-Service sentinel-watchdog -EA SilentlyContinue | Select-Object -Expand Status'));
+    const watchdogSvc = await sshExec(ps('Get-Service SentinelWatchdog -EA SilentlyContinue | Select-Object -Expand Status'));
     const running = watchdogSvc.stdout.toLowerCase().includes('running');
-    results.push(result('Watchdog Service Running', running ? 'PASS' : 'WARN', watchdogSvc.stdout || 'Not found'));
+    results.push(result('Watchdog Service Running', running ? 'PASS' : 'FAIL', watchdogSvc.stdout || 'Not found'));
   } catch (e) {
-    results.push(result('Watchdog Service Running', 'WARN', e.message));
+    results.push(result('Watchdog Service Running', 'FAIL', e.message));
   }
 
   // Verify config
   try {
     const config = await sshExec(ps(`Test-Path '${CONFIG_DIR}\\config.json'`));
-    results.push(result('Config File Created', config.stdout.toLowerCase().includes('true') ? 'PASS' : 'WARN', config.stdout));
+    results.push(result('Config File Created', config.stdout.toLowerCase().includes('true') ? 'PASS' : 'FAIL', config.stdout));
   } catch (e) {
-    results.push(result('Config File Created', 'WARN', e.message));
+    results.push(result('Config File Created', 'FAIL', e.message));
   }
 
   // Check IPC key (C-04 HMAC)
@@ -304,9 +279,9 @@ async function testServiceLifecycle() {
 
   // Stop agent service
   try {
-    await sshExec(ps('Stop-Service sentinel-agent -Force -EA SilentlyContinue'), 15000);
+    await sshExec(ps('Stop-Service SentinelAgent -Force -EA SilentlyContinue'), 15000);
     const t0 = Date.now();
-    const status = await sshExec(ps('Get-Service sentinel-agent -EA SilentlyContinue | Select-Object -Expand Status'));
+    const status = await sshExec(ps('Get-Service SentinelAgent -EA SilentlyContinue | Select-Object -Expand Status'));
     const stopped = status.stdout.toLowerCase().includes('stopped');
     results.push(result('Service Stop', stopped ? 'PASS' : 'WARN', `Status: ${status.stdout}`, Date.now() - t0));
   } catch (e) {
@@ -316,10 +291,10 @@ async function testServiceLifecycle() {
   // Start agent service
   try {
     const t0 = Date.now();
-    await sshExec(ps('Start-Service sentinel-agent -EA SilentlyContinue'), 15000);
+    await sshExec(ps('Start-Service SentinelAgent -EA SilentlyContinue'), 15000);
     // Give it a moment to start
     await sshExec(ps('Start-Sleep 3'));
-    const status = await sshExec(ps('Get-Service sentinel-agent -EA SilentlyContinue | Select-Object -Expand Status'));
+    const status = await sshExec(ps('Get-Service SentinelAgent -EA SilentlyContinue | Select-Object -Expand Status'));
     const running = status.stdout.toLowerCase().includes('running');
     results.push(result('Service Start', running ? 'PASS' : 'WARN', `Status: ${status.stdout}`, Date.now() - t0));
   } catch (e) {
@@ -329,9 +304,9 @@ async function testServiceLifecycle() {
   // Restart agent service
   try {
     const t0 = Date.now();
-    await sshExec(ps('Restart-Service sentinel-agent -Force -EA SilentlyContinue'), 20000);
+    await sshExec(ps('Restart-Service SentinelAgent -Force -EA SilentlyContinue'), 20000);
     await sshExec(ps('Start-Sleep 3'));
-    const status = await sshExec(ps('Get-Service sentinel-agent -EA SilentlyContinue | Select-Object -Expand Status'));
+    const status = await sshExec(ps('Get-Service SentinelAgent -EA SilentlyContinue | Select-Object -Expand Status'));
     const running = status.stdout.toLowerCase().includes('running');
     results.push(result('Service Restart', running ? 'PASS' : 'WARN', `Status: ${status.stdout}`, Date.now() - t0));
   } catch (e) {
@@ -345,7 +320,7 @@ async function testServiceLifecycle() {
     await sshExec(ps(
       'Stop-Process -Name sentinel-agent -Force -EA SilentlyContinue; Start-Sleep 10'
     ), 20000);
-    const status = await sshExec(ps('Get-Service sentinel-agent -EA SilentlyContinue | Select-Object -Expand Status'));
+    const status = await sshExec(ps('Get-Service SentinelAgent -EA SilentlyContinue | Select-Object -Expand Status'));
     const recovered = status.stdout.toLowerCase().includes('running');
     results.push(result('Watchdog Recovery', recovered ? 'PASS' : 'WARN',
       `After kill: ${status.stdout} (watchdog should restart)`, Date.now() - t0));
@@ -400,7 +375,7 @@ async function testReinstall() {
   // Service still running after reinstall
   try {
     await sshExec(ps('Start-Sleep 5'));
-    const svc = await sshExec(ps('Get-Service sentinel-agent -EA SilentlyContinue | Select-Object -Expand Status'));
+    const svc = await sshExec(ps('Get-Service SentinelAgent -EA SilentlyContinue | Select-Object -Expand Status'));
     results.push(result('Service After Reinstall', svc.stdout.toLowerCase().includes('running') ? 'PASS' : 'WARN',
       svc.stdout || 'Not found'));
   } catch (e) {
@@ -509,9 +484,9 @@ async function testEdgeCases() {
   // Watchdog stop-start race (I-12)
   try {
     const race = await sshExec(ps(
-      'Stop-Service sentinel-watchdog -Force -EA SilentlyContinue; ' +
-      'Start-Service sentinel-watchdog -EA SilentlyContinue; ' +
-      'Get-Service sentinel-watchdog -EA SilentlyContinue | Select-Object Status'
+      'Stop-Service SentinelWatchdog -Force -EA SilentlyContinue; ' +
+      'Start-Service SentinelWatchdog -EA SilentlyContinue; ' +
+      'Get-Service SentinelWatchdog -EA SilentlyContinue | Select-Object Status'
     ), 30000);
     results.push(result('Watchdog Restart Race (I-12)', 'INFO', race.stdout || 'N/A'));
   } catch (e) {
@@ -544,11 +519,11 @@ async function testUninstall() {
   // Stop services
   try {
     await sshExec(ps(
-      'Stop-Service sentinel-agent -Force -EA SilentlyContinue; ' +
-      'Stop-Service sentinel-watchdog -Force -EA SilentlyContinue'
+      'Stop-Service SentinelAgent -Force -EA SilentlyContinue; ' +
+      'Stop-Service SentinelWatchdog -Force -EA SilentlyContinue'
     ), 30000);
     const stopped = await sshExec(ps(
-      'Get-Service sentinel-agent -EA SilentlyContinue | Select-Object Status'
+      'Get-Service SentinelAgent -EA SilentlyContinue | Select-Object Status'
     ));
     results.push(result('Services Stopped',
       !stopped.stdout.toLowerCase().includes('running') ? 'PASS' : 'WARN',
@@ -593,11 +568,13 @@ async function runAgentTests() {
   const dlResult = await testDownload();
   results.push(dlResult);
 
-  if (dlResult.status === 'PASS') {
-    // Fresh install
-    const installResults = await testFreshInstall();
-    results.push(...installResults);
+  // Verify existing install (non-destructive — agent must be pre-installed on VM)
+  const installResults = await testExistingInstall();
+  results.push(...installResults);
 
+  // Only run config/service/reinstall tests if agent is installed
+  const agentInstalled = installResults.some(r => r.test === 'Agent Service Running' && r.status === 'PASS');
+  if (agentInstalled) {
     // Config persistence
     const configResults = await testConfigPersistence();
     results.push(...configResults);
@@ -605,23 +582,17 @@ async function runAgentTests() {
     // Service lifecycle
     const svcResults = await testServiceLifecycle();
     results.push(...svcResults);
-
-    // Reinstall
-    const reinstallResults = await testReinstall();
-    results.push(...reinstallResults);
+  } else {
+    results.push(result('Config/Service Tests', 'WARN', 'Skipped — agent not running'));
   }
 
-  // Update check (works even without fresh install if agent exists)
+  // Update check
   const updateResults = await testUpdateCheck();
   results.push(...updateResults);
 
   // Edge cases
   const edgeResults = await testEdgeCases();
   results.push(...edgeResults);
-
-  // Uninstall (stop services, leave binaries for next run)
-  const uninstallResults = await testUninstall();
-  results.push(...uninstallResults);
 
   return results;
 }
