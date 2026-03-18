@@ -5,9 +5,20 @@ import { CursorShape } from './useCursor';
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'failed';
 
+export interface MonitorInfo {
+  index: number;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  primary: boolean;
+}
+
 interface RemoteInfo {
   width: number;
   height: number;
+  dpiScale?: number;
 }
 
 interface CursorUpdate {
@@ -42,11 +53,13 @@ export interface LatencyStats {
 interface UseWebRTCOptions {
   agentId: string;
   onVideoTrack: (track: MediaStreamTrack) => void;
+  onAudioTrack?: (track: MediaStreamTrack) => void;
   onRemoteInfo: (info: RemoteInfo) => void;
   onCursorUpdate?: (update: CursorUpdate) => void;
   onCursorShape?: (shape: CursorShape) => void;
   onFrameTiming?: (timing: FrameTiming) => void;
   onLatencyUpdate?: (stats: LatencyStats) => void;
+  onMonitorList?: (monitors: MonitorInfo[]) => void;
 }
 
 export interface WebRTCStats {
@@ -58,7 +71,7 @@ export interface WebRTCStats {
 }
 
 export function useWebRTC(options: UseWebRTCOptions) {
-  const { agentId, onVideoTrack, onRemoteInfo, onCursorUpdate, onCursorShape, onFrameTiming, onLatencyUpdate } = options;
+  const { agentId, onVideoTrack, onAudioTrack, onRemoteInfo, onCursorUpdate, onCursorShape, onFrameTiming, onLatencyUpdate, onMonitorList } = options;
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dcRef = useRef<RTCDataChannel | null>(null);
@@ -76,15 +89,66 @@ export function useWebRTC(options: UseWebRTCOptions) {
   const connectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastFrameTimingRef = useRef<FrameTiming | null>(null);
+  const audioTrackRef = useRef<MediaStreamTrack | null>(null);
+  const audioElementRef = useRef<HTMLAudioElement | null>(null);
+  const iceRestartAttemptsRef = useRef<number>(0);
+  const maxICERestarts = 3;
+  const iceRestartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Request TURN credentials from signaling server
+  const requestTurnCredentials = useCallback(async (): Promise<RTCIceServer[] | null> => {
+    return new Promise((resolve) => {
+      const unsub = wsService.on('turn_credentials', (data: unknown) => {
+        unsub();
+        const creds = (data as { data?: { URLs?: string[]; Username?: string; Password?: string } }).data;
+        if (creds?.URLs) {
+          const servers: RTCIceServer[] = creds.URLs.map((url: string) => ({
+            urls: url,
+            username: creds.Username,
+            credential: creds.Password,
+          }));
+          resolve(servers);
+        } else {
+          resolve(null);
+        }
+      });
+      wsService.send('request_turn_credentials', {});
+      // Timeout after 3s
+      setTimeout(() => { unsub(); resolve(null); }, 3000);
+    });
+  }, []);
+
+  // Attempt ICE restart on connection failure
+  const attemptICERestart = useCallback(async () => {
+    const pc = pcRef.current;
+    if (!pc || pc.connectionState === 'closed') return;
+
+    iceRestartAttemptsRef.current++;
+    console.log(`[WebRTC] ICE restart attempt ${iceRestartAttemptsRef.current}/${maxICERestarts}`);
+
+    try {
+      const offer = await pc.createOffer({ iceRestart: true });
+      await pc.setLocalDescription(offer);
+
+      // Send renegotiation offer via signaling
+      wsService.send('webrtc_signal', {
+        agentId: agentId,
+        sessionId: sessionIdRef.current,
+        signal: {
+          type: 'renegotiate',
+          sessionId: sessionIdRef.current,
+          sdp: offer.sdp,
+        },
+      });
+    } catch (err) {
+      console.error('[WebRTC] ICE restart failed:', err);
+    }
+  }, [agentId]);
 
   // Initialize WebRTC peer connection
-  const initPeerConnection = useCallback(() => {
+  const initPeerConnection = useCallback((iceServers: RTCIceServer[]) => {
     const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-      ],
+      iceServers,
       iceCandidatePoolSize: 10,
     });
 
@@ -92,11 +156,25 @@ export function useWebRTC(options: UseWebRTCOptions) {
       console.log('[WebRTC] ICE connection state:', pc.iceConnectionState);
       if (pc.iceConnectionState === 'connected') {
         setConnectionState('connected');
+        iceRestartAttemptsRef.current = 0; // Reset on successful connection
+        if (iceRestartTimeoutRef.current) {
+          clearTimeout(iceRestartTimeoutRef.current);
+          iceRestartTimeoutRef.current = null;
+        }
       } else if (pc.iceConnectionState === 'failed') {
-        setConnectionState('failed');
+        if (iceRestartAttemptsRef.current < maxICERestarts) {
+          attemptICERestart();
+        } else {
+          setConnectionState('failed');
+        }
       } else if (pc.iceConnectionState === 'disconnected') {
-        // Don't immediately set to disconnected - may reconnect
-        console.log('[WebRTC] ICE disconnected, may reconnect...');
+        // Wait 3s, then attempt ICE restart
+        console.log('[WebRTC] ICE disconnected, will attempt restart in 3s...');
+        iceRestartTimeoutRef.current = setTimeout(() => {
+          if (pc.iceConnectionState === 'disconnected') {
+            attemptICERestart();
+          }
+        }, 3000);
       }
     };
 
@@ -125,6 +203,15 @@ export function useWebRTC(options: UseWebRTCOptions) {
           connectResolveRef.current = null;
           connectRejectRef.current = null;
         }
+      } else if (event.track.kind === 'audio') {
+        console.log('[WebRTC] Audio track received');
+        audioTrackRef.current = event.track;
+        // Create audio element for playback
+        const audio = new Audio();
+        audio.srcObject = new MediaStream([event.track]);
+        audio.play().catch(err => console.warn('[WebRTC] Audio autoplay failed:', err));
+        audioElementRef.current = audio;
+        onAudioTrack?.(event.track);
       }
     };
 
@@ -159,13 +246,17 @@ export function useWebRTC(options: UseWebRTCOptions) {
         }
         // Handle remote info (screen dimensions)
         else if (data.type === 'remoteInfo') {
-          onRemoteInfo({ width: data.width, height: data.height });
+          onRemoteInfo({ width: data.width, height: data.height, dpiScale: data.dpiScale });
         }
         // Handle frame timing data (latency instrumentation)
         else if (data.type === 'frameTiming') {
           const timing = data as FrameTiming;
           lastFrameTimingRef.current = timing;
           onFrameTiming?.(timing);
+        }
+        // Handle monitor list from agent
+        else if (data.type === 'monitorList') {
+          onMonitorList?.(data.monitors as MonitorInfo[]);
         }
         // Handle pong response (RTT measurement)
         else if (data.type === 'pong') {
@@ -227,7 +318,7 @@ export function useWebRTC(options: UseWebRTCOptions) {
     pcRef.current = pc;
 
     return pc;
-  }, [onVideoTrack, onRemoteInfo, onCursorUpdate, onCursorShape, onFrameTiming, onLatencyUpdate]);
+  }, [onVideoTrack, onAudioTrack, onRemoteInfo, onCursorUpdate, onCursorShape, onFrameTiming, onLatencyUpdate, onMonitorList, attemptICERestart]);
 
   // Handle remote ICE candidate
   const handleRemoteCandidate = useCallback(async (candidateStr: string) => {
@@ -354,7 +445,25 @@ export function useWebRTC(options: UseWebRTCOptions) {
       }
     }
 
-    const pc = initPeerConnection();
+    // Request TURN credentials from server
+    let iceServers: RTCIceServer[] = [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+    ];
+
+    try {
+      const turnServers = await requestTurnCredentials();
+      if (turnServers) {
+        iceServers = [
+          ...turnServers,
+          { urls: 'stun:stun.l.google.com:19302' }, // Keep STUN as fallback
+        ];
+      }
+    } catch (err) {
+      console.warn('[WebRTC] Could not get TURN credentials, using STUN only:', err);
+    }
+
+    const pc = initPeerConnection(iceServers);
 
     // Subscribe to WebRTC signals from server
     unsubscribeSignalRef.current = wsService.on('webrtc_signal', (data: unknown) => {
@@ -451,8 +560,9 @@ export function useWebRTC(options: UseWebRTCOptions) {
       }
     };
 
-    // Add transceiver for receiving video
+    // Add transceivers for receiving video and audio
     pc.addTransceiver('video', { direction: 'recvonly' });
+    pc.addTransceiver('audio', { direction: 'recvonly' });
 
     // Create and send offer
     const offer = await pc.createOffer();
@@ -481,7 +591,7 @@ export function useWebRTC(options: UseWebRTCOptions) {
 
       // ontrack handler in initPeerConnection will resolve the promise
     });
-  }, [agentId, initPeerConnection, handleRemoteCandidate, setRemoteAnswer]);
+  }, [agentId, initPeerConnection, handleRemoteCandidate, setRemoteAnswer, requestTurnCredentials]);
 
   // Disconnect
   const disconnect = useCallback(() => {
@@ -507,6 +617,13 @@ export function useWebRTC(options: UseWebRTCOptions) {
       pingIntervalRef.current = null;
     }
 
+    // Clear ICE restart timeout
+    if (iceRestartTimeoutRef.current) {
+      clearTimeout(iceRestartTimeoutRef.current);
+      iceRestartTimeoutRef.current = null;
+    }
+    iceRestartAttemptsRef.current = 0;
+
     // Reject any pending connect promise
     if (connectRejectRef.current) {
       connectRejectRef.current(new Error('Connection cancelled'));
@@ -519,6 +636,14 @@ export function useWebRTC(options: UseWebRTCOptions) {
     unsubscribeResponseRef.current?.();
     unsubscribeSignalRef.current = null;
     unsubscribeResponseRef.current = null;
+
+    // Clean up audio
+    if (audioElementRef.current) {
+      audioElementRef.current.pause();
+      audioElementRef.current.srcObject = null;
+      audioElementRef.current = null;
+    }
+    audioTrackRef.current = null;
 
     // Close data channel
     if (dcRef.current) {
@@ -550,6 +675,37 @@ export function useWebRTC(options: UseWebRTCOptions) {
       console.log('[WebRTC] Sent successfully');
     } else {
       console.warn('[WebRTC] sendInput DROPPED - data channel not open:', dc?.readyState, 'event:', event.type);
+    }
+  }, []);
+
+  // Request monitor list from agent
+  const requestMonitors = useCallback(() => {
+    const dc = dcRef.current;
+    if (dc && dc.readyState === 'open') {
+      dc.send(JSON.stringify({ type: 'requestMonitors' }));
+    }
+  }, []);
+
+  // Select a specific monitor on the agent
+  const selectMonitor = useCallback((index: number) => {
+    const dc = dcRef.current;
+    if (dc && dc.readyState === 'open') {
+      dc.send(JSON.stringify({ type: 'monitorSelect', index }));
+    }
+  }, []);
+
+  // Audio controls
+  const toggleMute = useCallback(() => {
+    if (audioElementRef.current) {
+      audioElementRef.current.muted = !audioElementRef.current.muted;
+      return !audioElementRef.current.muted;
+    }
+    return false;
+  }, []);
+
+  const setVolume = useCallback((volume: number) => {
+    if (audioElementRef.current) {
+      audioElementRef.current.volume = Math.max(0, Math.min(1, volume));
     }
   }, []);
 
@@ -599,8 +755,13 @@ export function useWebRTC(options: UseWebRTCOptions) {
     disconnect,
     sendInput,
     getStats,
+    toggleMute,
+    setVolume,
+    requestMonitors,
+    selectMonitor,
     connectionState,
     isConnected: connectionState === 'connected',
     dataChannel: dcRef.current,
+    peerConnection: pcRef.current,
   };
 }

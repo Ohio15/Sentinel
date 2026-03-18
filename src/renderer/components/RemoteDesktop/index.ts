@@ -13,7 +13,12 @@ export { CursorOverlay } from './CursorOverlay';
 export { useCursor } from './useCursor';
 export { useWebRTC } from './useWebRTC';
 export { useInput } from './useInput';
+export { useClipboard } from './useClipboard';
+export { useFileTransfer } from './useFileTransfer';
+export { FileTransferPanel } from './FileTransferPanel';
 
 export type { CursorState, CursorShape, CursorPosition } from './useCursor';
 export type { InputEvent } from './useInput';
 export type { ConnectionState, WebRTCStats } from './useWebRTC';
+export type { UseClipboardOptions, UseClipboardReturn } from './useClipboard';
+export type { RemoteFile, FileTransfer, UseFileTransferOptions, UseFileTransferReturn } from './useFileTransfer';

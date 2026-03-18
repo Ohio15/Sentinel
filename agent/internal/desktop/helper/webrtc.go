@@ -9,18 +9,23 @@ import (
 	"log"
 	"sync"
 
+	pionwebrtc "github.com/pion/webrtc/v4"
 	"github.com/sentinel/agent/internal/desktop"
+	"github.com/sentinel/agent/internal/desktop/recording"
 	"github.com/sentinel/agent/internal/webrtc"
 )
 
 // WebRTCHandler manages WebRTC sessions in the helper process
 type WebRTCHandler struct {
-	mu           sync.Mutex
-	manager      *webrtc.Manager
-	session      *webrtc.Session
-	client       *desktop.IPCClient
-	connectionID string
-	injector     *InputInjector
+	mu              sync.Mutex
+	manager         *webrtc.Manager
+	session         *webrtc.Session
+	client          *desktop.IPCClient
+	connectionID    string
+	injector        *InputInjector
+	clipboardBridge *ClipboardBridge
+	ftBridge        *FileTransferBridge
+	recorder        *recording.Recorder
 }
 
 // NewWebRTCHandler creates a new WebRTC handler
@@ -30,6 +35,27 @@ func NewWebRTCHandler(client *desktop.IPCClient) *WebRTCHandler {
 		manager:  webrtc.NewManager(),
 		injector: NewInputInjector(),
 	}
+}
+
+// SetClipboardBridge attaches a clipboard bridge to be wired into WebRTC sessions.
+func (h *WebRTCHandler) SetClipboardBridge(cb *ClipboardBridge) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.clipboardBridge = cb
+}
+
+// SetFileTransferBridge attaches a file transfer bridge to be wired into WebRTC sessions.
+func (h *WebRTCHandler) SetFileTransferBridge(ftb *FileTransferBridge) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.ftBridge = ftb
+}
+
+// SetRecorder attaches a session recorder to be wired into WebRTC sessions.
+func (h *WebRTCHandler) SetRecorder(rec *recording.Recorder) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.recorder = rec
 }
 
 // HandleStartSession processes a start session request from the service
@@ -78,6 +104,143 @@ func (h *WebRTCHandler) HandleStartSession(ctx context.Context, payload *desktop
 
 	h.session = session
 
+	// Wire SAS callback — forward to service via IPC
+	session.OnSAS = func() {
+		if h.client != nil {
+			// SAS request uses a uint32 session ID; use 0 since we don't track numeric IDs here
+			h.client.SendSASRequest(0, "user_request")
+		}
+	}
+
+	// Wire monitor list request — enumerate monitors and send back via data channel
+	session.OnRequestMonitors = func() {
+		ct := NewCoordinateTransformer()
+		monitors := ct.GetMonitors()
+
+		type monitorEntry struct {
+			Index   int    `json:"index"`
+			Name    string `json:"name"`
+			X       int    `json:"x"`
+			Y       int    `json:"y"`
+			Width   int    `json:"width"`
+			Height  int    `json:"height"`
+			Primary bool   `json:"primary"`
+		}
+
+		entries := make([]monitorEntry, len(monitors))
+		for i, m := range monitors {
+			entries[i] = monitorEntry{
+				Index:   m.Index,
+				Name:    m.Name,
+				X:       m.Left,
+				Y:       m.Top,
+				Width:   m.Width,
+				Height:  m.Height,
+				Primary: m.IsPrimary,
+			}
+		}
+
+		msg, err := json.Marshal(map[string]interface{}{
+			"type":     "monitorList",
+			"monitors": entries,
+		})
+		if err != nil {
+			log.Printf("[WebRTCHandler] Failed to marshal monitor list: %v", err)
+			return
+		}
+
+		if dc := session.DataChannel; dc != nil && dc.ReadyState() == pionwebrtc.DataChannelStateOpen {
+			if err := dc.SendText(string(msg)); err != nil {
+				log.Printf("[WebRTCHandler] Failed to send monitor list: %v", err)
+			}
+		}
+	}
+
+	// Wire monitor selection
+	session.OnMonitorSelect = func(index int) {
+		log.Printf("[WebRTCHandler] Monitor switch requested: index=%d", index)
+		h.injector.SetActiveMonitor(index)
+		// TODO: Implement DXGI capture switch when monitor_manager is available
+	}
+
+	// Wire clipboard bridge
+	if h.clipboardBridge != nil {
+		session.OnClipboard = func(msgType string, data []byte) {
+			h.clipboardBridge.HandleMessage(msgType, json.RawMessage(data))
+		}
+	}
+
+	// Wire file transfer bridge
+	if h.ftBridge != nil {
+		session.OnFileTransfer = func(msgType string, data []byte) {
+			h.ftBridge.HandleMessage(msgType, json.RawMessage(data))
+		}
+	}
+
+	// Wire recording
+	if h.recorder != nil {
+		session.OnRecording = func(msgType string, data []byte) {
+			var msg struct {
+				Type string `json:"type"`
+			}
+			if err := json.Unmarshal(data, &msg); err != nil {
+				log.Printf("[Helper] Failed to parse recording message: %v", err)
+				return
+			}
+
+			switch msg.Type {
+			case "recording.start":
+				width, height := 0, 0
+				if ve := session.GetVideoEncoder(); ve != nil {
+					width = ve.GetWidth()
+					height = ve.GetHeight()
+				}
+				if err := h.recorder.Start(session.ID, width, height, ""); err != nil {
+					log.Printf("[Helper] Recording start failed: %v", err)
+				} else {
+					statusMsg, _ := json.Marshal(map[string]interface{}{
+						"type":   "recording.status",
+						"active": true,
+					})
+					if dc := session.DataChannel; dc != nil && dc.ReadyState() == pionwebrtc.DataChannelStateOpen {
+						dc.SendText(string(statusMsg))
+					}
+				}
+			case "recording.stop":
+				h.recorder.Stop()
+				statusMsg, _ := json.Marshal(map[string]interface{}{
+					"type": "recording.stopped",
+				})
+				if dc := session.DataChannel; dc != nil && dc.ReadyState() == pionwebrtc.DataChannelStateOpen {
+					dc.SendText(string(statusMsg))
+				}
+			}
+		}
+	}
+
+	// Wire audio control messages
+	session.OnAudio = func(msgType string, data []byte) {
+		// Audio is managed at the WebRTC track level.
+		// Control messages (mute, volume, device selection) are handled here.
+		log.Printf("[Helper] Audio control message: %s", msgType)
+		// Audio track manager integration point — will be wired when audio capture starts
+	}
+
+	// Wire handler for additional data channels (e.g. file transfer)
+	session.OnDataChannelOpen = func(label string, dc *pionwebrtc.DataChannel) {
+		log.Printf("[WebRTCHandler] Extra data channel opened: %s", label)
+		switch label {
+		case "filetransfer":
+			if h.ftBridge != nil {
+				dc.OnOpen(func() {
+					h.ftBridge.Start(dc)
+				})
+			}
+		default:
+			log.Printf("[WebRTCHandler] Unhandled data channel label: %s", label)
+		}
+	}
+
 	// Set remote description (the offer from browser)
 	log.Printf("[WebRTCHandler] Setting remote description...")
 	if err := session.SetRemoteDescription(payload.SDPType, payload.SDP); err != nil {
@@ -114,6 +277,17 @@ func (h *WebRTCHandler) HandleStopSession(payload *desktop.StopSessionPayload) e
 	defer h.mu.Unlock()
 
 	log.Printf("[WebRTCHandler] Stopping session, connectionID=%s", payload.ConnectionID)
+
+	// Stop subsystem bridges before tearing down the session
+	if h.clipboardBridge != nil {
+		h.clipboardBridge.Stop()
+	}
+	if h.ftBridge != nil {
+		h.ftBridge.Stop()
+	}
+	if h.recorder != nil {
+		h.recorder.Stop()
+	}
 
 	if h.session != nil {
 		h.session.Stop()
@@ -181,6 +355,17 @@ func (h *WebRTCHandler) onInput(input webrtc.InputEvent) {
 func (h *WebRTCHandler) Close() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
+	// Stop subsystem bridges
+	if h.clipboardBridge != nil {
+		h.clipboardBridge.Stop()
+	}
+	if h.ftBridge != nil {
+		h.ftBridge.Stop()
+	}
+	if h.recorder != nil {
+		h.recorder.Stop()
+	}
 
 	if h.session != nil {
 		h.session.Stop()

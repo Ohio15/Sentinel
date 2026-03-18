@@ -20,6 +20,7 @@ import (
 	"unsafe"
 
 	"github.com/sentinel/agent/internal/capture"
+	"github.com/sentinel/agent/internal/colorconv"
 
 	"github.com/kbinani/screenshot"
 	"github.com/pion/ice/v4"
@@ -41,6 +42,19 @@ type Session struct {
 	Connected      bool
 	OnSignal       func(signal SignalMessage)
 	OnInput        func(input InputEvent)
+
+	// Feature callbacks — set by helper to wire subsystems to DC messages
+	OnSAS             func()                                    // Ctrl+Alt+Del request
+	OnClipboard       func(msgType string, data []byte)         // clipboard.* messages
+	OnFileTransfer    func(msgType string, data []byte)         // file.* messages
+	OnRecording       func(msgType string, data []byte)         // recording.* messages
+	OnAudio           func(msgType string, data []byte)         // audio.* messages
+	OnRequestMonitors func()                                    // Monitor list request
+	OnMonitorSelect   func(index int)                           // Monitor switch request
+	OnDataChannelOpen func(label string, dc *webrtc.DataChannel) // Non-input data channels
+
+	AudioTrack     *webrtc.TrackLocalStaticSample               // Opus audio track (optional)
+
 	ctx            context.Context
 	cancel         context.CancelFunc
 	encoder        *h264Encoder       // Legacy OpenH264 encoder (fallback)
@@ -317,7 +331,24 @@ func (m *Manager) loadOpenH264() error {
 			}
 		}
 
-		loadErr = fmt.Errorf("failed to load OpenH264 DLL from any location")
+		// Last resort: attempt to download from Cisco's GitHub
+		log.Printf("[OpenH264] All local paths exhausted, attempting auto-download...")
+		if dlErr := downloadOpenH264(); dlErr != nil {
+			log.Printf("[OpenH264] Auto-download failed: %v", dlErr)
+			loadErr = fmt.Errorf("failed to load OpenH264 DLL from any location (auto-download also failed: %v)", dlErr)
+			return
+		}
+
+		// Try loading from the download location
+		dlPath := filepath.Join(openH264InstallDir, openH264FileName)
+		if err := openh264.Open(dlPath); err == nil {
+			log.Printf("[OpenH264] SUCCESS: Loaded from downloaded %s", dlPath)
+			m.h264Loaded = true
+			return
+		} else {
+			log.Printf("[OpenH264] Failed to load downloaded DLL: %v", err)
+			loadErr = fmt.Errorf("downloaded OpenH264 DLL but failed to load: %v", err)
+		}
 	})
 	return loadErr
 }
@@ -692,23 +723,46 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 	log.Printf("[WebRTC] Using actual screen dimensions: %dx%d (max: %dx%d)", screenWidth, screenHeight, maxWidth, maxHeight)
 	log.Printf("[WebRTC] Quality settings: fps=%d, bitrate=%d", fps, bitrate)
 
-	// Create H.264 encoder - using OpenH264 (software) for stability
-	// NOTE: Media Foundation encoder disabled due to crashes on some systems
+	// Create H.264 encoder - try Media Foundation (hardware) first, fall back to OpenH264 (software)
 	log.Printf("[WebRTC] Creating H.264 encoder with dims %dx%d, bitrate %d...", screenWidth, screenHeight, bitrate)
 
 	var videoEncoder VideoEncoder
 	var legacyEncoder *h264Encoder
 
-	// Use OpenH264 encoder (software, but stable)
-	log.Printf("[WebRTC] Creating OpenH264 encoder (software)...")
-	encoder, err := newH264Encoder(screenWidth, screenHeight, bitrate)
-	if err != nil {
-		log.Printf("[WebRTC] OpenH264 encoder failed: %v", err)
-		return nil, fmt.Errorf("failed to create encoder: %w", err)
+	// Try Media Foundation encoder first (hardware acceleration) unless disabled
+	useMF := os.Getenv("SENTINEL_DISABLE_MF") != "1"
+	if useMF {
+		log.Printf("[WebRTC] Attempting Media Foundation encoder (hardware)...")
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[WebRTC] PANIC creating MF encoder: %v", r)
+				}
+			}()
+			mfEnc, mfErr := newMFEncoderWithTimeout(screenWidth, screenHeight, bitrate, fps, 5*time.Second)
+			if mfErr == nil {
+				videoEncoder = mfEnc
+				log.Printf("[WebRTC] Media Foundation encoder created (hardware=%v)", mfEnc.IsHardware())
+			} else {
+				log.Printf("[WebRTC] Media Foundation encoder failed: %v, falling back to OpenH264", mfErr)
+			}
+		}()
+	} else {
+		log.Printf("[WebRTC] Media Foundation encoder disabled via SENTINEL_DISABLE_MF=1")
 	}
-	legacyEncoder = encoder
-	videoEncoder = &openH264Wrapper{enc: encoder}
-	log.Printf("[WebRTC] OpenH264 encoder created successfully")
+
+	// Fall back to OpenH264 (software) if MF failed or disabled
+	if videoEncoder == nil {
+		log.Printf("[WebRTC] Creating OpenH264 encoder (software)...")
+		encoder, err := newH264Encoder(screenWidth, screenHeight, bitrate)
+		if err != nil {
+			log.Printf("[WebRTC] OpenH264 encoder failed: %v", err)
+			return nil, fmt.Errorf("failed to create encoder: %w", err)
+		}
+		legacyEncoder = encoder
+		videoEncoder = &openH264Wrapper{enc: encoder}
+		log.Printf("[WebRTC] OpenH264 encoder created successfully")
+	}
 	log.Printf("[WebRTC] H.264 encoder ready (internal dims: %dx%d, hardware=%v)",
 		videoEncoder.GetWidth(), videoEncoder.GetHeight(), videoEncoder.IsHardware())
 
@@ -728,6 +782,21 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 		videoEncoder.Close()
 		return nil, fmt.Errorf("failed to register H264 codec: %w", err)
 	}
+
+	// Register Opus audio codec for remote desktop audio
+	if err := mediaEngine.RegisterCodec(webrtc.RTPCodecParameters{
+		RTPCodecCapability: webrtc.RTPCodecCapability{
+			MimeType:    webrtc.MimeTypeOpus,
+			ClockRate:   48000,
+			Channels:    2,
+			SDPFmtpLine: "minptime=10;useinbandfec=1",
+		},
+		PayloadType: 111,
+	}, webrtc.RTPCodecTypeAudio); err != nil {
+		log.Printf("[WebRTC] WARNING: Failed to register Opus codec (audio disabled): %v", err)
+		// Don't fail - audio is optional
+	}
+
 	log.Printf("[WebRTC] Media engine created")
 
 	// Create interceptor registry for PLI support
@@ -811,6 +880,28 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 		}
 	}()
 
+	// Create audio track if Opus registered
+	var audioTrack *webrtc.TrackLocalStaticSample
+	at, audioErr := webrtc.NewTrackLocalStaticSample(
+		webrtc.RTPCodecCapability{
+			MimeType:  webrtc.MimeTypeOpus,
+			ClockRate: 48000,
+			Channels:  2,
+		},
+		"audio",
+		"sentinel-audio",
+	)
+	if audioErr == nil {
+		if _, addErr := peerConnection.AddTrack(at); addErr == nil {
+			audioTrack = at
+			log.Printf("[WebRTC] Audio track created and added")
+		} else {
+			log.Printf("[WebRTC] Failed to add audio track: %v", addErr)
+		}
+	} else {
+		log.Printf("[WebRTC] Failed to create audio track: %v", audioErr)
+	}
+
 	log.Printf("[WebRTC] DEBUG: Creating context...")
 	ctx, cancel := context.WithCancel(context.Background())
 	log.Printf("[WebRTC] DEBUG: Context created")
@@ -853,6 +944,7 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 		ID:              config.SessionID,
 		PeerConnection:  peerConnection,
 		VideoTrack:      videoTrack,
+		AudioTrack:      audioTrack,
 		Quality:         config.Quality,
 		Active:          true,
 		Connected:       false,
@@ -871,7 +963,14 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 	// Handle incoming data channels from the browser (offerer creates, we receive)
 	log.Printf("[WebRTC] Setting up OnDataChannel handler for incoming data channels...")
 	peerConnection.OnDataChannel(func(dc *webrtc.DataChannel) {
-		log.Printf("[WebRTC] Received data channel: %s (id=%d)", dc.Label(), dc.ID())
+		label := dc.Label()
+		log.Printf("[WebRTC] Received data channel: %s (id=%d)", label, dc.ID())
+
+		// Route non-input channels to the callback
+		if label != "input" && label != "" && session.OnDataChannelOpen != nil {
+			session.OnDataChannelOpen(label, dc)
+			return
+		}
 
 		session.mu.Lock()
 		session.DataChannel = dc
@@ -901,8 +1000,10 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 				return
 			}
 
+			msgType := typeCheck.Type
+
 			// Handle ping messages for RTT measurement
-			if typeCheck.Type == "ping" {
+			if msgType == "ping" {
 				var ping PingMessage
 				if err := json.Unmarshal(msg.Data, &ping); err == nil {
 					session.sendPong(ping.ClientT)
@@ -910,14 +1011,72 @@ func (m *Manager) CreateSession(config SessionConfig, onSignal func(signal Signa
 				return
 			}
 
-			// Handle input events
+			// Handle SAS (Ctrl+Alt+Del) request
+			if msgType == "sas" {
+				log.Printf("[WebRTC] SAS request received")
+				if session.OnSAS != nil {
+					session.OnSAS()
+				}
+				return
+			}
+
+			// Route clipboard messages
+			if strings.HasPrefix(msgType, "clipboard.") {
+				if session.OnClipboard != nil {
+					session.OnClipboard(msgType, msg.Data)
+				}
+				return
+			}
+
+			// Route file transfer messages
+			if strings.HasPrefix(msgType, "file.") {
+				if session.OnFileTransfer != nil {
+					session.OnFileTransfer(msgType, msg.Data)
+				}
+				return
+			}
+
+			// Route recording messages
+			if strings.HasPrefix(msgType, "recording.") {
+				if session.OnRecording != nil {
+					session.OnRecording(msgType, msg.Data)
+				}
+				return
+			}
+
+			// Route audio control messages
+			if strings.HasPrefix(msgType, "audio.") {
+				if session.OnAudio != nil {
+					session.OnAudio(msgType, msg.Data)
+				}
+				return
+			}
+
+			// Handle monitor requests
+			if msgType == "requestMonitors" {
+				if session.OnRequestMonitors != nil {
+					session.OnRequestMonitors()
+				}
+				return
+			}
+			if msgType == "monitorSelect" {
+				var sel struct {
+					Index int `json:"index"`
+				}
+				if err := json.Unmarshal(msg.Data, &sel); err == nil {
+					if session.OnMonitorSelect != nil {
+						session.OnMonitorSelect(sel.Index)
+					}
+				}
+				return
+			}
+
+			// Handle input events (default)
 			var input InputEvent
 			if err := json.Unmarshal(msg.Data, &input); err != nil {
 				log.Printf("[WebRTC] Failed to unmarshal input event: %v (raw=%s)", err, string(msg.Data))
 				return
 			}
-			log.Printf("[WebRTC] Received input: type=%s, x=%.1f, y=%.1f, button=%d, key=%s",
-				input.Type, input.X, input.Y, input.Button, input.Key)
 			if session.OnInput != nil {
 				session.OnInput(input)
 			}
@@ -1048,21 +1207,19 @@ type CursorHotspot struct {
 	Y int `json:"y"`
 }
 
-// RemoteInfoMessage tells dashboard about screen dimensions
+// RemoteInfoMessage tells dashboard about screen dimensions and DPI
 type RemoteInfoMessage struct {
-	Type   string `json:"type"`
-	Width  int    `json:"width"`
-	Height int    `json:"height"`
+	Type     string  `json:"type"`
+	Width    int     `json:"width"`
+	Height   int     `json:"height"`
+	DPIScale float64 `json:"dpiScale"`
 }
 
 // startScreenCapture captures the screen and sends frames over WebRTC
 func (s *Session) startScreenCapture(fps int) {
-	frameDuration := time.Second / time.Duration(fps)
-	ticker := time.NewTicker(frameDuration)
-	defer ticker.Stop()
+	frameBudget := time.Second / time.Duration(fps)
 
 	// Cursor update ticker (120Hz for instant cursor feedback)
-	// Higher rate reduces perceived latency since client renders cursor locally
 	cursorTicker := time.NewTicker(8 * time.Millisecond)
 	defer cursorTicker.Stop()
 
@@ -1079,7 +1236,6 @@ func (s *Session) startScreenCapture(fps int) {
 		bounds = image.Rect(0, 0, screenWidth, screenHeight)
 		log.Printf("[WebRTC] Using DXGI capture: %dx%d", screenWidth, screenHeight)
 	} else {
-		// Fall back to screenshot library
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -1104,14 +1260,15 @@ func (s *Session) startScreenCapture(fps int) {
 	// Check if we need to pad (encoder dimensions might be larger due to alignment)
 	needsPadding := encoderWidth != screenWidth || encoderHeight != screenHeight
 
-	// Check if we can use direct BGRA encoding (Media Foundation)
+	// Check if we can use direct BGRA encoding (Media Foundation — hw or sw can take BGRA via colorconv)
 	useDirectBGRA := s.useDXGI && s.videoEncoder.IsHardware()
 
 	log.Printf("Starting screen capture: screen=%dx%d, encoder=%dx%d, padding=%v, useDXGI=%v, directBGRA=%v, hardware=%v @ %d fps",
 		screenWidth, screenHeight, encoderWidth, encoderHeight, needsPadding, s.useDXGI, useDirectBGRA, s.videoEncoder.IsHardware(), fps)
 
-	// Send remote info to dashboard
-	s.sendRemoteInfo(screenWidth, screenHeight)
+	// Send remote info to dashboard (with DPI scale)
+	dpiScale := getDPIScale()
+	s.sendRemoteInfo(screenWidth, screenHeight, dpiScale)
 
 	// Track last cursor position and shape to avoid sending duplicates
 	lastCursorX, lastCursorY := -1, -1
@@ -1119,11 +1276,15 @@ func (s *Session) startScreenCapture(fps int) {
 	frameCount := 0
 	skipCount := 0
 	strategySkipCount := 0
-	const maxConsecutiveSkips = 5 // Don't skip more than 5 frames in a row
+	const maxConsecutiveSkips = 5
 
 	// Frame timing instrumentation
 	var frameID uint64 = 0
-	timingInterval := 30 // Send timing data every N frames
+	timingInterval := 30
+
+	// Adaptive frame pacing — use Timer instead of Ticker to avoid queue buildup
+	frameTimer := time.NewTimer(0) // Fire immediately for first frame
+	defer frameTimer.Stop()
 
 	for {
 		select {
@@ -1132,108 +1293,131 @@ func (s *Session) startScreenCapture(fps int) {
 			return
 
 		case <-cursorTicker.C:
-			// Send cursor position updates via data channel (for local cursor rendering)
 			cursorX, cursorY := getCursorPos()
 			if cursorX != lastCursorX || cursorY != lastCursorY {
 				s.sendCursorUpdate(cursorX, cursorY, true)
 				lastCursorX, lastCursorY = cursorX, cursorY
 			}
 
-			// Check for cursor shape changes
 			cursorShape := getCursorShape()
 			if cursorShape != lastCursorShape {
 				s.sendCursorShape(cursorShape)
 				lastCursorShape = cursorShape
 			}
 
-		case <-ticker.C:
+		case <-frameTimer.C:
 			if !s.Active {
 				return
 			}
 
+			start := time.Now()
 			var data []byte
 			var err error
 
+			frameID++
+
 			if s.useDXGI && s.dxgiCapture != nil {
-				// Use DXGI capture (faster, with dirty rectangles)
+				// DXGI capture path — with frame timing instrumentation
+				t0 := time.Now()
+
 				frame, captureErr := s.dxgiCapture.CaptureFrame(50)
 				if captureErr != nil {
 					log.Printf("DXGI capture failed: %v", captureErr)
+					frameTimer.Reset(frameBudget)
 					continue
 				}
 				if frame == nil {
-					// No new frame (screen unchanged)
 					skipCount++
+					frameTimer.Reset(frameBudget)
 					continue
 				}
 
-				// Use capture strategy for smart frame decisions
+				t1 := time.Now()
+
+				// Smart frame decisions via capture strategy
 				var decision FrameDecision
 				if s.captureStrategy != nil {
 					decision = s.captureStrategy.Decide(frame.DirtyRects)
 
 					if !decision.ShouldEncode && strategySkipCount < maxConsecutiveSkips {
 						strategySkipCount++
+						frameTimer.Reset(frameBudget)
 						continue
 					}
 					strategySkipCount = 0
 
-					// Apply quality adjustment
 					if decision.QualityAdjust != 0 {
 						s.adjustEncoderQuality(decision.QualityAdjust)
 					}
 
-					// Force keyframe if needed
 					if decision.ForceKeyframe {
 						s.videoEncoder.ForceKeyframe()
 					}
 				}
 
-				// Use direct BGRA encoding if supported (Media Foundation hardware)
+				// Encode — use colorconv for single-pass integer conversion
 				if useDirectBGRA {
 					data, err = s.videoEncoder.EncodeBGRA(frame.Data, frame.Width, frame.Height, frame.Stride, decision.ForceKeyframe)
 				} else {
-					// Convert BGRA to RGBA then YCbCr for OpenH264
-					img := bgraToRGBA(frame.Data, frame.Width, frame.Height, frame.Stride)
 					var ycbcr *image.YCbCr
 					if needsPadding {
-						ycbcr = rgbaToYCbCrPadded(img, encoderWidth, encoderHeight)
+						ycbcr = colorconv.BGRAToI420Padded(frame.Data, frame.Width, frame.Height, frame.Stride, encoderWidth, encoderHeight)
 					} else {
-						ycbcr = rgbaToYCbCr(img)
+						ycbcr = colorconv.BGRAToI420(frame.Data, frame.Width, frame.Height, frame.Stride)
 					}
 					data, err = s.videoEncoder.Encode(ycbcr)
 				}
+
+				t2 := time.Now()
+
+				// Send timing data every N frames (DXGI path now instrumented)
+				if frameID%uint64(timingInterval) == 0 {
+					s.sendFrameTiming(FrameTiming{
+						Type:      "frameTiming",
+						FrameID:   frameID,
+						CaptureMs: float64(t1.Sub(t0).Microseconds()) / 1000.0,
+						ConvertMs: 0, // Conversion is part of encode for direct BGRA path
+						EncodeMs:  float64(t2.Sub(t1).Microseconds()) / 1000.0,
+						TotalMs:   float64(t2.Sub(t0).Microseconds()) / 1000.0,
+						Timestamp: t0.UnixMicro(),
+					})
+				}
 			} else {
-				// Fall back to screenshot library - with timing instrumentation
-				frameID++
+				// Screenshot fallback path — with timing instrumentation
 				t0 := time.Now()
 
 				img, captureErr := screenshot.CaptureRect(bounds)
 				if captureErr != nil {
 					log.Printf("Failed to capture screen: %v", captureErr)
+					frameTimer.Reset(frameBudget)
 					continue
 				}
 				t1 := time.Now()
 
-				// NOTE: Cursor is NOT drawn on the video - client renders cursor locally via CursorOverlay
-				// This eliminates the full pipeline latency (capture→encode→transmit→decode→render)
-				// and provides instant cursor feedback at native mouse polling rate (~125-1000Hz)
-				// Server cursor position is sent via DataChannel for correction/sync
-
-				// Convert to YCbCr (with padding if needed for encoder alignment)
+				// Convert RGBA to YCbCr using integer math via colorconv
+				// Note: screenshot returns *image.RGBA, but its Pix layout is compatible
 				var ycbcr *image.YCbCr
+				rgbaPix := img.Pix
+				imgStride := img.Stride
+				imgW := img.Rect.Dx()
+				imgH := img.Rect.Dy()
+
+				// For RGBA input, we treat it the same as BGRA but with R and B swapped
+				// We need to use the original conversion for RGBA since colorconv expects BGRA
 				if needsPadding {
 					ycbcr = rgbaToYCbCrPadded(img, encoderWidth, encoderHeight)
 				} else {
 					ycbcr = rgbaToYCbCr(img)
 				}
+				_ = rgbaPix
+				_ = imgStride
+				_ = imgW
+				_ = imgH
 				t2 := time.Now()
 
-				// Encode to H.264
 				data, err = s.videoEncoder.Encode(ycbcr)
 				t3 := time.Now()
 
-				// Send timing data every N frames (for latency debugging)
 				if frameID%uint64(timingInterval) == 0 {
 					s.sendFrameTiming(FrameTiming{
 						Type:      "frameTiming",
@@ -1249,22 +1433,32 @@ func (s *Session) startScreenCapture(fps int) {
 
 			if err != nil {
 				log.Printf("Failed to encode frame: %v", err)
+				frameTimer.Reset(frameBudget)
 				continue
 			}
 
 			if data == nil {
 				skipCount++
-				continue // Frame was skipped
+				frameTimer.Reset(frameBudget)
+				continue
 			}
 
 			// Write to WebRTC track
 			if err := s.VideoTrack.WriteSample(media.Sample{
 				Data:     data,
-				Duration: frameDuration,
+				Duration: frameBudget,
 			}); err != nil {
 				log.Printf("Failed to write sample: %v", err)
 			}
 			frameCount++
+
+			// Adaptive pacing: subtract elapsed time from budget
+			elapsed := time.Since(start)
+			next := frameBudget - elapsed
+			if next < time.Millisecond {
+				next = time.Millisecond
+			}
+			frameTimer.Reset(next)
 		}
 	}
 }
@@ -1486,8 +1680,34 @@ func (s *Session) sendPong(clientT int64) {
 	dc.SendText(string(data))
 }
 
-// sendRemoteInfo sends screen dimensions to dashboard
-func (s *Session) sendRemoteInfo(width, height int) {
+// getDPIScale returns the DPI scale factor for the primary monitor
+func getDPIScale() float64 {
+	shcore := syscall.NewLazyDLL("shcore.dll")
+	procGetDpiForMonitor := shcore.NewProc("GetDpiForMonitor")
+	procMonitorFromPoint := user32.NewProc("MonitorFromPoint")
+
+	// Get primary monitor (point 0,0)
+	monitor, _, _ := procMonitorFromPoint.Call(0, 0, 1) // MONITOR_DEFAULTTOPRIMARY
+	if monitor == 0 {
+		return 1.0
+	}
+
+	var dpiX, dpiY uint32
+	hr, _, _ := procGetDpiForMonitor.Call(
+		monitor,
+		0, // MDT_EFFECTIVE_DPI
+		uintptr(unsafe.Pointer(&dpiX)),
+		uintptr(unsafe.Pointer(&dpiY)),
+	)
+	if hr != 0 || dpiX == 0 {
+		return 1.0
+	}
+
+	return float64(dpiX) / 96.0
+}
+
+// sendRemoteInfo sends screen dimensions and DPI scale to dashboard
+func (s *Session) sendRemoteInfo(width, height int, dpiScale float64) {
 	s.mu.Lock()
 	dc := s.DataChannel
 	s.mu.Unlock()
@@ -1509,16 +1729,17 @@ func (s *Session) sendRemoteInfo(width, height int) {
 	}
 
 	msg := RemoteInfoMessage{
-		Type:   "remoteInfo",
-		Width:  width,
-		Height: height,
+		Type:     "remoteInfo",
+		Width:    width,
+		Height:   height,
+		DPIScale: dpiScale,
 	}
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return
 	}
 	dc.SendText(string(data))
-	log.Printf("[WebRTC] Sent remote info: %dx%d", width, height)
+	log.Printf("[WebRTC] Sent remote info: %dx%d @ %.0f%% DPI", width, height, dpiScale*100)
 }
 
 // bgraToRGBA converts BGRA pixel data to RGBA image
@@ -1696,6 +1917,14 @@ func (s *Session) AddICECandidate(candidateJSON string) error {
 }
 
 // Stop stops the WebRTC session
+// GetVideoEncoder returns the session's video encoder, or nil if not yet initialized.
+// This is used by the helper to query encoder dimensions for recording.
+func (s *Session) GetVideoEncoder() VideoEncoder {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.videoEncoder
+}
+
 func (s *Session) Stop() {
 	s.mu.Lock()
 	defer s.mu.Unlock()

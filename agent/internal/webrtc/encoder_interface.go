@@ -3,7 +3,14 @@
 package webrtc
 
 import (
+	"fmt"
 	"image"
+	"log"
+	"unsafe"
+
+	openh264 "github.com/y9o/go-openh264"
+
+	"github.com/sentinel/agent/internal/colorconv"
 )
 
 // VideoEncoder is the interface for H.264 video encoders
@@ -44,19 +51,37 @@ func (w *openH264Wrapper) Encode(ycbcr *image.YCbCr) ([]byte, error) {
 }
 
 func (w *openH264Wrapper) EncodeBGRA(bgra []byte, width, height, stride int, forceKeyframe bool) ([]byte, error) {
-	// OpenH264 doesn't have direct BGRA support, convert to YCbCr
-	rgba := bgraToRGBASlice(bgra, width, height, stride)
-	ycbcr := rgbaSliceToYCbCr(rgba, width, height, width*4)
+	ycbcr := colorconv.BGRAToI420(bgra, width, height, stride)
+	if forceKeyframe {
+		w.ForceKeyframe()
+	}
 	return w.enc.encode(ycbcr)
 }
 
 func (w *openH264Wrapper) ForceKeyframe() {
-	w.forceKeyframe = true
-	// OpenH264 encoder doesn't have direct keyframe control
+	if w.enc != nil && w.enc.encoder != nil {
+		w.enc.mu.Lock()
+		w.enc.encoder.ForceIntraFrame(true)
+		w.enc.mu.Unlock()
+	}
+	w.forceKeyframe = true // Keep flag as backup
 }
 
 func (w *openH264Wrapper) SetBitrate(bps int) error {
-	// OpenH264 doesn't support dynamic bitrate change easily
+	if w.enc == nil || w.enc.encoder == nil {
+		return fmt.Errorf("encoder not initialized")
+	}
+	w.enc.mu.Lock()
+	defer w.enc.mu.Unlock()
+
+	bitrateInfo := openh264.SBitrateInfo{
+		ILayer:   0, // SPATIAL_LAYER_ALL
+		IBitrate: int32(bps),
+	}
+	if ret := w.enc.encoder.SetOption(openh264.ENCODER_OPTION_BITRATE, (*int)(unsafe.Pointer(&bitrateInfo))); ret != 0 {
+		return fmt.Errorf("SetOption BITRATE failed: %d", ret)
+	}
+	log.Printf("[OpenH264] Bitrate updated to %d bps", bps)
 	return nil
 }
 

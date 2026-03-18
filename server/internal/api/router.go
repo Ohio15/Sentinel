@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/sentinel/server/internal/middleware"
 	"github.com/sentinel/server/internal/pki"
+	"github.com/sentinel/server/internal/turn"
 	"github.com/sentinel/server/internal/websocket"
 	"github.com/sentinel/server/pkg/cache"
 	"github.com/sentinel/server/pkg/config"
@@ -25,6 +26,7 @@ type Router struct {
 	hub             WebSocketHub
 	pki             *pki.PKI
 	metricsRecorder MetricsRecorder
+	turnServer      *turn.Server
 }
 
 func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *websocket.Hub) *gin.Engine {

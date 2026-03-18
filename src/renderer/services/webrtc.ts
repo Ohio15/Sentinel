@@ -93,31 +93,11 @@ export class WebRTCService {
     console.log('[WebRTC] Starting connection for session:', sessionId);
 
     // Create peer connection with ICE servers (STUN + TURN for NAT traversal)
+    // Use STUN only — TURN credentials are requested dynamically via signaling server
     this.pc = new RTCPeerConnection({
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        // Metered TURN servers (more reliable)
-        {
-          urls: 'turn:a.relay.metered.ca:80',
-          username: 'e8dd65b92f8b3c9bd6c4e894',
-          credential: 'uWdWNmkhvyqTmhD0',
-        },
-        {
-          urls: 'turn:a.relay.metered.ca:80?transport=tcp',
-          username: 'e8dd65b92f8b3c9bd6c4e894',
-          credential: 'uWdWNmkhvyqTmhD0',
-        },
-        {
-          urls: 'turn:a.relay.metered.ca:443',
-          username: 'e8dd65b92f8b3c9bd6c4e894',
-          credential: 'uWdWNmkhvyqTmhD0',
-        },
-        {
-          urls: 'turn:a.relay.metered.ca:443?transport=tcp',
-          username: 'e8dd65b92f8b3c9bd6c4e894',
-          credential: 'uWdWNmkhvyqTmhD0',
-        },
       ],
       iceCandidatePoolSize: 10,
     });
@@ -278,7 +258,7 @@ export class WebRTCService {
       if (response.success === false || response.error) {
         const errorMsg = response.error || 'Remote desktop connection failed';
         console.error('[WebRTC] Connection error from agent:', errorMsg);
-        this.emit('error', new Error(errorMsg));
+        this.onError?.(errorMsg);
         return;
       }
 

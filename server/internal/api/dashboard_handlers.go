@@ -262,7 +262,7 @@ func (r *Router) handleDashboardMessage(userID uuid.UUID, message []byte) {
 		log.Printf("[WebRTC] Successfully forwarded webrtc_start to agent %s", agentID)
 
 	case ws.MsgTypeWebRTCSignal:
-		// Forward WebRTC signaling (ICE candidates, etc.) to agent
+		// Forward WebRTC signaling (ICE candidates, renegotiation offers, etc.) to agent
 		var signalPayload struct {
 			Signal json.RawMessage `json:"signal"`
 		}
@@ -331,6 +331,30 @@ func (r *Router) handleDashboardMessage(userID uuid.UUID, message []byte) {
 			},
 		})
 		r.hub.SendToAgent(agentID, agentMsg)
+
+	case "request_turn_credentials":
+		// Return TURN server credentials for WebRTC relay
+		if r.turnServer == nil {
+			errResponse, _ := json.Marshal(map[string]interface{}{
+				"type":      "error",
+				"requestId": msg.RequestID,
+				"error":     "TURN server not enabled",
+			})
+			r.hub.SendToUser(userID, errResponse)
+			return
+		}
+		creds := r.turnServer.GenerateCredentials(userID.String(), 24*time.Hour)
+		response, _ := json.Marshal(map[string]interface{}{
+			"type":      "turn_credentials",
+			"requestId": msg.RequestID,
+			"data":      creds,
+		})
+		r.hub.SendToUser(userID, response)
+
+	case "webrtc_session_status":
+		// Forward session status from agent to requesting dashboard
+		// (helper crash recovery, reconnection state changes)
+		r.hub.BroadcastToDashboards(message)
 
 	default:
 		log.Printf("[Dashboard] Unknown message type: %s from user %s", msg.Type, userID)

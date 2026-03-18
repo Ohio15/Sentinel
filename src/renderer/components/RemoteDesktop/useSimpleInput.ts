@@ -25,6 +25,7 @@ export interface SimpleInputEvent {
 interface UseSimpleInputOptions {
   remoteWidth: number;
   remoteHeight: number;
+  dpiScale?: number;
   sendInput: (event: SimpleInputEvent) => void;
   enabled?: boolean;
 }
@@ -33,7 +34,7 @@ interface UseSimpleInputOptions {
 const MOVE_THRESHOLD = 2;
 
 export function useSimpleInput(options: UseSimpleInputOptions) {
-  const { remoteWidth, remoteHeight, sendInput, enabled = true } = options;
+  const { remoteWidth, remoteHeight, dpiScale, sendInput, enabled = true } = options;
 
   // Track last sent position to filter tiny movements
   const lastSentRef = useRef<{ x: number; y: number }>({ x: -1, y: -1 });
@@ -51,12 +52,13 @@ export function useSimpleInput(options: UseSimpleInputOptions) {
       if (wrapperWidth === 0 || wrapperHeight === 0) {
         return { x: 0, y: 0 };
       }
+      const scale = dpiScale || 1.0;
       return {
-        x: Math.round((remoteWidth / wrapperWidth) * localX),
-        y: Math.round((remoteHeight / wrapperHeight) * localY),
+        x: Math.round((remoteWidth / wrapperWidth) * localX * scale),
+        y: Math.round((remoteHeight / wrapperHeight) * localY * scale),
       };
     },
-    [remoteWidth, remoteHeight]
+    [remoteWidth, remoteHeight, dpiScale]
   );
 
   /**

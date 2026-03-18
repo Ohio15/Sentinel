@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -30,6 +31,10 @@ type Manager struct {
 
 	// Queue for ICE candidates that arrive before session is ready
 	pendingCandidates map[uint32][]pendingICECandidate
+
+	// SAS (Secure Attention Sequence) via sas.dll
+	sasDLL      *syscall.LazyDLL
+	procSendSAS *syscall.LazyProc
 
 	// Callbacks for forwarding messages to server
 	onSessionAnswer func(sessionID uint32, connectionID, sdpType, sdp string)
@@ -56,10 +61,13 @@ type HelperSession struct {
 
 // NewManager creates a new desktop manager
 func NewManager(helperPath string) *Manager {
+	sasDLL := syscall.NewLazyDLL("sas.dll")
 	return &Manager{
 		sessions:          make(map[uint32]*HelperSession),
 		pendingCandidates: make(map[uint32][]pendingICECandidate),
 		helperPath:        helperPath,
+		sasDLL:            sasDLL,
+		procSendSAS:       sasDLL.NewProc("SendSAS"),
 	}
 }
 
@@ -278,16 +286,10 @@ func (m *Manager) spawnHelper(sessionID uint32) (*HelperSession, error) {
 
 		session.Process = proc
 
-		// Monitor process
+		// Monitor process - crash recovery is handled by OnDisconnect
 		go func() {
 			state, err := proc.Wait()
 			log.Printf("[Manager] Helper process exited: %v (state: %v)", err, state)
-
-			m.mu.Lock()
-			delete(m.sessions, sessionID)
-			m.mu.Unlock()
-
-			server.Close()
 		}()
 	} else {
 		// Running interactively, use regular exec.Command
@@ -302,16 +304,10 @@ func (m *Manager) spawnHelper(sessionID uint32) (*HelperSession, error) {
 		session.cmd = cmd
 		session.Process = cmd.Process
 
-		// Monitor process
+		// Monitor process - crash recovery is handled by OnDisconnect
 		go func() {
 			err := cmd.Wait()
 			log.Printf("[Manager] Helper process exited: %v", err)
-
-			m.mu.Lock()
-			delete(m.sessions, sessionID)
-			m.mu.Unlock()
-
-			server.Close()
 		}()
 	}
 
@@ -427,12 +423,97 @@ func (h *helperHandler) OnStatus(msg *IPCMessage, payload *StatusPayload) error 
 	return nil
 }
 
-func (h *helperHandler) OnDisconnect() {
-	log.Printf("[Manager] Helper disconnected for session %d, cleaning up session", h.sessionID)
+func (h *helperHandler) OnSAS(msg *IPCMessage, payload *SASPayload) error {
+	log.Printf("[Manager] SAS request from helper, session=%d, reason=%s", payload.SessionID, payload.Reason)
 
-	// Clean up the session and any pending candidates
+	// SendSAS(FALSE) - FALSE means not from simulated SAS
+	ret, _, err := h.manager.procSendSAS.Call(0) // FALSE = not simulated
+	if ret == 0 {
+		log.Printf("[Manager] SendSAS failed: %v", err)
+		h.session.Server.SendSASAck(false, fmt.Sprintf("SendSAS failed: %v", err))
+		return nil
+	}
+
+	log.Printf("[Manager] SendSAS succeeded")
+	h.session.Server.SendSASAck(true, "")
+	return nil
+}
+
+func (h *helperHandler) OnDisconnect() {
+	log.Printf("[Manager] Helper disconnected for session %d, attempting recovery...", h.sessionID)
+
 	h.manager.mu.Lock()
-	delete(h.manager.sessions, h.sessionID)
-	delete(h.manager.pendingCandidates, h.sessionID)
+	session, exists := h.manager.sessions[h.sessionID]
 	h.manager.mu.Unlock()
+
+	if !exists {
+		log.Printf("[Manager] Session %d not found, skipping recovery", h.sessionID)
+		return
+	}
+
+	// Attempt restart with backoff
+	go h.manager.restartHelper(h.sessionID, session)
+}
+
+// restartHelper attempts to restart a crashed helper process with exponential backoff
+func (m *Manager) restartHelper(sessionID uint32, oldSession *HelperSession) {
+	maxAttempts := 3
+	backoffs := []time.Duration{2 * time.Second, 4 * time.Second, 6 * time.Second}
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		log.Printf("[Manager] Restart attempt %d/%d for session %d", attempt, maxAttempts, sessionID)
+
+		// Notify dashboard
+		if m.onStatusUpdate != nil {
+			m.onStatusUpdate(sessionID, StateRestarting,
+				fmt.Sprintf("Restarting helper (attempt %d/%d)", attempt, maxAttempts),
+				oldSession.ConnectionID)
+		}
+
+		time.Sleep(backoffs[attempt-1])
+
+		// Clean up old session resources
+		m.mu.Lock()
+		if oldSession.Server != nil {
+			oldSession.Server.Close()
+		}
+		m.mu.Unlock()
+
+		// Try to spawn new helper
+		newSession, err := m.spawnHelper(sessionID)
+		if err != nil {
+			log.Printf("[Manager] Restart attempt %d failed: %v", attempt, err)
+			continue
+		}
+
+		// Update session with recovery info, preserving connection context
+		newSession.ConnectionID = oldSession.ConnectionID
+
+		m.mu.Lock()
+		m.sessions[sessionID] = newSession
+		m.mu.Unlock()
+
+		log.Printf("[Manager] Helper restarted successfully for session %d", sessionID)
+
+		if m.onStatusUpdate != nil {
+			m.onStatusUpdate(sessionID, StateRecovered,
+				"Helper recovered after crash",
+				oldSession.ConnectionID)
+		}
+		return
+	}
+
+	// All attempts failed
+	log.Printf("[Manager] Failed to restart helper after %d attempts for session %d", maxAttempts, sessionID)
+
+	m.mu.Lock()
+	delete(m.sessions, sessionID)
+	delete(m.pendingCandidates, sessionID)
+	m.mu.Unlock()
+
+	if m.onStatusUpdate != nil {
+		m.onStatusUpdate(sessionID, StateFailed,
+			"Helper failed to recover after crash",
+			oldSession.ConnectionID)
+	}
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/sentinel/server/internal/pki"
 	"github.com/sentinel/server/internal/push"
 	"github.com/sentinel/server/internal/queue"
+	"github.com/sentinel/server/internal/turn"
 	ws "github.com/sentinel/server/internal/websocket"
 	"github.com/sentinel/server/pkg/cache"
 	"github.com/sentinel/server/pkg/config"
@@ -45,4 +46,5 @@ type Services struct {
 	MetricsRecorder MetricsRecorder // For controlling metrics recording per device
 	JWTManager      *credentials.JWTManager    // Managed JWT secret rotation
 	APIKeyManager   *credentials.APIKeyManager // Managed API key system
+	TURNServer      *turn.Server               // Embedded TURN server for WebRTC relay
 }

@@ -44,6 +44,9 @@ services:
     ports:
       - "127.0.0.1:8090:8080"
       - "127.0.0.1:4445:4445"  # Plaintext gRPC for CF tunnel (localhost only)
+      - "${TURN_PORT:-3478}:${TURN_PORT:-3478}/udp"
+      - "${TURN_PORT:-3478}:${TURN_PORT:-3478}/tcp"
+      - "${TURN_MIN_PORT:-49152}-${TURN_MAX_PORT:-49252}:${TURN_MIN_PORT:-49152}-${TURN_MAX_PORT:-49252}/udp"
     expose:
       - "4444"   # gRPC Data Plane (exposed via Traefik, not directly to host)
     restart: unless-stopped
@@ -75,6 +78,13 @@ services:
       - WEBAUTHN_RP_ORIGINS=https://${DOMAIN},https://${DOMAIN}:4443,https://${DOMAIN}:8443
       - WEBAUTHN_TIMEOUT=60000
       - WEBAUTHN_USER_VERIFICATION=preferred
+      # TURN server for WebRTC relay
+      - TURN_ENABLED=${TURN_ENABLED:-false}
+      - TURN_PUBLIC_IP=${TURN_PUBLIC_IP:-}
+      - TURN_AUTH_SECRET=${TURN_AUTH_SECRET:-}
+      - TURN_PORT=${TURN_PORT:-3478}
+      - TURN_MIN_PORT=${TURN_MIN_PORT:-49152}
+      - TURN_MAX_PORT=${TURN_MAX_PORT:-49252}
     volumes:
       - ./installers:/app/installers:ro
       - ./agent/version.json:/app/agent/version.json:ro

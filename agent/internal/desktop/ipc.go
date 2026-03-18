@@ -37,6 +37,7 @@ type IPCHandler interface {
 	OnSessionAnswer(msg *IPCMessage, payload *SessionAnswerPayload) error
 	OnICECandidate(msg *IPCMessage, payload *ICECandidatePayload) error
 	OnStatus(msg *IPCMessage, payload *StatusPayload) error
+	OnSAS(msg *IPCMessage, payload *SASPayload) error
 	OnDisconnect()
 }
 
@@ -226,6 +227,13 @@ func (s *IPCServer) dispatchMessage(msg *IPCMessage) error {
 		}
 		return s.handler.OnStatus(msg, &payload)
 
+	case MsgTypeSAS:
+		var payload SASPayload
+		if err := msg.ParsePayload(&payload); err != nil {
+			return fmt.Errorf("invalid SAS payload: %w", err)
+		}
+		return s.handler.OnSAS(msg, &payload)
+
 	default:
 		return fmt.Errorf("unknown message type: %s", msg.Type)
 	}
@@ -306,6 +314,18 @@ func (s *IPCServer) SendShutdown(reason string, timeout time.Duration) error {
 	msg, err := NewIPCMessage(MsgTypeShutdown, "", &ShutdownPayload{
 		Reason:  reason,
 		Timeout: timeout,
+	})
+	if err != nil {
+		return err
+	}
+	return s.SendMessage(msg)
+}
+
+// SendSASAck sends the SAS result back to the helper
+func (s *IPCServer) SendSASAck(success bool, errMsg string) error {
+	msg, err := NewIPCMessage(MsgTypeSASAck, "", &SASAckPayload{
+		Success: success,
+		Error:   errMsg,
 	})
 	if err != nil {
 		return err

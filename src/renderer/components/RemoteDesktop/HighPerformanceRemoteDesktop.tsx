@@ -1,6 +1,10 @@
 import React, { useRef, useEffect, useState, useCallback, memo } from 'react';
-import { useWebRTC, WebRTCStats } from './useWebRTC';
+import { useWebRTC, WebRTCStats, MonitorInfo } from './useWebRTC';
 import { useSimpleInput } from './useSimpleInput';
+import { useClipboard } from './useClipboard';
+import { useFileTransfer } from './useFileTransfer';
+import { FileTransferPanel } from './FileTransferPanel';
+import { useRecording } from './useRecording';
 import { useDeviceStore } from '../../stores/deviceStore';
 import { wsService } from '../../services/websocket';
 import {
@@ -14,6 +18,11 @@ import {
   WifiOff,
   Bug,
   Shield,
+  Volume2,
+  VolumeX,
+  Clipboard,
+  FolderOpen,
+  Circle,
 } from 'lucide-react';
 
 interface HighPerformanceRemoteDesktopProps {
@@ -35,7 +44,7 @@ export const HighPerformanceRemoteDesktop = memo(function HighPerformanceRemoteD
   const wrapperRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  const [remoteSize, setRemoteSize] = useState({ width: 1920, height: 1080 });
+  const [remoteSize, setRemoteSize] = useState({ width: 1920, height: 1080, dpiScale: 1.0 });
   const [wrapperSize, setWrapperSize] = useState({ width: 0, height: 0 });
   const [videoReady, setVideoReady] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -43,6 +52,9 @@ export const HighPerformanceRemoteDesktop = memo(function HighPerformanceRemoteD
   const [error, setError] = useState<string | null>(null);
   const [showDebug, setShowDebug] = useState(false);
   const [pauseMouse, setPauseMouse] = useState(false); // Pause mouse moves for PIN entry etc.
+  const [isMuted, setIsMuted] = useState(false);
+  const [monitors, setMonitors] = useState<MonitorInfo[]>([]);
+  const [selectedMonitor, setSelectedMonitor] = useState(0);
 
   // WebRTC connection
   const {
@@ -50,8 +62,13 @@ export const HighPerformanceRemoteDesktop = memo(function HighPerformanceRemoteD
     disconnect,
     sendInput,
     getStats,
+    toggleMute,
+    requestMonitors,
+    selectMonitor,
     connectionState,
     isConnected,
+    dataChannel,
+    peerConnection,
   } = useWebRTC({
     agentId,
     onVideoTrack: (track) => {
@@ -61,26 +78,35 @@ export const HighPerformanceRemoteDesktop = memo(function HighPerformanceRemoteD
     },
     onRemoteInfo: (info) => {
       console.log('[RemoteDesktop] Remote info received:', info);
-      setRemoteSize({ width: info.width, height: info.height });
+      setRemoteSize({ width: info.width, height: info.height, dpiScale: info.dpiScale || 1.0 });
+    },
+    onMonitorList: (mons) => {
+      console.log('[RemoteDesktop] Monitor list received:', mons);
+      setMonitors(mons);
     },
   });
 
-  // Send Ctrl+Alt+Del sequence (for Windows login screens)
+  // Send Ctrl+Alt+Del via SAS (Secure Attention Sequence) through SYSTEM service
   const sendCtrlAltDel = useCallback(() => {
     if (!isConnected) return;
+    const dc = dataChannel as unknown as RTCDataChannel;
+    if (dc && dc.readyState === 'open') {
+      dc.send(JSON.stringify({ type: 'sas' }));
+    }
+  }, [isConnected, dataChannel]);
 
-    // Send key down events
-    sendInput({ type: 'keydown', key: 'Control', code: 'ControlLeft' });
-    sendInput({ type: 'keydown', key: 'Alt', code: 'AltLeft' });
-    sendInput({ type: 'keydown', key: 'Delete', code: 'Delete' });
+  // Toggle audio mute
+  const handleToggleMute = useCallback(() => {
+    const audible = toggleMute();
+    setIsMuted(!audible);
+  }, [toggleMute]);
 
-    // Small delay then release
-    setTimeout(() => {
-      sendInput({ type: 'keyup', key: 'Delete', code: 'Delete' });
-      sendInput({ type: 'keyup', key: 'Alt', code: 'AltLeft' });
-      sendInput({ type: 'keyup', key: 'Control', code: 'ControlLeft' });
-    }, 50);
-  }, [isConnected, sendInput]);
+  // Request monitor list when connected
+  useEffect(() => {
+    if (isConnected) {
+      requestMonitors();
+    }
+  }, [isConnected, requestMonitors]);
 
   // Simple input handling (Neko-inspired approach)
   const inputEnabled = isConnected && videoReady;
@@ -95,8 +121,48 @@ export const HighPerformanceRemoteDesktop = memo(function HighPerformanceRemoteD
   } = useSimpleInput({
     remoteWidth: remoteSize.width,
     remoteHeight: remoteSize.height,
+    dpiScale: remoteSize.dpiScale,
     sendInput,
     enabled: inputEnabled,
+  });
+
+  // Clipboard integration
+  const {
+    clipboardEnabled,
+    toggleClipboard,
+  } = useClipboard({
+    dataChannel: dataChannel as unknown as RTCDataChannel,
+    enabled: isConnected,
+  });
+
+  // File transfer integration
+  const {
+    files: ftFiles,
+    currentPath: ftPath,
+    transfers: ftTransfers,
+    listDirectory: ftListDir,
+    uploadFile: ftUpload,
+    downloadFile: ftDownload,
+    pauseTransfer: ftPause,
+    resumeTransfer: ftResume,
+    cancelTransfer: ftCancel,
+    navigateUp: ftNavUp,
+    isOpen: ftOpen,
+    setIsOpen: setFtOpen,
+  } = useFileTransfer({
+    peerConnection: peerConnection as unknown as RTCPeerConnection,
+    isConnected,
+  });
+
+  // Recording integration
+  const {
+    isRecording,
+    startRecording,
+    stopRecording,
+    recordingDuration,
+  } = useRecording({
+    dataChannel: dataChannel as unknown as RTCDataChannel,
+    isConnected,
   });
 
   // Calculate wrapper size to fit container while maintaining aspect ratio
@@ -142,7 +208,7 @@ export const HighPerformanceRemoteDesktop = memo(function HighPerformanceRemoteD
     // Update remote size from actual video dimensions
     const video = videoRef.current;
     if (video && video.videoWidth && video.videoHeight) {
-      setRemoteSize({ width: video.videoWidth, height: video.videoHeight });
+      setRemoteSize((prev) => ({ ...prev, width: video.videoWidth, height: video.videoHeight }));
     }
   }, []);
 
@@ -297,6 +363,63 @@ export const HighPerformanceRemoteDesktop = memo(function HighPerformanceRemoteD
                 title="Send Ctrl+Alt+Del"
               >
                 <Shield className="w-4 h-4" />
+              </button>
+              {monitors.length > 1 && (
+                <select
+                  value={selectedMonitor}
+                  onChange={(e) => {
+                    const idx = parseInt(e.target.value);
+                    setSelectedMonitor(idx);
+                    selectMonitor(idx);
+                  }}
+                  className="bg-gray-700 text-gray-200 text-xs px-2 py-1 rounded border border-gray-600"
+                  title="Select monitor"
+                >
+                  {monitors.map((m) => (
+                    <option key={m.index} value={m.index}>
+                      {m.name || `Monitor ${m.index + 1}`} ({m.width}x{m.height}){m.primary ? ' \u2605' : ''}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <button
+                onClick={handleToggleMute}
+                className={`p-1 transition-colors ${
+                  isMuted ? 'text-red-400' : 'text-gray-400 hover:text-white'
+                }`}
+                title={isMuted ? 'Unmute audio' : 'Mute audio'}
+              >
+                {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+              </button>
+              <button
+                onClick={toggleClipboard}
+                className={`p-1 transition-colors ${
+                  clipboardEnabled ? 'text-green-400' : 'text-gray-400 hover:text-white'
+                }`}
+                title={clipboardEnabled ? 'Disable clipboard sync' : 'Enable clipboard sync'}
+              >
+                <Clipboard className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => {
+                  setFtOpen(!ftOpen);
+                  if (!ftOpen) ftListDir('C:\\');
+                }}
+                className={`p-1 transition-colors ${
+                  ftOpen ? 'text-blue-400' : 'text-gray-400 hover:text-white'
+                }`}
+                title="File transfer"
+              >
+                <FolderOpen className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => isRecording ? stopRecording() : startRecording()}
+                className={`p-1 transition-colors ${
+                  isRecording ? 'text-red-500 animate-pulse' : 'text-gray-400 hover:text-white'
+                }`}
+                title={isRecording ? `Recording (${recordingDuration}) - Click to stop` : 'Start recording'}
+              >
+                <Circle className={`w-4 h-4 ${isRecording ? 'fill-current' : ''}`} />
               </button>
               <button
                 onClick={() => setPauseMouse(!pauseMouse)}
@@ -454,6 +577,22 @@ export const HighPerformanceRemoteDesktop = memo(function HighPerformanceRemoteD
             : 'WebRTC H.264'}
         </span>
       </div>
+
+      {/* File Transfer Panel */}
+      <FileTransferPanel
+        isOpen={ftOpen}
+        onClose={() => setFtOpen(false)}
+        files={ftFiles}
+        currentPath={ftPath}
+        transfers={ftTransfers}
+        onNavigate={(path) => ftListDir(path)}
+        onNavigateUp={ftNavUp}
+        onUpload={ftUpload}
+        onDownload={ftDownload}
+        onPause={ftPause}
+        onResume={ftResume}
+        onCancel={ftCancel}
+      />
     </div>
   );
 });

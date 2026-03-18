@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/sentinel/server/internal/pki"
 	"github.com/sentinel/server/internal/push"
 	"github.com/sentinel/server/internal/queue"
+	"github.com/sentinel/server/internal/turn"
 	"github.com/sentinel/server/internal/websocket"
 	"github.com/sentinel/server/pkg/cache"
 	"github.com/sentinel/server/pkg/config"
@@ -184,6 +186,46 @@ func main() {
 		grpcServer = grpcserver.NewDataPlaneServer(db, bulkInserter)
 	}
 
+	// Initialize TURN server if enabled
+	var turnServer *turn.Server
+	if os.Getenv("TURN_ENABLED") == "true" || os.Getenv("TURN_ENABLED") == "1" {
+		turnConfig := turn.Config{
+			PublicIP:   os.Getenv("TURN_PUBLIC_IP"),
+			ListenIP:   "0.0.0.0",
+			Port:       3478,
+			Realm:      "sentinel.local",
+			AuthSecret: os.Getenv("TURN_AUTH_SECRET"),
+		}
+		if portStr := os.Getenv("TURN_PORT"); portStr != "" {
+			if p, err := strconv.Atoi(portStr); err == nil {
+				turnConfig.Port = p
+			}
+		}
+		if minPort := os.Getenv("TURN_MIN_PORT"); minPort != "" {
+			if p, err := strconv.Atoi(minPort); err == nil {
+				turnConfig.MinPort = p
+			}
+		}
+		if maxPort := os.Getenv("TURN_MAX_PORT"); maxPort != "" {
+			if p, err := strconv.Atoi(maxPort); err == nil {
+				turnConfig.MaxPort = p
+			}
+		}
+
+		turnServer = turn.NewServer(turnConfig)
+		if err := turnServer.Start(); err != nil {
+			log.Printf("WARNING: TURN server failed to start: %v", err)
+			turnServer = nil
+		} else {
+			log.Printf("TURN server started on port %d", turnConfig.Port)
+		}
+		defer func() {
+			if turnServer != nil {
+				turnServer.Stop()
+			}
+		}()
+	}
+
 	// Initialize credential management services
 	var jwtManager *credentials.JWTManager
 	var apiKeyManager *credentials.APIKeyManager
@@ -233,6 +275,7 @@ func main() {
 		MetricsRecorder: grpcServer, // gRPC server implements MetricsRecorder interface
 		JWTManager:      jwtManager,
 		APIKeyManager:   apiKeyManager,
+		TURNServer:      turnServer,
 	}
 
 	// Seed default router scheduled actions (no-op if already populated)

@@ -382,6 +382,7 @@ func handleDashboardWebSocketWithServices(services *Services) gin.HandlerFunc {
 		cache:           services.Redis,
 		hub:             services.Hub,
 		metricsRecorder: services.MetricsRecorder,
+		turnServer:      services.TURNServer,
 	}
 	return router.handleDashboardWebSocket
 }

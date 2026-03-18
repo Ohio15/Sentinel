@@ -5,6 +5,7 @@ package encoder
 import (
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -34,6 +35,7 @@ var (
 	CODECAPI_AVLowLatencyMode           = GUID{0x9c27891a, 0xed7a, 0x40e1, [8]byte{0x88, 0xe8, 0xb2, 0x27, 0x27, 0xa0, 0x24, 0xee}}
 	CODECAPI_AVEncMPVGOPSize            = GUID{0x95f31b26, 0x95a4, 0x41aa, [8]byte{0x93, 0x03, 0x24, 0x6a, 0x7f, 0xc6, 0xee, 0xf1}}
 	CODECAPI_AVEncVideoForceKeyFrame    = GUID{0x398c1b98, 0x8353, 0x475a, [8]byte{0x9e, 0xf2, 0x8f, 0x26, 0x5d, 0x26, 0x03, 0x45}}
+	CODECAPI_AVEncCommonMeanBitRate     = GUID{0xf7222374, 0x2144, 0x4815, [8]byte{0xb5, 0x50, 0xa3, 0x7f, 0x8e, 0x12, 0xee, 0x52}}
 
 	IID_ICodecAPI = GUID{0x901db4c7, 0x31ce, 0x41a2, [8]byte{0x85, 0xdc, 0x8f, 0xa0, 0xbf, 0x41, 0xb8, 0xda}}
 )
@@ -667,6 +669,29 @@ func (e *H264Encoder) IsHardware() bool {
 // GetConfig returns the encoder configuration
 func (e *H264Encoder) GetConfig() EncoderConfig {
 	return e.config
+}
+
+// SetBitrate dynamically adjusts the target bitrate via ICodecAPI
+func (e *H264Encoder) SetBitrate(bps int) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.codecAPI == 0 {
+		return fmt.Errorf("CodecAPI not available")
+	}
+
+	pv := PROPVARIANT{Vt: VT_UI4, Val: int64(bps)}
+	hr := e.callMethod(e.codecAPI, vtSetValue,
+		uintptr(unsafe.Pointer(&CODECAPI_AVEncCommonMeanBitRate)),
+		uintptr(unsafe.Pointer(&pv)),
+	)
+	if hr != 0 {
+		return fmt.Errorf("ICodecAPI.SetValue(BitRate) failed: 0x%x", hr)
+	}
+
+	e.config.Bitrate = bps
+	log.Printf("[MFEncoder] Bitrate set to %d via CodecAPI", bps)
+	return nil
 }
 
 // Release frees all resources

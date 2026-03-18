@@ -26,6 +26,13 @@ const (
 	// Status updates
 	MsgTypeStatus = "status" // Helper -> Service: status update
 
+	// SAS (Secure Attention Sequence)
+	MsgTypeSAS    = "sas"     // Helper -> Service: request Ctrl+Alt+Del
+	MsgTypeSASAck = "sas_ack" // Service -> Helper: SAS result
+
+	// Session status (for dashboard forwarding)
+	MsgTypeSessionStatus = "session_status" // Service -> Dashboard: session state changes
+
 	// Lifecycle
 	MsgTypeShutdown = "shutdown" // Service -> Helper: graceful shutdown request
 )
@@ -113,7 +120,30 @@ const (
 	StateSecureDesktop  HelperState = "secure_desktop" // UAC prompt active
 	StateError          HelperState = "error"
 	StateShuttingDown   HelperState = "shutting_down"
+	StateRestarting     HelperState = "restarting"    // Helper being restarted after crash
+	StateRecovered      HelperState = "recovered"     // Helper recovered from crash
+	StateFailed         HelperState = "failed"        // Helper failed to recover
 )
+
+// SASPayload requests SAS from the service (which runs as SYSTEM)
+type SASPayload struct {
+	SessionID uint32 `json:"sessionId"`
+	Reason    string `json:"reason,omitempty"` // e.g., "user_request"
+}
+
+// SASAckPayload reports SAS result
+type SASAckPayload struct {
+	Success bool   `json:"success"`
+	Error   string `json:"error,omitempty"`
+}
+
+// SessionStatusPayload reports session state changes to dashboard
+type SessionStatusPayload struct {
+	SessionID    uint32      `json:"sessionId"`
+	ConnectionID string      `json:"connectionId"`
+	State        HelperState `json:"state"`
+	Message      string      `json:"message,omitempty"`
+}
 
 // ShutdownPayload requests graceful shutdown
 type ShutdownPayload struct {

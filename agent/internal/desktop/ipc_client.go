@@ -35,6 +35,7 @@ type IPCClient struct {
 	onStopSession  func(*StopSessionPayload) error
 	onICECandidate func(*ICECandidatePayload) error
 	onShutdown     func(*ShutdownPayload)
+	onSASAck       func(*SASAckPayload)
 }
 
 // NewIPCClient creates a new IPC client for connecting to the service
@@ -58,6 +59,11 @@ func (c *IPCClient) SetHandlers(
 	c.onStopSession = onStopSession
 	c.onICECandidate = onICECandidate
 	c.onShutdown = onShutdown
+}
+
+// SetOnSASAck sets the callback for SAS acknowledgment messages
+func (c *IPCClient) SetOnSASAck(handler func(*SASAckPayload)) {
+	c.onSASAck = handler
 }
 
 // Connect establishes connection to the service pipe
@@ -288,6 +294,17 @@ func (c *IPCClient) handleMessage(msg *IPCMessage) error {
 		}
 		return nil
 
+	case MsgTypeSASAck:
+		var payload SASAckPayload
+		if err := msg.ParsePayload(&payload); err != nil {
+			log.Printf("[IPC Client] Invalid SAS ack: %v", err)
+			return nil
+		}
+		if c.onSASAck != nil {
+			c.onSASAck(&payload)
+		}
+		return nil
+
 	case MsgTypeAuthOK:
 		// Already handled during authentication
 		return nil
@@ -361,6 +378,18 @@ func (c *IPCClient) SendStatus(state HelperState, message, connectionID string) 
 		State:        state,
 		Message:      message,
 		ConnectionID: connectionID,
+	})
+	if err != nil {
+		return err
+	}
+	return c.SendMessage(msg)
+}
+
+// SendSASRequest sends a SAS (Ctrl+Alt+Del) request to the service
+func (c *IPCClient) SendSASRequest(sessionID uint32, reason string) error {
+	msg, err := NewIPCMessage(MsgTypeSAS, "", &SASPayload{
+		SessionID: sessionID,
+		Reason:    reason,
 	})
 	if err != nil {
 		return err

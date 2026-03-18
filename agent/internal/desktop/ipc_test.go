@@ -68,6 +68,11 @@ func (h *mockIPCHandler) OnStatus(msg *IPCMessage, payload *StatusPayload) error
 	return nil
 }
 
+func (h *mockIPCHandler) OnSAS(msg *IPCMessage, payload *SASPayload) error {
+	// Mock: just acknowledge success
+	return h.server.SendSASAck(true, "")
+}
+
 func (h *mockIPCHandler) OnDisconnect() {
 	h.mu.Lock()
 	h.disconnects++

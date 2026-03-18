@@ -82,7 +82,14 @@ func newMFEncoder(width, height, bitrate, fps int) (*mfEncoderWrapper, error) {
 	return newMFEncoderWithTimeout(width, height, bitrate, fps, 10*time.Second)
 }
 
-func (w *mfEncoderWrapper) Encode(ycbcr *image.YCbCr) ([]byte, error) {
+func (w *mfEncoderWrapper) Encode(ycbcr *image.YCbCr) (data []byte, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[MFEncoder] PANIC in Encode: %v", r)
+			err = fmt.Errorf("MF encoder panic: %v", r)
+		}
+	}()
+
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -95,7 +102,14 @@ func (w *mfEncoderWrapper) Encode(ycbcr *image.YCbCr) ([]byte, error) {
 	return w.enc.Encode(nv12, forceKey)
 }
 
-func (w *mfEncoderWrapper) EncodeBGRA(bgra []byte, width, height, stride int, forceKeyframe bool) ([]byte, error) {
+func (w *mfEncoderWrapper) EncodeBGRA(bgra []byte, width, height, stride int, forceKeyframe bool) (data []byte, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[MFEncoder] PANIC in EncodeBGRA: %v", r)
+			err = fmt.Errorf("MF encoder panic: %v", r)
+		}
+	}()
+
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -109,8 +123,12 @@ func (w *mfEncoderWrapper) ForceKeyframe() {
 }
 
 func (w *mfEncoderWrapper) SetBitrate(bps int) error {
-	// Media Foundation encoder doesn't expose dynamic bitrate in current implementation
-	// Would need to add to encoder.H264Encoder
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if err := w.enc.SetBitrate(bps); err != nil {
+		return fmt.Errorf("MF SetBitrate failed: %w", err)
+	}
+	log.Printf("[MFEncoder] Bitrate updated to %d bps", bps)
 	return nil
 }
 
