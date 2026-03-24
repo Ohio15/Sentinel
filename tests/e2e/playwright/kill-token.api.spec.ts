@@ -15,8 +15,8 @@ test.describe('Kill Token API', () => {
     expect(devicesRes.ok()).toBeTruthy();
     const devicesData = await devicesRes.json();
 
-    // Handle both array response and { devices: [...] } wrapper
-    const devices = Array.isArray(devicesData) ? devicesData : devicesData.devices;
+    // Handle paginated response: { data: [...], page, pageSize, total, totalPages }
+    const devices = Array.isArray(devicesData) ? devicesData : (devicesData.data || devicesData.devices);
     expect(devices).toBeTruthy();
     expect(devices.length).toBeGreaterThan(0);
 

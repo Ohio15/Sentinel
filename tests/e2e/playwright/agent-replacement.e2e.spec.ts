@@ -61,9 +61,13 @@ test.describe('Agent Replacement Flow', () => {
 
     // 4. Verify device appears in the dashboard UI
     await page.goto(`${BASE_URL}/login`);
-    // Fill login form
-    await page.fill('input[name="email"], input[type="email"]', process.env.SENTINEL_ADMIN_EMAIL || 'admin@sentinel.local');
-    await page.fill('input[name="password"], input[type="password"]', process.env.SENTINEL_ADMIN_PASSWORD || 'admin');
+    // Login page shows method selection first — click "Password"
+    const passwordMethod = page.locator('text=Password').first();
+    await passwordMethod.waitFor({ timeout: 10000 });
+    await passwordMethod.click();
+    // Fill login form (field name is "identifier", not "email")
+    await page.fill('input[name="identifier"], input[name="email"], input[type="email"], input[type="text"]', process.env.SENTINEL_ADMIN_EMAIL || 'admin@sentinel.local');
+    await page.fill('input[name="password"], input[type="password"]', process.env.SENTINEL_ADMIN_PASSWORD || 'TestAdmin1');
     await page.click('button[type="submit"]');
     // Wait for dashboard to load
     await page.waitForURL('**/dashboard**', { timeout: 15000 }).catch(() => {
@@ -241,7 +245,7 @@ test.describe('Agent Replacement Flow', () => {
       headers: { Authorization: `Bearer ${token}` },
     });
     const devicesData = await devicesRes.json();
-    const devices = Array.isArray(devicesData) ? devicesData : devicesData.devices;
+    const devices = Array.isArray(devicesData) ? devicesData : (devicesData.data || devicesData.devices);
     expect(devices.length).toBeGreaterThan(0);
     const deviceId = devices[0].id;
 
@@ -282,7 +286,7 @@ test.describe('Agent Replacement Flow', () => {
       headers: { Authorization: `Bearer ${token}` },
     });
     const devicesData = await devicesRes.json();
-    const devices = Array.isArray(devicesData) ? devicesData : devicesData.devices;
+    const devices = Array.isArray(devicesData) ? devicesData : (devicesData.data || devicesData.devices);
     const deviceId = devices[0].id;
 
     // Ensure kill token exists

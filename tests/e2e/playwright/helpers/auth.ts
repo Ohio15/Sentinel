@@ -1,7 +1,7 @@
 import { APIRequestContext } from '@playwright/test';
 
 const ADMIN_EMAIL = process.env.SENTINEL_ADMIN_EMAIL || 'admin@sentinel.local';
-const ADMIN_PASSWORD = process.env.SENTINEL_ADMIN_PASSWORD || 'admin';
+const ADMIN_PASSWORD = process.env.SENTINEL_ADMIN_PASSWORD || 'TestAdmin1';
 
 interface LoginResponse {
   accessToken: string;
@@ -19,7 +19,7 @@ interface LoginResponse {
 export async function getAuthToken(request: APIRequestContext): Promise<string> {
   const response = await request.post('/api/auth/login', {
     data: {
-      email: ADMIN_EMAIL,
+      identifier: ADMIN_EMAIL,
       password: ADMIN_PASSWORD,
     },
   });
