@@ -5,12 +5,41 @@ package service
 import (
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc/mgr"
 )
+
+// resetTamperProtection resets restrictive DACLs and removes protection.dat
+// so that service stop/uninstall operations are not silently blocked by
+// tamper protection that was applied to the install directory.
+func resetTamperProtection(installPath string) {
+	log.Printf("Resetting tamper protection DACLs on %s...", installPath)
+
+	// Reset DACLs recursively so Administrators regain full control
+	if out, err := exec.Command("icacls", installPath, "/reset", "/t").CombinedOutput(); err != nil {
+		log.Printf("Warning: icacls /reset failed: %v (output: %s)", err, string(out))
+	}
+	if out, err := exec.Command("icacls", installPath, "/grant", "Administrators:F", "/t").CombinedOutput(); err != nil {
+		log.Printf("Warning: icacls /grant Administrators:F failed: %v (output: %s)", err, string(out))
+	}
+
+	// Remove protection.dat which controls tamper protection state
+	protectionDat := filepath.Join(installPath, "protection.dat")
+	if _, err := os.Stat(protectionDat); err == nil {
+		// Reset its own DACL first in case it is individually protected
+		exec.Command("icacls", protectionDat, "/reset").Run()
+		if err := os.Remove(protectionDat); err != nil {
+			log.Printf("Warning: failed to remove protection.dat: %v", err)
+		} else {
+			log.Println("Removed protection.dat")
+		}
+	}
+}
 
 // isWindowsAdmin checks if the current process has administrator privileges
 func isWindowsAdmin() bool {

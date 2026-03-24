@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -38,7 +41,7 @@ import (
 	"github.com/sentinel/agent/internal/peripheral"
 )
 
-var Version = "1.77.7"
+var Version = "1.77.8"
 
 const ServiceName = "SentinelAgent"
 
@@ -49,8 +52,10 @@ var (
 	installFlag = flag.Bool("install", false, "Install as system service")
 	uninstall   = flag.Bool("uninstall", false, "Uninstall the system service")
 	runService  = flag.Bool("service", false, "Run as a service (internal)")
-	showVersion = flag.Bool("version", false, "Show version information")
-	showStatus  = flag.Bool("status", false, "Show service status")
+	showVersion    = flag.Bool("version", false, "Show version information")
+	showStatus     = flag.Bool("status", false, "Show service status")
+	forceUninstall = flag.Bool("force-uninstall", false, "Force uninstall using local kill token (no server needed)")
+	killToken      = flag.String("kill-token", "", "Kill token for force uninstall authorization")
 )
 
 // Agent represents the main agent application
@@ -219,6 +224,37 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println("Sentinel Agent uninstalled successfully")
+		os.Exit(0)
+	}
+
+	if *forceUninstall {
+		if !svc.IsElevated() {
+			log.Fatal("Force uninstall requires administrator privileges")
+		}
+		if *killToken == "" {
+			log.Fatal("--kill-token is required for force uninstall")
+		}
+
+		// Determine install path from current executable location
+		exePath, err := os.Executable()
+		if err != nil {
+			log.Fatalf("Failed to get executable path: %v", err)
+		}
+		forceInstallPath := filepath.Dir(exePath)
+
+		// Validate kill token against locally stored hash
+		if err := validateKillToken(*killToken, forceInstallPath); err != nil {
+			log.Fatalf("Kill token validation failed: %v", err)
+		}
+
+		log.Println("Kill token validated. Performing force uninstall...")
+
+		// Full aggressive uninstall sequence
+		if err := forceUninstallWithToken(forceInstallPath); err != nil {
+			log.Fatalf("Force uninstall failed: %v", err)
+		}
+
+		log.Println("Force uninstall completed successfully")
 		os.Exit(0)
 	}
 
@@ -744,9 +780,10 @@ func (a *Agent) enroll() error {
 	}
 
 	var result struct {
-		Success  bool   `json:"success"`
-		DeviceID string `json:"deviceId"`
-		Config   struct {
+		Success   bool   `json:"success"`
+		DeviceID  string `json:"deviceId"`
+		KillToken string `json:"killToken"`
+		Config    struct {
 			HeartbeatInterval int `json:"heartbeatInterval"`
 			MetricsInterval   int `json:"metricsInterval"`
 		} `json:"config"`
@@ -778,8 +815,76 @@ func (a *Agent) enroll() error {
 	}
 	a.cfg.Save()
 
+	// Store the kill token if provided by the server
+	if result.KillToken != "" {
+		if err := storeKillToken(result.KillToken); err != nil {
+			log.Printf("[Enrollment] Warning: failed to store kill token: %v", err)
+		} else {
+			log.Println("[Enrollment] Kill token stored for offline emergency uninstall")
+		}
+	}
+
 	log.Printf("Enrolled successfully. Device ID: %s", result.DeviceID)
 	return nil
+}
+
+// storeKillToken persists the kill token hash to both the Windows Registry and a file.
+// The plaintext token is received from the server during enrollment; we store only the SHA-256 hash
+// so that validation can happen offline without exposing the plaintext at rest.
+func storeKillToken(plaintextToken string) error {
+	// Compute SHA-256 hash of the plaintext token
+	hash := sha256.Sum256([]byte(plaintextToken))
+	hashHex := hex.EncodeToString(hash[:])
+
+	var firstErr error
+
+	// Store in Windows Registry: HKLM\SOFTWARE\Sentinel\Agent\KillTokenHash
+	if runtime.GOOS == "windows" {
+		regCmd := exec.Command("reg", "add", `HKLM\SOFTWARE\Sentinel\Agent`, "/v", "KillTokenHash", "/t", "REG_SZ", "/d", hashHex, "/f")
+		if output, err := regCmd.CombinedOutput(); err != nil {
+			firstErr = fmt.Errorf("registry write failed: %v (output: %s)", err, strings.TrimSpace(string(output)))
+			log.Printf("[KillToken] Warning: %v", firstErr)
+		} else {
+			log.Println("[KillToken] Hash stored in Windows Registry (HKLM\\SOFTWARE\\Sentinel\\Agent\\KillTokenHash)")
+		}
+	}
+
+	// Store in file: <dataDir>/kill-token.dat
+	dataDir := filepath.Join(os.Getenv("ProgramData"), "Sentinel")
+	if runtime.GOOS != "windows" {
+		dataDir = "/etc/sentinel"
+	}
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		if firstErr == nil {
+			firstErr = fmt.Errorf("failed to create data dir %s: %v", dataDir, err)
+		}
+		log.Printf("[KillToken] Warning: failed to create data dir: %v", err)
+	} else {
+		killTokenPath := filepath.Join(dataDir, "kill-token.dat")
+		if err := os.WriteFile(killTokenPath, []byte(hashHex), 0600); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("failed to write kill-token.dat: %v", err)
+			}
+			log.Printf("[KillToken] Warning: failed to write %s: %v", killTokenPath, err)
+		} else {
+			log.Printf("[KillToken] Hash stored in file: %s", killTokenPath)
+		}
+	}
+
+	// Also store in install directory as a backup (protection.dat is used by existing validation)
+	installDir := filepath.Join(os.Getenv("ProgramFiles"), "Sentinel Agent")
+	if runtime.GOOS != "windows" {
+		installDir = "/usr/local/bin"
+	}
+	protectionPath := filepath.Join(installDir, "protection.dat")
+	if err := os.WriteFile(protectionPath, []byte(hashHex), 0600); err != nil {
+		// Not fatal — the other storage locations are sufficient
+		log.Printf("[KillToken] Warning: failed to write %s: %v (install dir may not exist yet)", protectionPath, err)
+	} else {
+		log.Printf("[KillToken] Hash stored in file: %s", protectionPath)
+	}
+
+	return firstErr
 }
 
 func (a *Agent) heartbeatLoop() {
@@ -2174,4 +2279,185 @@ func (a *Agent) handleUSBDeviceRequest(msg *client.Message) error {
 			"timestamp": time.Now().Format(time.RFC3339),
 		},
 	})
+}
+
+// validateKillToken validates a plaintext kill token against the locally stored hash.
+// The hash is stored in protection.dat (written by protection.Manager.GenerateUninstallKey).
+// Falls back to checking the registry at HKLM\SOFTWARE\Sentinel\Agent\KillTokenHash.
+func validateKillToken(token, installPath string) error {
+	// Compute SHA-256 of the provided plaintext token
+	hash := sha256.Sum256([]byte(token))
+	providedHash := hex.EncodeToString(hash[:])
+
+	// Try protection.dat first (primary location used by GenerateUninstallKey)
+	protectionPath := filepath.Join(installPath, "protection.dat")
+	if storedHash, err := os.ReadFile(protectionPath); err == nil {
+		storedHashStr := strings.TrimSpace(string(storedHash))
+		if storedHashStr != "" && storedHashStr == providedHash {
+			return nil
+		}
+	}
+
+	// Fallback: try kill-token.dat in the data directory
+	dataDir := filepath.Join(os.Getenv("ProgramData"), "Sentinel")
+	killTokenPath := filepath.Join(dataDir, "kill-token.dat")
+	if storedHash, err := os.ReadFile(killTokenPath); err == nil {
+		storedHashStr := strings.TrimSpace(string(storedHash))
+		if storedHashStr != "" && storedHashStr == providedHash {
+			return nil
+		}
+	}
+
+	// Fallback: try registry at HKLM\SOFTWARE\Sentinel\Agent\KillTokenHash
+	regCmd := exec.Command("reg", "query", `HKLM\SOFTWARE\Sentinel\Agent`, "/v", "KillTokenHash")
+	if output, err := regCmd.Output(); err == nil {
+		// Parse the registry output to find the hash value
+		lines := strings.Split(string(output), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if strings.Contains(line, "KillTokenHash") {
+				parts := strings.Fields(line)
+				if len(parts) >= 3 {
+					regHash := parts[len(parts)-1]
+					if regHash == providedHash {
+						return nil
+					}
+				}
+			}
+		}
+	}
+
+	return fmt.Errorf("kill token does not match any stored hash (checked protection.dat, kill-token.dat, and registry)")
+}
+
+// forceUninstallWithToken performs an aggressive offline uninstall.
+// This bypasses all server communication and tamper protections.
+// Sequence: reset DACLs -> stop watchdog -> stop agent -> kill processes ->
+// delete services -> clean files -> clean registry -> remove Defender exclusions.
+func forceUninstallWithToken(installPath string) error {
+	dataDir := filepath.Join(os.Getenv("ProgramData"), "Sentinel")
+
+	// 1. Reset DACLs on install directory to allow full access
+	log.Println("[ForceUninstall] Resetting DACL protections...")
+	if output, err := exec.Command("icacls", installPath, "/reset", "/t").CombinedOutput(); err != nil {
+		log.Printf("[ForceUninstall] Warning: DACL reset on install dir failed: %v (output: %s)", err, string(output))
+	}
+	if output, err := exec.Command("icacls", installPath, "/grant", "Administrators:F", "/t").CombinedOutput(); err != nil {
+		log.Printf("[ForceUninstall] Warning: DACL grant on install dir failed: %v (output: %s)", err, string(output))
+	}
+	// Also reset DACLs on data directory
+	if output, err := exec.Command("icacls", dataDir, "/reset", "/t").CombinedOutput(); err != nil {
+		log.Printf("[ForceUninstall] Warning: DACL reset on data dir failed: %v (output: %s)", err, string(output))
+	}
+	if output, err := exec.Command("icacls", dataDir, "/grant", "Administrators:F", "/t").CombinedOutput(); err != nil {
+		log.Printf("[ForceUninstall] Warning: DACL grant on data dir failed: %v (output: %s)", err, string(output))
+	}
+
+	// 2. Remove protection.dat to disable tamper protection detection
+	log.Println("[ForceUninstall] Removing tamper protection markers...")
+	os.Remove(filepath.Join(installPath, "protection.dat"))
+	os.Remove(filepath.Join(dataDir, "protection.dat"))
+
+	// 3. Stop watchdog FIRST to prevent agent restart
+	log.Println("[ForceUninstall] Stopping SentinelWatchdog service...")
+	if output, err := exec.Command("sc", "stop", "SentinelWatchdog").CombinedOutput(); err != nil {
+		log.Printf("[ForceUninstall] Warning: watchdog stop: %v (output: %s)", err, string(output))
+	}
+	time.Sleep(2 * time.Second)
+
+	// 4. Stop agent service
+	log.Println("[ForceUninstall] Stopping SentinelAgent service...")
+	if output, err := exec.Command("sc", "stop", "SentinelAgent").CombinedOutput(); err != nil {
+		log.Printf("[ForceUninstall] Warning: agent stop: %v (output: %s)", err, string(output))
+	}
+	time.Sleep(2 * time.Second)
+
+	// 5. Kill all sentinel processes forcefully
+	log.Println("[ForceUninstall] Killing all sentinel processes...")
+	sentinelProcesses := []string{
+		"sentinel-agent.exe",
+		"sentinel-watchdog.exe",
+		"sentinel-desktop.exe",
+		"sentinel-desktop-helper.exe",
+	}
+	for _, proc := range sentinelProcesses {
+		exec.Command("taskkill", "/F", "/IM", proc).Run()
+	}
+	time.Sleep(1 * time.Second)
+
+	// 6. Delete services from SCM
+	log.Println("[ForceUninstall] Deleting services...")
+	if output, err := exec.Command("sc", "delete", "SentinelAgent").CombinedOutput(); err != nil {
+		log.Printf("[ForceUninstall] Warning: agent service delete: %v (output: %s)", err, string(output))
+	}
+	if output, err := exec.Command("sc", "delete", "SentinelWatchdog").CombinedOutput(); err != nil {
+		log.Printf("[ForceUninstall] Warning: watchdog service delete: %v (output: %s)", err, string(output))
+	}
+
+	// 7. Clean up sensitive files (preserve logs for post-mortem)
+	log.Println("[ForceUninstall] Cleaning up sensitive files...")
+	sensitiveFiles := []string{
+		filepath.Join(dataDir, "config.json"),
+		filepath.Join(dataDir, "ipc-key.dat"),
+		filepath.Join(dataDir, "update-request.json"),
+		filepath.Join(dataDir, "update-status.json"),
+		filepath.Join(dataDir, "agent-info.json"),
+		filepath.Join(dataDir, "watchdog-update-request.json"),
+		filepath.Join(dataDir, "watchdog-update-status.json"),
+		filepath.Join(dataDir, "watchdog-info.json"),
+		filepath.Join(dataDir, "pending-alert.json"),
+		filepath.Join(dataDir, "kill-token.dat"),
+		filepath.Join(installPath, "protection.dat"),
+		filepath.Join(installPath, "watchdog-config.json"),
+	}
+	for _, f := range sensitiveFiles {
+		if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
+			log.Printf("[ForceUninstall] Warning: failed to remove %s: %v", f, err)
+		}
+	}
+
+	// Remove .sig files (HMAC signatures)
+	sigFiles, _ := filepath.Glob(filepath.Join(dataDir, "*.sig"))
+	for _, f := range sigFiles {
+		os.Remove(f)
+	}
+
+	// Remove certs directory
+	certsDir := filepath.Join(dataDir, "certs")
+	if err := os.RemoveAll(certsDir); err != nil {
+		log.Printf("[ForceUninstall] Warning: failed to remove certs dir: %v", err)
+	}
+
+	// Remove update staging directory
+	updateDir := filepath.Join(dataDir, "update")
+	if err := os.RemoveAll(updateDir); err != nil {
+		log.Printf("[ForceUninstall] Warning: failed to remove update dir: %v", err)
+	}
+
+	// 8. Clean registry
+	log.Println("[ForceUninstall] Cleaning registry...")
+	registryKeys := []string{
+		`HKLM\SOFTWARE\Sentinel`,
+		`HKLM\SYSTEM\CurrentControlSet\Services\SentinelAgent`,
+		`HKLM\SYSTEM\CurrentControlSet\Services\SentinelWatchdog`,
+	}
+	for _, key := range registryKeys {
+		if output, err := exec.Command("reg", "delete", key, "/f").CombinedOutput(); err != nil {
+			log.Printf("[ForceUninstall] Warning: registry cleanup for %s: %v (output: %s)", key, err, string(output))
+		}
+	}
+
+	// 9. Remove Windows Defender exclusions
+	log.Println("[ForceUninstall] Removing Windows Defender exclusions...")
+	defenderCmds := []string{
+		fmt.Sprintf("Remove-MpPreference -ExclusionPath '%s' -ErrorAction SilentlyContinue", installPath),
+		"Remove-MpPreference -ExclusionProcess 'sentinel-agent.exe' -ErrorAction SilentlyContinue",
+		"Remove-MpPreference -ExclusionProcess 'sentinel-watchdog.exe' -ErrorAction SilentlyContinue",
+	}
+	for _, cmd := range defenderCmds {
+		exec.Command("powershell", "-Command", cmd).Run()
+	}
+
+	log.Println("[ForceUninstall] All cleanup steps completed (logs preserved in data directory)")
+	return nil
 }

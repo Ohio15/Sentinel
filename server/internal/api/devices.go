@@ -614,14 +614,32 @@ func (r *Router) enrollAgent(c *gin.Context) {
 			return
 		}
 
-		c.JSON(http.StatusOK, gin.H{
+		// Generate a kill token for re-enrollment (rotates on every enroll)
+		killTokenPlain, killTokenHash, killErr := generateKillToken()
+		if killErr != nil {
+			log.Printf("[Enrollment] Warning: failed to generate kill token for re-enrolling device %s: %v", existingID, killErr)
+		} else {
+			if _, dbErr := r.db.Pool().Exec(ctx,
+				"UPDATE devices SET kill_token_hash = $1 WHERE id = $2",
+				killTokenHash, existingID,
+			); dbErr != nil {
+				log.Printf("[Enrollment] Warning: failed to store kill token hash for device %s: %v", existingID, dbErr)
+				killTokenPlain = "" // Don't return a token we couldn't persist
+			}
+		}
+
+		response := gin.H{
 			"success":  true,
 			"deviceId": existingID,
 			"config": map[string]int{
 				"heartbeatInterval": 30,
 				"metricsInterval":   2, // 2 seconds default
 			},
-		})
+		}
+		if killTokenPlain != "" {
+			response["killToken"] = killTokenPlain
+		}
+		c.JSON(http.StatusOK, response)
 		return
 	}
 
@@ -638,34 +656,49 @@ func (r *Router) enrollAgent(c *gin.Context) {
 		deviceType = "desktop"
 	}
 
+	// Generate kill token for the new device
+	killTokenPlain, killTokenHash, killErr := generateKillToken()
+	if killErr != nil {
+		log.Printf("[Enrollment] Warning: failed to generate kill token for new device %s: %v", deviceID, killErr)
+	}
+
+	var killTokenHashParam interface{}
+	if killErr == nil {
+		killTokenHashParam = killTokenHash
+	}
+
 	_, err = r.db.Pool().Exec(ctx, `
 		INSERT INTO devices (id, agent_id, hostname, display_name, device_type, os_type, os_version,
 			os_build, platform, platform_family, architecture, cpu_model, cpu_cores,
 			cpu_threads, cpu_speed, total_memory, boot_time, gpu, storage, serial_number,
 			manufacturer, model, domain, agent_version, ip_address, mac_address,
-			last_seen, status)
+			last_seen, status, kill_token_hash)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, to_timestamp($17),
-			$18, $19, $20, $21, $22, $23, $24, $25, $26, NOW(), 'online')
+			$18, $19, $20, $21, $22, $23, $24, $25, $26, NOW(), 'online', $27)
 	`, deviceID, enrollment.AgentID, enrollment.Hostname, displayName, deviceType, enrollment.OSType,
 		enrollment.OSVersion, enrollment.OSBuild, enrollment.Platform, enrollment.PlatformFamily,
 		enrollment.Architecture, enrollment.CPUModel, enrollment.CPUCores, enrollment.CPUThreads,
 		enrollment.CPUSpeed, enrollment.TotalMemory, enrollment.BootTime, string(gpuJSON), storageJSON,
 		enrollment.SerialNumber, enrollment.Manufacturer, enrollment.Model, enrollment.Domain,
-		enrollment.AgentVersion, ipAddr, enrollment.MACAddress)
+		enrollment.AgentVersion, ipAddr, enrollment.MACAddress, killTokenHashParam)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create device"})
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{
+	response := gin.H{
 		"success":  true,
 		"deviceId": deviceID,
 		"config": map[string]int{
 			"heartbeatInterval": 30,
 			"metricsInterval":   2, // 2 seconds default
 		},
-	})
+	}
+	if killTokenPlain != "" {
+		response["killToken"] = killTokenPlain
+	}
+	c.JSON(http.StatusCreated, response)
 }
 
 func mustMarshal(v interface{}) []byte {

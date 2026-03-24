@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 	"unsafe"
@@ -63,7 +64,7 @@ const (
 )
 
 var (
-	Version = "1.77.7"
+	Version = "1.77.8"
 	elog    debug.Log
 	isDebug = false
 )
@@ -111,6 +112,9 @@ func main() {
 		case "uninstall":
 			uninstallService()
 			return
+		case "force-uninstall":
+			forceUninstallWatchdog(installPath)
+			return
 		case "start":
 			startService()
 			return
@@ -150,12 +154,13 @@ func printUsage() {
 	fmt.Println("Sentinel Watchdog Service")
 	fmt.Println("")
 	fmt.Println("Usage:")
-	fmt.Println("  sentinel-watchdog install   - Install as Windows service")
-	fmt.Println("  sentinel-watchdog uninstall - Remove Windows service")
-	fmt.Println("  sentinel-watchdog start     - Start the service")
-	fmt.Println("  sentinel-watchdog stop      - Stop the service")
-	fmt.Println("  sentinel-watchdog debug     - Run in debug mode (console)")
-	fmt.Println("  sentinel-watchdog version   - Show version")
+	fmt.Println("  sentinel-watchdog install                              - Install as Windows service")
+	fmt.Println("  sentinel-watchdog uninstall                            - Remove Windows service")
+	fmt.Println("  sentinel-watchdog force-uninstall --kill-token=TOKEN   - Force uninstall with kill token (offline)")
+	fmt.Println("  sentinel-watchdog start                                - Start the service")
+	fmt.Println("  sentinel-watchdog stop                                 - Stop the service")
+	fmt.Println("  sentinel-watchdog debug                                - Run in debug mode (console)")
+	fmt.Println("  sentinel-watchdog version                              - Show version")
 }
 
 func loadConfig(installPath string) *WatchdogConfig {
@@ -2313,4 +2318,141 @@ func (ws *watchdogService) downloadAndStageUpdate(info *ServerVersionInfo, serve
 	logMessage(fmt.Sprintf("[IndependentPoll] Update staged and request written for version %s", info.Version))
 
 	return nil
+}
+
+// forceUninstallWatchdog performs an aggressive offline uninstall of the watchdog service.
+// Requires a valid kill token that matches the locally stored hash.
+func forceUninstallWatchdog(installPath string) {
+	// Parse --kill-token from remaining args
+	var token string
+	for _, arg := range os.Args[2:] {
+		if strings.HasPrefix(arg, "--kill-token=") {
+			token = strings.TrimPrefix(arg, "--kill-token=")
+		}
+	}
+
+	if token == "" {
+		log.Fatal("--kill-token is required for force uninstall")
+	}
+
+	// Check for admin privileges using Windows API
+	var sid *windows.SID
+	err := windows.AllocateAndInitializeSid(
+		&windows.SECURITY_NT_AUTHORITY,
+		2,
+		windows.SECURITY_BUILTIN_DOMAIN_RID,
+		windows.DOMAIN_ALIAS_RID_ADMINS,
+		0, 0, 0, 0, 0, 0,
+		&sid)
+	if err != nil {
+		log.Fatalf("Failed to check admin privileges: %v", err)
+	}
+	defer windows.FreeSid(sid)
+	isAdmin, err := windows.Token(0).IsMember(sid)
+	if err != nil || !isAdmin {
+		log.Fatal("Force uninstall requires administrator privileges")
+	}
+
+	// Validate the kill token against locally stored hash
+	if err := validateWatchdogKillToken(token, installPath); err != nil {
+		log.Fatalf("Kill token validation failed: %v", err)
+	}
+
+	log.Println("Kill token validated. Performing watchdog force uninstall...")
+
+	// 1. Reset DACLs on install directory
+	log.Println("[ForceUninstall] Resetting DACL protections...")
+	exec.Command("icacls", installPath, "/reset", "/t").Run()
+	exec.Command("icacls", installPath, "/grant", "Administrators:F", "/t").Run()
+
+	// 2. Remove protection markers
+	log.Println("[ForceUninstall] Removing tamper protection markers...")
+	os.Remove(filepath.Join(installPath, "protection.dat"))
+
+	// 3. Stop the watchdog service
+	log.Println("[ForceUninstall] Stopping SentinelWatchdog service...")
+	if output, err := exec.Command("sc", "stop", serviceName).CombinedOutput(); err != nil {
+		log.Printf("[ForceUninstall] Warning: watchdog stop: %v (output: %s)", err, string(output))
+	}
+	time.Sleep(2 * time.Second)
+
+	// 4. Kill watchdog processes
+	log.Println("[ForceUninstall] Killing watchdog processes...")
+	exec.Command("taskkill", "/F", "/IM", "sentinel-watchdog.exe").Run()
+	time.Sleep(1 * time.Second)
+
+	// 5. Delete the watchdog service from SCM
+	log.Println("[ForceUninstall] Deleting watchdog service...")
+	if output, err := exec.Command("sc", "delete", serviceName).CombinedOutput(); err != nil {
+		log.Printf("[ForceUninstall] Warning: watchdog service delete: %v (output: %s)", err, string(output))
+	}
+
+	// 6. Clean watchdog-specific files
+	log.Println("[ForceUninstall] Cleaning watchdog files...")
+	dataDir := filepath.Join(os.Getenv("ProgramData"), "Sentinel")
+	watchdogFiles := []string{
+		filepath.Join(installPath, "watchdog-config.json"),
+		filepath.Join(dataDir, "watchdog-update-request.json"),
+		filepath.Join(dataDir, "watchdog-update-status.json"),
+		filepath.Join(dataDir, "watchdog-info.json"),
+	}
+	for _, f := range watchdogFiles {
+		if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
+			log.Printf("[ForceUninstall] Warning: failed to remove %s: %v", f, err)
+		}
+	}
+
+	// 7. Clean watchdog service registry key
+	log.Println("[ForceUninstall] Cleaning registry...")
+	regKey := `HKLM\SYSTEM\CurrentControlSet\Services\` + serviceName
+	if output, err := exec.Command("reg", "delete", regKey, "/f").CombinedOutput(); err != nil {
+		log.Printf("[ForceUninstall] Warning: registry cleanup: %v (output: %s)", err, string(output))
+	}
+
+	log.Println("Watchdog force uninstall completed successfully")
+}
+
+// validateWatchdogKillToken validates a plaintext kill token against locally stored hashes.
+func validateWatchdogKillToken(token, installPath string) error {
+	hash := sha256.Sum256([]byte(token))
+	providedHash := hex.EncodeToString(hash[:])
+
+	// Try protection.dat (primary location)
+	protectionPath := filepath.Join(installPath, "protection.dat")
+	if storedHash, err := os.ReadFile(protectionPath); err == nil {
+		storedHashStr := strings.TrimSpace(string(storedHash))
+		if storedHashStr != "" && storedHashStr == providedHash {
+			return nil
+		}
+	}
+
+	// Fallback: try kill-token.dat in the data directory
+	dataDir := filepath.Join(os.Getenv("ProgramData"), "Sentinel")
+	killTokenPath := filepath.Join(dataDir, "kill-token.dat")
+	if storedHash, err := os.ReadFile(killTokenPath); err == nil {
+		storedHashStr := strings.TrimSpace(string(storedHash))
+		if storedHashStr != "" && storedHashStr == providedHash {
+			return nil
+		}
+	}
+
+	// Fallback: registry
+	regCmd := exec.Command("reg", "query", `HKLM\SOFTWARE\Sentinel\Agent`, "/v", "KillTokenHash")
+	if output, err := regCmd.Output(); err == nil {
+		lines := strings.Split(string(output), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if strings.Contains(line, "KillTokenHash") {
+				parts := strings.Fields(line)
+				if len(parts) >= 3 {
+					regHash := parts[len(parts)-1]
+					if regHash == providedHash {
+						return nil
+					}
+				}
+			}
+		}
+	}
+
+	return fmt.Errorf("kill token does not match any stored hash")
 }

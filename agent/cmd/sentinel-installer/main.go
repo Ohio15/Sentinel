@@ -77,8 +77,9 @@ var (
 	flagCode   = flag.String("code", "", "Installation code (e.g., AB12-CD34)")
 	flagServer = flag.String("server", "", "Server URL (overrides embedded/code config)")
 	flagToken  = flag.String("token", "", "Enrollment token (overrides embedded/code config)")
-	flagSilent = flag.Bool("silent", false, "Run in silent mode (no prompts)")
-	flagHelp   = flag.Bool("help", false, "Show help message")
+	flagSilent     = flag.Bool("silent", false, "Run in silent mode (no prompts)")
+	flagForceClean = flag.Bool("force-clean", false, "Aggressively remove existing installation before reinstalling (resets all protections)")
+	flagHelp       = flag.Bool("help", false, "Show help message")
 )
 
 // Default server host for code validation (used when no embedded config)
@@ -309,6 +310,9 @@ func main() {
 		fmt.Println("  sentinel-installer.exe --code=AB12-CD34")
 		fmt.Println("  sentinel-installer.exe --code=AB12-CD34 --silent")
 		fmt.Println("  sentinel-installer.exe --server=https://rmm.example.com --token=abc123")
+		fmt.Println("  sentinel-installer.exe --code=AB12-CD34 --force-clean")
+		fmt.Println()
+		fmt.Println("Use --force-clean to aggressively remove a stuck installation before reinstalling.")
 		os.Exit(0)
 	}
 
@@ -585,6 +589,15 @@ func proceedWithInstall(config *InstallConfig) {
 	printInfo("Configuring security exclusions...")
 	addDefenderExclusion(installPath)
 
+	// Force-clean mode: nuclear option to remove stuck installations
+	if *flagForceClean {
+		printInfo("Force-clean mode: aggressively removing existing installation...")
+		if err := forceCleanExistingInstall(installPath); err != nil {
+			printWarning("Force-clean encountered issues: %v (continuing anyway)", err)
+		}
+		printSuccess("Force-clean completed")
+	}
+
 	// Aggressively stop and clean up any existing installation
 	if err := prepareInstallDirectory(installPath, agentExe, watchdogExe); err != nil {
 		printError("Failed to prepare installation directory: %v", err)
@@ -739,6 +752,9 @@ func proceedWithInstall(config *InstallConfig) {
 				strings.Contains(strings.ToLower(errStr), "marked for deletion") {
 				// Service might still be pending deletion — force cleanup and wait
 				printWarning("Service registration blocked, retrying after cleanup (attempt %d/3)...", attempt)
+				// Reset DACLs in case tamper protection is blocking service operations
+				exec.Command("icacls", filepath.Dir(agentExe), "/reset", "/t").Run()
+				exec.Command("icacls", filepath.Dir(agentExe), "/grant", "Administrators:F", "/t").Run()
 				exec.Command("sc", "stop", "SentinelAgent").Run()
 				exec.Command("sc", "delete", "SentinelAgent").Run()
 				exec.Command("sc", "stop", "SentinelWatchdog").Run()
@@ -784,6 +800,15 @@ func proceedWithInstall(config *InstallConfig) {
 		printSuccess("SentinelWatchdog service is running")
 	} else {
 		printWarning("SentinelWatchdog service is not running")
+	}
+
+	if !agentRunning || !watchdogRunning {
+		if !agentRunning && !watchdogRunning {
+			printError("Neither service started. Check logs at: %s", filepath.Join(os.TempDir(), "sentinel-installer.log"))
+		}
+		if !*flagForceClean {
+			printInfo("Tip: If reinstalling over a stuck installation, try running with --force-clean")
+		}
 	}
 
 	// Cleanup installer log on success - no sensitive data left in %TEMP%
@@ -1158,6 +1183,91 @@ func addDefenderExclusion(path string) {
 	logMsg("[DEBUG] Added Windows Defender exclusions")
 }
 
+// forceCleanExistingInstall performs aggressive cleanup of a stuck Sentinel installation.
+// This is the "nuclear option" — it strips all protections, kills all processes, removes
+// services from SCM, and nukes the install directory. Used with --force-clean flag.
+func forceCleanExistingInstall(installPath string) error {
+	logMsg("[FORCE-CLEAN] Starting aggressive cleanup of %s", installPath)
+
+	// Phase 1: Strip ALL file protections
+	logMsg("[FORCE-CLEAN] Phase 1: Resetting all DACLs")
+	exec.Command("icacls", installPath, "/reset", "/t").Run()
+	exec.Command("icacls", installPath, "/grant", "Administrators:F", "/t").Run()
+
+	// Also reset ProgramData sentinel path
+	dataPath := filepath.Join(os.Getenv("ProgramData"), "Sentinel")
+	exec.Command("icacls", dataPath, "/reset", "/t").Run()
+	exec.Command("icacls", dataPath, "/grant", "Administrators:F", "/t").Run()
+
+	// Phase 2: Remove protection state
+	logMsg("[FORCE-CLEAN] Phase 2: Removing protection state")
+	os.Remove(filepath.Join(installPath, "protection.dat"))
+
+	// Phase 3: Stop services (watchdog first!)
+	logMsg("[FORCE-CLEAN] Phase 3: Stopping services")
+	for i := 0; i < 3; i++ {
+		exec.Command("sc", "stop", "SentinelWatchdog").Run()
+		exec.Command("sc", "stop", "SentinelAgent").Run()
+		time.Sleep(1 * time.Second)
+	}
+
+	// Phase 4: Kill ALL sentinel processes
+	logMsg("[FORCE-CLEAN] Phase 4: Killing processes")
+	for i := 0; i < 3; i++ {
+		exec.Command("taskkill", "/F", "/IM", "sentinel-agent.exe").Run()
+		exec.Command("taskkill", "/F", "/IM", "sentinel-watchdog.exe").Run()
+		exec.Command("taskkill", "/F", "/IM", "sentinel-desktop.exe").Run()
+		exec.Command("taskkill", "/F", "/IM", "sentinel-desktop-helper.exe").Run()
+		exec.Command("taskkill", "/F", "/IM", "sentinel-bootstrap.exe").Run()
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	// Phase 5: Delete services from SCM
+	logMsg("[FORCE-CLEAN] Phase 5: Deleting services")
+	exec.Command("sc", "delete", "SentinelAgent").Run()
+	exec.Command("sc", "delete", "SentinelWatchdog").Run()
+
+	// Wait for services to be fully gone
+	waitForServiceFullyDeleted("SentinelAgent", 30*time.Second)
+	waitForServiceFullyDeleted("SentinelWatchdog", 15*time.Second)
+
+	// Phase 6: Remove scheduled tasks
+	logMsg("[FORCE-CLEAN] Phase 6: Removing scheduled tasks")
+	exec.Command("schtasks", "/Delete", "/TN", "SentinelBootstrapRecovery", "/F").Run()
+	exec.Command("schtasks", "/Delete", "/TN", "SentinelAgentRecovery", "/F").Run()
+
+	// Phase 7: Nuke install directory
+	logMsg("[FORCE-CLEAN] Phase 7: Removing installation directory")
+	os.RemoveAll(installPath + ".old")
+	os.RemoveAll(installPath + ".new")
+
+	// Try direct removal
+	if err := os.RemoveAll(installPath); err != nil {
+		logMsg("[FORCE-CLEAN] Direct removal failed: %v, trying rename strategy", err)
+		os.Rename(installPath, installPath+".purge")
+		scheduleDirDeleteOnReboot(installPath + ".purge")
+		os.MkdirAll(installPath, 0755)
+	}
+
+	// Phase 8: Clean registry
+	logMsg("[FORCE-CLEAN] Phase 8: Cleaning registry")
+	exec.Command("powershell", "-Command",
+		"Remove-Item -Path 'HKLM:\\SOFTWARE\\Sentinel' -Recurse -Force -ErrorAction SilentlyContinue").Run()
+
+	// Phase 9: Clean ProgramData (preserving logs)
+	logMsg("[FORCE-CLEAN] Phase 9: Cleaning ProgramData (preserving logs)")
+	if entries, err := os.ReadDir(dataPath); err == nil {
+		for _, entry := range entries {
+			if entry.Name() != "logs" {
+				os.RemoveAll(filepath.Join(dataPath, entry.Name()))
+			}
+		}
+	}
+
+	logMsg("[FORCE-CLEAN] Cleanup complete")
+	return nil
+}
+
 // prepareInstallDirectory ensures the install directory is ready for installation
 // Uses DIRECTORY SWAP strategy to sidestep file locking issues:
 // 1. Install to "Sentinel Agent.new"
@@ -1206,6 +1316,33 @@ func prepareInstallDirectory(installPath, agentExe, watchdogExe string) error {
 func prepareUpgradeWithSwap(installPath, newPath, oldPath, agentExe, watchdogExe string) error {
 	logMsg("[DEBUG] Starting upgrade with directory swap strategy")
 
+	// CRITICAL: Reset file protection DACLs BEFORE attempting any service/process operations.
+	// Tamper protection applies restrictive DACLs that block file deletion and service management.
+	// Without this reset, all subsequent stop/kill/delete operations will silently fail.
+	printInfo("Resetting file protections...")
+	if output, err := exec.Command("icacls", installPath, "/reset", "/t").CombinedOutput(); err != nil {
+		logMsg("[DEBUG] icacls reset %s: %s (err: %v)", installPath, string(output), err)
+	} else {
+		logMsg("[DEBUG] icacls reset %s: OK", installPath)
+	}
+	if output, err := exec.Command("icacls", installPath, "/grant", "Administrators:F", "/t").CombinedOutput(); err != nil {
+		logMsg("[DEBUG] icacls grant Administrators:F %s: %s (err: %v)", installPath, string(output), err)
+	} else {
+		logMsg("[DEBUG] icacls grant Administrators:F %s: OK", installPath)
+	}
+	// Also reset protection.dat which controls tamper protection state
+	protectionDat := filepath.Join(installPath, "protection.dat")
+	if _, err := os.Stat(protectionDat); err == nil {
+		if output, err := exec.Command("icacls", protectionDat, "/reset").CombinedOutput(); err != nil {
+			logMsg("[DEBUG] icacls reset protection.dat: %s (err: %v)", string(output), err)
+		}
+		if err := os.Remove(protectionDat); err != nil {
+			logMsg("[DEBUG] Failed to remove protection.dat: %v", err)
+		} else {
+			logMsg("[DEBUG] Removed protection.dat successfully")
+		}
+	}
+
 	// Step 1: Stop services and kill processes (best effort - don't fail if this doesn't work)
 	printInfo("Stopping existing services...")
 	stopService("SentinelWatchdog")
@@ -1213,16 +1350,20 @@ func prepareUpgradeWithSwap(installPath, newPath, oldPath, agentExe, watchdogExe
 
 	// Kill service host processes
 	killServiceProcess("SentinelAgent")
+	logMsg("[DEBUG] killServiceProcess(SentinelAgent) completed")
 	killServiceProcess("SentinelWatchdog")
+	logMsg("[DEBUG] killServiceProcess(SentinelWatchdog) completed")
 
 	// Kill any running processes
 	for i := 0; i < 3; i++ {
+		logMsg("[DEBUG] Kill process attempt %d/3", i+1)
 		killProcess("sentinel-agent.exe")
 		killProcess("sentinel-watchdog.exe")
 		killProcessByPath(agentExe)
 		killProcessByPath(watchdogExe)
 		time.Sleep(300 * time.Millisecond)
 	}
+	logMsg("[DEBUG] All kill process attempts completed")
 
 	// Brief wait for handles to release
 	time.Sleep(1 * time.Second)
@@ -1362,7 +1503,8 @@ func deleteServiceAndWait(name string) {
 	}
 
 	// Delete the service
-	exec.Command("sc", "delete", name).Run()
+	delOutput, delErr := exec.Command("sc", "delete", name).CombinedOutput()
+	logMsg("[DEBUG] sc delete %s: %s (err: %v)", name, strings.TrimSpace(string(delOutput)), delErr)
 
 	// Poll until service is gone or marked for deletion (max 15 seconds)
 	deadline := time.Now().Add(15 * time.Second)
@@ -1413,10 +1555,12 @@ func waitForServiceFullyDeleted(name string, timeout time.Duration) {
 	outputStr := string(output)
 	if strings.Contains(outputStr, "RUNNING") || strings.Contains(outputStr, "START_PENDING") {
 		logMsg("[DEBUG] Service %s still running — stopping it", name)
-		exec.Command("sc", "stop", name).Run()
+		stopOut, stopErr := exec.Command("sc", "stop", name).CombinedOutput()
+		logMsg("[DEBUG] sc stop %s (in waitForServiceFullyDeleted): %s (err: %v)", name, strings.TrimSpace(string(stopOut)), stopErr)
 		time.Sleep(1 * time.Second)
 	}
-	exec.Command("sc", "delete", name).Run()
+	delOut, delErr := exec.Command("sc", "delete", name).CombinedOutput()
+	logMsg("[DEBUG] sc delete %s (in waitForServiceFullyDeleted): %s (err: %v)", name, strings.TrimSpace(string(delOut)), delErr)
 
 	// Poll until the service is truly gone (not just DELETE_PENDING)
 	deadline := time.Now().Add(timeout)
@@ -1708,31 +1852,40 @@ func stopService(name string) {
 	logMsg("[DEBUG] Stopping service: %s", name)
 
 	// First try graceful stop
-	exec.Command("sc", "stop", name).Run()
+	output, err := exec.Command("sc", "stop", name).CombinedOutput()
+	logMsg("[DEBUG] sc stop %s: %s (err: %v)", name, strings.TrimSpace(string(output)), err)
 
 	// Wait up to 10 seconds for service to stop
 	for i := 0; i < 20; i++ {
 		cmd := exec.Command("sc", "query", name)
-		output, err := cmd.Output()
-		if err != nil {
+		qOutput, qErr := cmd.CombinedOutput()
+		if qErr != nil {
+			logMsg("[DEBUG] sc query %s: service does not exist (err: %v)", name, qErr)
 			return // Service doesn't exist
 		}
-		if strings.Contains(string(output), "STOPPED") {
-			logMsg("[DEBUG] Service %s stopped", name)
+		outputStr := string(qOutput)
+		if strings.Contains(outputStr, "STOPPED") {
+			logMsg("[DEBUG] Service %s stopped successfully", name)
 			return
+		}
+		if i == 9 {
+			logMsg("[DEBUG] Service %s still not stopped after 5s, current state: %s", name, strings.TrimSpace(outputStr))
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 
+	logMsg("[DEBUG] Service %s did not stop gracefully after 10s, forcing stop", name)
 	// Force stop if still running
-	exec.Command("sc", "stop", name).Run()
+	forceOutput, forceErr := exec.Command("sc", "stop", name).CombinedOutput()
+	logMsg("[DEBUG] sc stop %s (force): %s (err: %v)", name, strings.TrimSpace(string(forceOutput)), forceErr)
 	time.Sleep(1 * time.Second)
 }
 
 // deleteService removes a Windows service
 func deleteService(name string) {
 	logMsg("[DEBUG] Deleting service: %s", name)
-	exec.Command("sc", "delete", name).Run()
+	output, err := exec.Command("sc", "delete", name).CombinedOutput()
+	logMsg("[DEBUG] sc delete %s: %s (err: %v)", name, strings.TrimSpace(string(output)), err)
 	time.Sleep(500 * time.Millisecond)
 }
 
@@ -1741,10 +1894,12 @@ func killProcess(name string) {
 	logMsg("[DEBUG] Killing process: %s", name)
 
 	// Use taskkill with force flag
-	exec.Command("taskkill", "/F", "/IM", name).Run()
+	tkOutput, tkErr := exec.Command("taskkill", "/F", "/IM", name).CombinedOutput()
+	logMsg("[DEBUG] taskkill /F /IM %s: %s (err: %v)", name, strings.TrimSpace(string(tkOutput)), tkErr)
 
 	// Also try WMIC for stubborn processes
-	exec.Command("wmic", "process", "where", fmt.Sprintf("name='%s'", name), "delete").Run()
+	wmOutput, wmErr := exec.Command("wmic", "process", "where", fmt.Sprintf("name='%s'", name), "delete").CombinedOutput()
+	logMsg("[DEBUG] wmic delete %s: %s (err: %v)", name, strings.TrimSpace(string(wmOutput)), wmErr)
 }
 
 // waitForProcessExit waits for a process to fully exit
@@ -1875,6 +2030,17 @@ func copyFileWithSync(src, dst string) error {
 // emergencyCleanup performs aggressive cleanup when normal methods fail
 func emergencyCleanup(installPath string) {
 	logMsg("[DEBUG] Performing emergency cleanup")
+
+	// CRITICAL: Reset file protection DACLs BEFORE attempting any cleanup operations.
+	// Tamper protection applies restrictive DACLs that block file deletion and service management.
+	// Without this reset, all subsequent stop/kill/delete operations will silently fail.
+	exec.Command("icacls", installPath, "/reset", "/t").Run()
+	exec.Command("icacls", installPath, "/grant", "Administrators:F", "/t").Run()
+	protectionDat := filepath.Join(installPath, "protection.dat")
+	if _, err := os.Stat(protectionDat); err == nil {
+		exec.Command("icacls", protectionDat, "/reset").Run()
+		os.Remove(protectionDat)
+	}
 
 	// Kill ALL sentinel processes
 	exec.Command("taskkill", "/F", "/IM", "sentinel-agent.exe").Run()

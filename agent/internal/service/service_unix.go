@@ -21,3 +21,9 @@ func waitForWatchdogStopped(timeout, interval time.Duration) error {
 func removeDefenderExclusions(installPath string) {
 	// No-op: Windows Defender exclusions only apply to Windows
 }
+
+// resetTamperProtection is a no-op on non-Windows systems.
+// DACL-based tamper protection only applies to Windows.
+func resetTamperProtection(installPath string) {
+	// No-op: DACL protection only applies to Windows
+}

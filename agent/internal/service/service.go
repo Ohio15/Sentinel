@@ -129,6 +129,11 @@ func Install(serverURL, token string) error {
 	if err == nil && status != service.StatusUnknown {
 		// Service exists, stop and uninstall first
 		log.Println("Service already installed, updating...")
+
+		// Reset tamper protection DACLs before attempting service operations;
+		// without this, stop/uninstall can silently fail on protected installs.
+		resetTamperProtection(installPath)
+
 		svc.Stop()
 		waitForServiceStop(ServiceName)
 		svc.Uninstall()
@@ -195,6 +200,9 @@ func installWatchdog(installPath string) {
 		log.Printf("Warning: could not create watchdog service: %v", err)
 		return
 	}
+
+	// Reset tamper protection DACLs before attempting service operations
+	resetTamperProtection(installPath)
 
 	// Stop and uninstall if already exists
 	status, _ := svc.Status()
@@ -281,6 +289,12 @@ func UninstallWithToken(serverURL, deviceID, uninstallToken string) error {
 	// Only disable protections for legitimate uninstall
 	if uninstallToken != "" {
 		log.Printf("Server-authorized uninstall with token: %s...", uninstallToken[:8])
+
+		// Reset DACLs at the filesystem level first, then disable protection state.
+		// DisableProtections only does icacls /reset; we also need Administrators:F
+		// and protection.dat removal to fully clear tamper protection.
+		resetTamperProtection(installPath)
+
 		protMgr := protection.NewManager(installPath, ServiceName)
 		if err := protMgr.DisableProtections(); err != nil {
 			log.Printf("Warning: could not disable protections: %v", err)
