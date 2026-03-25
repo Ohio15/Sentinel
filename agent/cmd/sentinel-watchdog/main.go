@@ -44,17 +44,14 @@ const (
 	updateVerifyInterval   = 2 * time.Second  // How often to check agent version during verification
 
 	// Health check constants for auto-rollback
-	// NOTE: These are intentionally very lenient to avoid false rollbacks from:
-	// - Network disconnects causing brief service restarts
-	// - Windows SCM auto-recovery restarts counting as "crashes"
-	// - Normal reconnection behavior during network instability
-	// CRITICAL: Old watchdog monitors with old settings during update, so new settings
-	// won't take effect until AFTER the update succeeds. Set very high tolerance.
-	healthCheckInterval   = 10 * time.Second  // How often to check agent health after update
-	healthCheckDuration   = 120 * time.Second // How long to monitor health after update (2 min)
-	maxAgentMemoryMB      = 500               // Maximum memory usage before triggering rollback
-	maxCrashesPerMinute   = 20                // Maximum crashes before triggering rollback (very lenient)
-	healthStatusTimeout   = 60 * time.Second  // Time to wait for agent to write health status
+	// NOTE: Old watchdog monitors with old thresholds during update — new values
+	// only take effect AFTER the update succeeds. Set conservatively but not absurdly.
+	// SCM recovery is now 60s/120s (not 5s/10s), so SCM restarts won't inflate crash count.
+	healthCheckInterval   = 10 * time.Second   // How often to check agent health after update
+	healthCheckDuration   = 5 * time.Minute    // How long to monitor health after update (5 min)
+	maxAgentMemoryMB      = 200                // Maximum memory usage before triggering rollback
+	maxCrashesPerMinute   = 5                  // Maximum crashes before triggering rollback
+	healthStatusTimeout   = 60 * time.Second   // Time to wait for agent to write health status
 
 	// Independent update polling constants (Layer 1 - resilient updates)
 	// The watchdog polls the server directly, independent of the agent's WebSocket connection
@@ -64,7 +61,7 @@ const (
 )
 
 var (
-	Version = "1.77.8"
+	Version = "1.77.9"
 	elog    debug.Log
 	isDebug = false
 )
@@ -519,11 +516,23 @@ func (ws *watchdogService) reinstallAgent() error {
 	return s.Start()
 }
 
-// isAgentResponding checks if the agent process is actually working
+// isAgentResponding checks if the agent process is alive and working
+// by verifying the freshness of its periodic agent-info heartbeat file.
+// Returns true (assume healthy) if the file can't be read or has no LastSeen
+// to avoid false positives during startup or from old agent versions.
 func (ws *watchdogService) isAgentResponding() bool {
-	// Check if the agent's PID file exists and process is alive
-	// For now, just check service state - can be enhanced later
-	return true
+	info, err := ipc.ReadAgentInfo()
+	if err != nil || info == nil {
+		return true // Can't read file — assume healthy (may be starting up)
+	}
+	if info.LastSeen.IsZero() {
+		return true // Old agent without LastSeen field — don't falsely restart
+	}
+	stale := time.Since(info.LastSeen) > 90*time.Second
+	if stale {
+		logMessage(fmt.Sprintf("[Health] Agent info stale: last seen %v ago (pid=%d)", time.Since(info.LastSeen).Round(time.Second), info.PID))
+	}
+	return !stale
 }
 
 func logMessage(msg string) {

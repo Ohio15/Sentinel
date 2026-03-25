@@ -84,6 +84,7 @@ type AgentInfo struct {
 	StartedAt time.Time `json:"started_at"`
 	PID       int       `json:"pid"`
 	AgentID   string    `json:"agent_id,omitempty"`
+	LastSeen  time.Time `json:"last_seen,omitempty"`
 }
 
 // PipeMessage is used for real-time communication over the named pipe

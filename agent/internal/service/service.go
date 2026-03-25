@@ -555,10 +555,12 @@ func configureServiceWithSC(serviceName string) error {
 		log.Printf("Warning: sc config start=auto failed: %v", err)
 	}
 	
-	// Configure failure recovery: restart after 5s, 10s, 30s
-	cmd = exec.Command("sc", "failure", serviceName, 
-		"reset=", "86400",
-		"actions=", "restart/5000/restart/10000/restart/30000")
+	// Configure failure recovery: restart after 60s, 120s, 60s
+	// Watchdog handles fast restart (10s interval) — SCM is the slow, reliable fallback
+	// Reset counter after 300s (5 min) so recovery attempts refresh quickly
+	cmd = exec.Command("sc", "failure", serviceName,
+		"reset=", "300",
+		"actions=", "restart/60000/restart/120000/restart/60000")
 	if err := cmd.Run(); err != nil {
 		log.Printf("Warning: sc failure config failed: %v", err)
 	}

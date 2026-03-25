@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"strings"
@@ -162,7 +164,10 @@ type Client struct {
 	offlineStore      *offline.Store
 	lastDisconnect    time.Time
 	wasOffline        bool
-	deviceInfo        *DeviceInfo
+	deviceInfo         *DeviceInfo
+	reconnectAttempt   int
+	enrollmentFailures int       // consecutive NeedsEnrollment responses
+	orphanBackoffUntil time.Time // when to next attempt after orphan detection
 }
 
 // New creates a new WebSocket client
@@ -170,8 +175,8 @@ func New(cfg *config.Config, version string) *Client {
 	return &Client{
 		config:         cfg,
 		handlers:       make(map[string]MessageHandler),
-		reconnectDelay: 500 * time.Millisecond,
-		maxReconnect:   2 * time.Second,
+		reconnectDelay: 1 * time.Second,
+		maxReconnect:   60 * time.Second,
 		done:           make(chan struct{}),
 		sendQueue:      make(chan []byte, 1024),
 		version:        version,
@@ -295,7 +300,9 @@ func (c *Client) waitForServer(ctx context.Context) bool {
 		return true
 	}
 
-	ticker := time.NewTicker(c.healthPollRate)
+	// Add jitter to health polling to prevent all agents polling in lockstep
+	jitter := time.Duration(rand.Int63n(int64(500 * time.Millisecond)))
+	ticker := time.NewTicker(c.healthPollRate + jitter)
 	defer ticker.Stop()
 
 	for {
@@ -309,6 +316,21 @@ func (c *Client) waitForServer(ctx context.Context) bool {
 			}
 		}
 	}
+}
+
+// backoffWithJitter returns a randomized exponential backoff duration.
+// Full jitter: sleep = random(0, min(cap, base * 2^attempt))
+// This prevents thundering herd when many agents reconnect simultaneously.
+func (c *Client) backoffWithJitter() time.Duration {
+	maxMs := float64(c.maxReconnect / time.Millisecond)
+	baseMs := float64(c.reconnectDelay / time.Millisecond)
+	expMs := math.Min(maxMs, baseMs*math.Pow(2, float64(c.reconnectAttempt)))
+	jitteredMs := rand.Float64() * expMs
+	if jitteredMs < float64(c.reconnectDelay/time.Millisecond) {
+		jitteredMs = float64(c.reconnectDelay / time.Millisecond)
+	}
+	c.reconnectAttempt++
+	return time.Duration(jitteredMs) * time.Millisecond
 }
 
 // Connect establishes a WebSocket connection to the server
@@ -873,6 +895,8 @@ func (c *Client) readLoop(ctx context.Context) {
 			if authResp.Success {
 				c.mu.Lock()
 				c.authenticated = true
+				c.enrollmentFailures = 0
+				c.orphanBackoffUntil = time.Time{} // reset orphan backoff
 				c.mu.Unlock()
 
 				if authResp.MTLSAuth {
@@ -900,12 +924,40 @@ func (c *Client) readLoop(ctx context.Context) {
 
 				// Check if server says we need to re-enroll
 				if authResp.NeedsEnrollment {
-					log.Println("Server indicates device not found - triggering re-enrollment")
-					c.mu.RLock()
-					cb := c.onNeedsEnrollment
-					c.mu.RUnlock()
-					if cb != nil {
-						go cb()
+					c.mu.Lock()
+					c.enrollmentFailures++
+					failures := c.enrollmentFailures
+					c.mu.Unlock()
+
+					if failures <= 3 {
+						// First 3 attempts: try re-enrollment normally (may be transient)
+						log.Printf("Server indicates device not found (attempt %d/3) - triggering re-enrollment", failures)
+						c.mu.RLock()
+						cb := c.onNeedsEnrollment
+						c.mu.RUnlock()
+						if cb != nil {
+							go cb()
+						}
+					} else {
+						// Orphan state: escalating backoff to reduce server load
+						backoffMin := failures - 3 // starts at 1, grows linearly
+						if backoffMin > 12 {
+							backoffMin = 12 // cap at 60 minutes
+						}
+						backoff := time.Duration(backoffMin) * 5 * time.Minute
+						log.Printf("[Orphan] Device not recognized after %d attempts. Backing off %v before retry.", failures, backoff)
+
+						c.mu.Lock()
+						c.orphanBackoffUntil = time.Now().Add(backoff)
+						c.mu.Unlock()
+
+						// Still try re-enrollment callback (admin may have re-added the device)
+						c.mu.RLock()
+						cb := c.onNeedsEnrollment
+						c.mu.RUnlock()
+						if cb != nil {
+							go cb()
+						}
 					}
 				}
 			} else {
@@ -1029,21 +1081,36 @@ func (c *Client) RunWithReconnect(ctx context.Context) {
 			return // Context cancelled
 		}
 
+		// Check orphan backoff — if we're in orphan state, wait before reconnecting
+		c.mu.RLock()
+		backoffUntil := c.orphanBackoffUntil
+		c.mu.RUnlock()
+		if !backoffUntil.IsZero() && time.Now().Before(backoffUntil) {
+			wait := time.Until(backoffUntil)
+			log.Printf("[Orphan] Waiting %v before next connection attempt...", wait.Round(time.Second))
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(wait):
+			}
+		}
+
 		// Phase 2: Connect WebSocket immediately after server is detected
 		log.Println("Attempting WebSocket connection...")
 		err := c.Connect(ctx)
 		if err != nil {
 			log.Printf("WebSocket connection failed: %v, retrying...", err)
-			// Brief pause before retry - server might still be starting up
+			// Exponential backoff with jitter before retry
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(c.reconnectDelay):
+			case <-time.After(c.backoffWithJitter()):
 			}
 			continue
 		}
 
 		log.Println("Connection established successfully")
+		c.reconnectAttempt = 0
 
 		// Phase 3: Wait for disconnection
 		<-c.done

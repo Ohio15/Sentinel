@@ -1,5 +1,5 @@
 {
-    "version":  "1.77.8",
+    "version":  "1.77.9",
     "releaseDate":  "2026-03-24",
     "changelog":  "Add --force-uninstall and --kill-token flags for offline emergency uninstall",
     "platforms":  [

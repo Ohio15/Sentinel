@@ -41,7 +41,7 @@ import (
 	"github.com/sentinel/agent/internal/peripheral"
 )
 
-var Version = "1.77.8"
+var Version = "1.77.9"
 
 const ServiceName = "SentinelAgent"
 
@@ -575,11 +575,13 @@ func (a *Agent) Start() error {
 
 // writeAgentInfo writes the agent's version info for watchdog verification
 func (a *Agent) writeAgentInfo() {
+	startedAt := time.Now()
 	info := &ipc.AgentInfo{
 		Version:   Version,
-		StartedAt: time.Now(),
+		StartedAt: startedAt,
 		PID:       os.Getpid(),
 		AgentID:   a.cfg.AgentID,
+		LastSeen:  startedAt,
 	}
 
 	if err := ipc.WriteAgentInfo(info); err != nil {
@@ -587,6 +589,29 @@ func (a *Agent) writeAgentInfo() {
 	} else {
 		log.Printf("Agent info written: version=%s pid=%d", Version, info.PID)
 	}
+
+	// Periodic agent-info heartbeat — lets watchdog detect hung processes
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-a.ctx.Done():
+				return
+			case <-ticker.C:
+				hbInfo := &ipc.AgentInfo{
+					Version:   Version,
+					StartedAt: startedAt,
+					PID:       os.Getpid(),
+					AgentID:   a.cfg.AgentID,
+					LastSeen:  time.Now(),
+				}
+				if err := ipc.WriteAgentInfo(hbInfo); err != nil {
+					log.Printf("Warning: failed to update agent info heartbeat: %v", err)
+				}
+			}
+		}
+	}()
 }
 
 // Stop gracefully shuts down the agent
