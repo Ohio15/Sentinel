@@ -4,7 +4,7 @@ on:
   workflow_run:
     workflows: ["CI"]
     types: [completed]
-    branches: [master]
+    branches: [main]
 
 jobs:
   deploy:
@@ -14,7 +14,7 @@ jobs:
 
     steps:
       - name: Pull latest code
-        run: cd ~/Sentinel && git pull origin master
+        run: cd ~/Sentinel && git pull origin main
 
       - name: Save current image for rollback
         run: |
@@ -63,6 +63,6 @@ jobs:
             echo "WARNING: Rollback may have failed — frontend returned HTTP $STATUS"
             docker logs sentinel-frontend --tail 30
           fi
-          git checkout master
+          git checkout main
           echo "::error::Deployment failed and was rolled back to $PREV_COMMIT. Fix the issue and re-deploy."
           exit 1

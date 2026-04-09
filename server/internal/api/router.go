@@ -886,12 +886,12 @@ func rateLimitMiddleware(cache *cache.Cache, maxRequests int, windowSeconds int,
 			return
 		}
 
-		// Set TTL only when the counter is first created (count == 1).
-		// This creates a proper fixed-window rate limit that resets after windowSeconds.
-		// Previously, TTL was refreshed on EVERY request (including 429'd ones),
-		// which caused the window to never expire under sustained load — the counter
-		// would grow unbounded (e.g., 471K+ for a hammering agent).
+		// Set TTL when the counter is first created (count == 1) for a fixed-window rate limit.
+		// Also set TTL if the key somehow has no expiry (immortal key bug: if the first
+		// Expire call fails due to a Redis hiccup, the key lives forever causing permanent 429s).
 		if count == 1 {
+			cache.Expire(c.Request.Context(), key, windowSeconds)
+		} else if ttl, err := cache.Client().TTL(c.Request.Context(), key).Result(); err == nil && ttl < 0 {
 			cache.Expire(c.Request.Context(), key, windowSeconds)
 		}
 
