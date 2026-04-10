@@ -1,5 +1,3 @@
-version: '3.8'
-
 # Local development setup - simpler without Traefik
 # Run with: docker-compose -f docker-compose.local.yml up
 

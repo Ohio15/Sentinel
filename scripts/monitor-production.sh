@@ -157,7 +157,7 @@ check_containers() {
     if command -v docker &> /dev/null; then
         log_info "Checking container health..."
 
-        containers=("sentinel-backend" "sentinel-postgres" "sentinel-redis" "sentinel-traefik")
+        containers=("sentinel-backend" "sentinel-postgres" "sentinel-redis" "sentinel-agent-gateway")
         for container in "${containers[@]}"; do
             status=$(docker inspect --format='{{.State.Status}}' "$container" 2>/dev/null || echo "not_found")
             health=$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null || echo "N/A")

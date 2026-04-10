@@ -43,7 +43,7 @@ echo ""
 # Step 1: Create certificates directory
 echo "Step 1: Setting up certificates directory..."
 mkdir -p "$CERTS_DIR"
-mkdir -p "$PROJECT_DIR/configs/traefik/dynamic"
+mkdir -p "$PROJECT_DIR/configs/traefik-agent/dynamic"
 
 # Step 2: Generate CA certificate if mTLS is enabled and CA doesn't exist
 if [ "${MTLS_ENABLED:-false}" = "true" ]; then

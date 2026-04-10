@@ -12,8 +12,6 @@
 #   - tmpfs for fast ephemeral database
 #   - Auto-cleanup on shutdown with -v flag
 
-version: '3.8'
-
 services:
   # Test PostgreSQL - uses tmpfs for speed, data is ephemeral
   postgres-test:

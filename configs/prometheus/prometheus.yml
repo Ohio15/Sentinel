@@ -9,11 +9,6 @@ scrape_configs:
       - targets: ['sentinel-backend:8080']
     scrape_interval: 10s
 
-  - job_name: 'traefik'
-    static_configs:
-      - targets: ['sentinel-traefik:8082']
-    scrape_interval: 15s
-
   - job_name: 'postgres'
     static_configs:
       - targets: ['sentinel-postgres:5432']

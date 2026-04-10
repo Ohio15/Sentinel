@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Dedicated Traefik instance for Sentinel agent mTLS + gRPC dataplane
   # Replaces agent-handling portions of the old sentinel-traefik service.
