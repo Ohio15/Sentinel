@@ -69,7 +69,7 @@ All services now include:
 - `read_only: true` where applicable
 - `tmpfs` for temporary directories
 - Health checks for backend service
-- Disabled Traefik dashboard in production
+- `sentinel-agent-gateway` dashboard disabled in production (edge web routing is handled by `infra-traefik` in the separate `~/infra/` stack, which manages its own dashboard settings)
 - PostgreSQL uses SCRAM-SHA-256 authentication
 - Redis configured with memory limits
 
@@ -121,7 +121,7 @@ Before going to production:
 - [x] Create .env.example
 - [ ] Change default admin password or remove from migration
 - [ ] Set strong passwords for all services
-- [ ] Enable TLS/HTTPS (Traefik configured, needs domain)
+- [ ] Enable TLS/HTTPS for public web endpoints via `infra-traefik` in `~/infra/` (Sentinel containers join the shared `edge` network); `sentinel-agent-gateway` continues to terminate mTLS on :8443 for agents
 - [ ] Set up structured logging
 - [ ] Configure monitoring/alerting
 - [ ] Set up database backups

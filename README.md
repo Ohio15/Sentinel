@@ -16,15 +16,27 @@ Sentinel is a modern, cloud-hosted Remote Monitoring and Management (RMM) platfo
 
 ## Architecture
 
+Web traffic for the Sentinel frontend and backend is routed by the shared
+`infra-traefik` edge proxy (in the `~/infra/` stack on NEXUS) via the external
+`edge` docker network. Sentinel itself runs a dedicated `sentinel-agent-gateway`
+Traefik instance that handles only agent-facing protocols on ports 8443 (mTLS)
+and 4444 (gRPC dataplane).
+
 ```
+┌──────────────────────────────────────────────────────────────┐
+│                infra-traefik  (~/infra/ stack)                │
+│              :80 / :443  — edge web routing                   │
+└──────────────┬────────────────────────────────┬───────────────┘
+               │ edge network                   │
+               ▼                                ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                     Sentinel Platform                        │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
-│  ┌─────────────┐       ┌─────────────┐       ┌────────────┐ │
-│  │   React     │       │   Traefik   │       │   Go       │ │
-│  │   Frontend  │◄─────►│   Gateway   │◄─────►│   Backend  │ │
-│  └─────────────┘       └─────────────┘       └────────────┘ │
+│  ┌─────────────┐                              ┌────────────┐│
+│  │   React     │                              │   Go       ││
+│  │   Frontend  │                              │   Backend  ││
+│  └─────────────┘                              └────────────┘│
 │                                                     │        │
 │                              ┌──────────────────────┤        │
 │                              │                      │        │
@@ -33,9 +45,14 @@ Sentinel is a modern, cloud-hosted Remote Monitoring and Management (RMM) platfo
 │                        │  Database │          │   Cache   │  │
 │                        └───────────┘          └───────────┘  │
 │                                                              │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │     sentinel-agent-gateway  (Traefik v3)               │ │
+│  │     :8443  mTLS agent channel                          │ │
+│  │     :4444  gRPC dataplane                              │ │
+│  └────────────────────────────────────────────────────────┘ │
 └──────────────────────────────┬───────────────────────────────┘
                                │
-                    WebSocket (TLS)
+                    mTLS / gRPC (TLS)
                                │
         ┌──────────────────────┼──────────────────────┐
         │                      │                      │
@@ -54,7 +71,8 @@ Sentinel is a modern, cloud-hosted Remote Monitoring and Management (RMM) platfo
 | Database | PostgreSQL 16 |
 | Cache | Redis 7 |
 | Agent | Go 1.21 |
-| Reverse Proxy | Traefik v3 |
+| Agent Gateway | Traefik v3 (`sentinel-agent-gateway`, :8443 mTLS, :4444 gRPC) |
+| Edge Web Routing | `infra-traefik` (separate `~/infra/` stack) via shared `edge` network |
 | Container | Docker, Docker Compose |
 
 ## Quick Start

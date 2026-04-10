@@ -51,6 +51,19 @@ Docker Backend (localhost:8090)
         - ./installers:/app/installers:ro
         - ./agent/version.json:/app/agent/version.json:ro
 
+Agent Gateway:
+    └── Container: sentinel-agent-gateway (Traefik v3)
+    └── ONLY handles agent protocols:
+        - :8443  agent mTLS channel
+        - :4444  gRPC dataplane
+    └── Config: configs/traefik-agent/ (NOT configs/traefik/)
+    └── Web traffic for frontend/backend/grafana/prometheus does NOT go
+        through this instance — it is routed by infra-traefik in the
+        separate ~/infra/ stack on NEXUS via the shared `edge` docker
+        network. Sentinel services join `edge` and are discovered by
+        infra-traefik via Docker labels (see docker-compose.yml) or
+        ~/infra/traefik/dynamic/sentinel-routes.yml.
+
 Agent Binaries:
     └── release/agent/sentinel-agent.exe (bundled with installer)
     └── release/agent/sentinel-watchdog.exe
@@ -273,7 +286,9 @@ The agent enables file/process protection on startup. To replace the binary:
 |---------|-----|
 | Public Server | `https://sentinelrmm.us:8443` |
 | Local Docker | `http://localhost:8090` |
-| Agent mTLS Port | `8443` (Traefik terminates TLS) |
+| Agent mTLS Port | `8443` (terminated by `sentinel-agent-gateway` Traefik instance) |
+| Agent gRPC Dataplane | `4444` (terminated by `sentinel-agent-gateway`) |
+| Public Web (HTTPS) | Routed by `infra-traefik` in the separate `~/infra/` stack on NEXUS; Sentinel containers join the shared `edge` network to receive routing |
 
 ### Enrollment Token
 Default token: `40addfff-a1c0-4825-8e70-ca422dffd90e`

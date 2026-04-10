@@ -1,5 +1,12 @@
 # Security Audit: Public Installation Portal Endpoints
 
+> **Note (2026-04-10):** This audit references `configs/traefik/dynamic/routers.yml`
+> and `configs/traefik/dynamic/middlewares.yml`, paths that were removed during
+> the 2026-04-10 Traefik infrastructure refactor. Edge web routing now lives in
+> the separate `~/infra/` stack on NEXUS (`infra-traefik`); Sentinel only owns
+> `sentinel-agent-gateway` for agent protocols on :8443 and :4444. This
+> historical audit is preserved below for record.
+
 **Date:** 2026-01-14
 **Auditor:** Claude Code
 **Scope:** Public-facing agent installation portal endpoints

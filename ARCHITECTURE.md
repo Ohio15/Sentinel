@@ -8,6 +8,14 @@ Sentinel is a cloud-hosted Remote Monitoring and Management (RMM) platform desig
 
 ## Infrastructure Layout
 
+Edge web routing (HTTPS on :80/:443) is handled by a separate `infra-traefik`
+stack in `~/infra/` on the host. Sentinel services (frontend, backend, grafana,
+prometheus) join the shared external `edge` docker network and are discovered
+by infra-traefik via Docker labels or file-based config
+(`~/infra/traefik/dynamic/sentinel-routes.yml`). Sentinel owns only the
+`sentinel-agent-gateway` Traefik instance, which exposes :8443 (agent mTLS)
+and :4444 (gRPC dataplane) for agent protocols.
+
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
 │                    Oracle Cloud Always Free Tier                            │
@@ -16,34 +24,37 @@ Sentinel is a cloud-hosted Remote Monitoring and Management (RMM) platform desig
 │  │                        VM 1 (ARM - 12GB RAM)                         │   │
 │  │                         Application Server                           │   │
 │  │                                                                      │   │
-│  │   ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                │   │
-│  │   │   Traefik   │  │   Backend   │  │  Frontend   │                │   │
-│  │   │   (Proxy)   │  │    (Go)     │  │  (React)    │                │   │
-│  │   │   :80/443   │  │   :8080     │  │   (static)  │                │   │
-│  │   └──────┬──────┘  └──────┬──────┘  └─────────────┘                │   │
-│  │          │                │                                         │   │
-│  │          │         ┌──────┴──────┐                                 │   │
-│  │          │         │  WebSocket  │                                 │   │
-│  │          │         │    Hub      │                                 │   │
-│  │          │         │   :8081     │                                 │   │
-│  │          │         └─────────────┘                                 │   │
-│  └──────────┼──────────────────────────────────────────────────────────┘   │
-│             │                                                               │
-│  ┌──────────┼──────────────────────────────────────────────────────────┐   │
-│  │          │          VM 2 (ARM - 12GB RAM)                           │   │
-│  │          │           Database Server                                 │   │
-│  │          │                                                          │   │
-│  │          │    ┌─────────────┐    ┌─────────────┐                   │   │
-│  │          └───►│ PostgreSQL  │    │    Redis    │                   │   │
-│  │               │    :5432    │    │    :6379    │                   │   │
-│  │               │             │    │  (cache/    │                   │   │
-│  │               │             │    │   pubsub)   │                   │   │
-│  │               └─────────────┘    └─────────────┘                   │   │
+│  │   ┌──────────────┐ ┌──────────────┐ ┌─────────────┐ ┌────────────┐ │   │
+│  │   │ infra-traefik│ │sentinel-agent│ │   Backend   │ │  Frontend  │ │   │
+│  │   │ (~/infra/)   │ │   -gateway   │ │    (Go)     │ │  (React)   │ │   │
+│  │   │  :80 / :443  │ │ :8443 / :4444│ │   :8080     │ │  (static)  │ │   │
+│  │   └──────┬───────┘ └──────┬───────┘ └──────┬──────┘ └─────────────┘ │   │
+│  │          │                │                │                         │   │
+│  │          │ edge network   │ agent traffic  │                         │   │
+│  │          └────────────────┼────────────────┤                         │   │
+│  │                           │                │                         │   │
+│  │                           │         ┌──────┴──────┐                 │   │
+│  │                           │         │  WebSocket  │                 │   │
+│  │                           │         │    Hub      │                 │   │
+│  │                           │         │   :8081     │                 │   │
+│  │                           │         └─────────────┘                 │   │
+│  └───────────────────────────┼──────────────────────────────────────────┘   │
+│                              │                                               │
+│  ┌───────────────────────────┼──────────────────────────────────────────┐   │
+│  │                           │    VM 2 (ARM - 12GB RAM)                 │   │
+│  │                           │     Database Server                      │   │
+│  │                           │                                          │   │
+│  │                           │  ┌─────────────┐    ┌─────────────┐     │   │
+│  │                           └─►│ PostgreSQL  │    │    Redis    │     │   │
+│  │                              │    :5432    │    │    :6379    │     │   │
+│  │                              │             │    │  (cache/    │     │   │
+│  │                              │             │    │   pubsub)   │     │   │
+│  │                              └─────────────┘    └─────────────┘     │   │
 │  └──────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
-                                    │ HTTPS/WSS (TLS)
+                                    │ mTLS / gRPC (TLS) to sentinel-agent-gateway
                                     │
         ┌───────────────────────────┼───────────────────────────┐
         │                           │                           │
@@ -57,7 +68,8 @@ Sentinel is a cloud-hosted Remote Monitoring and Management (RMM) platform desig
 
 | Component | Technology | Purpose |
 |-----------|------------|---------|
-| **Reverse Proxy** | Traefik v3 | SSL termination, routing, Let's Encrypt |
+| **Edge Web Routing** | `infra-traefik` (Traefik v3, `~/infra/` stack) | SSL termination and HTTP routing for frontend/backend/grafana/prometheus via the shared `edge` network |
+| **Agent Gateway** | `sentinel-agent-gateway` (Traefik v3) | Agent-facing mTLS on :8443 and gRPC dataplane on :4444 |
 | **Backend API** | Go 1.22 + Gin | REST API, business logic |
 | **WebSocket Hub** | Go + gorilla/websocket | Real-time agent communication |
 | **Database** | PostgreSQL 16 | Primary data store |
@@ -229,9 +241,10 @@ See `migrations/` folder for full schema. Key tables:
 - API keys for programmatic access
 
 ### Agent Authentication
-1. Initial enrollment with one-time token
-2. Agent receives unique credentials
-3. Subsequent connections use agent credentials
+1. Initial enrollment with one-time token through `sentinel-agent-gateway` on :8443
+2. Agent receives a unique client certificate issued by the Sentinel CA
+3. Subsequent connections authenticate via mTLS; token-based auth is a
+   historical fallback path, not the intended long-term mechanism
 4. TLS for all communication
 
 ### Authorization
