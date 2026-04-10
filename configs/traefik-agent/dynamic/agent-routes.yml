@@ -1,0 +1,58 @@
+http:
+  routers:
+    ws-agent-mtls:
+      rule: "PathPrefix(`/ws/agent/mtls`)"
+      entryPoints: [agents]
+      service: sentinel-backend-svc
+      tls:
+        options: mtls
+      middlewares: [agentRateLimit]
+      priority: 15
+
+    ws-agent:
+      rule: "PathPrefix(`/ws/agent`) || PathPrefix(`/ws`)"
+      entryPoints: [agents]
+      service: sentinel-backend-svc
+      tls:
+        options: mtls
+      middlewares: [agentRateLimit]
+      priority: 10
+
+    agent-api:
+      rule: "PathPrefix(`/api/agent`)"
+      entryPoints: [agents]
+      service: sentinel-backend-svc
+      tls:
+        options: mtls
+      middlewares: [agentRateLimit]
+      priority: 10
+
+    agent-health:
+      rule: "PathPrefix(`/health`)"
+      entryPoints: [agents]
+      service: sentinel-backend-svc
+      tls:
+        options: mtls
+      priority: 5
+
+  services:
+    sentinel-backend-svc:
+      loadBalancer:
+        servers:
+          - url: "http://sentinel-backend:8080"
+
+# TCP routers for gRPC TLS passthrough
+tcp:
+  routers:
+    grpc-dataplane:
+      entryPoints: [grpc]
+      rule: "HostSNI(`*`)"
+      service: grpc-backend
+      tls:
+        passthrough: true
+
+  services:
+    grpc-backend:
+      loadBalancer:
+        servers:
+          - address: "sentinel-backend:4444"

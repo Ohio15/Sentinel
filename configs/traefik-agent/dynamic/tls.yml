@@ -1,0 +1,19 @@
+tls:
+  options:
+    # Agent mTLS — accept client cert if given, don't require (backward compat)
+    mtls:
+      minVersion: VersionTLS12
+      maxVersion: VersionTLS13
+      clientAuth:
+        caFiles:
+          - /certs/ca-cert.pem
+        clientAuthType: VerifyClientCertIfGiven
+      cipherSuites:
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+      curvePreferences:
+        - X25519
+        - CurveP384
+        - CurveP256

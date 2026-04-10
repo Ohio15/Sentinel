@@ -1,0 +1,39 @@
+# Sentinel Agent Gateway — Static Configuration
+# Dedicated Traefik instance for agent mTLS (:8443) and gRPC dataplane (:4444)
+# Isolated from edge infrastructure. Lives in the Sentinel stack because agent
+# protocols are Sentinel-specific concerns.
+
+api:
+  dashboard: false
+  insecure: false
+
+log:
+  level: INFO
+  format: json
+
+accessLog:
+  format: json
+  filePath: /var/log/traefik/access.log
+  bufferingSize: 100
+
+entryPoints:
+  # mTLS-authenticated agent connections
+  agents:
+    address: ":8443"
+    transport:
+      respondingTimeouts:
+        readTimeout: 0s
+        writeTimeout: 0s
+        idleTimeout: 300s
+    http:
+      tls:
+        options: mtls@file
+
+  # gRPC Data Plane (TCP passthrough, backend terminates TLS)
+  grpc:
+    address: ":4444"
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true

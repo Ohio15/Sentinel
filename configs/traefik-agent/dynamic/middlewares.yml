@@ -1,0 +1,10 @@
+http:
+  middlewares:
+    agentRateLimit:
+      rateLimit:
+        average: 300
+        burst: 100
+        period: 1m
+        sourceCriterion:
+          ipStrategy:
+            depth: 1
