@@ -25,6 +25,7 @@ import (
 	grpcserver "github.com/sentinel/server/internal/grpc"
 	pb "github.com/sentinel/server/internal/grpc/dataplane"
 	"github.com/sentinel/server/internal/metrics"
+	"github.com/sentinel/server/internal/middleware"
 	"github.com/sentinel/server/internal/notifier"
 	"github.com/sentinel/server/internal/pki"
 	"github.com/sentinel/server/internal/push"
@@ -35,6 +36,7 @@ import (
 	"github.com/sentinel/server/pkg/config"
 	"github.com/sentinel/server/pkg/database"
 	"github.com/sentinel/server/pkg/logger"
+	"github.com/sentinel/server/pkg/tlsconfig"
 )
 
 func main() {
@@ -51,7 +53,7 @@ func main() {
 
 	// Initialize structured logger
 	logger.Init(cfg.Environment)
-	logger.Info("Sentinel server starting", "version", "1.76.14", "env", cfg.Environment, "server_id", cfg.ServerID)
+	logger.Info("Sentinel server starting", "version", "1.77.0", "env", cfg.Environment, "server_id", cfg.ServerID)
 
 	// Initialize database with connection pool settings
 	dbConfig := &database.Config{
@@ -313,6 +315,48 @@ func main() {
 		}
 	}()
 
+	// Start agent mTLS HTTP server on a dedicated port (:8443 by default).
+	// This listener terminates TLS directly (no Traefik proxy), exposes only
+	// agent-facing routes, and enforces per-IP rate limiting.
+	var mtlsServer *http.Server
+	if cfg.EnableMTLS && cfg.AgentMTLSPort > 0 {
+		mtlsTLSConfig, err := tlsconfig.LoadAgentMTLSConfig(tlsconfig.Config{
+			CertPath:   cfg.TLSCertPath,
+			KeyPath:    cfg.TLSKeyPath,
+			CACertPath: cfg.CACertPath,
+		})
+		if err != nil {
+			log.Fatalf("Failed to load agent mTLS config: %v", err)
+		}
+
+		agentLimiter := middleware.NewAgentRateLimiter()
+		agentRouter := api.NewAgentMTLSRouter(services, agentLimiter)
+
+		mtlsServer = &http.Server{
+			Addr:              fmt.Sprintf(":%d", cfg.AgentMTLSPort),
+			Handler:           agentRouter,
+			TLSConfig:         mtlsTLSConfig,
+			ReadTimeout:       0,                 // WebSocket: no read deadline
+			WriteTimeout:      0,                 // WebSocket: no write deadline
+			IdleTimeout:       300 * time.Second,  // matches former Traefik respondingTimeouts
+			ReadHeaderTimeout: 10 * time.Second,
+			MaxHeaderBytes:    1 << 20, // 1MB
+		}
+
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Error("Agent mTLS server goroutine panicked", "panic", r, "stack", string(debug.Stack()))
+				}
+			}()
+			logger.Info("Agent mTLS server listening", "addr", mtlsServer.Addr, "port", cfg.AgentMTLSPort)
+			// Empty cert/key paths: TLSConfig.GetCertificate handles cert loading
+			if err := mtlsServer.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("Agent mTLS server failed: %v", err)
+			}
+		}()
+	}
+
 	// Start gRPC Data Plane server (grpcServer was created earlier for Services)
 	var grpcSrv interface{ GracefulStop() }
 	if cfg.GRPCPort > 0 && grpcServer != nil {
@@ -466,6 +510,14 @@ func main() {
 	if grpcSrv != nil {
 		log.Println("Stopping gRPC server...")
 		grpcSrv.GracefulStop()
+	}
+
+	// Shutdown agent mTLS server
+	if mtlsServer != nil {
+		log.Println("Stopping agent mTLS server...")
+		if err := mtlsServer.Shutdown(ctx); err != nil {
+			log.Printf("Agent mTLS server forced to shutdown: %v", err)
+		}
 	}
 
 	// Shutdown HTTP server

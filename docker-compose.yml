@@ -1,33 +1,4 @@
 services:
-  # Dedicated Traefik instance for Sentinel agent mTLS + gRPC dataplane
-  # Replaces agent-handling portions of the old sentinel-traefik service.
-  # Handles ONLY :8443 (agent mTLS) and :4444 (gRPC passthrough).
-  # Web traffic (:80/:443/:4443) is handled by infra-traefik in ~/infra/.
-  sentinel-agent-gateway:
-    image: traefik:v3.0
-    container_name: sentinel-agent-gateway
-    restart: unless-stopped
-    ports:
-      - "8443:8443"
-      - "4444:4444"
-    volumes:
-      - ./configs/traefik-agent/traefik.yml:/etc/traefik/traefik.yml:ro
-      - ./configs/traefik-agent/dynamic:/etc/traefik/dynamic:ro
-      - ./certs:/certs:ro
-      - agent-traefik-logs:/var/log/traefik
-    networks:
-      - sentinel-network
-    security_opt:
-      - no-new-privileges:true
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 256M
-        reservations:
-          cpus: '0.1'
-          memory: 64M
-
   # Backend API Server
   backend:
     build:
@@ -38,11 +9,11 @@ services:
     ports:
       - "127.0.0.1:8090:8080"
       - "127.0.0.1:4445:4445"  # Plaintext gRPC for CF tunnel (localhost only)
+      - "8443:8443"             # Agent mTLS HTTP (direct, no Traefik)
+      - "4444:4444"             # Agent mTLS gRPC (direct, no Traefik)
       - "${TURN_PORT:-3478}:${TURN_PORT:-3478}/udp"
       - "${TURN_PORT:-3478}:${TURN_PORT:-3478}/tcp"
       - "${TURN_MIN_PORT:-49152}-${TURN_MAX_PORT:-49252}:${TURN_MIN_PORT:-49152}-${TURN_MAX_PORT:-49252}/udp"
-    expose:
-      - "4444"   # gRPC Data Plane (exposed via Traefik, not directly to host)
     restart: unless-stopped
     environment:
       - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=${DB_SSL_MODE:-require}
@@ -58,6 +29,7 @@ services:
       - API_KEY=${API_KEY}
       # mTLS configuration
       - ENABLE_MTLS=${ENABLE_MTLS:-true}
+      - AGENT_MTLS_PORT=8443
       - CA_CERT_PATH=/certs/ca-cert.pem
       - CA_KEY_PATH=/certs/ca-key.pem
       - CERT_VALIDITY_YEARS=${CERT_VALIDITY_YEARS:-2}
@@ -284,7 +256,6 @@ networks:
     name: edge
 
 volumes:
-  agent-traefik-logs:
   postgres-data:
   redis-data:
   agent-certs:

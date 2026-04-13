@@ -1,6 +1,6 @@
 module github.com/sentinel/server
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/gin-gonic/gin v1.9.1
@@ -9,11 +9,15 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.1
 	github.com/jackc/pgx/v5 v5.5.2
+	github.com/jung-kurt/gofpdf v1.16.2
 	github.com/lib/pq v1.10.9
 	github.com/pion/turn/v3 v3.0.3
+	github.com/pquerna/otp v1.5.0
 	github.com/redis/go-redis/v9 v9.4.0
+	github.com/xuri/excelize/v2 v2.10.0
 	golang.org/x/crypto v0.47.0
 	golang.org/x/oauth2 v0.23.0
+	golang.org/x/time v0.15.0
 	google.golang.org/grpc v1.64.0
 	google.golang.org/protobuf v1.33.0
 )
@@ -38,7 +42,6 @@ require (
 	github.com/jackc/pgservicefile v0.0.0-20221227161230-091c0ba34f0a // indirect
 	github.com/jackc/puddle/v2 v2.2.1 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/jung-kurt/gofpdf v1.16.2 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.4 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/leodido/go-urn v1.2.4 // indirect
@@ -53,7 +56,6 @@ require (
 	github.com/pion/stun/v2 v2.0.0 // indirect
 	github.com/pion/transport/v2 v2.2.1 // indirect
 	github.com/pion/transport/v3 v3.0.2 // indirect
-	github.com/pquerna/otp v1.5.0 // indirect
 	github.com/richardlehane/mscfb v1.0.4 // indirect
 	github.com/richardlehane/msoleps v1.0.4 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
@@ -62,7 +64,6 @@ require (
 	github.com/ugorji/go/codec v1.2.11 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xuri/efp v0.0.1 // indirect
-	github.com/xuri/excelize/v2 v2.10.0 // indirect
 	github.com/xuri/nfp v0.0.2-0.20250530014748-2ddeb826f9a9 // indirect
 	golang.org/x/arch v0.3.0 // indirect
 	golang.org/x/net v0.48.0 // indirect

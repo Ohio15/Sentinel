@@ -2,13 +2,10 @@ package grpc
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"io"
 	"log"
 	"net"
-	"os"
 	"sync"
 	"time"
 
@@ -16,6 +13,7 @@ import (
 	pb "github.com/sentinel/server/internal/grpc/dataplane"
 	"github.com/sentinel/server/internal/metrics"
 	"github.com/sentinel/server/pkg/database"
+	"github.com/sentinel/server/pkg/tlsconfig"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
@@ -529,34 +527,18 @@ func StartServer(config ServerConfig, server *DataPlaneServer) (*grpc.Server, ne
 		grpc.MaxSendMsgSize(64 * 1024 * 1024),
 	}
 
-	// Configure TLS if enabled
+	// Configure TLS if enabled — uses the shared tlsconfig factory so cipher
+	// suite, curve, and mTLS policy stay consistent with the HTTP :8443 listener.
 	if config.UseTLS && config.TLSCertFile != "" && config.TLSKeyFile != "" {
-		cert, err := tls.LoadX509KeyPair(config.TLSCertFile, config.TLSKeyFile)
+		tlsCfg, err := tlsconfig.LoadAgentMTLSConfig(tlsconfig.Config{
+			CertPath:   config.TLSCertFile,
+			KeyPath:    config.TLSKeyFile,
+			CACertPath: config.CACertFile,
+		})
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to load TLS certificates: %w", err)
+			return nil, nil, fmt.Errorf("failed to load TLS config: %w", err)
 		}
-
-		tlsConfig := &tls.Config{
-			Certificates: []tls.Certificate{cert},
-			MinVersion:   tls.VersionTLS12,
-		}
-
-		// Add CA cert for client verification if provided
-		if config.CACertFile != "" {
-			caCert, err := os.ReadFile(config.CACertFile)
-			if err != nil {
-				log.Printf("[gRPC] Warning: Could not read CA cert: %v", err)
-			} else {
-				caCertPool := x509.NewCertPool()
-				if caCertPool.AppendCertsFromPEM(caCert) {
-					tlsConfig.ClientCAs = caCertPool
-					tlsConfig.ClientAuth = tls.VerifyClientCertIfGiven
-					log.Printf("[gRPC] Client certificate verification enabled")
-				}
-			}
-		}
-
-		opts = append(opts, grpc.Creds(credentials.NewTLS(tlsConfig)))
+		opts = append(opts, grpc.Creds(credentials.NewTLS(tlsCfg)))
 		log.Printf("[gRPC] TLS enabled with cert: %s", config.TLSCertFile)
 	}
 

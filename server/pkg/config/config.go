@@ -57,6 +57,9 @@ type Config struct {
 	EnableMTLS          bool   // Enable mTLS certificate issuance
 	CertValidityYears   int    // Certificate validity period in years
 
+	// Agent mTLS HTTP listener
+	AgentMTLSPort int // Port for mTLS HTTP listener (default 8443, 0 disables)
+
 	// gRPC Data Plane
 	GRPCPort          int    // gRPC server port (0 to disable)
 	GRPCPlaintextPort int    // Plaintext gRPC port for CF tunnel connections (0 to disable)
@@ -134,6 +137,9 @@ func Load() (*Config, error) {
 		CAKeyPath:         getEnv("CA_KEY_PATH", "/certs/ca-key.pem"),
 		EnableMTLS:        getEnvBool("ENABLE_MTLS", true),
 		CertValidityYears: getEnvInt("CERT_VALIDITY_YEARS", 2),
+
+		// Agent mTLS HTTP listener
+		AgentMTLSPort: getEnvInt("AGENT_MTLS_PORT", 8443),
 
 		// gRPC Data Plane
 		GRPCPort:          getEnvInt("GRPC_PORT", 4444),
