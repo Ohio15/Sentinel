@@ -1,0 +1,18 @@
+Sentinel RMM Platform
+Copyright 2026 Ohio15
+
+This product is licensed under the Apache License, Version 2.0 (the "License");
+you may not use this product except in compliance with the License. You may
+obtain a copy of the License in the LICENSE file in this repository or at
+http://www.apache.org/licenses/LICENSE-2.0.
+
+This product includes third-party software distributed under its own licenses.
+A complete inventory can be generated with:
+
+  cd agent && go list -m all > ../DEPENDENCIES-go.txt
+  npm list --all --json > DEPENDENCIES-npm.json
+
+Major components include the Go standard library (BSD-3-Clause), React (MIT),
+Traefik (MIT), and additional packages distributed primarily under MIT,
+Apache-2.0, and BSD-family licenses. Each dependency retains its own license
+and attribution; consult the dependency inventory for details.

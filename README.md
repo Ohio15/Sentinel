@@ -4,6 +4,19 @@
 
 Sentinel is a modern, cloud-hosted Remote Monitoring and Management (RMM) platform designed to monitor and manage endpoints across Windows, Linux, and macOS. Built with a focus on performance, scalability, and ease of use.
 
+> **⚠ Authorized Deployment Only.** Sentinel is a remote monitoring and
+> management platform. Deploying it on systems you do not own, administer, or
+> have explicit written authorization to manage is illegal in most
+> jurisdictions. You are solely responsible for ensuring any deployment
+> complies with applicable law and your organization's policies. See
+> [SECURITY.md](SECURITY.md) to report vulnerabilities.
+>
+> **No Warranty.** This software is provided "AS IS" under the terms of the
+> Apache License 2.0 (see [LICENSE](LICENSE)). The authors make no
+> representations about suitability for any particular purpose, including but
+> not limited to regulatory compliance, endpoint-protection guarantees, or
+> data-integrity assurances.
+
 ## Features
 
 - **Real-time Device Monitoring** - CPU, memory, disk, and network metrics
