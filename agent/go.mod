@@ -1,10 +1,13 @@
 module github.com/sentinel/agent
 
-go 1.21.0
+go 1.24.0
+
+toolchain go1.25.9
 
 require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/creack/pty v1.1.21
+	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.1
 	github.com/kardianos/service v1.2.2
 	github.com/kbinani/screenshot v0.0.0-20250624051815-089614a94018
@@ -13,10 +16,10 @@ require (
 	github.com/pion/webrtc/v4 v4.1.8
 	github.com/shirou/gopsutil/v3 v3.24.1
 	github.com/y9o/go-openh264 v0.2.0
-	golang.org/x/sys v0.30.0
-	golang.org/x/text v0.22.0
-	google.golang.org/grpc v1.64.0
-	google.golang.org/protobuf v1.33.0
+	golang.org/x/sys v0.39.0
+	golang.org/x/text v0.32.0
+	google.golang.org/grpc v1.79.3
+	google.golang.org/protobuf v1.36.10
 	modernc.org/sqlite v1.34.4
 )
 
@@ -26,7 +29,6 @@ require (
 	github.com/gen2brain/shm v0.1.0 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/jezek/xgb v1.1.1 // indirect
 	github.com/lufia/plan9stats v0.0.0-20231016141302-07b5767bb0ed // indirect
@@ -53,9 +55,9 @@ require (
 	github.com/tklauser/numcpus v0.7.0 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	github.com/yusufpapurcu/wmi v1.2.3 // indirect
-	golang.org/x/crypto v0.33.0 // indirect
-	golang.org/x/net v0.35.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20240318140521-94a12d6c2237 // indirect
+	golang.org/x/crypto v0.46.0 // indirect
+	golang.org/x/net v0.48.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217 // indirect
 	modernc.org/gc/v3 v3.0.0-20240107210532-573471604cb6 // indirect
 	modernc.org/libc v1.55.3 // indirect
 	modernc.org/mathutil v1.6.0 // indirect

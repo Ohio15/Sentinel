@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -1860,7 +1861,7 @@ func (a *Agent) handleUpdateCertificate(msg *client.Message) error {
 	if !ok {
 		errMsg := "Invalid message data"
 		a.client.SendCertUpdateAck("", false, errMsg)
-		return fmt.Errorf(errMsg)
+		return errors.New(errMsg)
 	}
 
 	certType, _ := data["certType"].(string)
@@ -1870,7 +1871,7 @@ func (a *Agent) handleUpdateCertificate(msg *client.Message) error {
 	if certContent == "" {
 		errMsg := "No certificate content provided"
 		a.client.SendCertUpdateAck(certHash, false, errMsg)
-		return fmt.Errorf(errMsg)
+		return errors.New(errMsg)
 	}
 
 	hashPrefix := certHash
@@ -1893,7 +1894,7 @@ func (a *Agent) handleUpdateCertificate(msg *client.Message) error {
 		errMsg := fmt.Sprintf("Failed to create cert directory: %v", err)
 		log.Printf("[Certs] %s", errMsg)
 		a.client.SendCertUpdateAck(certHash, false, errMsg)
-		return fmt.Errorf(errMsg)
+		return errors.New(errMsg)
 	}
 
 	// Write the certificate file
@@ -1901,7 +1902,7 @@ func (a *Agent) handleUpdateCertificate(msg *client.Message) error {
 		errMsg := fmt.Sprintf("Failed to write certificate: %v", err)
 		log.Printf("[Certs] %s", errMsg)
 		a.client.SendCertUpdateAck(certHash, false, errMsg)
-		return fmt.Errorf(errMsg)
+		return errors.New(errMsg)
 	}
 
 	log.Printf("[Certs] Certificate updated successfully at %s", certPath)
