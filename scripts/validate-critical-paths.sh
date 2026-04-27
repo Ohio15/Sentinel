@@ -11,12 +11,13 @@
 # Usage:
 #   ./validate-critical-paths.sh                    # Test remote production
 #   ./validate-critical-paths.sh localhost:8090     # Test local dev
-#   ./validate-critical-paths.sh sentinelrmm.us:4443
+#   ./validate-critical-paths.sh https://sentinelrmm.us
+#   ./validate-critical-paths.sh https://sentinel.nexus  # LAN-fast on NEXUS
 
 set -e
 
 # Configuration
-BASE_URL="${1:-https://sentinelrmm.us:4443}"
+BASE_URL="${1:-https://sentinelrmm.us}"
 TIMEOUT=10
 VERBOSE="${VERBOSE:-false}"
 

@@ -99,7 +99,7 @@ fi
 # Run the critical path validation on current production
 log_info "Running critical path validation on current production..."
 if [ -x "$SCRIPT_DIR/validate-critical-paths.sh" ]; then
-    if "$SCRIPT_DIR/validate-critical-paths.sh" "https://sentinelrmm.us:4443" 2>&1; then
+    if "$SCRIPT_DIR/validate-critical-paths.sh" "https://sentinelrmm.us" 2>&1; then
         log_success "Current production is healthy"
     else
         log_warn "Current production has issues - deployment may fix them"
@@ -208,7 +208,7 @@ DEPLOYMENT_SUCCESS=true
 
 # Run critical path validation
 if [ -x "$SCRIPT_DIR/validate-critical-paths.sh" ]; then
-    if "$SCRIPT_DIR/validate-critical-paths.sh" "https://sentinelrmm.us:4443" 2>&1; then
+    if "$SCRIPT_DIR/validate-critical-paths.sh" "https://sentinelrmm.us" 2>&1; then
         log_success "Post-deployment validation passed"
     else
         log_error "Post-deployment validation FAILED"
@@ -217,7 +217,7 @@ if [ -x "$SCRIPT_DIR/validate-critical-paths.sh" ]; then
 else
     # Fallback: basic health check
     log_info "Running basic health check..."
-    HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 -k "https://sentinelrmm.us:4443/health")
+    HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 -k "https://sentinelrmm.us/health")
     if [ "$HTTP_STATUS" = "200" ]; then
         log_success "Health check passed (HTTP $HTTP_STATUS)"
     else
