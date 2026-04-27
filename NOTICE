@@ -6,13 +6,1096 @@ you may not use this product except in compliance with the License. You may
 obtain a copy of the License in the LICENSE file in this repository or at
 http://www.apache.org/licenses/LICENSE-2.0.
 
-This product includes third-party software distributed under its own licenses.
-A complete inventory can be generated with:
+This NOTICE file enumerates third-party software distributed with Sentinel and
+the license under which each dependency is made available. Each dependency
+remains the property of its respective copyright holders and retains its
+original license and attribution terms.
 
-  cd agent && go list -m all > ../DEPENDENCIES-go.txt
-  npm list --all --json > DEPENDENCIES-npm.json
+## Inventory summary
 
-Major components include the Go standard library (BSD-3-Clause), React (MIT),
-Traefik (MIT), and additional packages distributed primarily under MIT,
-Apache-2.0, and BSD-family licenses. Each dependency retains its own license
-and attribution; consult the dependency inventory for details.
+- Go dependencies (deduplicated across `agent` + `server` modules): **170**
+  - Agent module direct+indirect: 95
+  - Server module direct+indirect: 98
+- npm dependencies (full `npm list --all` tree): **510**
+  - Production-only subset: 18
+- Generated: dependency data from `go list -m -json all` (per module) and `license-checker --json` (frontend). License identification augmented with `go-licenses report` where available.
+
+## License compliance review
+
+**Copyleft / weak-copyleft licenses detected — review recommended:**
+
+Go:
+- `github.com/hashicorp/golang-lru/v2` @ `v2.0.7` — MPL-2.0
+- `github.com/shoenig/go-m1cpu` @ `v0.1.6` — MPL-2.0
+- `github.com/shoenig/test` @ `v0.6.4` — MPL-2.0
+
+MPL-2.0 is a **weak (file-level) copyleft** license. Linking to MPL-2.0 code from a larger proprietary work is permitted; only modifications to the MPL-2.0 files themselves must be published under MPL-2.0. Sentinel does not modify any of the listed MPL-2.0 packages, so no source-disclosure obligation is triggered by the current dependency set. Full MPL-2.0 text is reproduced below. No **strong** copyleft licenses (GPL / AGPL / LGPL / SSPL / BUSL) were detected.
+
+## Go dependencies
+
+The following Go modules are compiled into the Sentinel agent and server binaries (direct and transitive dependencies). Modules flagged `agent+server` are shared.
+
+| Module | Version | License | Used By |
+|---|---|---|---|
+| `cloud.google.com/go/compute` | `v1.25.1` | Apache-2.0 | agent+server |
+| `cloud.google.com/go/compute/metadata` | `v0.2.3` | Apache-2.0 | agent |
+| `cloud.google.com/go/compute/metadata` | `v0.3.0` | Apache-2.0 | server |
+| `github.com/boombuler/barcode` | `v1.0.1-0.20190219062509-6c824513bacc` | MIT | server |
+| `github.com/bsm/ginkgo/v2` | `v2.12.0` | MIT | server |
+| `github.com/bsm/gomega` | `v1.27.10` | MIT | server |
+| `github.com/bytedance/sonic` | `v1.9.1` | Apache-2.0 | server |
+| `github.com/census-instrumentation/opencensus-proto` | `v0.4.1` | Apache-2.0 | agent+server |
+| `github.com/cespare/xxhash/v2` | `v2.2.0` | MIT | agent+server |
+| `github.com/chenzhuoyu/base64x` | `v0.0.0-20221115062448-fe3a3abad311` | Apache-2.0 | server |
+| `github.com/cncf/xds/go` | `v0.0.0-20240318125728-8a4994d93e50` | Apache-2.0 | agent+server |
+| `github.com/creack/pty` | `v1.1.21` | MIT | agent |
+| `github.com/creack/pty` | `v1.1.9` | MIT | server |
+| `github.com/davecgh/go-spew` | `v1.1.1` | ISC | agent+server |
+| `github.com/dgryski/go-rendezvous` | `v0.0.0-20200823014737-9f7001d12a5f` | MIT | server |
+| `github.com/dustin/go-humanize` | `v1.0.1` | MIT | agent |
+| `github.com/ebitengine/purego` | `v0.6.1` | Apache-2.0 | agent |
+| `github.com/envoyproxy/go-control-plane` | `v0.12.0` | Apache-2.0 | agent+server |
+| `github.com/envoyproxy/protoc-gen-validate` | `v1.0.4` | Apache-2.0 | agent+server |
+| `github.com/fxamacker/cbor/v2` | `v2.5.0` | MIT | server |
+| `github.com/gabriel-vasile/mimetype` | `v1.4.2` | MIT | server |
+| `github.com/gen2brain/shm` | `v0.1.0` | BSD-3-Clause | agent |
+| `github.com/gin-contrib/sse` | `v0.1.0` | MIT | server |
+| `github.com/gin-gonic/gin` | `v1.9.1` | MIT | server |
+| `github.com/go-ole/go-ole` | `v1.3.0` | MIT | agent |
+| `github.com/go-playground/assert/v2` | `v2.2.0` | MIT | server |
+| `github.com/go-playground/locales` | `v0.14.1` | MIT | server |
+| `github.com/go-playground/universal-translator` | `v0.18.1` | MIT | server |
+| `github.com/go-playground/validator/v10` | `v10.14.0` | MIT | server |
+| `github.com/go-webauthn/webauthn` | `v0.10.0` | BSD-3-Clause | server |
+| `github.com/go-webauthn/x` | `v0.1.6` | BSD-2-Clause | server |
+| `github.com/goccy/go-json` | `v0.10.2` | MIT | server |
+| `github.com/godbus/dbus/v5` | `v5.1.0` | BSD-2-Clause | agent |
+| `github.com/golang-jwt/jwt/v5` | `v5.2.0` | MIT | server |
+| `github.com/golang/glog` | `v1.2.0` | Apache-2.0 | agent+server |
+| `github.com/golang/protobuf` | `v1.5.4` | BSD-3-Clause | agent+server |
+| `github.com/google/go-cmp` | `v0.6.0` | BSD-3-Clause | agent+server |
+| `github.com/google/go-tpm` | `v0.9.0` | Apache-2.0 | server |
+| `github.com/google/go-tpm-tools` | `v0.3.13-0.20230620182252-4639ecce2aba` | Apache-2.0 | server |
+| `github.com/google/gofuzz` | `v1.0.0` | Apache-2.0 | server |
+| `github.com/google/pprof` | `v0.0.0-20240409012703-83162a5b38cd` | Apache-2.0 | agent |
+| `github.com/google/uuid` | `v1.6.0` | BSD-3-Clause | agent+server |
+| `github.com/gorilla/websocket` | `v1.5.1` | BSD-3-Clause | agent+server |
+| `github.com/hashicorp/golang-lru/v2` | `v2.0.7` | MPL-2.0 | agent |
+| `github.com/jackc/pgpassfile` | `v1.0.0` | MIT | server |
+| `github.com/jackc/pgservicefile` | `v0.0.0-20221227161230-091c0ba34f0a` | MIT | server |
+| `github.com/jackc/pgx/v5` | `v5.5.2` | MIT | server |
+| `github.com/jackc/puddle/v2` | `v2.2.1` | MIT | server |
+| `github.com/jezek/xgb` | `v1.1.1` | BSD-3-Clause | agent |
+| `github.com/json-iterator/go` | `v1.1.12` | MIT | server |
+| `github.com/jung-kurt/gofpdf` | `v1.16.2` | MIT | server |
+| `github.com/kardianos/service` | `v1.2.2` | Zlib | agent |
+| `github.com/kbinani/screenshot` | `v0.0.0-20250624051815-089614a94018` | MIT | agent |
+| `github.com/klauspost/cpuid/v2` | `v2.2.4` | MIT | server |
+| `github.com/kr/pretty` | `v0.1.0` | MIT | agent |
+| `github.com/kr/pretty` | `v0.3.0` | MIT | server |
+| `github.com/kr/text` | `v0.2.0` | MIT | agent+server |
+| `github.com/leodido/go-urn` | `v1.2.4` | MIT | server |
+| `github.com/lib/pq` | `v1.10.9` | MIT | server |
+| `github.com/lufia/plan9stats` | `v0.0.0-20231016141302-07b5767bb0ed` | BSD-3-Clause | agent |
+| `github.com/lxn/win` | `v0.0.0-20210218163916-a377121e959e` | BSD-3-Clause | agent |
+| `github.com/mattn/go-isatty` | `v0.0.20` | MIT | agent |
+| `github.com/mattn/go-isatty` | `v0.0.19` | MIT | server |
+| `github.com/Microsoft/go-winio` | `v0.6.2` | MIT | agent |
+| `github.com/mitchellh/mapstructure` | `v1.5.0` | MIT | server |
+| `github.com/modern-go/concurrent` | `v0.0.0-20180306012644-bacd9c7ef1dd` | Apache-2.0 | server |
+| `github.com/modern-go/reflect2` | `v1.0.2` | Apache-2.0 | server |
+| `github.com/ncruces/go-strftime` | `v0.1.9` | MIT | agent |
+| `github.com/onsi/ginkgo` | `v1.16.5` | MIT | agent |
+| `github.com/onsi/gomega` | `v1.17.0` | MIT | agent |
+| `github.com/pelletier/go-toml/v2` | `v2.0.8` | MIT | server |
+| `github.com/phpdave11/gofpdi` | `v1.0.7` | MIT | server |
+| `github.com/pion/datachannel` | `v1.5.10` | MIT | agent |
+| `github.com/pion/dtls/v2` | `v2.2.7` | MIT | server |
+| `github.com/pion/dtls/v3` | `v3.0.9` | MIT | agent |
+| `github.com/pion/ice/v4` | `v4.1.0` | MIT | agent |
+| `github.com/pion/interceptor` | `v0.1.42` | MIT | agent |
+| `github.com/pion/logging` | `v0.2.4` | MIT | agent |
+| `github.com/pion/logging` | `v0.2.2` | MIT | server |
+| `github.com/pion/mdns/v2` | `v2.1.0` | MIT | agent |
+| `github.com/pion/randutil` | `v0.1.0` | MIT | agent+server |
+| `github.com/pion/rtcp` | `v1.2.16` | MIT | agent |
+| `github.com/pion/rtp` | `v1.8.26` | MIT | agent |
+| `github.com/pion/sctp` | `v1.8.41` | MIT | agent |
+| `github.com/pion/sdp/v3` | `v3.0.16` | MIT | agent |
+| `github.com/pion/srtp/v3` | `v3.0.9` | MIT | agent |
+| `github.com/pion/stun/v2` | `v2.0.0` | MIT | server |
+| `github.com/pion/stun/v3` | `v3.0.2` | MIT | agent |
+| `github.com/pion/transport/v2` | `v2.2.1` | MIT | server |
+| `github.com/pion/transport/v3` | `v3.1.1` | MIT | agent |
+| `github.com/pion/transport/v3` | `v3.0.2` | MIT | server |
+| `github.com/pion/turn/v3` | `v3.0.3` | MIT | server |
+| `github.com/pion/turn/v4` | `v4.1.3` | MIT | agent |
+| `github.com/pion/webrtc/v4` | `v4.1.8` | MIT | agent |
+| `github.com/pkg/errors` | `v0.8.1` | BSD-2-Clause | server |
+| `github.com/pmezard/go-difflib` | `v1.0.0` | BSD-2-Clause | agent+server |
+| `github.com/power-devops/perfstat` | `v0.0.0-20221212215047-62379fc7944b` | MIT | agent |
+| `github.com/pquerna/otp` | `v1.5.0` | Apache-2.0 | server |
+| `github.com/redis/go-redis/v9` | `v9.4.0` | BSD-2-Clause | server |
+| `github.com/remyoudompheng/bigfft` | `v0.0.0-20230129092748-24d4a6f8daec` | BSD-3-Clause | agent |
+| `github.com/richardlehane/mscfb` | `v1.0.4` | Apache-2.0 | server |
+| `github.com/richardlehane/msoleps` | `v1.0.4` | Apache-2.0 | server |
+| `github.com/rogpeppe/go-internal` | `v1.14.1` | BSD-3-Clause | server |
+| `github.com/ruudk/golang-pdf417` | `v0.0.0-20181029194003-1af4ab5afa58` | MIT | server |
+| `github.com/sclevine/agouti` | `v3.0.0+incompatible` | MIT | agent |
+| `github.com/shirou/gopsutil/v3` | `v3.24.1` | BSD-3-Clause | agent |
+| `github.com/shoenig/go-m1cpu` | `v0.1.6` | MPL-2.0 | agent |
+| `github.com/shoenig/test` | `v0.6.4` | MPL-2.0 | agent |
+| `github.com/sirupsen/logrus` | `v1.9.3` | MIT | agent |
+| `github.com/stretchr/objx` | `v0.5.0` | MIT | agent |
+| `github.com/stretchr/objx` | `v0.5.2` | MIT | server |
+| `github.com/stretchr/testify` | `v1.11.1` | MIT | agent+server |
+| `github.com/tiendc/go-deepcopy` | `v1.7.1` | MIT | server |
+| `github.com/tklauser/go-sysconf` | `v0.3.13` | BSD-3-Clause | agent |
+| `github.com/tklauser/numcpus` | `v0.7.0` | Apache-2.0 | agent |
+| `github.com/twitchyliquid64/golang-asm` | `v0.15.1` | BSD-3-Clause | server |
+| `github.com/ugorji/go/codec` | `v1.2.11` | MIT | server |
+| `github.com/wlynxg/anet` | `v0.0.5` | BSD-3-Clause | agent |
+| `github.com/x448/float16` | `v0.8.4` | MIT | server |
+| `github.com/xuri/efp` | `v0.0.1` | BSD-3-Clause | server |
+| `github.com/xuri/excelize/v2` | `v2.10.0` | BSD-3-Clause | server |
+| `github.com/xuri/nfp` | `v0.0.2-0.20250530014748-2ddeb826f9a9` | BSD-3-Clause | server |
+| `github.com/y9o/go-openh264` | `v0.2.0` | MIT | agent |
+| `github.com/yuin/goldmark` | `v1.4.13` | MIT | server |
+| `github.com/yusufpapurcu/wmi` | `v1.2.3` | MIT | agent |
+| `golang.org/x/arch` | `v0.3.0` | BSD-3-Clause | server |
+| `golang.org/x/crypto` | `v0.33.0` | BSD-3-Clause | agent |
+| `golang.org/x/crypto` | `v0.47.0` | BSD-3-Clause | server |
+| `golang.org/x/exp` | `v0.0.0-20231108232855-2478ac86f678` | BSD-3-Clause | agent |
+| `golang.org/x/image` | `v0.25.0` | BSD-3-Clause | server |
+| `golang.org/x/mod` | `v0.17.0` | BSD-3-Clause | agent |
+| `golang.org/x/mod` | `v0.31.0` | BSD-3-Clause | server |
+| `golang.org/x/net` | `v0.35.0` | BSD-3-Clause | agent |
+| `golang.org/x/net` | `v0.48.0` | BSD-3-Clause | server |
+| `golang.org/x/oauth2` | `v0.18.0` | BSD-3-Clause | agent |
+| `golang.org/x/oauth2` | `v0.23.0` | BSD-3-Clause | server |
+| `golang.org/x/sync` | `v0.11.0` | BSD-3-Clause | agent |
+| `golang.org/x/sync` | `v0.19.0` | BSD-3-Clause | server |
+| `golang.org/x/sys` | `v0.30.0` | BSD-3-Clause | agent |
+| `golang.org/x/sys` | `v0.40.0` | BSD-3-Clause | server |
+| `golang.org/x/term` | `v0.29.0` | BSD-3-Clause | agent |
+| `golang.org/x/term` | `v0.39.0` | BSD-3-Clause | server |
+| `golang.org/x/text` | `v0.22.0` | BSD-3-Clause | agent |
+| `golang.org/x/text` | `v0.33.0` | BSD-3-Clause | server |
+| `golang.org/x/time` | `v0.15.0` | BSD-3-Clause | server |
+| `golang.org/x/tools` | `v0.21.1-0.20240508182429-e35e4ccd0d2d` | BSD-3-Clause | agent |
+| `golang.org/x/tools` | `v0.40.0` | BSD-3-Clause | server |
+| `golang.org/x/xerrors` | `v0.0.0-20191204190536-9bdfabe68543` | BSD-3-Clause | agent+server |
+| `google.golang.org/appengine` | `v1.6.8` | Apache-2.0 | agent+server |
+| `google.golang.org/genproto/googleapis/api` | `v0.0.0-20240318140521-94a12d6c2237` | Apache-2.0 | agent+server |
+| `google.golang.org/genproto/googleapis/rpc` | `v0.0.0-20240318140521-94a12d6c2237` | Apache-2.0 | agent+server |
+| `google.golang.org/grpc` | `v1.64.0` | Apache-2.0 | agent+server |
+| `google.golang.org/protobuf` | `v1.33.0` | BSD-3-Clause | agent+server |
+| `gopkg.in/check.v1` | `v1.0.0-20190902080502-41f04d3bba15` | BSD-2-Clause | agent |
+| `gopkg.in/check.v1` | `v1.0.0-20201130134442-10cb98267c6c` | BSD-2-Clause | server |
+| `gopkg.in/yaml.v3` | `v3.0.1` | Apache-2.0 | agent+server |
+| `modernc.org/cc/v4` | `v4.21.4` | BSD-3-Clause | agent |
+| `modernc.org/ccgo/v4` | `v4.19.2` | BSD-3-Clause | agent |
+| `modernc.org/fileutil` | `v1.3.0` | BSD-3-Clause | agent |
+| `modernc.org/gc/v2` | `v2.4.1` | BSD-3-Clause | agent |
+| `modernc.org/gc/v3` | `v3.0.0-20240107210532-573471604cb6` | BSD-3-Clause | agent |
+| `modernc.org/libc` | `v1.55.3` | BSD-3-Clause | agent |
+| `modernc.org/mathutil` | `v1.6.0` | BSD-3-Clause | agent |
+| `modernc.org/memory` | `v1.8.0` | BSD-3-Clause | agent |
+| `modernc.org/opt` | `v0.1.3` | BSD-3-Clause | agent |
+| `modernc.org/sortutil` | `v1.2.0` | BSD-3-Clause | agent |
+| `modernc.org/sqlite` | `v1.34.4` | BSD-3-Clause | agent |
+| `modernc.org/strutil` | `v1.2.0` | BSD-3-Clause | agent |
+| `modernc.org/token` | `v1.1.0` | BSD-3-Clause | agent |
+| `rsc.io/pdf` | `v0.1.1` | BSD-3-Clause | server |
+
+## JavaScript dependencies
+
+The following npm packages are bundled into the Sentinel web frontend (production build) or used during development / testing. The production subset ships to end users; the devDependencies are used only for build tooling.
+
+### Full tree (all dependencies)
+
+| Package | Version | License |
+|---|---|---|
+| `@acemir/cssom` | `0.9.29` | MIT |
+| `@adobe/css-tools` | `4.4.4` | MIT |
+| `@alloc/quick-lru` | `5.2.0` | MIT |
+| `@asamuzakjp/css-color` | `4.1.1` | MIT |
+| `@asamuzakjp/dom-selector` | `6.7.6` | MIT |
+| `@asamuzakjp/nwsapi` | `2.3.9` | MIT |
+| `@babel/code-frame` | `7.27.1` | MIT |
+| `@babel/compat-data` | `7.28.5` | MIT |
+| `@babel/core` | `7.28.5` | MIT |
+| `@babel/generator` | `7.28.5` | MIT |
+| `@babel/helper-compilation-targets` | `7.27.2` | MIT |
+| `@babel/helper-globals` | `7.28.0` | MIT |
+| `@babel/helper-module-imports` | `7.27.1` | MIT |
+| `@babel/helper-module-transforms` | `7.28.3` | MIT |
+| `@babel/helper-plugin-utils` | `7.27.1` | MIT |
+| `@babel/helper-string-parser` | `7.27.1` | MIT |
+| `@babel/helper-validator-identifier` | `7.28.5` | MIT |
+| `@babel/helper-validator-option` | `7.27.1` | MIT |
+| `@babel/helpers` | `7.28.4` | MIT |
+| `@babel/parser` | `7.28.5` | MIT |
+| `@babel/plugin-transform-react-jsx-self` | `7.27.1` | MIT |
+| `@babel/plugin-transform-react-jsx-source` | `7.27.1` | MIT |
+| `@babel/runtime` | `7.28.4` | MIT |
+| `@babel/template` | `7.27.2` | MIT |
+| `@babel/traverse` | `7.28.5` | MIT |
+| `@babel/types` | `7.28.5` | MIT |
+| `@bcoe/v8-coverage` | `1.0.2` | MIT |
+| `@csstools/color-helpers` | `5.1.0` | MIT-0 |
+| `@csstools/css-calc` | `2.1.4` | MIT |
+| `@csstools/css-color-parser` | `3.1.0` | MIT |
+| `@csstools/css-parser-algorithms` | `3.0.5` | MIT |
+| `@csstools/css-syntax-patches-for-csstree` | `1.0.22` | MIT-0 |
+| `@csstools/css-tokenizer` | `3.0.4` | MIT |
+| `@dnd-kit/accessibility` | `3.1.1` | MIT |
+| `@dnd-kit/core` | `6.3.1` | MIT |
+| `@dnd-kit/sortable` | `10.0.0` | MIT |
+| `@dnd-kit/utilities` | `3.2.2` | MIT |
+| `@esbuild/win32-x64` | `0.21.5` | MIT |
+| `@esbuild/win32-x64` | `0.27.2` | MIT |
+| `@eslint-community/eslint-utils` | `4.9.0` | MIT |
+| `@eslint-community/regexpp` | `4.12.2` | MIT |
+| `@eslint/config-array` | `0.21.1` | Apache-2.0 |
+| `@eslint/config-helpers` | `0.4.2` | Apache-2.0 |
+| `@eslint/core` | `0.17.0` | Apache-2.0 |
+| `@eslint/eslintrc` | `3.3.3` | MIT |
+| `@eslint/js` | `9.39.2` | MIT |
+| `@eslint/object-schema` | `2.1.7` | Apache-2.0 |
+| `@eslint/plugin-kit` | `0.4.1` | Apache-2.0 |
+| `@fullcalendar/core` | `6.1.19` | MIT |
+| `@fullcalendar/daygrid` | `6.1.19` | MIT |
+| `@fullcalendar/interaction` | `6.1.19` | MIT |
+| `@fullcalendar/react` | `6.1.19` | MIT |
+| `@fullcalendar/timegrid` | `6.1.19` | MIT |
+| `@humanfs/core` | `0.19.1` | Apache-2.0 |
+| `@humanfs/node` | `0.16.7` | Apache-2.0 |
+| `@humanwhocodes/module-importer` | `1.0.1` | Apache-2.0 |
+| `@humanwhocodes/retry` | `0.4.3` | Apache-2.0 |
+| `@jridgewell/gen-mapping` | `0.3.13` | MIT |
+| `@jridgewell/remapping` | `2.3.5` | MIT |
+| `@jridgewell/resolve-uri` | `3.1.2` | MIT |
+| `@jridgewell/sourcemap-codec` | `1.5.5` | MIT |
+| `@jridgewell/trace-mapping` | `0.3.31` | MIT |
+| `@nodelib/fs.scandir` | `2.1.5` | MIT |
+| `@nodelib/fs.stat` | `2.0.5` | MIT |
+| `@nodelib/fs.walk` | `1.2.8` | MIT |
+| `@playwright/test` | `1.58.2` | Apache-2.0 |
+| `@remix-run/router` | `1.23.1` | MIT |
+| `@rolldown/pluginutils` | `1.0.0-beta.27` | MIT |
+| `@rollup/rollup-win32-x64-gnu` | `4.53.3` | MIT |
+| `@rollup/rollup-win32-x64-msvc` | `4.53.3` | MIT |
+| `@simplewebauthn/browser` | `10.0.0` | MIT |
+| `@simplewebauthn/types` | `10.0.0` | MIT |
+| `@standard-schema/spec` | `1.1.0` | MIT |
+| `@tanstack/query-core` | `5.90.12` | MIT |
+| `@tanstack/react-query` | `5.90.12` | MIT |
+| `@testing-library/dom` | `10.4.1` | MIT |
+| `@testing-library/jest-dom` | `6.9.1` | MIT |
+| `@testing-library/react` | `16.3.1` | MIT |
+| `@testing-library/user-event` | `14.6.1` | MIT |
+| `@types/aria-query` | `5.0.4` | MIT |
+| `@types/babel__core` | `7.20.5` | MIT |
+| `@types/babel__generator` | `7.27.0` | MIT |
+| `@types/babel__template` | `7.4.4` | MIT |
+| `@types/babel__traverse` | `7.28.0` | MIT |
+| `@types/chai` | `5.2.3` | MIT |
+| `@types/d3-array` | `3.2.2` | MIT |
+| `@types/d3-color` | `3.1.3` | MIT |
+| `@types/d3-ease` | `3.0.2` | MIT |
+| `@types/d3-interpolate` | `3.0.4` | MIT |
+| `@types/d3-path` | `3.1.1` | MIT |
+| `@types/d3-scale` | `4.0.9` | MIT |
+| `@types/d3-shape` | `3.1.7` | MIT |
+| `@types/d3-time` | `3.0.4` | MIT |
+| `@types/d3-timer` | `3.0.2` | MIT |
+| `@types/deep-eql` | `4.0.2` | MIT |
+| `@types/estree` | `1.0.8` | MIT |
+| `@types/json-schema` | `7.0.15` | MIT |
+| `@types/node` | `20.19.25` | MIT |
+| `@types/prop-types` | `15.7.15` | MIT |
+| `@types/react` | `18.3.27` | MIT |
+| `@types/react-dom` | `18.3.7` | MIT |
+| `@types/ws` | `8.18.1` | MIT |
+| `@typescript-eslint/eslint-plugin` | `8.50.0` | MIT |
+| `@typescript-eslint/parser` | `8.50.0` | MIT |
+| `@typescript-eslint/project-service` | `8.50.0` | MIT |
+| `@typescript-eslint/scope-manager` | `8.50.0` | MIT |
+| `@typescript-eslint/tsconfig-utils` | `8.50.0` | MIT |
+| `@typescript-eslint/type-utils` | `8.50.0` | MIT |
+| `@typescript-eslint/types` | `8.50.0` | MIT |
+| `@typescript-eslint/typescript-estree` | `8.50.0` | MIT |
+| `@typescript-eslint/utils` | `8.50.0` | MIT |
+| `@typescript-eslint/visitor-keys` | `8.50.0` | MIT |
+| `@vitejs/plugin-react` | `4.7.0` | MIT |
+| `@vitest/coverage-v8` | `4.0.16` | MIT |
+| `@vitest/expect` | `4.0.16` | MIT |
+| `@vitest/mocker` | `4.0.16` | MIT |
+| `@vitest/pretty-format` | `4.0.16` | MIT |
+| `@vitest/runner` | `4.0.16` | MIT |
+| `@vitest/snapshot` | `4.0.16` | MIT |
+| `@vitest/spy` | `4.0.16` | MIT |
+| `@vitest/utils` | `4.0.16` | MIT |
+| `@xterm/addon-fit` | `0.10.0` | MIT |
+| `@xterm/xterm` | `5.5.0` | MIT |
+| `acorn` | `8.15.0` | MIT |
+| `acorn-jsx` | `5.3.2` | MIT |
+| `agent-base` | `7.1.4` | MIT |
+| `ajv` | `6.12.6` | MIT |
+| `ansi-regex` | `5.0.1` | MIT |
+| `ansi-styles` | `4.3.0` | MIT |
+| `ansi-styles` | `5.2.0` | MIT |
+| `any-promise` | `1.3.0` | MIT |
+| `anymatch` | `3.1.3` | ISC |
+| `arg` | `5.0.2` | MIT |
+| `argparse` | `2.0.1` | Python-2.0 |
+| `aria-query` | `5.3.0` | Apache-2.0 |
+| `array-buffer-byte-length` | `1.0.2` | MIT |
+| `array-includes` | `3.1.9` | MIT |
+| `array.prototype.findlast` | `1.2.5` | MIT |
+| `array.prototype.flat` | `1.3.3` | MIT |
+| `array.prototype.flatmap` | `1.3.3` | MIT |
+| `array.prototype.tosorted` | `1.1.4` | MIT |
+| `arraybuffer.prototype.slice` | `1.0.4` | MIT |
+| `assertion-error` | `2.0.1` | MIT |
+| `ast-v8-to-istanbul` | `0.3.9` | MIT |
+| `async-function` | `1.0.0` | MIT |
+| `autoprefixer` | `10.4.22` | MIT |
+| `available-typed-arrays` | `1.0.7` | MIT |
+| `balanced-match` | `1.0.2` | MIT |
+| `baseline-browser-mapping` | `2.9.2` | Apache-2.0 |
+| `bidi-js` | `1.0.3` | MIT |
+| `binary-extensions` | `2.3.0` | MIT |
+| `brace-expansion` | `1.1.12` | MIT |
+| `brace-expansion` | `2.0.2` | MIT |
+| `braces` | `3.0.3` | MIT |
+| `browserslist` | `4.28.1` | MIT |
+| `call-bind` | `1.0.8` | MIT |
+| `call-bind-apply-helpers` | `1.0.2` | MIT |
+| `call-bound` | `1.0.4` | MIT |
+| `callsites` | `3.1.0` | MIT |
+| `camelcase-css` | `2.0.1` | MIT |
+| `caniuse-lite` | `1.0.30001759` | CC-BY-4.0 |
+| `chai` | `6.2.1` | MIT |
+| `chalk` | `4.1.2` | MIT |
+| `chokidar` | `3.6.0` | MIT |
+| `clsx` | `2.1.1` | MIT |
+| `color-convert` | `2.0.1` | MIT |
+| `color-name` | `1.1.4` | MIT |
+| `commander` | `4.1.1` | MIT |
+| `concat-map` | `0.0.1` | MIT |
+| `convert-source-map` | `2.0.0` | MIT |
+| `cross-spawn` | `7.0.6` | MIT |
+| `css-tree` | `3.1.0` | MIT |
+| `css.escape` | `1.5.1` | MIT |
+| `cssesc` | `3.0.0` | MIT |
+| `cssstyle` | `5.3.5` | MIT |
+| `csstype` | `3.2.3` | MIT |
+| `d3-array` | `3.2.4` | ISC |
+| `d3-color` | `3.1.0` | ISC |
+| `d3-ease` | `3.0.1` | BSD-3-Clause |
+| `d3-format` | `3.1.0` | ISC |
+| `d3-interpolate` | `3.0.1` | ISC |
+| `d3-path` | `3.1.0` | ISC |
+| `d3-scale` | `4.0.2` | ISC |
+| `d3-shape` | `3.2.0` | ISC |
+| `d3-time` | `3.1.0` | ISC |
+| `d3-time-format` | `4.1.0` | ISC |
+| `d3-timer` | `3.0.1` | ISC |
+| `data-urls` | `6.0.0` | MIT |
+| `data-view-buffer` | `1.0.2` | MIT |
+| `data-view-byte-length` | `1.0.2` | MIT |
+| `data-view-byte-offset` | `1.0.1` | MIT |
+| `date-fns` | `4.1.0` | MIT |
+| `debug` | `4.4.3` | MIT |
+| `decimal.js` | `10.6.0` | MIT |
+| `decimal.js-light` | `2.5.1` | MIT |
+| `deep-is` | `0.1.4` | MIT |
+| `define-data-property` | `1.1.4` | MIT |
+| `define-properties` | `1.2.1` | MIT |
+| `dequal` | `2.0.3` | MIT |
+| `didyoumean` | `1.2.2` | Apache-2.0 |
+| `dlv` | `1.1.3` | MIT |
+| `doctrine` | `2.1.0` | Apache-2.0 |
+| `dom-accessibility-api` | `0.5.16` | MIT |
+| `dom-accessibility-api` | `0.6.3` | MIT |
+| `dom-helpers` | `5.2.1` | MIT |
+| `dunder-proto` | `1.0.1` | MIT |
+| `electron-to-chromium` | `1.5.266` | ISC |
+| `entities` | `6.0.1` | BSD-2-Clause |
+| `es-abstract` | `1.24.1` | MIT |
+| `es-define-property` | `1.0.1` | MIT |
+| `es-errors` | `1.3.0` | MIT |
+| `es-iterator-helpers` | `1.2.2` | MIT |
+| `es-module-lexer` | `1.7.0` | MIT |
+| `es-object-atoms` | `1.1.1` | MIT |
+| `es-set-tostringtag` | `2.1.0` | MIT |
+| `es-shim-unscopables` | `1.1.0` | MIT |
+| `es-to-primitive` | `1.3.0` | MIT |
+| `esbuild` | `0.21.5` | MIT |
+| `esbuild` | `0.27.2` | MIT |
+| `escalade` | `3.2.0` | MIT |
+| `escape-string-regexp` | `4.0.0` | MIT |
+| `eslint` | `9.39.2` | MIT |
+| `eslint-plugin-react` | `7.37.5` | MIT |
+| `eslint-plugin-react-hooks` | `7.0.1` | MIT |
+| `eslint-scope` | `8.4.0` | BSD-2-Clause |
+| `eslint-visitor-keys` | `3.4.3` | Apache-2.0 |
+| `eslint-visitor-keys` | `4.2.1` | Apache-2.0 |
+| `espree` | `10.4.0` | BSD-2-Clause |
+| `esquery` | `1.6.0` | BSD-3-Clause |
+| `esrecurse` | `4.3.0` | BSD-2-Clause |
+| `estraverse` | `5.3.0` | BSD-2-Clause |
+| `estree-walker` | `3.0.3` | MIT |
+| `esutils` | `2.0.3` | BSD-2-Clause |
+| `eventemitter3` | `4.0.7` | MIT |
+| `expect-type` | `1.3.0` | Apache-2.0 |
+| `fast-deep-equal` | `3.1.3` | MIT |
+| `fast-equals` | `5.3.3` | MIT |
+| `fast-glob` | `3.3.3` | MIT |
+| `fast-json-stable-stringify` | `2.1.0` | MIT |
+| `fast-levenshtein` | `2.0.6` | MIT |
+| `fastq` | `1.19.1` | ISC |
+| `fdir` | `6.5.0` | MIT |
+| `file-entry-cache` | `8.0.0` | MIT |
+| `fill-range` | `7.1.1` | MIT |
+| `find-up` | `5.0.0` | MIT |
+| `flat-cache` | `4.0.1` | MIT |
+| `flatted` | `3.3.3` | ISC |
+| `for-each` | `0.3.5` | MIT |
+| `fraction.js` | `5.3.4` | MIT |
+| `function-bind` | `1.1.2` | MIT |
+| `function.prototype.name` | `1.1.8` | MIT |
+| `functions-have-names` | `1.2.3` | MIT |
+| `generator-function` | `2.0.1` | MIT |
+| `gensync` | `1.0.0-beta.2` | MIT |
+| `get-intrinsic` | `1.3.0` | MIT |
+| `get-proto` | `1.0.1` | MIT |
+| `get-symbol-description` | `1.1.0` | MIT |
+| `glob-parent` | `5.1.2` | ISC |
+| `glob-parent` | `6.0.2` | ISC |
+| `globals` | `14.0.0` | MIT |
+| `globalthis` | `1.0.4` | MIT |
+| `goober` | `2.1.18` | MIT |
+| `gopd` | `1.2.0` | MIT |
+| `has-bigints` | `1.1.0` | MIT |
+| `has-flag` | `4.0.0` | MIT |
+| `has-property-descriptors` | `1.0.2` | MIT |
+| `has-proto` | `1.2.0` | MIT |
+| `has-symbols` | `1.1.0` | MIT |
+| `has-tostringtag` | `1.0.2` | MIT |
+| `hasown` | `2.0.2` | MIT |
+| `hermes-estree` | `0.25.1` | MIT |
+| `hermes-parser` | `0.25.1` | MIT |
+| `html-encoding-sniffer` | `4.0.0` | MIT |
+| `html-escaper` | `2.0.2` | MIT |
+| `http-proxy-agent` | `7.0.2` | MIT |
+| `https-proxy-agent` | `7.0.6` | MIT |
+| `iconv-lite` | `0.6.3` | MIT |
+| `ignore` | `5.3.2` | MIT |
+| `ignore` | `7.0.5` | MIT |
+| `import-fresh` | `3.3.1` | MIT |
+| `imurmurhash` | `0.1.4` | MIT |
+| `indent-string` | `4.0.0` | MIT |
+| `internal-slot` | `1.1.0` | MIT |
+| `internmap` | `2.0.3` | ISC |
+| `is-array-buffer` | `3.0.5` | MIT |
+| `is-async-function` | `2.1.1` | MIT |
+| `is-bigint` | `1.1.0` | MIT |
+| `is-binary-path` | `2.1.0` | MIT |
+| `is-boolean-object` | `1.2.2` | MIT |
+| `is-callable` | `1.2.7` | MIT |
+| `is-core-module` | `2.16.1` | MIT |
+| `is-data-view` | `1.0.2` | MIT |
+| `is-date-object` | `1.1.0` | MIT |
+| `is-extglob` | `2.1.1` | MIT |
+| `is-finalizationregistry` | `1.1.1` | MIT |
+| `is-generator-function` | `1.1.2` | MIT |
+| `is-glob` | `4.0.3` | MIT |
+| `is-map` | `2.0.3` | MIT |
+| `is-negative-zero` | `2.0.3` | MIT |
+| `is-number` | `7.0.0` | MIT |
+| `is-number-object` | `1.1.1` | MIT |
+| `is-potential-custom-element-name` | `1.0.1` | MIT |
+| `is-regex` | `1.2.1` | MIT |
+| `is-set` | `2.0.3` | MIT |
+| `is-shared-array-buffer` | `1.0.4` | MIT |
+| `is-string` | `1.1.1` | MIT |
+| `is-symbol` | `1.1.1` | MIT |
+| `is-typed-array` | `1.1.15` | MIT |
+| `is-weakmap` | `2.0.2` | MIT |
+| `is-weakref` | `1.1.1` | MIT |
+| `is-weakset` | `2.0.4` | MIT |
+| `isarray` | `2.0.5` | MIT |
+| `isexe` | `2.0.0` | ISC |
+| `istanbul-lib-coverage` | `3.2.2` | BSD-3-Clause |
+| `istanbul-lib-report` | `3.0.1` | BSD-3-Clause |
+| `istanbul-lib-source-maps` | `5.0.6` | BSD-3-Clause |
+| `istanbul-reports` | `3.2.0` | BSD-3-Clause |
+| `iterator.prototype` | `1.1.5` | MIT |
+| `jiti` | `1.21.7` | MIT |
+| `js-tokens` | `4.0.0` | MIT |
+| `js-tokens` | `9.0.1` | MIT |
+| `js-yaml` | `4.1.1` | MIT |
+| `jsdom` | `27.3.0` | MIT |
+| `jsesc` | `3.1.0` | MIT |
+| `json-buffer` | `3.0.1` | MIT |
+| `json-schema-traverse` | `0.4.1` | MIT |
+| `json-stable-stringify-without-jsonify` | `1.0.1` | MIT |
+| `json5` | `2.2.3` | MIT |
+| `jsx-ast-utils` | `3.3.5` | MIT |
+| `keyv` | `4.5.4` | MIT |
+| `levn` | `0.4.1` | MIT |
+| `lilconfig` | `3.1.3` | MIT |
+| `lines-and-columns` | `1.2.4` | MIT |
+| `locate-path` | `6.0.0` | MIT |
+| `lodash` | `4.17.21` | MIT |
+| `lodash.merge` | `4.6.2` | MIT |
+| `loose-envify` | `1.4.0` | MIT |
+| `lru-cache` | `11.2.4` | BlueOak-1.0.0 |
+| `lru-cache` | `5.1.1` | ISC |
+| `lucide-react` | `0.303.0` | ISC |
+| `lz-string` | `1.5.0` | MIT |
+| `magic-string` | `0.30.21` | MIT |
+| `magicast` | `0.5.1` | MIT |
+| `make-dir` | `4.0.0` | MIT |
+| `math-intrinsics` | `1.1.0` | MIT |
+| `mdn-data` | `2.12.2` | CC0-1.0 |
+| `merge2` | `1.4.1` | MIT |
+| `micromatch` | `4.0.8` | MIT |
+| `min-indent` | `1.0.1` | MIT |
+| `minimatch` | `3.1.2` | ISC |
+| `minimatch` | `9.0.5` | ISC |
+| `ms` | `2.1.3` | MIT |
+| `mz` | `2.7.0` | MIT |
+| `nanoid` | `3.3.11` | MIT |
+| `natural-compare` | `1.4.0` | MIT |
+| `node-releases` | `2.0.27` | MIT |
+| `normalize-path` | `3.0.0` | MIT |
+| `normalize-range` | `0.1.2` | MIT |
+| `object-assign` | `4.1.1` | MIT |
+| `object-hash` | `3.0.0` | MIT |
+| `object-inspect` | `1.13.4` | MIT |
+| `object-keys` | `1.1.1` | MIT |
+| `object.assign` | `4.1.7` | MIT |
+| `object.entries` | `1.1.9` | MIT |
+| `object.fromentries` | `2.0.8` | MIT |
+| `object.values` | `1.2.1` | MIT |
+| `obug` | `2.1.1` | MIT |
+| `optionator` | `0.9.4` | MIT |
+| `own-keys` | `1.0.1` | MIT |
+| `p-limit` | `3.1.0` | MIT |
+| `p-locate` | `5.0.0` | MIT |
+| `parent-module` | `1.0.1` | MIT |
+| `parse5` | `8.0.0` | MIT |
+| `path-exists` | `4.0.0` | MIT |
+| `path-key` | `3.1.1` | MIT |
+| `path-parse` | `1.0.7` | MIT |
+| `pathe` | `2.0.3` | MIT |
+| `picocolors` | `1.1.1` | ISC |
+| `picomatch` | `2.3.1` | MIT |
+| `picomatch` | `4.0.3` | MIT |
+| `pify` | `2.3.0` | MIT |
+| `pirates` | `4.0.7` | MIT |
+| `playwright` | `1.58.2` | Apache-2.0 |
+| `playwright-core` | `1.58.2` | Apache-2.0 |
+| `possible-typed-array-names` | `1.1.0` | MIT |
+| `postcss` | `8.5.6` | MIT |
+| `postcss-import` | `15.1.0` | MIT |
+| `postcss-js` | `4.1.0` | MIT |
+| `postcss-load-config` | `6.0.1` | MIT |
+| `postcss-nested` | `6.2.0` | MIT |
+| `postcss-selector-parser` | `6.1.2` | MIT |
+| `postcss-value-parser` | `4.2.0` | MIT |
+| `preact` | `10.12.1` | MIT |
+| `prelude-ls` | `1.2.1` | MIT |
+| `pretty-format` | `27.5.1` | MIT |
+| `prop-types` | `15.8.1` | MIT |
+| `punycode` | `2.3.1` | MIT |
+| `queue-microtask` | `1.2.3` | MIT |
+| `react` | `18.3.1` | MIT |
+| `react-dom` | `18.3.1` | MIT |
+| `react-hot-toast` | `2.6.0` | MIT |
+| `react-is` | `16.13.1` | MIT |
+| `react-is` | `17.0.2` | MIT |
+| `react-is` | `18.3.1` | MIT |
+| `react-refresh` | `0.17.0` | MIT |
+| `react-router` | `6.30.2` | MIT |
+| `react-router-dom` | `6.30.2` | MIT |
+| `react-smooth` | `4.0.4` | MIT |
+| `react-transition-group` | `4.4.5` | BSD-3-Clause |
+| `read-cache` | `1.0.0` | MIT |
+| `readdirp` | `3.6.0` | MIT |
+| `recharts` | `2.15.4` | MIT |
+| `recharts-scale` | `0.4.5` | MIT |
+| `redent` | `3.0.0` | MIT |
+| `reflect.getprototypeof` | `1.0.10` | MIT |
+| `regexp.prototype.flags` | `1.5.4` | MIT |
+| `require-from-string` | `2.0.2` | MIT |
+| `resolve` | `1.22.11` | MIT |
+| `resolve` | `2.0.0-next.5` | MIT |
+| `resolve-from` | `4.0.0` | MIT |
+| `reusify` | `1.1.0` | MIT |
+| `rollup` | `4.53.3` | MIT |
+| `run-parallel` | `1.2.0` | MIT |
+| `safe-array-concat` | `1.1.3` | MIT |
+| `safe-push-apply` | `1.0.0` | MIT |
+| `safe-regex-test` | `1.1.0` | MIT |
+| `safer-buffer` | `2.1.2` | MIT |
+| `saxes` | `6.0.0` | ISC |
+| `scheduler` | `0.23.2` | MIT |
+| `semver` | `6.3.1` | ISC |
+| `semver` | `7.7.3` | ISC |
+| `sentinel` | `1.77.9` | MIT |
+| `set-function-length` | `1.2.2` | MIT |
+| `set-function-name` | `2.0.2` | MIT |
+| `set-proto` | `1.0.0` | MIT |
+| `shebang-command` | `2.0.0` | MIT |
+| `shebang-regex` | `3.0.0` | MIT |
+| `side-channel` | `1.1.0` | MIT |
+| `side-channel-list` | `1.0.0` | MIT |
+| `side-channel-map` | `1.0.1` | MIT |
+| `side-channel-weakmap` | `1.0.2` | MIT |
+| `siginfo` | `2.0.0` | ISC |
+| `source-map-js` | `1.2.1` | BSD-3-Clause |
+| `stackback` | `0.0.2` | MIT |
+| `std-env` | `3.10.0` | MIT |
+| `stop-iteration-iterator` | `1.1.0` | MIT |
+| `string.prototype.matchall` | `4.0.12` | MIT |
+| `string.prototype.repeat` | `1.0.0` | MIT |
+| `string.prototype.trim` | `1.2.10` | MIT |
+| `string.prototype.trimend` | `1.0.9` | MIT |
+| `string.prototype.trimstart` | `1.0.8` | MIT |
+| `strip-indent` | `3.0.0` | MIT |
+| `strip-json-comments` | `3.1.1` | MIT |
+| `sucrase` | `3.35.1` | MIT |
+| `supports-color` | `7.2.0` | MIT |
+| `supports-preserve-symlinks-flag` | `1.0.0` | MIT |
+| `symbol-tree` | `3.2.4` | MIT |
+| `tailwindcss` | `3.4.18` | MIT |
+| `thenify` | `3.3.1` | MIT |
+| `thenify-all` | `1.6.0` | MIT |
+| `tiny-invariant` | `1.3.3` | MIT |
+| `tinybench` | `2.9.0` | MIT |
+| `tinyexec` | `1.0.2` | MIT |
+| `tinyglobby` | `0.2.15` | MIT |
+| `tinyrainbow` | `3.0.3` | MIT |
+| `tldts` | `7.0.19` | MIT |
+| `tldts-core` | `7.0.19` | MIT |
+| `to-regex-range` | `5.0.1` | MIT |
+| `tough-cookie` | `6.0.0` | BSD-3-Clause |
+| `tr46` | `6.0.0` | MIT |
+| `ts-api-utils` | `2.1.0` | MIT |
+| `ts-interface-checker` | `0.1.13` | Apache-2.0 |
+| `tslib` | `2.8.1` | 0BSD |
+| `type-check` | `0.4.0` | MIT |
+| `typed-array-buffer` | `1.0.3` | MIT |
+| `typed-array-byte-length` | `1.0.3` | MIT |
+| `typed-array-byte-offset` | `1.0.4` | MIT |
+| `typed-array-length` | `1.0.7` | MIT |
+| `typescript` | `5.9.3` | Apache-2.0 |
+| `typescript-eslint` | `8.50.0` | MIT |
+| `unbox-primitive` | `1.1.0` | MIT |
+| `undici-types` | `6.21.0` | MIT |
+| `update-browserslist-db` | `1.2.2` | MIT |
+| `uri-js` | `4.4.1` | BSD-2-Clause |
+| `use-sync-external-store` | `1.6.0` | MIT |
+| `util-deprecate` | `1.0.2` | MIT |
+| `victory-vendor` | `36.9.2` | MIT AND ISC |
+| `vite` | `5.4.21` | MIT |
+| `vite` | `7.3.0` | MIT |
+| `vitest` | `4.0.16` | MIT |
+| `w3c-xmlserializer` | `5.0.0` | MIT |
+| `webidl-conversions` | `8.0.0` | BSD-2-Clause |
+| `whatwg-encoding` | `3.1.1` | MIT |
+| `whatwg-mimetype` | `4.0.0` | MIT |
+| `whatwg-url` | `15.1.0` | MIT |
+| `which` | `2.0.2` | ISC |
+| `which-boxed-primitive` | `1.1.1` | MIT |
+| `which-builtin-type` | `1.2.1` | MIT |
+| `which-collection` | `1.0.2` | MIT |
+| `which-typed-array` | `1.1.19` | MIT |
+| `why-is-node-running` | `2.3.0` | MIT |
+| `word-wrap` | `1.2.5` | MIT |
+| `ws` | `8.20.0` | MIT |
+| `xml-name-validator` | `5.0.0` | Apache-2.0 |
+| `xmlchars` | `2.2.0` | MIT |
+| `yallist` | `3.1.1` | ISC |
+| `yocto-queue` | `0.1.0` | MIT |
+| `zod` | `4.2.1` | MIT |
+| `zod-validation-error` | `4.0.2` | MIT |
+| `zustand` | `4.5.7` | MIT |
+
+## Third-party license texts
+
+The following dependencies are distributed under copyleft or weak-copyleft licenses. Their full license texts are reproduced below to satisfy notice obligations. The permissive-licensed dependencies (MIT, BSD-family, Apache-2.0, ISC, 0BSD, Unlicense, CC0) retain their original LICENSE files in the Go module cache (`$GOPATH/pkg/mod/<module>@<version>/LICENSE*`) and `node_modules/<package>/LICENSE*`.
+
+### Mozilla Public License, Version 2.0
+
+Applies to: `github.com/hashicorp/golang-lru/v2`, `github.com/shoenig/go-m1cpu`, `github.com/shoenig/test`.
+
+```
+Mozilla Public License, version 2.0
+
+1. Definitions
+
+1.1. "Contributor"
+
+     means each individual or legal entity that creates, contributes to the
+     creation of, or owns Covered Software.
+
+1.2. "Contributor Version"
+
+     means the combination of the Contributions of others (if any) used by a
+     Contributor and that particular Contributor's Contribution.
+
+1.3. "Contribution"
+
+     means Covered Software of a particular Contributor.
+
+1.4. "Covered Software"
+
+     means Source Code Form to which the initial Contributor has attached the
+     notice in Exhibit A, the Executable Form of such Source Code Form, and
+     Modifications of such Source Code Form, in each case including portions
+     thereof.
+
+1.5. "Incompatible With Secondary Licenses"
+     means
+
+     a. that the initial Contributor has attached the notice described in
+        Exhibit B to the Covered Software; or
+
+     b. that the Covered Software was made available under the terms of
+        version 1.1 or earlier of the License, but not also under the terms of
+        a Secondary License.
+
+1.6. "Executable Form"
+
+     means any form of the work other than Source Code Form.
+
+1.7. "Larger Work"
+
+     means a work that combines Covered Software with other material, in a
+     separate file or files, that is not Covered Software.
+
+1.8. "License"
+
+     means this document.
+
+1.9. "Licensable"
+
+     means having the right to grant, to the maximum extent possible, whether
+     at the time of the initial grant or subsequently, any and all of the
+     rights conveyed by this License.
+
+1.10. "Modifications"
+
+     means any of the following:
+
+     a. any file in Source Code Form that results from an addition to,
+        deletion from, or modification of the contents of Covered Software; or
+
+     b. any new file in Source Code Form that contains any Covered Software.
+
+1.11. "Patent Claims" of a Contributor
+
+      means any patent claim(s), including without limitation, method,
+      process, and apparatus claims, in any patent Licensable by such
+      Contributor that would be infringed, but for the grant of the License,
+      by the making, using, selling, offering for sale, having made, import,
+      or transfer of either its Contributions or its Contributor Version.
+
+1.12. "Secondary License"
+
+      means either the GNU General Public License, Version 2.0, the GNU Lesser
+      General Public License, Version 2.1, the GNU Affero General Public
+      License, Version 3.0, or any later versions of those licenses.
+
+1.13. "Source Code Form"
+
+      means the form of the work preferred for making modifications.
+
+1.14. "You" (or "Your")
+
+      means an individual or a legal entity exercising rights under this
+      License. For legal entities, "You" includes any entity that controls, is
+      controlled by, or is under common control with You. For purposes of this
+      definition, "control" means (a) the power, direct or indirect, to cause
+      the direction or management of such entity, whether by contract or
+      otherwise, or (b) ownership of more than fifty percent (50%) of the
+      outstanding shares or beneficial ownership of such entity.
+
+
+2. License Grants and Conditions
+
+2.1. Grants
+
+     Each Contributor hereby grants You a world-wide, royalty-free,
+     non-exclusive license:
+
+     a. under intellectual property rights (other than patent or trademark)
+        Licensable by such Contributor to use, reproduce, make available,
+        modify, display, perform, distribute, and otherwise exploit its
+        Contributions, either on an unmodified basis, with Modifications, or
+        as part of a Larger Work; and
+
+     b. under Patent Claims of such Contributor to make, use, sell, offer for
+        sale, have made, import, and otherwise transfer either its
+        Contributions or its Contributor Version.
+
+2.2. Effective Date
+
+     The licenses granted in Section 2.1 with respect to any Contribution
+     become effective for each Contribution on the date the Contributor first
+     distributes such Contribution.
+
+2.3. Limitations on Grant Scope
+
+     The licenses granted in this Section 2 are the only rights granted under
+     this License. No additional rights or licenses will be implied from the
+     distribution or licensing of Covered Software under this License.
+     Notwithstanding Section 2.1(b) above, no patent license is granted by a
+     Contributor:
+
+     a. for any code that a Contributor has removed from Covered Software; or
+
+     b. for infringements caused by: (i) Your and any other third party's
+        modifications of Covered Software, or (ii) the combination of its
+        Contributions with other software (except as part of its Contributor
+        Version); or
+
+     c. under Patent Claims infringed by Covered Software in the absence of
+        its Contributions.
+
+     This License does not grant any rights in the trademarks, service marks,
+     or logos of any Contributor (except as may be necessary to comply with
+     the notice requirements in Section 3.4).
+
+2.4. Subsequent Licenses
+
+     No Contributor makes additional grants as a result of Your choice to
+     distribute the Covered Software under a subsequent version of this
+     License (see Section 10.2) or under the terms of a Secondary License (if
+     permitted under the terms of Section 3.3).
+
+2.5. Representation
+
+     Each Contributor represents that the Contributor believes its
+     Contributions are its original creation(s) or it has sufficient rights to
+     grant the rights to its Contributions conveyed by this License.
+
+2.6. Fair Use
+
+     This License is not intended to limit any rights You have under
+     applicable copyright doctrines of fair use, fair dealing, or other
+     equivalents.
+
+2.7. Conditions
+
+     Sections 3.1, 3.2, 3.3, and 3.4 are conditions of the licenses granted in
+     Section 2.1.
+
+
+3. Responsibilities
+
+3.1. Distribution of Source Form
+
+     All distribution of Covered Software in Source Code Form, including any
+     Modifications that You create or to which You contribute, must be under
+     the terms of this License. You must inform recipients that the Source
+     Code Form of the Covered Software is governed by the terms of this
+     License, and how they can obtain a copy of this License. You may not
+     attempt to alter or restrict the recipients' rights in the Source Code
+     Form.
+
+3.2. Distribution of Executable Form
+
+     If You distribute Covered Software in Executable Form then:
+
+     a. such Covered Software must also be made available in Source Code Form,
+        as described in Section 3.1, and You must inform recipients of the
+        Executable Form how they can obtain a copy of such Source Code Form by
+        reasonable means in a timely manner, at a charge no more than the cost
+        of distribution to the recipient; and
+
+     b. You may distribute such Executable Form under the terms of this
+        License, or sublicense it under different terms, provided that the
+        license for the Executable Form does not attempt to limit or alter the
+        recipients' rights in the Source Code Form under this License.
+
+3.3. Distribution of a Larger Work
+
+     You may create and distribute a Larger Work under terms of Your choice,
+     provided that You also comply with the requirements of this License for
+     the Covered Software. If the Larger Work is a combination of Covered
+     Software with a work governed by one or more Secondary Licenses, and the
+     Covered Software is not Incompatible With Secondary Licenses, this
+     License permits You to additionally distribute such Covered Software
+     under the terms of such Secondary License(s), so that the recipient of
+     the Larger Work may, at their option, further distribute the Covered
+     Software under the terms of either this License or such Secondary
+     License(s).
+
+3.4. Notices
+
+     You may not remove or alter the substance of any license notices
+     (including copyright notices, patent notices, disclaimers of warranty, or
+     limitations of liability) contained within the Source Code Form of the
+     Covered Software, except that You may alter any license notices to the
+     extent required to remedy known factual inaccuracies.
+
+3.5. Application of Additional Terms
+
+     You may choose to offer, and to charge a fee for, warranty, support,
+     indemnity or liability obligations to one or more recipients of Covered
+     Software. However, You may do so only on Your own behalf, and not on
+     behalf of any Contributor. You must make it absolutely clear that any
+     such warranty, support, indemnity, or liability obligation is offered by
+     You alone, and You hereby agree to indemnify every Contributor for any
+     liability incurred by such Contributor as a result of warranty, support,
+     indemnity or liability terms You offer. You may include additional
+     disclaimers of warranty and limitations of liability specific to any
+     jurisdiction.
+
+4. Inability to Comply Due to Statute or Regulation
+
+   If it is impossible for You to comply with any of the terms of this License
+   with respect to some or all of the Covered Software due to statute,
+   judicial order, or regulation then You must: (a) comply with the terms of
+   this License to the maximum extent possible; and (b) describe the
+   limitations and the code they affect. Such description must be placed in a
+   text file included with all distributions of the Covered Software under
+   this License. Except to the extent prohibited by statute or regulation,
+   such description must be sufficiently detailed for a recipient of ordinary
+   skill to be able to understand it.
+
+5. Termination
+
+5.1. The rights granted under this License will terminate automatically if You
+     fail to comply with any of its terms. However, if You become compliant,
+     then the rights granted under this License from a particular Contributor
+     are reinstated (a) provisionally, unless and until such Contributor
+     explicitly and finally terminates Your grants, and (b) on an ongoing
+     basis, if such Contributor fails to notify You of the non-compliance by
+     some reasonable means prior to 60 days after You have come back into
+     compliance. Moreover, Your grants from a particular Contributor are
+     reinstated on an ongoing basis if such Contributor notifies You of the
+     non-compliance by some reasonable means, this is the first time You have
+     received notice of non-compliance with this License from such
+     Contributor, and You become compliant prior to 30 days after Your receipt
+     of the notice.
+
+5.2. If You initiate litigation against any entity by asserting a patent
+     infringement claim (excluding declaratory judgment actions,
+     counter-claims, and cross-claims) alleging that a Contributor Version
+     directly or indirectly infringes any patent, then the rights granted to
+     You by any and all Contributors for the Covered Software under Section
+     2.1 of this License shall terminate.
+
+5.3. In the event of termination under Sections 5.1 or 5.2 above, all end user
+     license agreements (excluding distributors and resellers) which have been
+     validly granted by You or Your distributors under this License prior to
+     termination shall survive termination.
+
+6. Disclaimer of Warranty
+
+   Covered Software is provided under this License on an "as is" basis,
+   without warranty of any kind, either expressed, implied, or statutory,
+   including, without limitation, warranties that the Covered Software is free
+   of defects, merchantable, fit for a particular purpose or non-infringing.
+   The entire risk as to the quality and performance of the Covered Software
+   is with You. Should any Covered Software prove defective in any respect,
+   You (not any Contributor) assume the cost of any necessary servicing,
+   repair, or correction. This disclaimer of warranty constitutes an essential
+   part of this License. No use of  any Covered Software is authorized under
+   this License except under this disclaimer.
+
+7. Limitation of Liability
+
+   Under no circumstances and under no legal theory, whether tort (including
+   negligence), contract, or otherwise, shall any Contributor, or anyone who
+   distributes Covered Software as permitted above, be liable to You for any
+   direct, indirect, special, incidental, or consequential damages of any
+   character including, without limitation, damages for lost profits, loss of
+   goodwill, work stoppage, computer failure or malfunction, or any and all
+   other commercial damages or losses, even if such party shall have been
+   informed of the possibility of such damages. This limitation of liability
+   shall not apply to liability for death or personal injury resulting from
+   such party's negligence to the extent applicable law prohibits such
+   limitation. Some jurisdictions do not allow the exclusion or limitation of
+   incidental or consequential damages, so this exclusion and limitation may
+   not apply to You.
+
+8. Litigation
+
+   Any litigation relating to this License may be brought only in the courts
+   of a jurisdiction where the defendant maintains its principal place of
+   business and such litigation shall be governed by laws of that
+   jurisdiction, without reference to its conflict-of-law provisions. Nothing
+   in this Section shall prevent a party's ability to bring cross-claims or
+   counter-claims.
+
+9. Miscellaneous
+
+   This License represents the complete agreement concerning the subject
+   matter hereof. If any provision of this License is held to be
+   unenforceable, such provision shall be reformed only to the extent
+   necessary to make it enforceable. Any law or regulation which provides that
+   the language of a contract shall be construed against the drafter shall not
+   be used to construe this License against a Contributor.
+
+
+10. Versions of the License
+
+10.1. New Versions
+
+      Mozilla Foundation is the license steward. Except as provided in Section
+      10.3, no one other than the license steward has the right to modify or
+      publish new versions of this License. Each version will be given a
+      distinguishing version number.
+
+10.2. Effect of New Versions
+
+      You may distribute the Covered Software under the terms of the version
+      of the License under which You originally received the Covered Software,
+      or under the terms of any subsequent version published by the license
+      steward.
+
+10.3. Modified Versions
+
+      If you create software not governed by this License, and you want to
+      create a new license for such software, you may create and use a
+      modified version of this License if you rename the license and remove
+      any references to the name of the license steward (except to note that
+      such modified license differs from this License).
+
+10.4. Distributing Source Code Form that is Incompatible With Secondary
+      Licenses If You choose to distribute Source Code Form that is
+      Incompatible With Secondary Licenses under the terms of this version of
+      the License, the notice described in Exhibit B of this License must be
+      attached.
+
+Exhibit A - Source Code Form License Notice
+
+      This Source Code Form is subject to the
+      terms of the Mozilla Public License, v.
+      2.0. If a copy of the MPL was not
+      distributed with this file, You can
+      obtain one at
+      http://mozilla.org/MPL/2.0/.
+
+If it is not possible or desirable to put the notice in a particular file,
+then You may include the notice in a location (such as a LICENSE file in a
+relevant directory) where a recipient would be likely to look for such a
+notice.
+
+You may add additional accurate notices of copyright ownership.
+
+Exhibit B - "Incompatible With Secondary Licenses" Notice
+
+      This Source Code Form is "Incompatible
+      With Secondary Licenses", as defined by
+      the Mozilla Public License, v. 2.0.
+```
