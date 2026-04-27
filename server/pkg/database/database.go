@@ -161,6 +161,9 @@ func (db *DB) Migrate() error {
 		"migrations/036_usb_file_transfers.sql",      // v47
 		"migrations/037_router_audit_log.sql",        // v48
 		"migrations/038_security_hardening.sql",      // v49
+		"migrations/039_test_center.sql",             // v50
+		"migrations/040_kill_token.sql",              // v51
+		"migrations/041_webhooks_fix_org_id_type.sql", // v52
 	}
 
 	// Run pending migrations
