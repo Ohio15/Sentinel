@@ -40,7 +40,10 @@ log_info() {
 
 log_pass() {
     echo -e "${GREEN}[PASS]${NC} $1"
-    ((PASSED++))
+    # Use arithmetic assignment, not ((var++)). The post-increment form
+    # returns 1 (false) when the pre-increment value is 0, which trips
+    # `set -e` on the very first PASS and aborts the whole script.
+    PASSED=$((PASSED + 1))
 }
 
 log_fail() {
@@ -48,12 +51,12 @@ log_fail() {
     if [ -n "$2" ]; then
         echo -e "${RED}       ${NC}$2"
     fi
-    ((FAILED++))
+    FAILED=$((FAILED + 1))
 }
 
 log_warn() {
     echo -e "${YELLOW}[WARN]${NC} $1"
-    ((WARNINGS++))
+    WARNINGS=$((WARNINGS + 1))
 }
 
 log_debug() {
