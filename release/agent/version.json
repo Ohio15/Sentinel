@@ -1,7 +1,7 @@
 {
-    "version":  "1.77.8",
-    "releaseDate":  "2026-03-24",
-    "changelog":  "Add --force-uninstall and --kill-token flags for offline emergency uninstall",
+    "version":  "1.77.9",
+    "releaseDate":  "2026-03-25",
+    "changelog":  "Agent reliability fixes: SCM recovery timing (60s/120s/60s with 5min reset), tighter health thresholds (5 crashes/min, 200MB memory, 5min window), reconnection backoff with full jitter, watchdog isAgentResponding via agent-info.json freshness check (90s), and orphan agent escalating backoff after 3 failed NeedsEnrollment attempts.",
     "platforms":  [
                       "windows",
                       "linux",
