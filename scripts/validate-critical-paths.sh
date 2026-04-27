@@ -82,7 +82,11 @@ http_request() {
     fi
 
     if [ "$method" = "GET" ]; then
-        response=$(curl $curl_opts "$url" 2>/dev/null || echo "CURL_ERROR")
+        # Use eval to mirror the POST path: the curl_opts string contains
+        # literal single quotes around the -w format (and possibly extra
+        # headers) that must be interpreted as shell quote delimiters,
+        # otherwise curl receives them as literal characters in its output.
+        response=$(eval curl $curl_opts "'$url'" 2>/dev/null || echo "CURL_ERROR")
     else
         curl_opts="$curl_opts -X $method"
         if [ -n "$data" ]; then
