@@ -25,7 +25,12 @@ Thumbs.db
 *.log
 npm-debug.log*
 
-# Agent binaries (built separately)
+# Compiled Go binaries — built locally and via CI/CD; never commit.
+# Per Ron's standing rule: binaries do not go in git. Local working copies
+# are fine, but they must not be tracked. The size-guard pre-commit hook
+# also catches accidental re-introduction.
+*.exe
+# Legacy explicit entries (kept for clarity / if *.exe is ever narrowed):
 downloads/sentinel-agent*
 agent/sentinel-installer.exe
 
