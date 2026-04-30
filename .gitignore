@@ -46,6 +46,11 @@ certs/*.cnf
 server/sentinel.exe
 server/*.test.exe
 *.test.exe
+# Linux Go binaries (no .exe extension)
+server/sentinel-server
+server/sentinel-server-linux
+server/sentinel-server-*
+release/agent/sentinel-agent-*
 # Private keys and certificates (global)
 *.pem
 *.key

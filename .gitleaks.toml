@@ -99,4 +99,9 @@ paths = [
 regexes = [
   '''(?i)\b(example|sample|placeholder|changeme|your[_\-]?token|xxx+|0{8,}|f{8,}|deadbeef)\b''',
   '''(?i)\bsk-(ant-)?(api|proj)[0-9]{2}?-?[Xx0]{10,}''',
+  # Test JWTs in Testing/Server/Auth/Test-AuthMiddleware.ps1: decoded payload
+  # {"userId":"test","role":"admin"} with literal "wrong_signature" — clearly
+  # test fixtures, not real tokens.
+  '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJ1c2VySWQiOiJ0ZXN0Iiwicm9sZSI6ImFkbWluIn0''',
+  '''eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0\.eyJ1c2VySWQiOiJ0ZXN0Iiwicm9sZSI6ImFkbWluIn0''',
 ]
