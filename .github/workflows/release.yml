@@ -1,0 +1,18 @@
+name: Release
+
+# Thin caller. Real logic lives in dev-standards.
+# Triggered by pushing a v* tag. Coexists with the existing ci.yml +
+# deploy-web.yml flow — those still fire on push to main.
+# Schema: https://github.com/Ohio15/dev-standards/blob/main/release/SPEC.md
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  release:
+    uses: Ohio15/dev-standards/.github/workflows/docker-release.yml@v1

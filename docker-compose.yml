@@ -1,6 +1,7 @@
 services:
   # Backend API Server
   backend:
+    image: ghcr.io/ohio15/sentinel-backend:${IMAGE_TAG:-latest}
     build:
       context: ./server
       dockerfile: Dockerfile
@@ -85,9 +86,14 @@ services:
       retries: 3
       start_period: 40s
 
-  # Frontend (built via CI/CD — image contains built assets from Dockerfile.web)
-  # Deployment: push to master → CI passes → self-hosted runner rebuilds image
+  # Frontend
+  # Two release paths coexist:
+  #   - Old: push to main -> ci.yml -> deploy-web.yml builds locally on NEXUS, recreates frontend.
+  #   - New: tag v* -> dev-standards/docker-release pulls ghcr.io/ohio15/sentinel-frontend:vX.Y.Z.
+  # The `image:` line below lets `docker compose pull` work for the new path; `build:` keeps the
+  # old path (local rebuild tags the same name).
   frontend:
+    image: ghcr.io/ohio15/sentinel-frontend:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.web

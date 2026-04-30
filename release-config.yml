@@ -1,0 +1,39 @@
+# dev-standards release contract — see https://github.com/Ohio15/dev-standards/blob/main/release/SPEC.md
+#
+# Coexists with the existing ci.yml + deploy-web.yml flow. The old flow
+# (push to main -> CI -> NEXUS local build) stays in place; it owns the
+# frontend (which bakes DOMAIN at Vite build time and needs NEXUS .env).
+# This new flow triggers only on `v*` tag pushes and currently covers
+# only the backend image (no build args needed).
+
+surface: docker
+project: sentinel
+
+gates:
+  # Existing ci.yml already runs the comprehensive Go + npm test suite on
+  # every push. Tag-time gates focus on belt-and-suspenders checks.
+  tests: false
+  gitleaks: true
+  size_guard: true
+  npm_audit: critical
+  conventional_commits: false
+
+docker:
+  images:
+    - name: ghcr.io/ohio15/sentinel-backend
+      dockerfile: server/Dockerfile
+      context: ./server
+  deploy:
+    nexus_path: /home/ohio_/Sentinel
+    compose_file: docker-compose.yml
+    services: [backend]
+    health_check:
+      command: |
+        bash -c 'for i in $(seq 1 12); do
+          ip=$(docker inspect -f "{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}" sentinel-backend 2>/dev/null);
+          if [ -n "$ip" ] && curl -fsS -m 5 "http://${ip}:8080/health" >/dev/null 2>&1; then exit 0; fi;
+          sleep 5;
+        done; exit 1'
+      timeout_seconds: 90
+      interval_seconds: 5
+    rollback_on_health_fail: true
