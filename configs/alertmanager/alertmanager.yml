@@ -1,0 +1,32 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ['alertname', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: 'shadow-null'
+  routes:
+    - match:
+        severity: critical
+      receiver: 'shadow-null'
+      group_wait: 10s
+    - match:
+        severity: warning
+      receiver: 'shadow-null'
+      group_wait: 1m
+
+inhibit_rules:
+  - source_match:
+      severity: critical
+    target_match:
+      severity: warning
+    equal: ['alertname']
+
+receivers:
+  - name: 'shadow-null'
+    # Phase 2 SHADOW MODE: no notifiers configured.
+    # Alerts are visible in Alertmanager UI at https://alertmanager.nexus
+    # Phase 3.5 will replace this with ntfy webhook receiver after ntfy is
+    # upgraded to v2.22+, hardened with auth, and a publisher token issued.

@@ -200,6 +200,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./configs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./configs/prometheus/rules:/etc/prometheus/rules:ro
       - prometheus-data:/prometheus
     networks:
       - sentinel-network
@@ -221,6 +222,82 @@ services:
         reservations:
           cpus: '0.25'
           memory: 128M
+
+  # Monitoring - Alertmanager (Phase 2 shadow mode: UI-only, no external push)
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: sentinel-alertmanager
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=https://alertmanager.nexus'
+    volumes:
+      - ./configs/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    networks:
+      - sentinel-network
+      - edge
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=edge
+      - traefik.http.routers.alertmanager-nexus.rule=Host(`alertmanager.nexus`)
+      - traefik.http.routers.alertmanager-nexus.entrypoints=web,websecure
+      - traefik.http.routers.alertmanager-nexus.tls=true
+      - traefik.http.services.alertmanager-nexus.loadbalancer.server.port=9093
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 32M
+
+  # Monitoring - Node Exporter (host metrics: CPU, memory, disk, network)
+  node-exporter:
+    image: prom/node-exporter:v1.8.0
+    container_name: sentinel-node-exporter
+    restart: unless-stopped
+    command:
+      - '--path.rootfs=/host'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc|run/docker)($$|/)'
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    networks:
+      - sentinel-network
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 64M
+
+  # Monitoring - cAdvisor (per-container metrics: CPU, memory, network, restarts)
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: sentinel-cadvisor
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    networks:
+      - sentinel-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
 
   # Monitoring - Grafana dashboards
   grafana:
@@ -267,3 +344,4 @@ volumes:
   agent-certs:
   prometheus-data:
   grafana-data:
+  alertmanager-data:

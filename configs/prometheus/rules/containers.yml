@@ -1,0 +1,32 @@
+groups:
+  - name: containers
+    rules:
+      - alert: ContainerRestartLoop
+        expr: changes(container_start_time_seconds{name!=""}[15m]) > 3
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.name }} restart loop"
+          description: "{{ $labels.name }} has restarted {{ $value }} times in the last 15 minutes"
+
+      - alert: ContainerHighMemory
+        expr: |
+          (container_memory_usage_bytes{name!=""}
+            / on(name) (container_spec_memory_limit_bytes{name!=""} > 0)
+          ) * 100 > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.name }} memory > 90% of limit"
+          description: "{{ $labels.name }} using {{ $value | printf \"%.1f\" }}% of its memory limit"
+
+      - alert: ContainerHighCPU
+        expr: rate(container_cpu_usage_seconds_total{name!=""}[5m]) * 100 > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.name }} CPU > 90% sustained"
+          description: "{{ $labels.name }} CPU usage at {{ $value | printf \"%.1f\" }}% for 10 minutes"

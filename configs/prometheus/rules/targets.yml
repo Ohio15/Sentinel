@@ -1,0 +1,11 @@
+groups:
+  - name: targets
+    rules:
+      - alert: TargetDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prometheus target {{ $labels.job }} on {{ $labels.instance }} is down"
+          description: "Scrape target has been unreachable for 2+ minutes. Check the service or network reachability from sentinel-prometheus."

@@ -1,0 +1,38 @@
+groups:
+  - name: host
+    rules:
+      - alert: HostHighCPU
+        expr: 100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Host CPU > 85% for 10m"
+          description: "{{ $labels.instance }} CPU usage at {{ $value | printf \"%.1f\" }}%"
+
+      - alert: HostHighMemory
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 90
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Host memory > 90% for 10m"
+          description: "{{ $labels.instance }} memory usage at {{ $value | printf \"%.1f\" }}%"
+
+      - alert: HostDiskLow
+        expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|fuse.lxcfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|fuse.lxcfs|overlay"}) * 100 < 15
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk free < 15% on {{ $labels.mountpoint }}"
+          description: "{{ $labels.instance }} {{ $labels.mountpoint }} at {{ $value | printf \"%.1f\" }}% free"
+
+      - alert: HostDiskCritical
+        expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|fuse.lxcfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|fuse.lxcfs|overlay"}) * 100 < 5
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk free < 5% on {{ $labels.mountpoint }}"
+          description: "{{ $labels.instance }} {{ $labels.mountpoint }} at {{ $value | printf \"%.1f\" }}% free — imminent failure risk"
