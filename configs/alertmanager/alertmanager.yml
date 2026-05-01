@@ -6,15 +6,15 @@ route:
   group_wait: 30s
   group_interval: 5m
   repeat_interval: 4h
-  receiver: 'shadow-null'
+  receiver: 'ntfy-cortex-alerts'
   routes:
     - match:
         severity: critical
-      receiver: 'shadow-null'
+      receiver: 'ntfy-cortex-alerts'
       group_wait: 10s
     - match:
         severity: warning
-      receiver: 'shadow-null'
+      receiver: 'ntfy-cortex-alerts'
       group_wait: 1m
 
 inhibit_rules:
@@ -25,8 +25,11 @@ inhibit_rules:
     equal: ['alertname']
 
 receivers:
-  - name: 'shadow-null'
-    # Phase 2 SHADOW MODE: no notifiers configured.
-    # Alerts are visible in Alertmanager UI at https://alertmanager.nexus
-    # Phase 3.5 will replace this with ntfy webhook receiver after ntfy is
-    # upgraded to v2.22+, hardened with auth, and a publisher token issued.
+  - name: 'ntfy-cortex-alerts'
+    # Phase 3.5 LIVE: routes alerts through alertmanager-ntfy adapter ->
+    # ntfy.nexus topic 'cortex-alerts'. Adapter handles auth (publisher
+    # token) and Alertmanager -> ntfy payload translation.
+    webhook_configs:
+      - url: 'http://alertmanager-ntfy:8080/webhook'
+        send_resolved: true
+        max_alerts: 10
