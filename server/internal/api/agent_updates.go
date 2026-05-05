@@ -37,6 +37,16 @@ var (
 	versionCacheTime   time.Time
 	cachedChecksums    map[string]string // "windows-amd64" -> sha256
 	checksumCacheTime  time.Time
+
+	// Wave 1 hotfix (incident df7a7ff8): release-readiness cache. Tracks whether
+	// the version advertised by installers/version.json has a corresponding
+	// agent_releases row. When false, heartbeat-ack callers must suppress
+	// updateAvailable=true to avoid the 401 retry-storm we hit on the 2026-04-27
+	// v1.77.10 deploy. Cache TTL 60s, separate mutex from versionCacheMutex to
+	// avoid reentrant-lock issues with getAgentVersionFromFile.
+	cachedReleaseStatus *AgentReleaseStatus
+	releaseStatusMutex  sync.RWMutex
+	releaseStatusTime   time.Time
 )
 
 // getAgentVersionFromFile reads the agent version from version.json
@@ -89,6 +99,58 @@ func getAgentVersionFromFile() *AgentVersionFile {
 // getCurrentAgentVersion returns the current agent version string
 func getCurrentAgentVersion() string {
 	return getAgentVersionFromFile().Version
+}
+
+// AgentReleaseStatus captures whether the announced version is actually
+// publishable from the server. Heartbeat-ack callers gate updateAvailable=true
+// on HasReleaseRow — without it, the download endpoint will 401/404 and trigger
+// the retry-storm pattern documented in incident df7a7ff8.
+type AgentReleaseStatus struct {
+	Version       string
+	HasReleaseRow bool
+}
+
+// getAgentReleaseStatus returns cached release-readiness, refreshing every 60s.
+// One indexed query per minute (EXISTS over agent_releases) — not per heartbeat.
+// On DB error: HasReleaseRow=false (fail-closed → suppress announcement). Better
+// to under-announce than to flood the fleet with download retries when the
+// release isn't actually serveable.
+func (r *Router) getAgentReleaseStatus(ctx context.Context) *AgentReleaseStatus {
+	releaseStatusMutex.RLock()
+	if cachedReleaseStatus != nil && time.Since(releaseStatusTime) < 60*time.Second {
+		s := cachedReleaseStatus
+		releaseStatusMutex.RUnlock()
+		return s
+	}
+	releaseStatusMutex.RUnlock()
+
+	// Compute outside the write lock so DB latency doesn't block other readers.
+	version := getCurrentAgentVersion()
+	hasRow := false
+	if r != nil && r.db != nil {
+		qctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		if err := r.db.Pool().QueryRow(qctx,
+			`SELECT EXISTS(SELECT 1 FROM agent_releases WHERE version = $1)`, version,
+		).Scan(&hasRow); err != nil {
+			log.Printf("[ReleaseStatus] agent_releases lookup failed for %s: %v (suppressing updateAvailable)", version, err)
+			hasRow = false
+		}
+	}
+	fresh := &AgentReleaseStatus{Version: version, HasReleaseRow: hasRow}
+
+	releaseStatusMutex.Lock()
+	defer releaseStatusMutex.Unlock()
+	// Another goroutine may have refreshed while we were querying — keep theirs.
+	if cachedReleaseStatus != nil && time.Since(releaseStatusTime) < 60*time.Second {
+		return cachedReleaseStatus
+	}
+	cachedReleaseStatus = fresh
+	releaseStatusTime = time.Now()
+	if !hasRow {
+		log.Printf("[ReleaseStatus] No agent_releases row for advertised version %s — updateAvailable suppressed until release pipeline publishes", version)
+	}
+	return fresh
 }
 
 // AgentVersionInfo contains version information for auto-update

@@ -403,10 +403,17 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 			deviceID).Scan(&agentVersion, &osType); verErr == nil && agentVersion != "" {
 			latestVersion := getCurrentAgentVersion()
 			if isNewerVersion(latestVersion, agentVersion) {
-				// Linux agents below v1.72.0 have completely broken self-update
-				// (hardcoded Windows paths, no execute_command support). Don't send
-				// update notifications — they just trigger a useless download storm.
-				if osType == "linux" && !isNewerVersion(agentVersion, "1.71.99") {
+				// Wave 1 hotfix (incident df7a7ff8): gate announcement on
+				// agent_releases having a row for latestVersion. Without this,
+				// the v1.77.10 advert sent agents into a 401 retry-storm because
+				// the release pipeline never populated agent_releases.
+				releaseStatus := r.getAgentReleaseStatus(ctx)
+				if !releaseStatus.HasReleaseRow {
+					log.Printf("Suppressing update notification for agent %s (no agent_releases row for %s — release pipeline gap)", authPayload.AgentID, latestVersion)
+				} else if osType == "linux" && !isNewerVersion(agentVersion, "1.71.99") {
+					// Linux agents below v1.72.0 have completely broken self-update
+					// (hardcoded Windows paths, no execute_command support). Don't send
+					// update notifications — they just trigger a useless download storm.
 					log.Printf("Suppressing update notification for agent %s (Linux v%s < v1.72.0, requires manual update)", authPayload.AgentID, agentVersion)
 				} else if r.hasRecentUpdateFailure(ctx, authPayload.AgentID, latestVersion) {
 					log.Printf("Suppressing update notification for agent %s (recent update failure, 30min cooldown)", authPayload.AgentID)
@@ -633,16 +640,23 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 			// (~10s), hammering the download endpoint with 429s in an endless loop.
 			recentFailure := r.hasRecentUpdateFailure(ctx, agentID, latestVersion)
 
+			// Wave 1 hotfix (incident df7a7ff8): gate on agent_releases row exists.
+			releaseStatus := r.getAgentReleaseStatus(ctx)
+			noRelease := !releaseStatus.HasReleaseRow
+
 			if deviceOSType == "linux" && !isNewerVersion(heartbeat.AgentVersion, "1.71.99") {
 				// Don't tell this agent about updates — it can't apply them
 			} else if recentFailure {
 				// Don't tell this agent about updates — it recently failed, back off
 				log.Printf("Agent %s update suppressed for 30min (recent failure)", agentID)
+			} else if noRelease {
+				// Don't tell this agent about updates — server has no published release to serve
+				log.Printf("Agent %s update suppressed (no agent_releases row for %s — release pipeline gap)", agentID, latestVersion)
 			} else {
 				ackPayload["updateAvailable"] = true
 				ackPayload["latestVersion"] = latestVersion
 			}
-			suppressed := (deviceOSType == "linux" && !isNewerVersion(heartbeat.AgentVersion, "1.71.99")) || recentFailure
+			suppressed := (deviceOSType == "linux" && !isNewerVersion(heartbeat.AgentVersion, "1.71.99")) || recentFailure || noRelease
 			log.Printf("Agent %s has update available: %s -> %s (os=%s, suppressed=%v)", agentID, heartbeat.AgentVersion, latestVersion, deviceOSType, suppressed)
 		} else if heartbeat.AgentVersion != "" {
 			// Agent is at latest version — auto-resolve any stale update failure alerts
