@@ -1,7 +1,7 @@
 {
-    "version":  "1.77.15",
+    "version":  "1.77.16",
     "releaseDate":  "2026-05-05",
-    "changelog":  "Wave 1 hotfix (incident df7a7ff8) — server-only. Suppress updateAvailable=true announcements when agent_releases has no row for the advertised version. Stops the 401 retry-storm and Device Offline alert noise that began with the v1.77.10 deploy on 2026-04-27. No agent-binary change in this release; surviving fleet remains on 1.77.4. Phase 2 will populate agent_releases and ship 1.77.10 binaries end-to-end.",
+    "changelog":  "Wave 1.1 hotfix (incident df7a7ff8 follow-up) — server-only. Closes the residual 401 path missed in Wave 1: the public GET /api/agent/version handler now applies the same agent_releases gate as the heartbeat-ack path, so agents polling via updater.CheckForUpdate stop being told an update is available when none is publishable. Also corrects scripts/cleanup-401-failure-suppression.sql (updated_at → completed_at; the prior column name does not exist on this schema).",
     "platforms":  [
                       "windows",
                       "linux",

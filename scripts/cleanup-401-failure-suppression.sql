@@ -25,7 +25,7 @@
 
 UPDATE agent_updates
    SET status = 'superseded',
-       updated_at = NOW()
+       completed_at = NOW()
  WHERE status = 'failed'
    AND error_message LIKE '%401%'
    AND created_at > NOW() - INTERVAL '30 minutes';
@@ -35,4 +35,4 @@ UPDATE agent_updates
 --     FROM agent_updates
 --    WHERE status = 'superseded'
 --      AND error_message LIKE '%401%'
---      AND updated_at > NOW() - INTERVAL '5 minutes';
+--      AND completed_at > NOW() - INTERVAL '5 minutes';

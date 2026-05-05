@@ -250,6 +250,18 @@ func (r *Router) getAgentVersion(c *gin.Context) {
 		return
 	}
 
+	// Wave 1.1 hotfix (incident df7a7ff8 follow-up): same release-status gate
+	// as the heartbeat-ack path in handlers.go. Without this, agents polling via
+	// updater.CheckForUpdate bypass the heartbeat gate and still 401-loop on
+	// /api/agent/update/download. Suppress at the source: don't tell self-pollers
+	// an update is available when the server can't actually serve it.
+	releaseStatus := r.getAgentReleaseStatus(c.Request.Context())
+	if !releaseStatus.HasReleaseRow {
+		response.Available = false
+		c.JSON(http.StatusOK, response)
+		return
+	}
+
 	// Agents below v1.72.0 on Linux have broken self-update (hardcoded Windows paths,
 	// no cross-filesystem fallback, broken restart). Telling them "update available"
 	// just causes an endless download-fail loop. Return unavailable to stop the storm;
