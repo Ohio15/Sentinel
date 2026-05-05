@@ -1,7 +1,7 @@
 {
-    "version":  "1.77.17",
+    "version":  "1.77.10",
     "releaseDate":  "2026-05-05",
-    "changelog":  "Wave 2 security hotfix (CVE-class) — server-only. Closes two pre-existing credential-leak paths to log infrastructure: (1) bootstrap.go:809 was emitting the first 8 characters of the live enrollment token to stdout/Loki on every config-patch — replaced with token_len=%d. (2) middleware/auth.go:70-71 was logging the full Request.URL.RawQuery for WebSocket paths, which captured ?token=<JWT> for clients on the deprecated query-param auth path — replaced with query_len=%d. No agent rebuild; agent-side updater setAuthHeaders defense-in-depth deferred to Wave 4 where it composes with the WS-message redesign and Phase 2 binary publish.",
+    "changelog":  "Phase 2 Stage 1 release-pipeline-gap fix (incident df7a7ff8). The v1.77.10 source code was tagged on 2026-04-27 but binaries were never built/published and no agent_releases row was inserted — see issue #12 backstory. This release publishes the v1.77.10 binaries that should have shipped 2026-04-27 (rebuilt fresh from the unchanged agent source) and inserts the matching agent_releases row, lifting the Wave 1 announcement gate. Surviving fleet (currently on 1.77.3/1.77.4) can now upgrade to 1.77.10 via the existing self-poll path. Server convention going forward: installers/version.json reflects the published agent binary version; package.json reflects the server/repo version. They diverge for server-only releases (e.g., v1.77.15-17 were server-only and did not change agent binaries).",
     "platforms":  [
                       "windows",
                       "linux",

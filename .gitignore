@@ -30,6 +30,9 @@ npm-debug.log*
 # are fine, but they must not be tracked. The size-guard pre-commit hook
 # also catches accidental re-introduction.
 *.exe
+# Linux/macOS Go binaries (no .exe extension) — same standing rule.
+installers/sentinel-agent-linux-*
+installers/sentinel-agent-darwin-*
 # Legacy explicit entries (kept for clarity / if *.exe is ever narrowed):
 downloads/sentinel-agent*
 agent/sentinel-installer.exe
