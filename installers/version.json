@@ -1,7 +1,7 @@
 {
-    "version":  "1.77.16",
+    "version":  "1.77.17",
     "releaseDate":  "2026-05-05",
-    "changelog":  "Wave 1.1 hotfix (incident df7a7ff8 follow-up) — server-only. Closes the residual 401 path missed in Wave 1: the public GET /api/agent/version handler now applies the same agent_releases gate as the heartbeat-ack path, so agents polling via updater.CheckForUpdate stop being told an update is available when none is publishable. Also corrects scripts/cleanup-401-failure-suppression.sql (updated_at → completed_at; the prior column name does not exist on this schema).",
+    "changelog":  "Wave 2 security hotfix (CVE-class) — server-only. Closes two pre-existing credential-leak paths to log infrastructure: (1) bootstrap.go:809 was emitting the first 8 characters of the live enrollment token to stdout/Loki on every config-patch — replaced with token_len=%d. (2) middleware/auth.go:70-71 was logging the full Request.URL.RawQuery for WebSocket paths, which captured ?token=<JWT> for clients on the deprecated query-param auth path — replaced with query_len=%d. No agent rebuild; agent-side updater setAuthHeaders defense-in-depth deferred to Wave 4 where it composes with the WS-message redesign and Phase 2 binary publish.",
     "platforms":  [
                       "windows",
                       "linux",

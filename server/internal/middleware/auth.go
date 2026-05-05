@@ -67,8 +67,10 @@ func AuthMiddleware(jwtSecret string) gin.HandlerFunc {
 		// Debug logging for WebSocket auth failures
 		isWS := strings.Contains(c.Request.URL.Path, "/ws/")
 		if isWS {
-			log.Printf("[AUTH-WS] Path=%s Query=%s HasHeader=%v TokenLen=%d ClientIP=%s",
-				c.Request.URL.Path, c.Request.URL.RawQuery, authHeader != "", len(tokenString), c.ClientIP())
+			// Wave 2 hotfix: was logging RawQuery verbatim, which leaked JWTs from
+			// the deprecated ?token=<JWT> WS auth path into Loki. Length-only now.
+			log.Printf("[AUTH-WS] Path=%s QueryLen=%d HasHeader=%v TokenLen=%d ClientIP=%s",
+				c.Request.URL.Path, len(c.Request.URL.RawQuery), authHeader != "", len(tokenString), c.ClientIP())
 		}
 
 		if tokenString == "" {

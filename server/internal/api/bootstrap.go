@@ -806,8 +806,8 @@ func buildPatchedInstallerWithCode(serverURL, enrollmentToken, installCode strin
 
 	if bytes.Contains(installerData, placeholder) {
 		installerData = bytes.Replace(installerData, placeholder, patched, 1)
-		log.Printf("[Patch] Config block patched: server=%s, token=%s..., code=%s",
-			serverURL, enrollmentToken[:min(8, len(enrollmentToken))], installCode)
+		log.Printf("[Patch] Config block patched: server=%s, token_len=%d, code=%s",
+			serverURL, len(enrollmentToken), installCode)
 	} else {
 		log.Printf("[Patch] ERROR: Config block not found in binary! Looking for XYZCFG magic...")
 		// Try to find the magic header to debug
