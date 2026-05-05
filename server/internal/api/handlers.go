@@ -428,12 +428,24 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 					r.hub.SendToAgent(authPayload.AgentID, ackMsg)
 					log.Printf("Proactive update notification for agent %s: %s -> %s", authPayload.AgentID, agentVersion, latestVersion)
 
-					// For agents that aren't on the latest version and have a stuck update,
-					// send a force-update command to restart the watchdog (Windows) or
-					// download+swap the binary (Linux).
-					if isNewerVersion(latestVersion, agentVersion) && (osType == "windows" || osType == "linux") {
-						r.sendForceUpdateCommand(authPayload.AgentID, deviceID, agentVersion, latestVersion, osType)
-					}
+					// Wave 1.2 (incident df7a7ff8): server-pushed force-update path
+					// is disabled. sendForceUpdateCommand emits a chained shell
+					// invocation (curl.exe / bash) that does NOT carry the
+					// X-Enrollment-Token header — qa-butcher CRITICAL C1. Once
+					// agent_releases is populated (Phase 2 Stage 1), this path
+					// fires every connection, hits /api/agent/update/download,
+					// 401s, and trips hasRecentUpdateFailure suppression which
+					// then blocks the agent's own native CheckForUpdate path
+					// from completing the upgrade. Until Wave 4 replaces this
+					// with a WS message that the agent's in-process updater
+					// handles (so the credential never crosses a shell
+					// boundary), let agents discover updates via their own
+					// CheckForUpdate poll cycle — slower but functional.
+					//
+					// if isNewerVersion(latestVersion, agentVersion) && (osType == "windows" || osType == "linux") {
+					//     r.sendForceUpdateCommand(authPayload.AgentID, deviceID, agentVersion, latestVersion, osType)
+					// }
+					_ = osType // silence unused warning while disabled
 				}
 			}
 		}
