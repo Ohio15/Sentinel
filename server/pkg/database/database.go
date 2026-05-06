@@ -164,6 +164,7 @@ func (db *DB) Migrate() error {
 		"migrations/039_test_center.sql",             // v50
 		"migrations/040_kill_token.sql",              // v51
 		"migrations/041_webhooks_fix_org_id_type.sql", // v52
+		"migrations/042_alert_rules_sla_policies_dedupe_uniqueness.sql", // v53
 	}
 
 	// Run pending migrations
