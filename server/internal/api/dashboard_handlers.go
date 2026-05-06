@@ -320,12 +320,17 @@ func (r *Router) handleDashboardMessage(userID uuid.UUID, message []byte) {
 		}
 		json.Unmarshal(msg.Payload, &scriptPayload)
 		log.Printf("[Dashboard] Forwarding execute_script to agent %s: script=%s", agentID, scriptPayload.Name)
+		// Agents read data["script"] (see agent/cmd/sentinel-agent/main.go::handleExecuteScript).
+		// Pre-2026-05-06 this path sent "content" only, so every dashboard execute_script
+		// dispatch was a silent no-op. Send "script" for the agent and keep "content" for
+		// any older consumer that may have keyed off it.
 		agentMsg, _ := json.Marshal(map[string]interface{}{
 			"type":      ws.MsgTypeScript,
 			"requestId": msg.RequestID,
 			"data": map[string]interface{}{
 				"scriptId": scriptPayload.ScriptID,
 				"language": scriptPayload.Language,
+				"script":   scriptPayload.Content,
 				"content":  scriptPayload.Content,
 				"name":     scriptPayload.Name,
 			},

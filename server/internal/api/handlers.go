@@ -1920,22 +1920,26 @@ func (r *Router) executeScript(c *gin.Context) {
 	userID := c.MustGet("userId").(uuid.UUID)
 	var commandID uuid.UUID
 	err = r.db.Pool().QueryRow(ctx, `
-		INSERT INTO commands (device_id, user_id, command_type, command, status, organization_id)
+		INSERT INTO commands (device_id, created_by, command_type, command, status, organization_id)
 			VALUES ($1, $2, $3, $4, 'pending', $5) RETURNING id
-	`, deviceID, userID, script.Language, script.Content).Scan(&commandID)
+	`, deviceID, userID, script.Language, script.Content, constants.CurrentOrganizationID).Scan(&commandID)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create command"})
 		return
 	}
 
+	// Agents register a handler on MsgTypeExecuteScript ("execute_script") that reads
+	// data["script"] and data["language"] (see agent/cmd/sentinel-agent/main.go).
+	// The previous payload here used type="execute" with a payload-wrapped shape that
+	// no agent handler ever consumed — every dispatch was a silent no-op until 2026-05-06.
 	msg, _ := json.Marshal(map[string]interface{}{
-		"type":      "execute",
+		"type":      "execute_script",
 		"requestId": commandID.String(),
-		"payload": map[string]interface{}{
+		"data": map[string]interface{}{
 			"commandId": commandID.String(),
-			"type":      script.Language,
-			"command":   script.Content,
+			"script":    script.Content,
+			"language":  script.Language,
 		},
 	})
 
