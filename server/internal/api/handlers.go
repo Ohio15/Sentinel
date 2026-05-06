@@ -606,6 +606,7 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 
 	switch msg.Type {
 	case ws.MsgTypeHeartbeat:
+		MetricsIncHeartbeat()
 		// Parse heartbeat to get agent version
 		var heartbeat struct {
 			AgentVersion string `json:"agentVersion"`

@@ -208,6 +208,14 @@ func (h *Hub) GetPendingRequests() *messaging.PendingRequestManager {
 	return h.pendingRequests
 }
 
+// ActiveAgentCount returns the number of agent WebSocket connections currently
+// registered with this hub. Used by the Prometheus metrics refresher.
+func (h *Hub) ActiveAgentCount() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.agents)
+}
+
 func (h *Hub) Run() {
 	for {
 		select {

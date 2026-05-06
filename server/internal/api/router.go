@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"runtime"
@@ -236,6 +237,12 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 	r.GET("/health", healthCheck(services))
 	r.GET("/health/live", livenessCheck())
 	r.GET("/health/ready", readinessCheck(services))
+
+	// Prometheus scrape endpoint. Mounted on the root engine without auth/CSRF —
+	// access is gated at the network layer (port 8080 is bound to 127.0.0.1 on the
+	// host; Prometheus reaches it over the internal docker network only).
+	r.GET("/metrics", metricsHandler())
+	startMetricsRefresher(context.Background(), services.DB.AsDB(), services.Hub)
 
 	// API routes
 	api := r.Group("/api")

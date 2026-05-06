@@ -15,6 +15,7 @@ require (
 	github.com/lib/pq v1.10.9
 	github.com/pion/turn/v3 v3.0.3
 	github.com/pquerna/otp v1.5.0
+	github.com/prometheus/client_golang v1.20.5
 	github.com/redis/go-redis/v9 v9.6.3
 	github.com/xuri/excelize/v2 v2.10.0
 	golang.org/x/crypto v0.47.0

@@ -23,6 +23,7 @@ type WebSocketHub interface {
 	IsAgentOnline(agentID string) bool
 	RegisterAgent(conn *websocket.Conn, agentID string, deviceID uuid.UUID) *ws.Client
 	RegisterDashboard(conn *websocket.Conn, userID uuid.UUID) *ws.Client
+	ActiveAgentCount() int
 }
 
 // MetricsRecorder defines the interface for metrics recording control
