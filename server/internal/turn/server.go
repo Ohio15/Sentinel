@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pion/turn/v3"
+	"github.com/pion/turn/v4"
 )
 
 // Config for TURN server
