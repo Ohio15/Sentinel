@@ -42,7 +42,11 @@ CREATE INDEX IF NOT EXISTS idx_tickets_first_response_due ON tickets(first_respo
 CREATE INDEX IF NOT EXISTS idx_tickets_resolution_due ON tickets(resolution_due_at) WHERE closed_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_tickets_sla_breaches ON tickets(sla_response_breached, sla_resolution_breached);
 
--- Insert default SLA policies
+-- Insert default SLA policies — per-row idempotent. The original guard was
+-- WHERE NOT EXISTS (SELECT 1 FROM sla_policies LIMIT 1) which is "table-empty
+-- only"; once any row existed, the seed was skipped entirely, but if rows were
+-- partially modified or wiped between replays, dupes appeared (2026-05-06 cleanup).
+-- Migration 042 enforces uniqueness via partial index; this seed cooperates with it.
 INSERT INTO sla_policies (name, priority, response_target_minutes, resolution_target_minutes, is_default)
 SELECT * FROM (VALUES
     ('Critical - 1 Hour Response', 'urgent', 60, 240, TRUE),
@@ -50,7 +54,12 @@ SELECT * FROM (VALUES
     ('Medium - 8 Hour Response', 'medium', 480, 1440, TRUE),
     ('Low - 24 Hour Response', 'low', 1440, 2880, TRUE)
 ) AS defaults(name, priority, response_target_minutes, resolution_target_minutes, is_default)
-WHERE NOT EXISTS (SELECT 1 FROM sla_policies LIMIT 1);
+WHERE NOT EXISTS (
+    SELECT 1 FROM sla_policies sp
+    WHERE sp.name = defaults.name
+      AND sp.priority = defaults.priority
+      AND sp.client_id IS NULL
+);
 
 -- ============================================================================
 -- HIERARCHICAL CATEGORIES

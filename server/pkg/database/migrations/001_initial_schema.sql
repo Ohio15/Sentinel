@@ -129,14 +129,28 @@ CREATE TABLE alert_rules (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Default alert rules
-INSERT INTO alert_rules (name, description, metric, operator, threshold, severity, cooldown_minutes) VALUES
-    ('High CPU Usage', 'Alert when CPU usage exceeds 90%', 'cpu_percent', 'gt', 90, 'warning', 15),
-    ('Critical CPU Usage', 'Alert when CPU usage exceeds 95%', 'cpu_percent', 'gt', 95, 'critical', 5),
-    ('High Memory Usage', 'Alert when memory usage exceeds 85%', 'memory_percent', 'gt', 85, 'warning', 15),
-    ('Critical Memory Usage', 'Alert when memory usage exceeds 95%', 'memory_percent', 'gt', 95, 'critical', 5),
-    ('Low Disk Space', 'Alert when disk usage exceeds 90%', 'disk_percent', 'gt', 90, 'critical', 60),
-    ('Device Offline', 'Alert when device goes offline', 'status', 'eq', 0, 'critical', 5);
+-- Default alert rules — idempotent insert. Pre-2026-05-06 this was a bare VALUES list
+-- with no guard; replays of this migration produced 16 rows from a 6-row seed (each
+-- duplicate then independently fired alerts). Migration 042 cleans up any existing
+-- duplicates and adds a unique constraint; this seed becomes a no-op on subsequent
+-- runs whether or not 042 has applied yet.
+INSERT INTO alert_rules (name, description, metric, operator, threshold, severity, cooldown_minutes)
+SELECT * FROM (VALUES
+    ('High CPU Usage', 'Alert when CPU usage exceeds 90%', 'cpu_percent', 'gt', 90.0::real, 'warning', 15),
+    ('Critical CPU Usage', 'Alert when CPU usage exceeds 95%', 'cpu_percent', 'gt', 95.0::real, 'critical', 5),
+    ('High Memory Usage', 'Alert when memory usage exceeds 85%', 'memory_percent', 'gt', 85.0::real, 'warning', 15),
+    ('Critical Memory Usage', 'Alert when memory usage exceeds 95%', 'memory_percent', 'gt', 95.0::real, 'critical', 5),
+    ('Low Disk Space', 'Alert when disk usage exceeds 90%', 'disk_percent', 'gt', 90.0::real, 'critical', 60),
+    ('Device Offline', 'Alert when device goes offline', 'status', 'eq', 0.0::real, 'critical', 5)
+) AS seed(name, description, metric, operator, threshold, severity, cooldown_minutes)
+WHERE NOT EXISTS (
+    SELECT 1 FROM alert_rules ar
+    WHERE ar.name = seed.name
+      AND ar.metric = seed.metric
+      AND ar.operator = seed.operator
+      AND ar.threshold = seed.threshold
+      AND ar.severity = seed.severity
+);
 
 -- Sessions table (for JWT refresh tokens)
 CREATE TABLE sessions (
