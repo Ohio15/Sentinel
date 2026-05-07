@@ -92,6 +92,7 @@ var migrationFilesRegistry = []string{
 	"migrations/000051_kill_token.up.sql",                                  // v51
 	"migrations/000052_webhooks_fix_org_id_type.up.sql",                    // v52
 	"migrations/000053_alert_rules_sla_policies_dedupe_uniqueness.up.sql",  // v53
+	"migrations/000054_idx_devices_last_seen.up.sql",                       // v54
 }
 
 // registeredMigrationFilesForTest exposes the registry to tests in this
