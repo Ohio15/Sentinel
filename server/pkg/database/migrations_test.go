@@ -29,7 +29,7 @@ func TestMigrationFilenameInvariants(t *testing.T) {
 		t.Fatalf("read embedded migrations dir: %v", err)
 	}
 
-	pattern := regexp.MustCompile(`^([0-9]{6})_[a-z0-9_]+\.sql$`)
+	pattern := regexp.MustCompile(`^([0-9]{6})_[a-z0-9_]+\.up\.sql$`)
 	versions := make([]int, 0, len(entries))
 	embeddedNames := make(map[string]bool, len(entries))
 
@@ -40,7 +40,7 @@ func TestMigrationFilenameInvariants(t *testing.T) {
 		}
 		m := pattern.FindStringSubmatch(e.Name())
 		if m == nil {
-			t.Errorf("invariant 1: filename %q does not match ^[0-9]{6}_[a-z0-9_]+\\.sql$", e.Name())
+			t.Errorf("invariant 1: filename %q does not match ^[0-9]{6}_[a-z0-9_]+\\.up\\.sql$", e.Name())
 			continue
 		}
 		v, _ := strconv.Atoi(m[1])
