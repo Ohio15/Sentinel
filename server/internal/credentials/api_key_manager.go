@@ -181,6 +181,7 @@ func (m *APIKeyManager) ValidateKey(ctx context.Context, providedKey string, cli
 	var bcryptHash []byte
 	var permsBytes, ipBytes []byte
 	var status string
+	var isRevoked bool
 	err := m.db.QueryRow(ctx, `
 		SELECT id, key_value_encrypted, name, description, permissions, ip_allowlist,
 		       status, created_at, created_by, last_used_at, expires_at,
@@ -191,8 +192,17 @@ func (m *APIKeyManager) ValidateKey(ctx context.Context, providedKey string, cli
 	`, prefix).Scan(
 		&key.ID, &bcryptHash, &key.Name, &key.Description, &permsBytes,
 		&ipBytes, &status, &key.CreatedAt, &key.CreatedBy,
-		&key.LastUsedAt, &key.ExpiresAt, &key.RevokedAt, &key.UseCount,
+		&key.LastUsedAt, &key.ExpiresAt, &isRevoked, &key.UseCount,
 	)
+	// credential_keys has no revoked_at column; revocation is tracked via
+	// revoked_by being non-NULL. Lift the boolean into APIKey.RevokedAt as
+	// a non-nil sentinel (key.CreatedAt is meaningful enough for the
+	// validateKeyState != nil check) so the rest of the validation flow
+	// recognises revoked keys.
+	if isRevoked {
+		t := key.CreatedAt
+		key.RevokedAt = &t
+	}
 	if err != nil {
 		log.Printf("[APIKeyManager] ValidateKey lookup failed (prefix=%s): %v", prefix, err)
 		return nil, ErrKeyNotFound
