@@ -167,19 +167,24 @@ func (m *APIKeyManager) ValidateKey(ctx context.Context, providedKey string, cli
 		return key, nil
 	}
 
-	// Query database
+	// Query database. Column naming is historical and misleading:
+	//   - credential_keys.key_hash         is the 16-char lookup prefix
+	//     (sk_live_xxxxxxxx) used as the index probe.
+	//   - credential_keys.key_value_encrypted (bytea) holds the bcrypt hash
+	//     of the full plaintext key — what bcrypt.CompareHashAndPassword
+	//     verifies against.
 	var key APIKey
-	var keyHash string
+	var bcryptHash []byte
 	var status string
 	err := m.db.QueryRow(ctx, `
-		SELECT id, key_hash, name, description, permissions, ip_allowlist,
+		SELECT id, key_value_encrypted, name, description, permissions, ip_allowlist,
 		       status, created_at, created_by, last_used_at, expires_at,
 		       revoked_by IS NOT NULL as is_revoked, use_count
 		FROM credential_keys
 		WHERE credential_type = 'api_key'
 		  AND key_hash = $1
 	`, prefix).Scan(
-		&key.ID, &keyHash, &key.Name, &key.Description, &key.Permissions,
+		&key.ID, &bcryptHash, &key.Name, &key.Description, &key.Permissions,
 		&key.IPAllowlist, &status, &key.CreatedAt, &key.CreatedBy,
 		&key.LastUsedAt, &key.ExpiresAt, &key.RevokedAt, &key.UseCount,
 	)
@@ -189,8 +194,8 @@ func (m *APIKeyManager) ValidateKey(ctx context.Context, providedKey string, cli
 
 	key.KeyPrefix = prefix
 
-	// Validate bcrypt hash
-	if err := bcrypt.CompareHashAndPassword([]byte(keyHash), []byte(providedKey)); err != nil {
+	// Validate bcrypt hash against the full plaintext key.
+	if err := bcrypt.CompareHashAndPassword(bcryptHash, []byte(providedKey)); err != nil {
 		return nil, ErrKeyNotFound
 	}
 
