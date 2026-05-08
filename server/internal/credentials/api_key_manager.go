@@ -235,6 +235,35 @@ func (m *APIKeyManager) validateKeyState(key *APIKey, providedKey, clientIP stri
 	return nil
 }
 
+// ValidateAndDeriveRole validates a managed API key and returns the calling
+// user's UUID (key.ID) along with a coarse RBAC role string derived from the
+// key's permissions array:
+//
+//   "admin"    — permissions include "*" or "admin:*"
+//   "operator" — any other non-empty permission set
+//   "viewer"   — empty permissions (read-only would be the future addition)
+//
+// Used by middleware to slot managed keys into the existing role-based
+// authorization (RequireRole("admin","operator")) without exposing the
+// permissions array to every handler.
+func (m *APIKeyManager) ValidateAndDeriveRole(ctx context.Context, providedKey, clientIP string) (uuid.UUID, string, error) {
+	key, err := m.ValidateKey(ctx, providedKey, clientIP)
+	if err != nil {
+		return uuid.Nil, "", err
+	}
+	role := "viewer"
+	for _, p := range key.Permissions {
+		if p == "*" || p == "admin:*" {
+			role = "admin"
+			break
+		}
+		if p != "" {
+			role = "operator"
+		}
+	}
+	return key.ID, role, nil
+}
+
 // HasPermission checks if a key has a specific permission
 func (m *APIKeyManager) HasPermission(key *APIKey, required string) bool {
 	for _, perm := range key.Permissions {

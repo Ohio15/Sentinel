@@ -321,7 +321,7 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 
 		// Protected routes (require JWT)
 		protected := api.Group("")
-		protected.Use(middleware.AuthOrAPIKeyMiddleware(services.Config.JWTSecret, services.Config.APIKey))
+		protected.Use(middleware.AuthOrAPIKeyMiddlewareWithManager(services.Config.JWTSecret, services.Config.APIKey, services.APIKeyManager))
 		protected.Use(middleware.CSRFMiddleware(middleware.DefaultCSRFConfig()))
 		{
 			// Auth

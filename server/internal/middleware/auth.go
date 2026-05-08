@@ -25,6 +25,14 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
+// APIKeyValidator is the contract the auth middleware needs from the
+// credentials package — kept as an interface here so middleware doesn't
+// import credentials (which would create a cycle via the Services struct).
+// credentials.APIKeyManager satisfies this interface.
+type APIKeyValidator interface {
+	ValidateAndDeriveRole(ctx context.Context, providedKey, clientIP string) (uuid.UUID, string, error)
+}
+
 // ValidateJWT parses and validates a JWT token string, returning the claims if valid.
 func ValidateJWT(tokenString string, jwtSecret string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
@@ -138,14 +146,42 @@ func AgentAuthMiddleware(enrollmentToken string) gin.HandlerFunc {
 }
 
 func AuthOrAPIKeyMiddleware(jwtSecret, apiKey string) gin.HandlerFunc {
+	return AuthOrAPIKeyMiddlewareWithManager(jwtSecret, apiKey, nil)
+}
+
+// AuthOrAPIKeyMiddlewareWithManager wires the managed-key path (credential_keys
+// table via APIKeyManager) into the middleware. Callers that supply a non-nil
+// manager get permission-derived RBAC: a managed key whose permissions include
+// "*" or "admin:*" maps to role="admin"; any other non-empty permission set
+// maps to role="operator". The static-key fallback (config.APIKey) remains for
+// backwards compatibility and stays at role="operator".
+func AuthOrAPIKeyMiddlewareWithManager(jwtSecret, apiKey string, mgr APIKeyValidator) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Check for API key first
-		if key := c.GetHeader("X-API-Key"); key != "" && apiKey != "" {
-			if subtle.ConstantTimeCompare([]byte(key), []byte(apiKey)) == 1 {
+		if key := c.GetHeader("X-API-Key"); key != "" {
+			// Managed-key path: keys with sk_live_ prefix go through the
+			// APIKeyManager which validates against credential_keys.
+			if mgr != nil && len(key) >= 8 && key[:8] == "sk_live_" {
+				validated, role, err := mgr.ValidateAndDeriveRole(c.Request.Context(), key, c.ClientIP())
+				if err != nil {
+					log.Printf("[AUTH] managed API key rejected: %v", err)
+					c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
+					c.Abort()
+					return
+				}
+				c.Set("userId", validated)
+				c.Set("email", "api-key:"+validated.String())
+				c.Set("role", role)
+				c.Set("auth_method", "api_key")
+				c.Next()
+				return
+			}
+			// Static-key fallback (config.APIKey) — operator role only.
+			if apiKey != "" && subtle.ConstantTimeCompare([]byte(key), []byte(apiKey)) == 1 {
 				c.Set("userId", uuid.Nil)
-				c.Set("email", "api-key")
-				c.Set("role", "operator") // Previously "admin" — principle of least privilege
-				log.Printf("[WARN] API key used without explicit role, defaulting to operator. Set role in api_keys table.")
+				c.Set("email", "api-key:static")
+				c.Set("role", "operator")
+				c.Set("auth_method", "api_key")
 				c.Next()
 				return
 			}

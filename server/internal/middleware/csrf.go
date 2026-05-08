@@ -56,6 +56,14 @@ func CSRFMiddleware(config CSRFConfig) gin.HandlerFunc {
 			}
 		}
 
+		// Skip CSRF when the request was authenticated via API key (set by
+		// AuthOrAPIKeyMiddleware). API-key auth uses an explicit header that
+		// can't be forged via a victim's browser cookies, so CSRF is moot.
+		if method, ok := c.Get("auth_method"); ok && method == "api_key" {
+			c.Next()
+			return
+		}
+
 		// Skip CSRF for specific paths (agent endpoints, WebSocket, etc.)
 		path := c.Request.URL.Path
 		for _, skipPath := range config.SkipPaths {
