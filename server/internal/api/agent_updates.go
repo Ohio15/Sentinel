@@ -568,6 +568,19 @@ func (r *Router) reportUpdateStatus(c *gin.Context) {
 		`, uuid.New(), req.AgentID, req.FromVersion, req.ToVersion, c.ClientIP(), req.Status, req.Error)
 	}
 
+	// Phase 6 (v1.77.30): rollout outcome — flip the rollout_devices row from
+	// 'dispatched' to 'succeeded' or 'failed' so the rollout ticker can finalise
+	// the parent rollout. Intermediate statuses (downloading|staging|applying)
+	// are progress signals, not terminal — leave the rollout row in 'dispatched'.
+	if req.Status == "completed" || req.Status == "failed" || req.Status == "rolled_back" {
+		var deviceUUID uuid.UUID
+		if err := r.db.Pool().QueryRow(c.Request.Context(),
+			`SELECT id FROM devices WHERE agent_id = $1`, req.AgentID).Scan(&deviceUUID); err == nil {
+			success := req.Status == "completed"
+			r.recordRolloutDeviceOutcome(c.Request.Context(), deviceUUID, success, req.Error)
+		}
+	}
+
 	if req.Status == "completed" {
 		r.db.Pool().Exec(c.Request.Context(), `
 			UPDATE devices SET agent_version = $1, updated_at = NOW() WHERE agent_id = $2

@@ -641,6 +641,24 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 		// Build heartbeat ack - include update info if newer version available
 		ackPayload := map[string]interface{}{}
 
+		// Phase 6 (v1.77.30): rollout-aware dispatch overrides the global
+		// "latest version" notion. If this device has a pending row in an
+		// active rollout, offer that rollout's release_version regardless of
+		// global latestVersion or recent-failure suppression — admin chose
+		// this on purpose. Skip the legacy comparison block entirely.
+		if releaseVer, rolloutID, dispatched := r.dispatchPendingRolloutForDevice(ctx, agentID, deviceID, heartbeat.AgentVersion); dispatched {
+			ackPayload["updateAvailable"] = true
+			ackPayload["latestVersion"] = releaseVer
+			ackPayload["rolloutId"] = rolloutID
+			log.Printf("[Rollouts] dispatched rollout %s -> agent %s (%s -> %s)", rolloutID, agentID, heartbeat.AgentVersion, releaseVer)
+			ackMsg, _ := json.Marshal(map[string]interface{}{
+				"type":    ws.MsgTypeHeartbeatAck,
+				"payload": ackPayload,
+			})
+			r.hub.SendToAgent(agentID, ackMsg)
+			return
+		}
+
 		latestVersion := getCurrentAgentVersion()
 		if heartbeat.AgentVersion != "" && isNewerVersion(latestVersion, heartbeat.AgentVersion) {
 			// Suppress update notification for Linux agents below v1.72.0 — their

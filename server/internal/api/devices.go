@@ -182,10 +182,11 @@ func (r *Router) getDevice(c *gin.Context) {
 
 // UpdateDeviceRequest defines the fields that can be updated
 type UpdateDeviceRequest struct {
-	DisplayName *string    `json:"displayName"`
-	DeviceType  *string    `json:"deviceType"` // desktop, laptop, server, tablet, virtual
-	Tags        []string   `json:"tags"`
-	ClientID    *uuid.UUID `json:"clientId"`
+	DisplayName   *string    `json:"displayName"`
+	DeviceType    *string    `json:"deviceType"` // desktop, laptop, server, tablet, virtual
+	Tags          []string   `json:"tags"`
+	ClientID      *uuid.UUID `json:"clientId"`
+	UpdateGroupID *uuid.UUID `json:"updateGroupId"` // pointer-to-pointer-zero-value semantics: omitted = no change; explicit null in JSON = unassign
 }
 
 // updateDevice updates device properties like display name, tags, and client assignment
@@ -237,6 +238,17 @@ func (r *Router) updateDevice(c *gin.Context) {
 	if req.ClientID != nil {
 		updates = append(updates, "client_id = $"+strconv.Itoa(argNum))
 		args = append(args, *req.ClientID)
+		argNum++
+	}
+
+	if req.UpdateGroupID != nil {
+		var exists bool
+		if err := r.db.Pool().QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM update_groups WHERE id = $1)", *req.UpdateGroupID).Scan(&exists); err != nil || !exists {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Update group not found"})
+			return
+		}
+		updates = append(updates, "update_group_id = $"+strconv.Itoa(argNum))
+		args = append(args, *req.UpdateGroupID)
 		argNum++
 	}
 

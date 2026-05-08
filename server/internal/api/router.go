@@ -243,6 +243,7 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 	// host; Prometheus reaches it over the internal docker network only).
 	r.GET("/metrics", metricsHandler())
 	startMetricsRefresher(context.Background(), services.DB.AsDB(), services.Hub)
+	startRolloutTicker(context.Background(), services.DB.AsDB())
 
 	// API routes
 	api := r.Group("/api")
@@ -379,6 +380,12 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 			protected.PUT("/scripts/:id", middleware.RequireRole("admin", "operator"), updateScriptHandler(services))
 			protected.DELETE("/scripts/:id", middleware.RequireRole("admin"), deleteScriptHandler(services))
 			protected.POST("/scripts/:id/execute", middleware.RequireRole("admin", "operator"), executeScriptHandler(services))
+
+			// Rollouts (Phase 6 — agent-update orchestration)
+			protected.POST("/rollouts", middleware.RequireRole("admin"), createRolloutHandler(services))
+			protected.GET("/rollouts", listRolloutsHandler(services))
+			protected.GET("/rollouts/:id", getRolloutHandler(services))
+			protected.POST("/rollouts/:id/cancel", middleware.RequireRole("admin"), cancelRolloutHandler(services))
 
 			// Alerts
 			protected.GET("/alerts", listAlertsHandler(services))

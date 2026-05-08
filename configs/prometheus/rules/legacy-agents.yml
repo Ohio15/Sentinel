@@ -1,0 +1,16 @@
+groups:
+  - name: legacy-agents
+    rules:
+      - alert: LegacyAgentOnline
+        expr: sentinel_agents_legacy_count > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: fleet
+        annotations:
+          summary: "Legacy agent online: {{ $value }} on version {{ $labels.version }}"
+          description: |
+            One or more agents are running a version older than 1.77.5 and have been visible for 5+ minutes.
+            These agents cannot self-update (the CheckForUpdate polling loop was added in 1.77.5+).
+            Recovery requires a manual install-script push to bring them onto the current release.
+            Affected version: {{ $labels.version }}. Count: {{ $value }}.

@@ -55,6 +55,10 @@ func (m *mockHub) RegisterDashboard(conn *gorillaws.Conn, userID uuid.UUID) *web
 	return nil
 }
 
+func (m *mockHub) ActiveAgentCount() int {
+	return len(m.online)
+}
+
 func newMockHub() *mockHub {
 	return &mockHub{
 		online: make(map[string]bool),

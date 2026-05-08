@@ -45,6 +45,19 @@ var (
 		[]string{"agent_id", "hostname", "version"},
 	)
 
+	// agentLegacyCount counts active (non-disabled) agents running a version older
+	// than safeSelfUpdateMinVersion. v1.77.4 and earlier predate the CheckForUpdate
+	// polling loop in agent/internal/updater; those builds cannot self-update and
+	// require manual reinstall. Surfacing the count lets us alert when a ghost
+	// reconnects (security-adjacent: those agents have known-broken auth/dispatch).
+	agentLegacyCount = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "sentinel_agents_legacy_count",
+			Help: "Count of non-disabled agents running a legacy version that cannot self-update. Labeled by version.",
+		},
+		[]string{"version"},
+	)
+
 	heartbeatTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
 			Name: "sentinel_heartbeat_total",
@@ -62,6 +75,11 @@ var (
 
 func MetricsIncHeartbeat()              { heartbeatTotal.Inc() }
 func MetricsSetWebsocketActive(n int)   { websocketActive.Set(float64(n)) }
+
+// safeSelfUpdateMinVersion is the lowest agent version that contains the
+// CheckForUpdate polling loop (agent/internal/updater). Anything below this
+// is "legacy": cannot self-update, must be reinstalled manually.
+const safeSelfUpdateMinVersion = "1.77.5"
 
 func metricsHandler() gin.HandlerFunc {
 	h := promhttp.Handler()
@@ -92,8 +110,10 @@ func startMetricsRefresher(ctx context.Context, db *database.DB, hub WebSocketHu
 		agentLastSeenSeconds.Reset()
 		certExpiresInDays.Reset()
 		agentVersionInfo.Reset()
+		agentLegacyCount.Reset()
 
 		now := time.Now()
+		legacyByVersion := map[string]int{}
 		for rows.Next() {
 			var (
 				agentID, hostname, version, status string
@@ -115,6 +135,12 @@ func startMetricsRefresher(ctx context.Context, db *database.DB, hub WebSocketHu
 			if certExpires != nil {
 				certExpiresInDays.WithLabelValues(agentID, hostname).Set(certExpires.Sub(now).Hours() / 24)
 			}
+			if version != "" && isNewerVersion(safeSelfUpdateMinVersion, version) {
+				legacyByVersion[version]++
+			}
+		}
+		for ver, n := range legacyByVersion {
+			agentLegacyCount.WithLabelValues(ver).Set(float64(n))
 		}
 		if hub != nil {
 			websocketActive.Set(float64(hub.ActiveAgentCount()))
