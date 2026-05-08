@@ -353,17 +353,25 @@ func (m *APIKeyManager) ListKeys(ctx context.Context) ([]APIKey, error) {
 		var key APIKey
 		var status string
 		var isRevoked bool
+		var permsBytes, ipBytes []byte
 		err := rows.Scan(
 			&key.ID, &key.KeyPrefix, &key.Name, &key.Description,
-			&key.Permissions, &key.IPAllowlist, &status, &key.CreatedAt,
+			&permsBytes, &ipBytes, &status, &key.CreatedAt,
 			&key.CreatedBy, &key.LastUsedAt, &key.ExpiresAt, &isRevoked, &key.UseCount,
 		)
 		if err != nil {
+			log.Printf("[APIKeyManager] ListKeys scan error: %v", err)
 			continue
 		}
+		if len(permsBytes) > 0 {
+			_ = jsonUnmarshal(permsBytes, &key.Permissions)
+		}
+		if len(ipBytes) > 0 {
+			_ = jsonUnmarshal(ipBytes, &key.IPAllowlist)
+		}
 		if isRevoked {
-			now := time.Now()
-			key.RevokedAt = &now
+			t := key.CreatedAt
+			key.RevokedAt = &t
 		}
 		keys = append(keys, key)
 	}
