@@ -1,5 +1,5 @@
 {
-  "version": "1.77.33",
+  "version": "1.77.34",
   "releaseDate": "2026-05-08",
   "changelog": "Security patches: upgrade gRPC 1.64.0 -> 1.79.3 (CVE-2026-33186 auth bypass), pgx 5.5.2 -> 5.9.2 (CVE-2026-33816 SQL injection), oauth2 0.23.0 -> 0.34.0 (CVE-2025-22868), JWT 5.2.0 -> 5.2.2 (CVE-2025-30204), x/crypto 0.33.0 -> 0.46.0 (CVE-2025-22869), x/net 0.35.0 -> 0.48.0, redis 9.4.0 -> 9.6.3, Go toolchain go1.25.9 (resolves 9 stdlib advisories). npm audit fix at root and frontend. Migration 030_webhooks organization_id type fix moved to forward-only 041 migration. 039 and 040 migrations registered in runner (previously orphaned).",
   "platforms": [

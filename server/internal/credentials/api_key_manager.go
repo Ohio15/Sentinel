@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -16,6 +17,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
+
+// jsonUnmarshal is a thin wrapper so the call sites read clearly.
+func jsonUnmarshal(data []byte, v interface{}) error { return json.Unmarshal(data, v) }
 
 var (
 	ErrKeyNotFound      = errors.New("API key not found")
@@ -175,6 +179,7 @@ func (m *APIKeyManager) ValidateKey(ctx context.Context, providedKey string, cli
 	//     verifies against.
 	var key APIKey
 	var bcryptHash []byte
+	var permsBytes, ipBytes []byte
 	var status string
 	err := m.db.QueryRow(ctx, `
 		SELECT id, key_value_encrypted, name, description, permissions, ip_allowlist,
@@ -184,18 +189,32 @@ func (m *APIKeyManager) ValidateKey(ctx context.Context, providedKey string, cli
 		WHERE credential_type = 'api_key'
 		  AND key_hash = $1
 	`, prefix).Scan(
-		&key.ID, &bcryptHash, &key.Name, &key.Description, &key.Permissions,
-		&key.IPAllowlist, &status, &key.CreatedAt, &key.CreatedBy,
+		&key.ID, &bcryptHash, &key.Name, &key.Description, &permsBytes,
+		&ipBytes, &status, &key.CreatedAt, &key.CreatedBy,
 		&key.LastUsedAt, &key.ExpiresAt, &key.RevokedAt, &key.UseCount,
 	)
 	if err != nil {
+		log.Printf("[APIKeyManager] ValidateKey lookup failed (prefix=%s): %v", prefix, err)
 		return nil, ErrKeyNotFound
+	}
+
+	// jsonb columns come back as []byte; unmarshal explicitly into the slice
+	// fields to avoid relying on pgx's implicit jsonb→[]string mapping.
+	if len(permsBytes) > 0 {
+		if err := jsonUnmarshal(permsBytes, &key.Permissions); err != nil {
+			log.Printf("[APIKeyManager] ValidateKey permissions unmarshal failed: %v", err)
+			return nil, ErrKeyNotFound
+		}
+	}
+	if len(ipBytes) > 0 {
+		_ = jsonUnmarshal(ipBytes, &key.IPAllowlist)
 	}
 
 	key.KeyPrefix = prefix
 
 	// Validate bcrypt hash against the full plaintext key.
 	if err := bcrypt.CompareHashAndPassword(bcryptHash, []byte(providedKey)); err != nil {
+		log.Printf("[APIKeyManager] ValidateKey bcrypt mismatch (prefix=%s): %v", prefix, err)
 		return nil, ErrKeyNotFound
 	}
 
