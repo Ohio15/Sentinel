@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -23,13 +22,25 @@ import (
 
 const agentVersion = "1.0.0"
 
-// Agent installer paths (relative to server binary or absolute)
-var installerPaths = map[string]string{
-	"windows-x64": "installers/sentinel-agent-1.0.0-windows-x64.zip",
-	"linux-x64":   "installers/sentinel-agent-1.0.0-linux-x64.tar.gz",
-	"linux-arm64": "installers/sentinel-agent-1.0.0-linux-arm64.tar.gz",
-	"macos-x64":   "installers/sentinel-agent-1.0.0-macos-x64.tar.gz",
-	"macos-arm64": "installers/sentinel-agent-1.0.0-macos-arm64.tar.gz",
+// installerArtifactName returns the legacy packaged-agent filename for a given
+// platform/arch key. Resolution to a real filesystem path is deferred to the
+// canonical resolver in installer_paths.go so /app/installers and other
+// production paths are picked up uniformly.
+func installerArtifactName(key string) string {
+	switch key {
+	case "windows-x64":
+		return fmt.Sprintf("sentinel-agent-%s-windows-x64.zip", agentVersion)
+	case "linux-x64":
+		return fmt.Sprintf("sentinel-agent-%s-linux-x64.tar.gz", agentVersion)
+	case "linux-arm64":
+		return fmt.Sprintf("sentinel-agent-%s-linux-arm64.tar.gz", agentVersion)
+	case "macos-x64":
+		return fmt.Sprintf("sentinel-agent-%s-macos-x64.tar.gz", agentVersion)
+	case "macos-arm64":
+		return fmt.Sprintf("sentinel-agent-%s-macos-arm64.tar.gz", agentVersion)
+	default:
+		return ""
+	}
 }
 
 // listEnrollmentTokens returns all enrollment tokens
@@ -249,8 +260,12 @@ func (r *Router) regenerateEnrollmentToken(c *gin.Context) {
 func (r *Router) listAgentInstallers(c *gin.Context) {
 	installers := []models.AgentInstaller{}
 
-	for key, path := range installerPaths {
-		parts := strings.Split(key, "-")
+	for _, key := range []string{"windows-x64", "linux-x64", "linux-arm64", "macos-x64", "macos-arm64"} {
+		filename := installerArtifactName(key)
+		if filename == "" {
+			continue
+		}
+		parts := strings.SplitN(key, "-", 2)
 		if len(parts) != 2 {
 			continue
 		}
@@ -258,14 +273,16 @@ func (r *Router) listAgentInstallers(c *gin.Context) {
 		installer := models.AgentInstaller{
 			Platform:     parts[0],
 			Architecture: parts[1],
-			Filename:     filepath.Base(path),
+			Filename:     filename,
 			Version:      agentVersion,
 			DownloadURL:  fmt.Sprintf("/api/agents/download/%s/%s", parts[0], parts[1]),
 		}
 
-		// Try to get file size
-		if info, err := os.Stat(path); err == nil {
-			installer.Size = info.Size()
+		// Resolve via canonical search roots so /app/installers is included.
+		if resolved := findArtifact(filename); resolved != "" {
+			if info, err := os.Stat(resolved); err == nil {
+				installer.Size = info.Size()
+			}
 		}
 
 		installers = append(installers, installer)
@@ -319,16 +336,16 @@ func (r *Router) downloadAgentInstaller(c *gin.Context) {
 		return
 	}
 
-	// Find installer
+	// Find installer via canonical resolver so /app/installers and other
+	// production-deployment roots are searched uniformly.
 	key := fmt.Sprintf("%s-%s", platform, arch)
-	installerPath, ok := installerPaths[key]
-	if !ok {
+	filename := installerArtifactName(key)
+	if filename == "" {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Installer not found for this platform"})
 		return
 	}
-
-	// Check if file exists
-	if _, err := os.Stat(installerPath); os.IsNotExist(err) {
+	installerPath := findArtifact(filename)
+	if installerPath == "" {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Installer file not found"})
 		return
 	}

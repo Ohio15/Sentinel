@@ -1,0 +1,140 @@
+name: Deploy Installers to NEXUS
+
+# When a GitHub Release is published (by build-installers.yml or manually), pull
+# the installer assets down to NEXUS and place them where the running
+# sentinel-backend container expects them.
+#
+# The backend container mounts ./installers:/app/installers:ro and
+# ./release/agent:/app/release/agent:ro (see docker-compose.yml). Updates are
+# live — no container restart needed because the canonical path resolver
+# (server/internal/api/installer_paths.go) re-stats on every request.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to pull installers from (e.g. v1.77.10). Defaults to the latest release.'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Pull release assets onto NEXUS
+    runs-on: self-hosted
+    steps:
+      - name: Resolve target tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          elif [ -n "${{ github.event.release.tag_name }}" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          else
+            TAG=$(gh release view --repo "${{ github.repository }}" --json tagName -q .tagName)
+          fi
+          echo "Target tag: $TAG"
+          echo "value=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Download installer assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.tag.outputs.value }}"
+          STAGE="$HOME/Sentinel/.installer-stage-$TAG"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+          gh release download "$TAG" \
+            --repo "${{ github.repository }}" \
+            --dir "$STAGE" \
+            --pattern '*.exe' \
+            --pattern '*.deb' \
+            --pattern '*.rpm' \
+            --pattern '*.pkg' \
+            --pattern '*.spk' \
+            --pattern 'sentinel-agent-*' \
+            --pattern 'sentinel-watchdog-*' \
+            --pattern 'sentinel-bootstrap-*' \
+            --pattern 'sentinel-desktop*' \
+            --pattern 'SHA256SUMS'
+          ls -la "$STAGE"
+
+      - name: Verify checksums
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.tag.outputs.value }}"
+          STAGE="$HOME/Sentinel/.installer-stage-$TAG"
+          cd "$STAGE"
+          if [ -f SHA256SUMS ]; then
+            sha256sum -c SHA256SUMS
+          else
+            echo "::warning::No SHA256SUMS file in release; skipping integrity check"
+          fi
+
+      - name: Atomically swap into installers/ and release/agent/
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.tag.outputs.value }}"
+          STAGE="$HOME/Sentinel/.installer-stage-$TAG"
+          DEST_INSTALLERS="$HOME/Sentinel/installers"
+          DEST_RELEASE="$HOME/Sentinel/release/agent"
+          mkdir -p "$DEST_INSTALLERS" "$DEST_RELEASE"
+
+          # Per-file install with timestamped backup of any pre-existing copy.
+          # Atomic at the file level — concurrent reads from the container see
+          # either old or new bytes, never partial.
+          install_with_backup() {
+            local src="$1" dest="$2"
+            if [ -f "$dest" ]; then
+              cp "$dest" "${dest}.bak-$(date +%Y%m%d-%H%M%S)"
+            fi
+            install -m 0755 "$src" "$dest"
+            echo "Installed $dest"
+          }
+
+          for f in "$STAGE"/sentinel-installer-template.exe \
+                   "$STAGE"/sentinel-agent-*.exe \
+                   "$STAGE"/sentinel-agent-linux-* \
+                   "$STAGE"/sentinel-watchdog-*.exe \
+                   "$STAGE"/sentinel-watchdog-linux-* \
+                   "$STAGE"/sentinel-bootstrap-*.exe \
+                   "$STAGE"/sentinel-desktop*.exe; do
+            [ -f "$f" ] || continue
+            install_with_backup "$f" "$DEST_INSTALLERS/$(basename "$f")"
+          done
+
+          # Also place the Inno Setup template + agent binaries into
+          # release/agent/ for legacy callers that look there.
+          for f in "$STAGE"/sentinel-installer-template.exe \
+                   "$STAGE"/sentinel-agent-darwin-* \
+                   "$STAGE"/sentinel-watchdog-darwin-*; do
+            [ -f "$f" ] || continue
+            install_with_backup "$f" "$DEST_RELEASE/$(basename "$f")"
+          done
+
+          # Linux/macOS/Synology packages live in installers/ only.
+          for f in "$STAGE"/*.deb "$STAGE"/*.rpm "$STAGE"/*.pkg "$STAGE"/*.spk; do
+            [ -f "$f" ] || continue
+            install -m 0644 "$f" "$DEST_INSTALLERS/$(basename "$f")"
+            echo "Installed $DEST_INSTALLERS/$(basename "$f")"
+          done
+
+      - name: Verify container sees new artifacts
+        run: |
+          set -euo pipefail
+          docker exec sentinel-backend ls -la /app/installers/sentinel-installer-template.exe
+          docker exec sentinel-backend sh -c 'head -c 2 /app/installers/sentinel-installer-template.exe | xxd' | grep -q '4d5a' \
+            && echo "Container can read template (PE magic OK)" \
+            || (echo "::error::Container cannot read template"; exit 1)
+
+      - name: Clean up stage dir
+        if: always()
+        run: rm -rf "$HOME/Sentinel/.installer-stage-${{ steps.tag.outputs.value }}"

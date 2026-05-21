@@ -23,6 +23,14 @@ func RegisterAgentLinkRoutes(api *gin.RouterGroup, protected *gin.RouterGroup, s
 		rateLimitMiddleware(services.Redis, 10, 60, "install-code-validate"),
 		validateInstallationCodeHandler(services))
 
+	// Public bootstrap-redeem endpoint (no auth - signed URL is the auth).
+	// Companion to validate-code: the installer follows the signed BootstrapURL
+	// to fetch the enrollment token, avoiding plaintext-token capture in the
+	// validate-code response. Single-use via atomic status row transition.
+	api.GET("/public/install/redeem",
+		rateLimitMiddleware(services.Redis, 10, 60, "install-redeem"),
+		redeemInstallCodeHandler(services))
+
 	// Public generic installer download (no auth)
 	api.GET("/download/agent", serveGenericInstallerHandler(services))
 	api.GET("/download/agent/windows", serveGenericInstallerHandler(services))

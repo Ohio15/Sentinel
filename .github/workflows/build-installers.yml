@@ -1,0 +1,339 @@
+name: Build Installers
+
+# Builds the full installer suite (Windows EXE, Linux .deb/.rpm, macOS .pkg,
+# Synology .spk) and publishes them as release artifacts. Triggered on v* tags
+# (matches the existing release flow) and manually via workflow_dispatch for
+# rebuilds without a new tag.
+#
+# Why this exists: prior to 2026-05-21 the installer template was untracked in
+# git (commit bad511d) and built only on Ron's local box. Production NEXUS lost
+# the file and /api/agent/installer 404'd. This workflow makes the template + all
+# platform installers reproducible CI artifacts.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version label for artifacts (e.g. 1.77.10). Defaults to the tag name when run from a tag.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write  # required to attach assets to releases
+
+env:
+  GO_VERSION: '1.21'
+
+jobs:
+  # -----------------------------------------------------------------------------
+  # 1. Cross-compile all Go binaries on Linux (fastest, covers most platforms).
+  # macOS Universal2 lipo step happens in the macos job because lipo is mac-only.
+  # -----------------------------------------------------------------------------
+  build-binaries-linux:
+    name: Build binaries (cross from Linux)
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: version
+        name: Resolve version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "value=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "value=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=$(jq -r .version installers/version.json)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: agent/go.sum
+
+      - name: Build agent + watchdog + bootstrap matrix
+        working-directory: agent
+        run: |
+          set -euo pipefail
+          # The matrix that ships as installer payload (or is downloaded directly
+          # via /api/bootstrap/*). Windows arm64 is intentionally included
+          # because Surface Pro X and similar devices need it; current code
+          # accepts arch=arm64 but never had a built binary.
+          targets=(
+            "windows amd64 .exe"
+            "windows arm64 .exe"
+            "linux   amd64 ''"
+            "linux   arm64 ''"
+            "darwin  amd64 ''"
+            "darwin  arm64 ''"
+          )
+          mkdir -p ../release/agent ../installers
+          for entry in "${targets[@]}"; do
+            read -r goos goarch ext <<<"$entry"
+            ext=${ext//\'/}
+            for cmd in sentinel-agent sentinel-watchdog sentinel-bootstrap; do
+              out="../installers/${cmd}-${goos}-${goarch}${ext}"
+              echo "Building $out"
+              GOOS=$goos GOARCH=$goarch CGO_ENABLED=0 go build \
+                -ldflags="-s -w -X main.Version=${{ steps.version.outputs.value }}" \
+                -o "$out" "./cmd/${cmd}"
+            done
+          done
+
+          # Windows-only desktop binaries (UI tray + WebRTC helper)
+          for cmd in sentinel-desktop sentinel-desktop-helper; do
+            for goarch in amd64 arm64; do
+              out="../installers/${cmd}-windows-${goarch}.exe"
+              echo "Building $out"
+              GOOS=windows GOARCH=$goarch CGO_ENABLED=0 go build \
+                -ldflags="-s -w -X main.Version=${{ steps.version.outputs.value }}" \
+                -o "$out" "./cmd/${cmd}"
+            done
+          done
+
+      - name: Stage binaries into release/agent (build-pkg.sh + Inno Setup expect this layout)
+        run: |
+          set -euo pipefail
+          cp installers/sentinel-agent-darwin-amd64    release/agent/sentinel-agent-darwin-amd64
+          cp installers/sentinel-agent-darwin-arm64    release/agent/sentinel-agent-darwin-arm64
+          cp installers/sentinel-watchdog-darwin-amd64 release/agent/sentinel-watchdog-darwin-amd64
+          cp installers/sentinel-watchdog-darwin-arm64 release/agent/sentinel-watchdog-darwin-arm64
+          cp installers/sentinel-agent-windows-amd64.exe    release/agent/sentinel-agent.exe
+          cp installers/sentinel-watchdog-windows-amd64.exe release/agent/sentinel-watchdog.exe
+          cp installers/sentinel-desktop-windows-amd64.exe         release/agent/sentinel-desktop.exe
+          cp installers/sentinel-desktop-helper-windows-amd64.exe  release/agent/sentinel-desktop-helper.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries-linuxbuild
+          path: |
+            installers/sentinel-*
+            release/agent/sentinel-*
+          retention-days: 7
+          if-no-files-found: error
+
+  # -----------------------------------------------------------------------------
+  # 2. Windows installer (Inno Setup template, agent ZIP for legacy /agents/download)
+  # -----------------------------------------------------------------------------
+  package-windows:
+    name: Package Windows installer template
+    runs-on: windows-latest
+    needs: build-binaries-linux
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: binaries-linuxbuild
+          path: .
+
+      - name: Install Inno Setup 6
+        run: choco install innosetup -y --no-progress
+        shell: pwsh
+
+      - name: Compile Inno Setup template
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { $iscc = "C:\Program Files\Inno Setup 6\ISCC.exe" }
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe not found after choco install" }
+          & $iscc "installers/windows/sentinel-setup.iss"
+          if (-not (Test-Path "release/agent/sentinel-installer-template.exe")) {
+            throw "Inno Setup output missing"
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-windows
+          path: |
+            release/agent/sentinel-installer-template.exe
+          if-no-files-found: error
+
+  # -----------------------------------------------------------------------------
+  # 3. Linux .deb (amd64 only — build-deb.sh hardcodes ARCH=amd64; arm64 deferred
+  # to Phase 4 platform-parity work where the script gets parametrized)
+  # -----------------------------------------------------------------------------
+  package-linux-deb:
+    name: Package Linux .deb (amd64)
+    runs-on: ubuntu-latest
+    needs: build-binaries-linux
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: binaries-linuxbuild
+          path: .
+
+      - name: Build .deb
+        run: |
+          chmod +x installers/sentinel-agent-linux-amd64 installers/sentinel-watchdog-linux-amd64
+          chmod +x installers/linux/build-deb.sh
+          installers/linux/build-deb.sh "${{ needs.build-binaries-linux.outputs.version }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-linux-deb
+          path: installers/linux/output/*.deb
+          if-no-files-found: error
+
+  # -----------------------------------------------------------------------------
+  # 4. Linux .rpm (amd64 only, same parametrization caveat)
+  # -----------------------------------------------------------------------------
+  package-linux-rpm:
+    name: Package Linux .rpm (x86_64)
+    runs-on: ubuntu-latest
+    needs: build-binaries-linux
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: binaries-linuxbuild
+          path: .
+
+      - name: Install rpmbuild
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
+      - name: Build .rpm
+        run: |
+          chmod +x installers/sentinel-agent-linux-amd64 installers/sentinel-watchdog-linux-amd64
+          chmod +x installers/linux/build-rpm.sh
+          installers/linux/build-rpm.sh "${{ needs.build-binaries-linux.outputs.version }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-linux-rpm
+          path: installers/linux/output/*.rpm
+          if-no-files-found: error
+
+  # -----------------------------------------------------------------------------
+  # 5. Synology .spk (amd64 + arm64 — build-spk.sh is already arch-parametrized)
+  # -----------------------------------------------------------------------------
+  package-synology:
+    name: Package Synology .spk
+    runs-on: ubuntu-latest
+    needs: build-binaries-linux
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: binaries-linuxbuild
+          path: .
+
+      - name: Build .spk (${{ matrix.arch }})
+        run: |
+          chmod +x installers/sentinel-agent-linux-${{ matrix.arch }} installers/sentinel-watchdog-linux-${{ matrix.arch }}
+          chmod +x installers/synology/build-spk.sh
+          installers/synology/build-spk.sh "${{ needs.build-binaries-linux.outputs.version }}" "${{ matrix.arch }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-synology-${{ matrix.arch }}
+          path: installers/synology/output/*.spk
+          if-no-files-found: error
+
+  # -----------------------------------------------------------------------------
+  # 6. macOS .pkg with Universal2 binary (lipo amd64+arm64 — lipo is mac-only)
+  # -----------------------------------------------------------------------------
+  package-macos:
+    name: Package macOS .pkg (Universal2)
+    runs-on: macos-latest
+    needs: build-binaries-linux
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: binaries-linuxbuild
+          path: .
+
+      - name: Create Universal2 binaries with lipo
+        run: |
+          set -euo pipefail
+          lipo -create -output release/agent/sentinel-agent \
+            release/agent/sentinel-agent-darwin-amd64 \
+            release/agent/sentinel-agent-darwin-arm64
+          lipo -create -output release/agent/sentinel-watchdog \
+            release/agent/sentinel-watchdog-darwin-amd64 \
+            release/agent/sentinel-watchdog-darwin-arm64
+          chmod +x release/agent/sentinel-agent release/agent/sentinel-watchdog
+          # Verify universality
+          lipo -info release/agent/sentinel-agent
+          lipo -info release/agent/sentinel-watchdog
+
+      - name: Build .pkg
+        run: |
+          chmod +x installers/macos/build-pkg.sh
+          installers/macos/build-pkg.sh --version "${{ needs.build-binaries-linux.outputs.version }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-macos
+          path: installers/macos/output/*.pkg
+          if-no-files-found: error
+
+  # -----------------------------------------------------------------------------
+  # 7. Publish all artifacts to the GitHub Release (only when running from a tag)
+  # -----------------------------------------------------------------------------
+  publish-release:
+    name: Attach assets to GitHub Release
+    runs-on: ubuntu-latest
+    needs:
+      - build-binaries-linux
+      - package-windows
+      - package-linux-deb
+      - package-linux-rpm
+      - package-synology
+      - package-macos
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Flatten artifacts into release/
+        run: |
+          mkdir -p release
+          find ./artifacts -type f \( \
+            -name 'sentinel-installer-template.exe' -o \
+            -name 'sentinel-agent-windows-amd64.exe' -o \
+            -name 'sentinel-agent-windows-arm64.exe' -o \
+            -name 'sentinel-agent-linux-amd64' -o \
+            -name 'sentinel-agent-linux-arm64' -o \
+            -name 'sentinel-watchdog-windows-amd64.exe' -o \
+            -name 'sentinel-watchdog-linux-amd64' -o \
+            -name 'sentinel-watchdog-linux-arm64' -o \
+            -name 'sentinel-bootstrap-windows-amd64.exe' -o \
+            -name 'sentinel-desktop-windows-amd64.exe' -o \
+            -name 'sentinel-desktop-helper-windows-amd64.exe' -o \
+            -name '*.deb' -o -name '*.rpm' -o -name '*.pkg' -o -name '*.spk' \
+          \) -exec cp -v {} release/ \;
+          ls -la release/
+
+      - name: Generate SHA256SUMS
+        working-directory: release
+        run: |
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          fail_on_unmatched_files: true
+          generate_release_notes: false
+          append_body: true
+          body: |
+            ## Installer artifacts
+            Auto-published by `.github/workflows/build-installers.yml`. Verify integrity with `SHA256SUMS`.
+
+            Windows installer: `sentinel-installer-template.exe` — patched per-tenant at download time by the server.
+            Linux: `.deb` (amd64), `.rpm` (x86_64). arm64 deb/rpm pending Phase 4 platform-parity work.
+            macOS: `.pkg` Universal2 (amd64 + arm64).
+            Synology: `.spk` for amd64 (DSM x86_64) and arm64 (DSM armv8).
+
+            Code signing is not yet enabled — Phase 2 follows.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -153,25 +154,15 @@ func getInstallInstructions() string {
 
 // buildPatchedInstaller creates a patched installer EXE with embedded config
 func buildPatchedInstaller(serverURL, enrollmentToken string) ([]byte, error) {
-	// Find installer template
-	installerPaths := []string{
-		"installers/sentinel-installer-template.exe",
-		"release/agent/sentinel-installer-template.exe",
-		"../installers/sentinel-installer-template.exe",
+	installerPath := findInstallerTemplate()
+	if installerPath == "" {
+		return nil, fmt.Errorf("installer template not found")
 	}
-
-	var installerData []byte
-	var err error
-	for _, path := range installerPaths {
-		installerData, err = os.ReadFile(path)
-		if err == nil {
-			log.Printf("Using installer template from: %s", path)
-			break
-		}
-	}
+	installerData, err := os.ReadFile(installerPath)
 	if err != nil {
-		return nil, fmt.Errorf("installer template not found: %w", err)
+		return nil, fmt.Errorf("read installer template %s: %w", installerPath, err)
 	}
+	log.Printf("Using installer template from: %s", installerPath)
 
 	// Binary patch the placeholders
 	// The installer has these placeholders that get replaced:
@@ -250,38 +241,40 @@ func downloadInstallerHandler(services *Services) gin.HandlerFunc {
 			return
 		}
 
-		// Rate limit: max 5 downloads per token
-		if link.DownloadCount >= 5 {
-			logLinkAccess(services, downloadToken, c.ClientIP(), c.Request.UserAgent(), "download", false, strPtr("Download limit exceeded"))
-			c.JSON(http.StatusTooManyRequests, gin.H{"error": "Download limit exceeded. Contact your administrator."})
-			return
-		}
-
-		// Log access
-		logLinkAccess(services, downloadToken, c.ClientIP(), c.Request.UserAgent(), "download", true, nil)
-
-		// Update download tracking
-		_, err = services.DB.Pool().Exec(c.Request.Context(), `
+		// Rate limit: max 5 downloads per token. Atomic increment-with-guard so
+		// two concurrent requests at count=4 can't both succeed and produce 6
+		// downloads (TOCTOU race that the check-then-update form had).
+		const maxDownloadsPerLink = 5
+		var newCount int
+		err = services.DB.Pool().QueryRow(c.Request.Context(), `
 			UPDATE agent_installation_links
 			SET downloaded_at = COALESCE(downloaded_at, NOW()),
 			    download_ip = $1,
 			    download_user_agent = $2,
 			    download_count = download_count + 1,
 			    status = CASE WHEN status = 'pending' THEN 'downloaded' ELSE status END
-			WHERE id = $3
-		`, c.ClientIP(), c.Request.UserAgent(), link.ID)
+			WHERE id = $3 AND download_count < $4
+			RETURNING download_count
+		`, c.ClientIP(), c.Request.UserAgent(), link.ID, maxDownloadsPerLink).Scan(&newCount)
 		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				// Either the row no longer exists or the counter cap was hit.
+				logLinkAccess(services, downloadToken, c.ClientIP(), c.Request.UserAgent(), "download", false, strPtr("Download limit exceeded"))
+				c.JSON(http.StatusTooManyRequests, gin.H{"error": "Download limit exceeded. Contact your administrator."})
+				return
+			}
 			log.Printf("Failed to update download tracking: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process download"})
+			return
 		}
+
+		// Log access (only after the atomic increment succeeded)
+		logLinkAccess(services, downloadToken, c.ClientIP(), c.Request.UserAgent(), "download", true, nil)
 
 		// Get server URL for agent connection
 		serverURL := services.Config.ServerURL
 		if serverURL == "" {
-			scheme := "https"
-			if c.Request.TLS == nil {
-				scheme = "http"
-			}
-			serverURL = fmt.Sprintf("%s://%s", scheme, c.Request.Host)
+			serverURL = fmt.Sprintf("%s://%s", detectRequestScheme(c), c.Request.Host)
 		}
 
 		// Build patched installer EXE
