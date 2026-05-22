@@ -1739,17 +1739,27 @@ public class CertValidator {
 		return fmt.Errorf("failed to write bootstrap script: %w", err)
 	}
 
-	// Create the scheduled task
-	// Delete existing task first
-	exec.Command("schtasks", "/delete", "/tn", BootstrapTaskName, "/f").Run()
+	// Create the scheduled task. Invoke schtasks directly (no `cmd /C`) so Go's
+	// os/exec quotes each arg via Windows CommandLineToArgvW rules. The prior
+	// `cmd /C "schtasks /create ... /tr \"...\""` form caused cmd.exe to
+	// misparse the embedded backslash-quotes inside /tr and pass
+	// `-ExecutionPolicy` to schtasks as its own flag → 0x80004005 error
+	// "Invalid argument/option - '-ExecutionPolicy'" (observed in main.go:437
+	// boot warning on PS-BSIKORA-LT, 2026-05-22). The runner string is built
+	// without nested escaping; Go quotes it correctly for schtasks's /tr arg.
+	_ = exec.Command("schtasks", "/delete", "/tn", BootstrapTaskName, "/f").Run()
 
-	// Create new task that runs every N hours
-	taskCmd := fmt.Sprintf(
-		`schtasks /create /tn "%s" /tr "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File \"%s\"" /sc HOURLY /mo %d /ru SYSTEM /f /rl HIGHEST`,
-		BootstrapTaskName, scriptPath, BootstrapCheckInterval,
+	runner := fmt.Sprintf(`powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File "%s"`, scriptPath)
+	cmd := exec.Command("schtasks",
+		"/create",
+		"/tn", BootstrapTaskName,
+		"/tr", runner,
+		"/sc", "HOURLY",
+		"/mo", strconv.Itoa(BootstrapCheckInterval),
+		"/ru", "SYSTEM",
+		"/f",
+		"/rl", "HIGHEST",
 	)
-
-	cmd := exec.Command("cmd", "/C", taskCmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to create scheduled task: %w - %s", err, string(output))

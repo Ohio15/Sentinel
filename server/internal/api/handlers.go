@@ -228,6 +228,18 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 		return
 	}
 
+	// Defensive: reject auth payloads with an empty agent_id. Previously these
+	// would INSERT a row with agent_id='' which violates the UNIQUE expectation
+	// on lookups and produced the "blank agent_id but status=online" state
+	// observed on PS-BSIKORA-LT (2026-05-22). The agent must regenerate a
+	// hardware-fingerprint agent_id in config.Load() — see PR #18.
+	if strings.TrimSpace(authPayload.AgentID) == "" {
+		log.Printf("[WS] Rejecting auth with empty agent_id from %s (ua=%q)", c.ClientIP(), c.Request.UserAgent())
+		conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Missing agent_id — agent must regenerate fingerprint and reconnect"}`)})
+		conn.Close()
+		return
+	}
+
 	// Get device ID - or auto-enroll if device was deleted
 	ctx := context.Background()
 	var deviceID uuid.UUID
@@ -330,8 +342,13 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 			authRespPayload["caCert"] = bundle.CACert
 			authRespPayload["certExpiresAt"] = bundle.ExpiresAt.Format(time.RFC3339)
 			authRespPayload["certSerial"] = bundle.SerialNumber
-			log.Printf("[PKI] Issued certificate for agent %s, serial=%s, expires=%s",
-				authPayload.AgentID, bundle.SerialNumber, bundle.ExpiresAt.Format(time.RFC3339))
+			// Log payload sizes so we can prove the response went on the wire
+			// with cert bytes — used to diagnose silent agent-side install
+			// failures (incident 2026-05-22, PS-BSIKORA-LT: cert recorded in DB
+			// but client-cert.pem never landed on disk).
+			log.Printf("[PKI] Issued certificate for agent %s, serial=%s, expires=%s, certBytes=%d, keyBytes=%d, caBytes=%d",
+				authPayload.AgentID, bundle.SerialNumber, bundle.ExpiresAt.Format(time.RFC3339),
+				len(bundle.ClientCert), len(bundle.ClientKey), len(bundle.CACert))
 		}
 	}
 
@@ -607,14 +624,21 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 	switch msg.Type {
 	case ws.MsgTypeHeartbeat:
 		MetricsIncHeartbeat()
-		// Parse heartbeat to get agent version
+		// Parse heartbeat to get agent version + optional layer_state (recovery
+		// posture self-report introduced in PR #18 for the silent-agent detector).
 		var heartbeat struct {
-			AgentVersion string `json:"agentVersion"`
+			AgentVersion string      `json:"agentVersion"`
+			LayerState   *LayerState `json:"layer_state,omitempty"`
 		}
 		if err := json.Unmarshal(message, &heartbeat); err != nil {
 			log.Printf("Failed to unmarshal heartbeat: %v, raw: %s", err, string(message))
 		}
 		log.Printf("Heartbeat from %s: version=%q", agentID, heartbeat.AgentVersion)
+
+		// Best-effort agent_health update — failures are logged but don't gate
+		// the heartbeat path. Even when LayerState is nil this populates
+		// last_check_in so the recovery-feed dashboard has fresh data.
+		upsertAgentHealth(ctx, r.db.Pool(), agentID, deviceID, "online", heartbeat.LayerState)
 
 		// Update last seen (and agent version if provided)
 		if heartbeat.AgentVersion != "" {

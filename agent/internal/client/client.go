@@ -10,6 +10,8 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +23,17 @@ import (
 	"github.com/sentinel/agent/internal/mtls"
 	"github.com/sentinel/agent/internal/paths"
 )
+
+// schtaskExists returns true if a Windows scheduled task with the given name
+// is currently registered. Used by collectLayerState() to populate Layer-4
+// posture in heartbeats. Non-Windows: always false.
+func schtaskExists(name string) bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	err := exec.Command("schtasks", "/query", "/tn", name).Run()
+	return err == nil
+}
 
 // Message types
 const (
@@ -146,6 +159,7 @@ type Client struct {
 	handlers          map[string]MessageHandler
 	authenticated     bool
 	connected         bool
+	connectedSince    time.Time
 	reconnectDelay    time.Duration
 	maxReconnect      time.Duration
 	mu                sync.RWMutex
@@ -420,6 +434,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	c.mu.Lock()
 	c.conn = conn
 	c.connected = true
+	c.connectedSince = time.Now()
 	c.lastPong = time.Now()
 	c.mu.Unlock()
 
@@ -515,6 +530,7 @@ func (c *Client) connectWithToken(ctx context.Context) error {
 	c.mu.Lock()
 	c.conn = conn
 	c.connected = true
+	c.connectedSince = time.Now()
 	c.lastPong = time.Now()
 	c.mu.Unlock()
 
@@ -589,6 +605,7 @@ func (c *Client) connectViaTunnel(ctx context.Context) error {
 	c.mu.Lock()
 	c.conn = conn
 	c.connected = true
+	c.connectedSince = time.Now()
 	c.lastPong = time.Now()
 	c.mu.Unlock()
 
@@ -778,7 +795,31 @@ func (c *Client) SendHeartbeat() error {
 		msg["architecture"] = c.deviceInfo.Architecture
 	}
 	c.mu.RUnlock()
+	// Recovery-posture self-report (PR #18). Server populates agent_health from
+	// this so the silent-agent detector can pick the right heal action.
+	msg["layer_state"] = c.collectLayerState()
 	return c.SendJSON(msg)
+}
+
+// collectLayerState gathers what the agent can cheaply observe about its own
+// recovery layers. Each field is optional — server's upsertAgentHealth uses
+// COALESCE so omitted fields preserve prior values.
+func (c *Client) collectLayerState() map[string]interface{} {
+	state := map[string]interface{}{
+		"mtls_cert_present": mtls.HasMTLS(),
+	}
+	// Layer 1 (WS uptime) — derive from authenticatedAt if we tracked one.
+	c.mu.RLock()
+	if !c.connectedSince.IsZero() {
+		state["layer1_ws_uptime_secs"] = int64(time.Since(c.connectedSince).Seconds())
+	}
+	c.mu.RUnlock()
+	// Layer 4 (scheduled task present) — Windows only; cheap registry-style
+	// check via schtasks. Skip on non-Windows where Layer 4 is a cron job.
+	if runtime.GOOS == "windows" {
+		state["layer4_schtask_present"] = schtaskExists("SentinelBootstrapRecovery")
+	}
+	return state
 }
 
 // SendTerminalOutput sends terminal output to the server
@@ -905,21 +946,34 @@ func (c *Client) readLoop(ctx context.Context) {
 					log.Println("Authentication successful")
 				}
 
-				// Install certificates if server provided them
+				// Install certificates if server provided them. Verbose logging
+				// here is intentional — silent failure of this branch on
+				// PS-BSIKORA-LT (2026-05-22) burned days because we couldn't tell
+				// whether the cert was issued, sent, received, or persisted.
 				if authResp.ClientCert != "" && authResp.ClientKey != "" {
-					log.Printf("[mTLS] Received client certificate from server, serial=%s, expires=%s",
-						authResp.CertSerial, authResp.CertExpiresAt)
+					log.Printf("[mTLS] Received cert from server (serial=%s, expires=%s, certLen=%d, keyLen=%d, caLen=%d)",
+						authResp.CertSerial, authResp.CertExpiresAt,
+						len(authResp.ClientCert), len(authResp.ClientKey), len(authResp.CACert))
 					err := mtls.InstallCertificates(
 						[]byte(authResp.ClientCert),
 						[]byte(authResp.ClientKey),
 						[]byte(authResp.CACert),
 					)
 					if err != nil {
-						log.Printf("[mTLS] Warning: Failed to install certificates: %v", err)
+						log.Printf("[mTLS] ERROR installing cert: %v (serial=%s) — will retry on next auth", err, authResp.CertSerial)
 					} else {
-						log.Println("[mTLS] Client certificate installed successfully")
-						log.Println("[mTLS] Next connection will use certificate-based authentication")
+						log.Printf("[mTLS] Client certificate installed (serial=%s); next connection will use mTLS auth", authResp.CertSerial)
 					}
+				} else if authResp.Success && !authResp.MTLSAuth && !mtls.HasMTLS() {
+					// We authenticated with token, server should have issued a
+					// cert (we don't have one and didn't authenticate via mTLS),
+					// but the response carried no cert bytes. Either the server
+					// considers us already-cert'd (stale HasClientCert advertisement
+					// from us), or PKI issuance failed server-side. Surface this
+					// loudly so it isn't a silent "we'll just stay on token auth
+					// forever" state.
+					log.Printf("[mTLS] WARNING: auth succeeded via token but no cert in response (mtlsAuth=%v, hasMTLS=%v) — agent will operate without mTLS until next reconnect",
+						authResp.MTLSAuth, mtls.HasMTLS())
 				}
 
 				// Check if server says we need to re-enroll

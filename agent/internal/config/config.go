@@ -57,7 +57,8 @@ const (
 type Config struct {
 	AgentID           string `json:"agent_id"`
 	ServerURL         string `json:"server_url"`
-	GrpcAddress       string `json:"grpc_address"`       // gRPC Data Plane address (HTTP port + 1)
+	GrpcAddress       string `json:"grpc_address"`        // gRPC Data Plane address (HTTP port + 1)
+	GrpcEndpoint      string `json:"grpc_endpoint,omitempty"` // Legacy alias the server-side installer writes — folded into GrpcAddress in Load()
 	EnrollmentToken   string `json:"enrollment_token"`
 	HeartbeatInterval int    `json:"heartbeat_interval"` // seconds
 	MetricsInterval   int    `json:"metrics_interval"`   // seconds
@@ -170,6 +171,8 @@ func Load() (*Config, error) {
 		if err := json.Unmarshal(jsonData, cfg); err != nil {
 			return nil, fmt.Errorf("failed to parse config file: %w", err)
 		}
+		foldLegacyAliases(cfg)
+		ensureAgentID(cfg)
 
 		// Save encrypted version immediately (use unlocked since we hold the lock)
 		instance = cfg
@@ -185,9 +188,46 @@ func Load() (*Config, error) {
 	if err := json.Unmarshal(jsonData, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
+	foldLegacyAliases(cfg)
+	if ensureAgentID(cfg) {
+		// Persist the regenerated agent_id so the next Load() doesn't have to
+		// redo the fingerprint work. Best-effort — if save fails, we still
+		// proceed (the in-memory cfg has the regenerated ID).
+		if err := cfg.saveUnlocked(); err != nil {
+			log.Printf("[CONFIG] Warning: failed to persist regenerated agent_id: %v", err)
+		}
+	}
 
 	instance = cfg
 	return cfg, nil
+}
+
+// ensureAgentID regenerates a hardware-fingerprint agent_id when the loaded
+// config has an empty one. Empty agent_id rows propagate to the server as
+// devices.agent_id='' which breaks UNIQUE-keyed lookups and dashboard filters
+// (observed 2026-05-22 on PS-BSIKORA-LT). Returns true if a regeneration
+// happened, so the caller can decide whether to persist.
+func ensureAgentID(cfg *Config) bool {
+	if strings.TrimSpace(cfg.AgentID) != "" {
+		return false
+	}
+	cfg.AgentID = hardware.FingerprintWithFallback()
+	log.Printf("[CONFIG] Regenerated empty agent_id -> %s", cfg.AgentID)
+	return true
+}
+
+// foldLegacyAliases normalizes legacy/alias JSON keys into their canonical
+// fields. The server-side installer writes `grpc_endpoint` (handlers_installer.go
+// InstallerConfig) but the agent's canonical field is `grpc_address` — without
+// this fold the explicit endpoint is silently dropped and GetGrpcAddress falls
+// back to its HTTP-port+1 offset (yielding 8082 for prod sentinelrmm.us). Bug
+// observed 2026-05-22 on PS-BSIKORA-LT.
+func foldLegacyAliases(cfg *Config) {
+	if cfg.GrpcAddress == "" && cfg.GrpcEndpoint != "" {
+		cfg.GrpcAddress = cfg.GrpcEndpoint
+		cfg.GrpcEndpoint = ""
+		log.Printf("[CONFIG] Folded legacy grpc_endpoint -> grpc_address=%s", cfg.GrpcAddress)
+	}
 }
 
 // Save writes the configuration to disk (encrypted)
