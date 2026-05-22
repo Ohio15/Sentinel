@@ -9,6 +9,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/sentinel/agent/internal/winptr"
 )
 
 var (
@@ -127,7 +129,7 @@ func (m *Manager) discoverAdmins() ([]AdminAccount, error) {
 	memberSize := unsafe.Sizeof(LOCALGROUP_MEMBERS_INFO_2{})
 
 	for i := uint32(0); i < entriesRead; i++ {
-		member := (*LOCALGROUP_MEMBERS_INFO_2)(unsafe.Pointer(buffer + uintptr(i)*memberSize))
+		member := (*LOCALGROUP_MEMBERS_INFO_2)(winptr.Add(buffer, uintptr(i)*memberSize))
 
 		// Convert SID to string
 		sidStr, err := sidToString(member.Sid)
@@ -457,7 +459,7 @@ func isAccountDisabled(username string) bool {
 	}
 	defer procNetApiBufferFree.Call(buffer)
 
-	info := (*USER_INFO_1)(unsafe.Pointer(buffer))
+	info := (*USER_INFO_1)(winptr.FromUintptr(buffer))
 	return (info.Flags & UF_ACCOUNTDISABLE) != 0
 }
 
@@ -489,6 +491,6 @@ func GetActiveSessionUser() (string, uint32, error) {
 	}
 	defer procWTSFreeMemory.Call(buffer)
 
-	username := syscall.UTF16ToString((*[256]uint16)(unsafe.Pointer(buffer))[:])
+	username := syscall.UTF16ToString(unsafe.Slice((*uint16)(winptr.FromUintptr(buffer)), 256))
 	return username, sessionID, nil
 }
