@@ -28,7 +28,15 @@ jobs:
           cache-dependency-path: agent/go.sum
 
       - name: Go vulnerability check
+        # Agent is Windows-targeted (uses x/sys/windows, protection_windows.go,
+        # syscall.NewLazyDLL, etc.); scan against the actual production GOOS.
+        # CGO is disabled because govulncheck only needs to load packages for
+        # vulnerability analysis — no native libs (X11, PulseAudio) required.
         working-directory: ./agent
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: 0
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           "$(go env GOPATH)/bin/govulncheck" ./...
