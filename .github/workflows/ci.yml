@@ -21,11 +21,28 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
       - name: Go vulnerability check
+        # Agent is Windows-targeted (uses x/sys/windows, protection_windows.go,
+        # syscall.NewLazyDLL, etc.); scan against the actual production GOOS.
+        # CGO is disabled because govulncheck only needs to load packages for
+        # vulnerability analysis — no native libs (X11, PulseAudio) required.
+        # govulncheck itself is the host binary installed in the previous step;
+        # GOOS/GOARCH/CGO_ENABLED here control the *target* it analyzes.
         working-directory: ./agent
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: 0
+        run: "$(go env GOPATH)/bin/govulncheck ./..."
 
       - name: npm audit
         run: npm audit --audit-level=high || true
