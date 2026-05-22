@@ -8,6 +8,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/sentinel/agent/internal/winptr"
 )
 
 var (
@@ -245,7 +247,7 @@ func querySessionString(sessionID uint32, infoClass int) string {
 	defer procWTSFreeMemory.Call(buffer)
 
 	// Convert UTF-16 string
-	return syscall.UTF16ToString((*[1024]uint16)(unsafe.Pointer(buffer))[:])
+	return syscall.UTF16ToString(unsafe.Slice((*uint16)(winptr.FromUintptr(buffer)), 1024))
 }
 
 // MonitorState continuously monitors system state and calls callbacks

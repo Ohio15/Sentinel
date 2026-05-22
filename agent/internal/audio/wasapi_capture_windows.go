@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/sentinel/agent/internal/winptr"
 )
 
 // WASAPI GUIDs
@@ -239,7 +241,7 @@ func (w *WASAPICapture) Initialize(deviceID string) error {
 		return fmt.Errorf("GetMixFormat failed: 0x%x", hr)
 	}
 
-	wfx := (*WAVEFORMATEX)(unsafe.Pointer(pFormat))
+	wfx := (*WAVEFORMATEX)(winptr.FromUintptr(pFormat))
 	w.format = AudioFormat{
 		SampleRate: int(wfx.SamplesPerSec),
 		Channels:   int(wfx.Channels),
@@ -419,7 +421,7 @@ func (w *WASAPICapture) readPackets() {
 
 			// Copy data
 			audioData := make([]byte, dataSize)
-			copy(audioData, (*[1 << 30]byte)(unsafe.Pointer(data))[:dataSize:dataSize])
+			copy(audioData, unsafe.Slice((*byte)(winptr.FromUintptr(data)), dataSize))
 
 			// Apply volume
 			if volume < 1.0 {
@@ -606,12 +608,12 @@ func (w *WASAPICapture) getDeviceName(device uintptr) string {
 		return "Unknown"
 	}
 
-	return syscall.UTF16ToString((*[256]uint16)(unsafe.Pointer(ptr))[:])
+	return syscall.UTF16ToString(unsafe.Slice((*uint16)(winptr.FromUintptr(ptr)), 256))
 }
 
 func (w *WASAPICapture) callMethod(obj uintptr, methodIndex int, args ...uintptr) uintptr {
-	vtable := *(*uintptr)(unsafe.Pointer(obj))
-	method := *(*uintptr)(unsafe.Pointer(vtable + uintptr(methodIndex)*unsafe.Sizeof(uintptr(0))))
+	vtable := *(*uintptr)(winptr.FromUintptr(obj))
+	method := *(*uintptr)(winptr.Add(vtable, uintptr(methodIndex)*unsafe.Sizeof(uintptr(0))))
 	allArgs := make([]uintptr, 1+len(args))
 	allArgs[0] = obj
 	copy(allArgs[1:], args)
