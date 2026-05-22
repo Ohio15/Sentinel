@@ -10,3 +10,18 @@
 #
 # reason: source asset — hand-drawn background, no build step
 # src/assets/images/InfieldImage.png
+
+# reason: linux/amd64 sentinel-agent binary referenced as the universal-fallback
+# AGENT_BINARY in installers/macos/build-pkg.sh:79 when darwin-amd64/arm64
+# candidates are absent. Also colocated with release/agent/version.json which
+# the running server reads from the read-only ./release/agent volume mount
+# (docker-compose.yml:58). Removing this file without first cutting the
+# installer script over to a build-artifact source would silently change
+# macOS installer build behavior.
+# TODO: replace with CI-built per-platform release assets (PR #17 introduces
+# .github/workflows/build-installers.yml). Once that pipeline is on main and
+# installers/macos/build-pkg.sh sources darwin binaries from the CI artifact
+# (not release/agent/), delete this entry and `git rm` release/agent/sentinel-agent.
+# Tracking issue: see PR description for "Move release/agent/sentinel-agent
+# out of git" follow-up.
+release/agent/sentinel-agent
