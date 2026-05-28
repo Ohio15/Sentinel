@@ -26,6 +26,7 @@ package api
 
 import (
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"log"
@@ -217,18 +218,55 @@ func handleAgentReCert(services *Services) gin.HandlerFunc {
 			return
 		}
 
+		// 6-10. Transactional block. Everything from the device lookup through
+		//       the audit write happens inside a single tx so a partial failure
+		//       cannot leave dashboard timestamps / audit rows / device pointer
+		//       state inconsistent. The opening SELECT ... FOR UPDATE acquires
+		//       a row lock on the device that is held until commit/rollback,
+		//       which forces a second concurrent re-cert request for the same
+		//       device to block at this point until the first completes.
+		//       Combined with PKI's own internal mutex (which serializes cert
+		//       *generation*), this gives us end-to-end serialization of
+		//       same-device re-cert flows.
+		//
+		//       Caveat: PKI.IssueClientCertificate writes to client_certificates
+		//       AND updates devices on its OWN pool connection (not via tx). If
+		//       we roll back here AFTER PKI succeeded, the new cert row stays
+		//       in client_certificates and devices.client_cert_* fields still
+		//       point at the new serial. That's an orphaned cert record, not a
+		//       security regression: the device row still references a valid
+		//       (newly issued) cert, just one the agent never received because
+		//       we 500'd. Operators can clean up via the cert-management UI.
+		tx, err := services.DB.Pool().Begin(ctx)
+		if err != nil {
+			log.Printf("[re-cert] Failed to begin transaction for agent=%s: %v", agentID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start transaction"})
+			return
+		}
+		// Best-effort rollback on any path that doesn't reach Commit. pgx
+		// treats Rollback-after-Commit as a no-op error we can safely ignore.
+		defer func() {
+			_ = tx.Rollback(ctx)
+		}()
+
 		// 6. Look up the device by client_cert_serial. This is the primary
 		//    contract: a re-cert request must identify an existing device row.
 		//    If the row is missing we return 404 — the installer must fall back
 		//    to a fresh install_code enrollment. We do NOT auto-recreate.
+		//
+		//    FOR UPDATE acquires a row-level write lock that blocks any other
+		//    transaction's SELECT FOR UPDATE / UPDATE / DELETE on this row
+		//    until we commit. Concurrent re-cert flows for the SAME device
+		//    will queue here; flows for DIFFERENT devices are unaffected.
 		var (
 			deviceID uuid.UUID
 			orgID    int
 		)
-		err = services.DB.Pool().QueryRow(ctx, `
+		err = tx.QueryRow(ctx, `
 			SELECT id, organization_id
 			FROM devices
 			WHERE client_cert_serial = $1
+			FOR UPDATE
 		`, oldSerial).Scan(&deviceID, &orgID)
 		if err != nil {
 			log.Printf("[re-cert] No device found for cert serial=%s agent=%s — installer should re-enroll", oldSerial, agentID)
@@ -242,10 +280,11 @@ func handleAgentReCert(services *Services) gin.HandlerFunc {
 		// 7. Issue the new cert. PKI.IssueClientCertificate atomically:
 		//      - generates a new ECDSA keypair
 		//      - signs a new cert
-		//      - inserts a row in client_certificates
+		//      - inserts a row in client_certificates (on its own pool conn)
 		//      - UPDATEs devices SET client_cert_serial/issued_at/expires_at/fingerprint
 		//    Concurrent re-cert calls serialize on the PKI struct's internal
-		//    mutex, so two rapid requests from the same agent cannot tear state.
+		//    mutex (for cert generation) AND on our outer SELECT FOR UPDATE
+		//    (for the surrounding device-state operations).
 		bundle, err := services.PKI.IssueClientCertificate(
 			ctx,
 			agentID,
@@ -271,40 +310,64 @@ func handleAgentReCert(services *Services) gin.HandlerFunc {
 		// 9. Refresh ca_cert_distributed_at and updated_at so dashboard sorting
 		//    by "recent cert activity" reflects the reissue. issued_at /
 		//    expires_at / fingerprint were already updated by the PKI helper.
-		if _, err := services.DB.Pool().Exec(ctx, `
+		//    Inside the tx so rollback restores prior timestamps.
+		if _, err := tx.Exec(ctx, `
 			UPDATE devices
 			SET ca_cert_distributed_at = NOW(),
 			    updated_at = NOW()
 			WHERE id = $1
 		`, deviceID); err != nil {
-			log.Printf("[re-cert] Warning: failed to bump distribution timestamps for device=%s: %v", deviceID, err)
+			log.Printf("[re-cert] Failed to bump distribution timestamps for device=%s: %v", deviceID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update device timestamps"})
+			return
 		}
 
-		// 10. Synchronous audit write — we want this entry durable before the
-		//     200 response so investigators always see a reissue event paired
-		//     with the response. Failure of the audit write is logged but does
-		//     not fail the request (the cert is already issued and committed).
+		// 10. Synchronous audit write inside the tx. If the commit fails the
+		//     audit row goes with it, but the cert in client_certificates
+		//     stays (PKI used a separate connection) — which is the orphaned-
+		//     cert caveat documented at the top of the tx block. We accept
+		//     that trade-off: investigators see an entry for every committed
+		//     re-cert; an uncommitted re-cert leaves a recoverable orphan,
+		//     not a silent state change.
 		auditDetails := map[string]any{
-			"old_serial":     oldSerial,
-			"new_serial":     bundle.SerialNumber,
-			"requesting_ip":  c.ClientIP(),
-			"agent_id":       agentID,
-			"expires_at":     bundle.ExpiresAt.UTC().Format(time.RFC3339),
-			"fingerprint":    bundle.Fingerprint,
+			"old_serial":    oldSerial,
+			"new_serial":    bundle.SerialNumber,
+			"requesting_ip": c.ClientIP(),
+			"agent_id":      agentID,
+			"expires_at":    bundle.ExpiresAt.UTC().Format(time.RFC3339),
+			"fingerprint":   bundle.Fingerprint,
 		}
-		if err := audit.LogEvent(
-			ctx,
-			services.DB.Pool(),
-			audit.ActionDeviceCertReissue,
-			audit.ResourceTypeDevice,
-			&deviceID,
-			nil, // no user — this is agent-initiated
-			c.ClientIP(),
-			audit.SeverityInfo,
-			auditDetails,
-		); err != nil {
-			log.Printf("[re-cert] Warning: audit log write failed for agent=%s old=%s new=%s: %v",
+		detailsJSON, err := json.Marshal(auditDetails)
+		if err != nil {
+			// Should be unreachable for a static-shape map[string]any with
+			// only strings, but if it ever fires we want a hard signal not
+			// a silent skip — the audit entry is part of the durability
+			// contract for this endpoint.
+			log.Printf("[re-cert] Failed to marshal audit details for agent=%s: %v", agentID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record audit entry"})
+			return
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO audit_log (
+			    user_id, action, resource_type, resource_id, details,
+			    ip_address, user_agent, severity, organization_id
+			) VALUES (
+			    NULL, $1, $2, $3, $4::jsonb,
+			    NULLIF($5, '')::inet, 'sentinel-agent', $6, $7
+			)
+		`, audit.ActionDeviceCertReissue, audit.ResourceTypeDevice, deviceID,
+			detailsJSON, c.ClientIP(), audit.SeverityInfo, orgID); err != nil {
+			log.Printf("[re-cert] Audit insert failed for agent=%s old=%s new=%s: %v",
 				agentID, oldSerial, bundle.SerialNumber, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record audit entry"})
+			return
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			log.Printf("[re-cert] Commit failed for agent=%s device=%s new_serial=%s: %v",
+				agentID, deviceID, bundle.SerialNumber, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit re-cert transaction"})
+			return
 		}
 
 		log.Printf("[re-cert] Issued new cert for agent=%s device=%s old_serial=%s new_serial=%s",
