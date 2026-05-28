@@ -109,7 +109,7 @@ func getCertificateInfoHandler(services *Services) gin.HandlerFunc {
 }
 
 func deleteDeviceHandler(services *Services) gin.HandlerFunc {
-	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub}
+	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub, audit: services.Audit}
 	return router.deleteDevice
 }
 

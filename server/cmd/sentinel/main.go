@@ -20,6 +20,7 @@ import (
 
 	"github.com/sentinel/server/internal/alerting"
 	"github.com/sentinel/server/internal/api"
+	"github.com/sentinel/server/internal/audit"
 	"github.com/sentinel/server/internal/constants"
 	"github.com/sentinel/server/internal/credentials"
 	grpcserver "github.com/sentinel/server/internal/grpc"
@@ -53,7 +54,7 @@ func main() {
 
 	// Initialize structured logger
 	logger.Init(cfg.Environment)
-	logger.Info("Sentinel server starting", "version", "1.77.0", "env", cfg.Environment, "server_id", cfg.ServerID)
+	logger.Info("Sentinel server starting", "version", "1.78.0", "env", cfg.Environment, "server_id", cfg.ServerID)
 
 	// Initialize database with connection pool settings
 	dbConfig := &database.Config{
@@ -264,6 +265,9 @@ func main() {
 		log.Println("API Key Manager initialized")
 	}
 
+	// Audit logger for security-critical events (device deletes, cert reissue, etc.)
+	auditLogger := audit.NewLogger(db.Pool())
+
 	// Create services container for dependency injection
 	services := &api.Services{
 		Config:          cfg,
@@ -278,6 +282,7 @@ func main() {
 		JWTManager:      jwtManager,
 		APIKeyManager:   apiKeyManager,
 		TURNServer:      turnServer,
+		Audit:           auditLogger,
 	}
 
 	// Seed default router scheduled actions (no-op if already populated)

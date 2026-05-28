@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/sentinel/server/internal/audit"
 	"github.com/sentinel/server/internal/constants"
 	"github.com/sentinel/server/internal/models"
 	"github.com/sentinel/server/internal/websocket"
@@ -281,7 +282,12 @@ func (r *Router) updateDevice(c *gin.Context) {
 }
 
 // deleteDevice removes a device record - allowed for devices in 'uninstalling' or 'offline' status
-// This ensures active devices cannot be accidentally deleted
+// This ensures active devices cannot be accidentally deleted.
+//
+// Audit: writes a 'device_delete' entry (severity=warning) to audit_log capturing
+// hostname, agent_id, last_seen, and client_cert_serial BEFORE the DELETE so the
+// trail survives the row removal. The audit write is best-effort — if it fails the
+// delete still proceeds, but the failure is logged.
 func (r *Router) deleteDevice(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -291,9 +297,19 @@ func (r *Router) deleteDevice(c *gin.Context) {
 
 	ctx := context.Background()
 
-	// Check device status - only allow deletion for uninstalling or offline devices
-	var status string
-	err = r.db.Pool().QueryRow(ctx, "SELECT status FROM devices WHERE id = $1 AND organization_id = $2", id, constants.CurrentOrganizationID).Scan(&status)
+	// Capture identifying metadata for the audit trail before the row vanishes.
+	var (
+		status            string
+		hostname          string
+		agentID           string
+		lastSeen          *time.Time
+		clientCertSerial  *string
+	)
+	err = r.db.Pool().QueryRow(ctx, `
+		SELECT status, hostname, agent_id, last_seen, client_cert_serial
+		FROM devices
+		WHERE id = $1 AND organization_id = $2
+	`, id, constants.CurrentOrganizationID).Scan(&status, &hostname, &agentID, &lastSeen, &clientCertSerial)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
 		return
@@ -305,6 +321,22 @@ func (r *Router) deleteDevice(c *gin.Context) {
 			"message": "Only offline or uninstalling devices can be deleted. Use 'Uninstall Agent' for online devices.",
 		})
 		return
+	}
+
+	// Write audit entry BEFORE the DELETE so the forensic trail survives even if
+	// the DELETE later races with another request. The logger writes asynchronously
+	// in a goroutine with a 5s timeout (see audit.Logger.LogFromContextWithSeverity).
+	if r.audit != nil {
+		details := map[string]interface{}{
+			"hostname":           hostname,
+			"agent_id":           agentID,
+			"prior_status":       status,
+			"client_cert_serial": clientCertSerial,
+		}
+		if lastSeen != nil {
+			details["last_seen"] = lastSeen.UTC().Format(time.RFC3339)
+		}
+		r.audit.LogFromContextWithSeverity(c, audit.ActionDeviceDelete, audit.ResourceTypeDevice, &id, audit.SeverityWarning, details)
 	}
 
 	// Device is uninstalling - safe to delete

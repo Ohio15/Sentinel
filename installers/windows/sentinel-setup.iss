@@ -3,7 +3,7 @@
 ; Professional installer with embedded config support, robust logging, and rollback
 
 #define MyAppName "Sentinel Agent"
-#define MyAppVersion "1.73.0"
+#define MyAppVersion "1.73.1"
 #define MyAppPublisher "Sentinel RMM"
 #define MyAppURL "https://sentinelrmm.us"
 #define MyAppExeName "sentinel-agent.exe"
@@ -73,6 +73,8 @@ var
   LogFile: String;
   ConfigData: String;
   IsUpgrade: Boolean;
+  IsReinstall: Boolean;
+  ExistingInstallPath: String;
   ServicesWereStopped: Boolean;
   BackedUpConfig: String;
   OldAgentPath: String;
@@ -599,10 +601,61 @@ begin
   end;
 end;
 
-// Backup existing config
+// Prune timestamped config backups, retaining only the newest MaxKeep files.
+// Backup filenames sort lexicographically by timestamp, so the lexicographically
+// largest names are the most recent.
+procedure PruneConfigBackups(MaxKeep: Integer);
+var
+  BackupDir: String;
+  FindRec: TFindRec;
+  Names: TStringList;
+  FullPath: String;
+  Idx: Integer;
+begin
+  BackupDir := ExpandConstant('{commonappdata}\Sentinel');
+  if not DirExists(BackupDir) then
+    Exit;
+
+  Names := TStringList.Create;
+  try
+    if FindFirst(BackupDir + '\config-backup-*.json', FindRec) then
+    begin
+      try
+        repeat
+          // Skip dirs (defensive — pattern shouldn't match them, but be safe).
+          if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) = 0 then
+            Names.Add(FindRec.Name);
+        until not FindNext(FindRec);
+      finally
+        FindClose(FindRec);
+      end;
+    end;
+
+    if Names.Count <= MaxKeep then
+      Exit;
+
+    Names.Sort;
+
+    // Delete oldest (smallest indices) until only MaxKeep remain.
+    for Idx := 0 to (Names.Count - MaxKeep - 1) do
+    begin
+      FullPath := BackupDir + '\' + Names[Idx];
+      if DeleteFile(FullPath) then
+        WriteLog('Pruned old config backup: ' + FullPath)
+      else
+        WriteLog('Failed to prune old config backup: ' + FullPath);
+    end;
+  finally
+    Names.Free;
+  end;
+end;
+
+// Backup existing config. Each backup is written with a timestamped filename so
+// successive re-installs do not clobber one another; PruneConfigBackups keeps the
+// retention bounded.
 function BackupExistingConfig: String;
 var
-  ConfigPath, BackupPath: String;
+  ConfigPath, BackupPath, Timestamp: String;
   ConfigContent: AnsiString;
 begin
   Result := '';
@@ -614,9 +667,24 @@ begin
     if LoadStringFromFile(ConfigPath, ConfigContent) then
     begin
       Result := String(ConfigContent);
-      BackupPath := ExpandConstant('{commonappdata}\Sentinel\config-backup-' + RefID + '.json');
-      SaveStringToFile(BackupPath, ConfigContent, False);
-      WriteLog('Config backed up to: ' + BackupPath);
+      // yyyymmdd-hhnnss sorts lexicographically by chronological order.
+      // Compose from two calls so the format strings contain only valid
+      // format specifiers and Inno's date/time separator chars are passed
+      // explicitly (avoids ambiguity around literal '-' in format strings).
+      Timestamp := GetDateTimeString('yyyymmdd', #0, #0) + '-' +
+                   GetDateTimeString('hhnnss', #0, #0);
+      BackupPath := ExpandConstant('{commonappdata}\Sentinel\config-backup-' +
+                                   Timestamp + '-' + RefID + '.json');
+      // Ensure parent dir exists before writing (DefaultDirName creation runs
+      // later in [Dirs], but backups happen in PrepareToInstall).
+      ForceDirectories(ExpandConstant('{commonappdata}\Sentinel'));
+      if SaveStringToFile(BackupPath, ConfigContent, False) then
+        WriteLog('Config backed up to: ' + BackupPath)
+      else
+        WriteLog('Failed to write config backup to: ' + BackupPath);
+
+      // Retain the three most recent backups.
+      PruneConfigBackups(3);
     end
     else
     begin
@@ -663,11 +731,16 @@ end;
 
 // Initialize installer
 function InitializeSetup: Boolean;
+var
+  RegisteredPath: String;
+  DefaultAppConfig: String;
 begin
   Result := True;
   InstallationFailed := False;
   ServicesWereStopped := False;
   FileExtractionComplete := False;
+  IsReinstall := False;
+  ExistingInstallPath := '';
 
   // Initialize progress tracking
   // Post-install steps: verify files, write config, remove old services,
@@ -688,11 +761,11 @@ begin
   WriteLog('Default target: ' + ExpandConstant('{autopf}\Sentinel'));
   WriteLog('========================================');
 
-  // Check for existing installation
+  // Check for existing installation via services (legacy upgrade signal).
   IsUpgrade := ServiceExists('SentinelAgent') or ServiceExists('SentinelWatchdog');
   if IsUpgrade then
   begin
-    WriteLog('UPGRADE: Existing installation detected');
+    WriteLog('UPGRADE: Existing installation detected (services present)');
     OldAgentPath := GetServicePath('SentinelAgent');
     OldWatchdogPath := GetServicePath('SentinelWatchdog');
     WriteLog('  Old agent path: ' + OldAgentPath);
@@ -700,8 +773,51 @@ begin
   end
   else
   begin
-    WriteLog('FRESH INSTALL: No existing installation');
+    WriteLog('No existing services detected');
   end;
+
+  // Re-install detection: a re-install is any run where the machine already
+  // has Sentinel configuration on disk. The agent's config lives at
+  // {app}\config.json (e.g. C:\Program Files\Sentinel\config.json). We probe
+  // the install path from the HKLM\SOFTWARE\Sentinel\InstallPath registry
+  // value first (handles non-default install dirs), and fall back to the
+  // default {app} expansion. We also accept a ProgramData-level config.json
+  // for forward-compat with any deployment that places config there.
+  if RegQueryStringValue(HKLM, 'SOFTWARE\Sentinel', 'InstallPath', RegisteredPath) then
+  begin
+    if (RegisteredPath <> '') and FileExists(RegisteredPath + '\config.json') then
+    begin
+      IsReinstall := True;
+      ExistingInstallPath := RegisteredPath;
+      WriteLog('Existing config detected at registered install path: ' + RegisteredPath + '\config.json');
+    end;
+  end;
+
+  if not IsReinstall then
+  begin
+    DefaultAppConfig := ExpandConstant('{app}\config.json');
+    if FileExists(DefaultAppConfig) then
+    begin
+      IsReinstall := True;
+      ExistingInstallPath := ExpandConstant('{app}');
+      WriteLog('Existing config detected at default install path: ' + DefaultAppConfig);
+    end;
+  end;
+
+  if not IsReinstall then
+  begin
+    if FileExists(ExpandConstant('{commonappdata}\Sentinel\config.json')) then
+    begin
+      IsReinstall := True;
+      WriteLog('Existing config detected at ProgramData path: ' +
+               ExpandConstant('{commonappdata}\Sentinel\config.json'));
+    end;
+  end;
+
+  if IsReinstall then
+    Log('Detected existing Sentinel installation — will perform re-cert rotation post-install.')
+  else
+    WriteLog('FRESH INSTALL: No existing Sentinel configuration found on disk');
 
   // Try to read embedded config
   ConfigData := ReadConfigViaPowerShell;
@@ -781,6 +897,7 @@ procedure CurStepChanged(CurStep: TSetupStep);
 var
   AgentPath, WatchdogPath: String;
   AgentCreated, WatchdogCreated: Boolean;
+  MarkerDir, MarkerPath, NoTokenMsg: String;
 begin
   // Mark file extraction complete when entering post-install
   if CurStep = ssPostInstall then
@@ -831,11 +948,49 @@ begin
                           'You may need to configure the agent manually.');
       end;
     end
+    else if IsReinstall then
+    begin
+      // Generic template re-installed on an already-enrolled machine. The
+      // existing config.json on disk is authoritative; do NOT overwrite it.
+      // The .re-cert-pending marker (written below) tells the agent to
+      // rotate its cert against the existing enrollment on next startup.
+      WriteLog('No embedded ConfigData but existing install detected — preserving on-disk config for re-cert rotation.');
+    end
     else
     begin
-      WriteLog('WARNING: No config data available. Agent will need manual configuration.');
-      ShowInstallWarning('No configuration was embedded in this installer.' + #13#10 +
-                        'The agent may need manual configuration via config.json');
+      // Fresh install + no embedded token: the agent can never enroll. We
+      // must refuse loudly rather than silently producing a broken install.
+      WriteLog('CRITICAL: Fresh install with no embedded enrollment token. Aborting to prevent silent failure.');
+      InstallationFailed := True;
+      NoTokenMsg :=
+        'No enrollment token was embedded in this installer. This installer ' +
+        'was built without a per-install token, so the agent cannot enroll ' +
+        'with the server.' + #13#10 + #13#10 +
+        'Generate a fresh installer for this machine from the Sentinel admin ' +
+        'UI (Devices > Add Device > Download Installer) and run that instead.' + #13#10 + #13#10 +
+        'Reference ID: ' + RefID;
+      MsgBox(NoTokenMsg, mbCriticalError, MB_OK);
+      // Abort halts the install and triggers Inno Setup's rollback of any
+      // files extracted so far. DeinitializeSetup will then call AttemptRollback
+      // to restart the previous services (none, in this branch — so no-op).
+      Abort;
+    end;
+
+    // Step 2b: Write the re-cert marker BEFORE (re)starting services. The
+    // agent reads {commonappdata}\Sentinel\.re-cert-pending on startup and
+    // performs an in-place certificate rotation against its existing
+    // enrollment when the marker is present. Path is fixed and must match
+    // what the agent team consumes:
+    //   C:\ProgramData\Sentinel\.re-cert-pending
+    if IsReinstall then
+    begin
+      MarkerDir := ExpandConstant('{commonappdata}\Sentinel');
+      MarkerPath := MarkerDir + '\.re-cert-pending';
+      ForceDirectories(MarkerDir);
+      if SaveStringToFile(MarkerPath, '1', False) then
+        Log('Wrote re-cert marker — agent will rotate its cert on next startup.')
+      else
+        WriteLog('WARNING: Failed to write re-cert marker at: ' + MarkerPath);
     end;
 
     // Step 3: Delete existing services if upgrading

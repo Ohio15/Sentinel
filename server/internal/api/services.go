@@ -3,6 +3,7 @@ package api
 import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/sentinel/server/internal/audit"
 	"github.com/sentinel/server/internal/credentials"
 	"github.com/sentinel/server/internal/metrics"
 	"github.com/sentinel/server/internal/pki"
@@ -48,4 +49,5 @@ type Services struct {
 	JWTManager      *credentials.JWTManager    // Managed JWT secret rotation
 	APIKeyManager   *credentials.APIKeyManager // Managed API key system
 	TURNServer      *turn.Server               // Embedded TURN server for WebRTC relay
+	Audit           *audit.Logger              // Audit log writer (security-critical actions)
 }
