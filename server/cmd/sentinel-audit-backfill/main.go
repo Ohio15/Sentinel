@@ -19,24 +19,41 @@
 // a 'device_delete_inferred' audit row capturing what we can infer.
 //
 // Idempotent: ON CONFLICT DO NOTHING via a unique partial index on
-// (action, details->>'cert_serial') for action='device_delete_inferred'.
-// The index is created lazily by this tool the first time it runs.
+// (details->>'cert_serial') for action='device_delete_inferred'. The
+// expression and predicate in the ON CONFLICT target MUST exactly match the
+// index definition below — Postgres pairs partial-index conflict targets by
+// textual equality of the predicate expression. The current pairing is:
+//
+//	index:    ON audit_log ((details->>'cert_serial')) WHERE action = 'device_delete_inferred'
+//	conflict: ON CONFLICT ((details->>'cert_serial')) WHERE action = 'device_delete_inferred'
+//
+// To verify the pairing on a real DB:
+//  1. Populate client_certificates with N orphaned rows.
+//  2. Run the tool once: expect inserted=N, skipped_duplicate=0.
+//  3. Run it again with no DB changes: expect inserted=0, skipped_duplicate=N.
 //
 // Usage:
 //
 //	DATABASE_URL=postgres://... sentinel-audit-backfill [--dry-run]
 //
 // Default mode runs the inserts. --dry-run prints what would be inserted.
+//
+// Exit codes:
+//   - 0  : completed (even if some per-row inserts failed; counts are reported).
+//   - 2  : DATABASE_URL not set.
+//   - 3  : fatal setup error (cannot connect, cannot create index, cannot run query).
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -55,19 +72,22 @@ func main() {
 
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
-		log.Fatalf("pgxpool.New: %v", err)
+		log.Printf("pgxpool.New: %v", err)
+		os.Exit(3)
 	}
 	defer pool.Close()
 
 	// Idempotency index — created once, cheap to retry. We key on the cert
 	// serial extracted from details JSONB to ensure a second run doesn't
-	// double-insert the same orphan.
+	// double-insert the same orphan. Predicate MUST match the ON CONFLICT
+	// predicate in the INSERT below exactly.
 	if _, err := pool.Exec(ctx, `
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_log_inferred_cert_serial
 		ON audit_log ((details->>'cert_serial'))
 		WHERE action = 'device_delete_inferred'
 	`); err != nil {
-		log.Fatalf("create idempotency index: %v", err)
+		log.Printf("create idempotency index: %v", err)
+		os.Exit(3)
 	}
 
 	// Query orphaned certs. We carry organization_id, device_id, agent_id,
@@ -87,7 +107,8 @@ func main() {
 		ORDER BY cc.issued_at
 	`)
 	if err != nil {
-		log.Fatalf("query orphans: %v", err)
+		log.Printf("query orphans: %v", err)
+		os.Exit(3)
 	}
 	defer rows.Close()
 
@@ -95,37 +116,51 @@ func main() {
 		considered int
 		inserted   int
 		skipped    int
+		failed     int
 	)
 	for rows.Next() {
 		var (
 			serial      string
 			agentID     string
-			deviceID    *string // text in audit row; nil if unknown
+			deviceID    *uuid.UUID
 			orgID       int
 			issuedAt    time.Time
 			expiresAt   time.Time
 			fingerprint string
 		)
 		if err := rows.Scan(&serial, &agentID, &deviceID, &orgID, &issuedAt, &expiresAt, &fingerprint); err != nil {
-			log.Fatalf("scan: %v", err)
+			log.Printf("scan row: %v (skipping)", err)
+			failed++
+			continue
 		}
 		considered++
 
-		// details payload — keys mirror what the live deleteDevice handler
-		// writes so downstream consumers can treat both event types uniformly.
-		details := fmt.Sprintf(`{
-			"cert_serial": "%s",
-			"agent_id": "%s",
-			"device_id": %s,
-			"cert_issued_at": "%s",
-			"cert_expires_at": "%s",
-			"fingerprint": "%s",
-			"inferred_reason": "cert exists in client_certificates with no matching devices.client_cert_serial; device row presumed deleted before audit instrumentation landed"
-		}`,
-			serial, agentID, jsonStringOrNull(deviceID),
-			issuedAt.UTC().Format(time.RFC3339), expiresAt.UTC().Format(time.RFC3339),
-			fingerprint,
-		)
+		// Build details payload via json.Marshal so we never have to think about
+		// string escaping for agent IDs, serials, or fingerprints. Keys mirror
+		// what the live deleteDevice handler writes so downstream consumers can
+		// treat both event types uniformly.
+		detailsMap := map[string]any{
+			"cert_serial":      serial,
+			"agent_id":         agentID,
+			"cert_issued_at":   issuedAt.UTC().Format(time.RFC3339),
+			"cert_expires_at":  expiresAt.UTC().Format(time.RFC3339),
+			"fingerprint":      fingerprint,
+			"inferred_reason":  "cert exists in client_certificates with no matching devices.client_cert_serial; device row presumed deleted before audit instrumentation landed",
+		}
+		if deviceID != nil {
+			detailsMap["device_id"] = deviceID.String()
+		} else {
+			detailsMap["device_id"] = nil
+		}
+
+		detailsJSON, err := json.Marshal(detailsMap)
+		if err != nil {
+			// Should be impossible for the static shape above, but if it
+			// happens log and skip rather than tear down the whole batch.
+			log.Printf("marshal details for serial=%s: %v (skipping)", serial, err)
+			failed++
+			continue
+		}
 
 		if *dryRun {
 			fmt.Printf("would insert: serial=%s agent=%s org=%d issued=%s\n",
@@ -135,7 +170,9 @@ func main() {
 
 		// Use the cert's issued_at as the audit created_at so the timeline
 		// reflects when the device existed, not when this backfill ran.
-		// ON CONFLICT skip thanks to the partial unique index.
+		// ON CONFLICT skip thanks to the partial unique index. The predicate
+		// here MUST be byte-identical to the one in the CREATE INDEX above
+		// or Postgres will treat the index as not matching the conflict target.
 		tag, err := pool.Exec(ctx, `
 			INSERT INTO audit_log (
 			    user_id, action, resource_type, resource_id, details,
@@ -149,9 +186,14 @@ func main() {
 			)
 			ON CONFLICT ((details->>'cert_serial')) WHERE action = 'device_delete_inferred'
 			DO NOTHING
-		`, deviceID, details, orgID, issuedAt)
+		`, deviceID, detailsJSON, orgID, issuedAt)
 		if err != nil {
-			log.Fatalf("insert audit row for serial=%s: %v", serial, err)
+			// One poisoned row must not halt the batch. Investigators can
+			// re-run after fixing the underlying cause; the unique index
+			// guarantees inserted rows are not duplicated on retry.
+			log.Printf("insert audit row for serial=%s: %v (skipping)", serial, err)
+			failed++
+			continue
 		}
 		if tag.RowsAffected() == 0 {
 			skipped++
@@ -160,23 +202,14 @@ func main() {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Fatalf("rows iteration: %v", err)
+		log.Printf("rows iteration: %v", err)
+		os.Exit(3)
 	}
 
 	mode := "applied"
 	if *dryRun {
 		mode = "dry-run"
 	}
-	fmt.Printf("backfill complete (%s): considered=%d inserted=%d skipped_duplicate=%d\n",
-		mode, considered, inserted, skipped)
-}
-
-// jsonStringOrNull formats a nullable text value for JSON embedding. UUIDs
-// in audit_log.resource_id are stored as the column type; we keep details
-// payload as a free-form JSON to mirror what live handlers write.
-func jsonStringOrNull(s *string) string {
-	if s == nil {
-		return "null"
-	}
-	return `"` + *s + `"`
+	fmt.Printf("backfill complete (%s): considered=%d inserted=%d skipped_duplicate=%d failed=%d\n",
+		mode, considered, inserted, skipped, failed)
 }
