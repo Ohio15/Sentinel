@@ -14,6 +14,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/sentinel/agent/internal/winptr"
 )
 
 const (
@@ -52,7 +54,7 @@ func GetSessionUsername(sessionID uint32) (string, string, error) {
 		return "", "", fmt.Errorf("WTSQuerySessionInformationW (username) failed: %w", err)
 	}
 
-	username := windows.UTF16PtrToString((*uint16)(unsafe.Pointer(buffer)))
+	username := windows.UTF16PtrToString((*uint16)(winptr.FromUintptr(buffer)))
 	procWTSFreeMemory.Call(buffer)
 
 	// Get domain
@@ -67,7 +69,7 @@ func GetSessionUsername(sessionID uint32) (string, string, error) {
 		return username, "", fmt.Errorf("WTSQuerySessionInformationW (domain) failed: %w", err)
 	}
 
-	domain := windows.UTF16PtrToString((*uint16)(unsafe.Pointer(buffer)))
+	domain := windows.UTF16PtrToString((*uint16)(winptr.FromUintptr(buffer)))
 	procWTSFreeMemory.Call(buffer)
 
 	return username, domain, nil

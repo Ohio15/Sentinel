@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/sentinel/agent/internal/winptr"
 )
 
 // DXGI and D3D11 GUIDs
@@ -418,7 +420,7 @@ func (c *DXGICapture) CaptureFrame(timeoutMs int) (*CapturedFrame, error) {
 	rowSize := c.width * 4
 
 	for y := 0; y < c.height; y++ {
-		src := unsafe.Pointer(srcPtr + uintptr(y)*uintptr(mapped.RowPitch))
+		src := winptr.Add(srcPtr, uintptr(y)*uintptr(mapped.RowPitch))
 		dst := unsafe.Pointer(uintptr(dstPtr) + uintptr(y*rowSize))
 		copy(
 			(*[1 << 30]byte)(dst)[:rowSize:rowSize],
@@ -568,15 +570,15 @@ func (c *DXGICapture) cleanup() {
 
 // Helper methods for COM calls
 func (c *DXGICapture) queryInterface(obj uintptr, iid *GUID, out *uintptr) uintptr {
-	vtable := *(*uintptr)(unsafe.Pointer(obj))
-	method := *(*uintptr)(unsafe.Pointer(vtable + uintptr(vtQueryInterface)*unsafe.Sizeof(uintptr(0))))
+	vtable := *(*uintptr)(winptr.FromUintptr(obj))
+	method := *(*uintptr)(winptr.Add(vtable, uintptr(vtQueryInterface)*unsafe.Sizeof(uintptr(0))))
 	ret, _, _ := syscall.SyscallN(method, obj, uintptr(unsafe.Pointer(iid)), uintptr(unsafe.Pointer(out)))
 	return ret
 }
 
 func (c *DXGICapture) addRef(obj uintptr) uintptr {
-	vtable := *(*uintptr)(unsafe.Pointer(obj))
-	method := *(*uintptr)(unsafe.Pointer(vtable + uintptr(vtAddRef)*unsafe.Sizeof(uintptr(0))))
+	vtable := *(*uintptr)(winptr.FromUintptr(obj))
+	method := *(*uintptr)(winptr.Add(vtable, uintptr(vtAddRef)*unsafe.Sizeof(uintptr(0))))
 	ret, _, _ := syscall.SyscallN(method, obj)
 	return ret
 }
@@ -585,15 +587,15 @@ func (c *DXGICapture) release(obj uintptr) uintptr {
 	if obj == 0 {
 		return 0
 	}
-	vtable := *(*uintptr)(unsafe.Pointer(obj))
-	method := *(*uintptr)(unsafe.Pointer(vtable + uintptr(vtRelease)*unsafe.Sizeof(uintptr(0))))
+	vtable := *(*uintptr)(winptr.FromUintptr(obj))
+	method := *(*uintptr)(winptr.Add(vtable, uintptr(vtRelease)*unsafe.Sizeof(uintptr(0))))
 	ret, _, _ := syscall.SyscallN(method, obj)
 	return ret
 }
 
 func (c *DXGICapture) callMethod(obj uintptr, methodIndex int, args ...uintptr) uintptr {
-	vtable := *(*uintptr)(unsafe.Pointer(obj))
-	method := *(*uintptr)(unsafe.Pointer(vtable + uintptr(methodIndex)*unsafe.Sizeof(uintptr(0))))
+	vtable := *(*uintptr)(winptr.FromUintptr(obj))
+	method := *(*uintptr)(winptr.Add(vtable, uintptr(methodIndex)*unsafe.Sizeof(uintptr(0))))
 	allArgs := make([]uintptr, 1+len(args))
 	allArgs[0] = obj
 	copy(allArgs[1:], args)

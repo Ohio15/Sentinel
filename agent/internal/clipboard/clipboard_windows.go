@@ -17,6 +17,8 @@ import (
 	"time"
 	"unicode/utf16"
 	"unsafe"
+
+	"github.com/sentinel/agent/internal/winptr"
 )
 
 var (
@@ -306,7 +308,7 @@ func (c *WindowsClipboard) readTextFormat() (*ClipboardFormat, error) {
 	}
 
 	// Convert UTF-16 to string
-	utf16Slice := (*[1 << 20]uint16)(unsafe.Pointer(ptr))[:size/2:size/2]
+	utf16Slice := unsafe.Slice((*uint16)(winptr.FromUintptr(ptr)), size/2)
 	var end int
 	for i, ch := range utf16Slice {
 		if ch == 0 {
@@ -361,7 +363,7 @@ func (c *WindowsClipboard) readHTMLFormat() (*ClipboardFormat, error) {
 
 	// HTML format is UTF-8
 	data := make([]byte, size)
-	copy(data, (*[1 << 20]byte)(unsafe.Pointer(ptr))[:size:size])
+	copy(data, unsafe.Slice((*byte)(winptr.FromUintptr(ptr)), size))
 
 	// Find null terminator
 	for i, b := range data {
@@ -414,7 +416,7 @@ func (c *WindowsClipboard) readRTFFormat() (*ClipboardFormat, error) {
 	}
 
 	data := make([]byte, size)
-	copy(data, (*[1 << 20]byte)(unsafe.Pointer(ptr))[:size:size])
+	copy(data, unsafe.Slice((*byte)(winptr.FromUintptr(ptr)), size))
 
 	// Find null terminator
 	for i, b := range data {
@@ -463,7 +465,7 @@ func (c *WindowsClipboard) readDIBFormat(format uintptr) (*ClipboardFormat, erro
 	}
 
 	// Read BITMAPINFOHEADER
-	header := (*BITMAPINFOHEADER)(unsafe.Pointer(ptr))
+	header := (*BITMAPINFOHEADER)(winptr.FromUintptr(ptr))
 
 	width := int(header.BiWidth)
 	height := int(header.BiHeight)
@@ -486,7 +488,7 @@ func (c *WindowsClipboard) readDIBFormat(format uintptr) (*ClipboardFormat, erro
 	}
 
 	// Convert DIB to image.RGBA
-	pixelData := (*[1 << 26]byte)(unsafe.Pointer(ptr + uintptr(headerSize)))[:pixelDataSize:pixelDataSize]
+	pixelData := unsafe.Slice((*byte)(winptr.Add(ptr, uintptr(headerSize))), pixelDataSize)
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 
 	bytesPerPixel := bitCount / 8
@@ -565,7 +567,7 @@ func (c *WindowsClipboard) readPNGFormat() (*ClipboardFormat, error) {
 	}
 
 	data := make([]byte, size)
-	copy(data, (*[1 << 26]byte)(unsafe.Pointer(ptr))[:size:size])
+	copy(data, unsafe.Slice((*byte)(winptr.FromUintptr(ptr)), size))
 
 	return &ClipboardFormat{
 		Type:     FormatPNG,
@@ -709,7 +711,7 @@ func (c *WindowsClipboard) writeTextFormat(text string) error {
 		return errors.New("failed to lock memory")
 	}
 
-	dst := (*[1 << 20]uint16)(unsafe.Pointer(ptr))[:len(utf16Text):len(utf16Text)]
+	dst := unsafe.Slice((*uint16)(winptr.FromUintptr(ptr)), len(utf16Text))
 	copy(dst, utf16Text)
 	procGlobalUnlock.Call(hMem)
 
@@ -749,7 +751,7 @@ func (c *WindowsClipboard) writeHTMLFormat(html string) error {
 		return errors.New("failed to lock memory")
 	}
 
-	copy((*[1 << 20]byte)(unsafe.Pointer(ptr))[:len(data):len(data)], data)
+	copy(unsafe.Slice((*byte)(winptr.FromUintptr(ptr)), len(data)), data)
 	procGlobalUnlock.Call(hMem)
 
 	ret, _, _ := procSetClipboardData.Call(cfHTML, hMem)
@@ -780,7 +782,7 @@ func (c *WindowsClipboard) writeRTFFormat(rtf string) error {
 		return errors.New("failed to lock memory")
 	}
 
-	copy((*[1 << 20]byte)(unsafe.Pointer(ptr))[:len(data):len(data)], data)
+	copy(unsafe.Slice((*byte)(winptr.FromUintptr(ptr)), len(data)), data)
 	procGlobalUnlock.Call(hMem)
 
 	ret, _, _ := procSetClipboardData.Call(cfRTF, hMem)
@@ -828,7 +830,7 @@ func (c *WindowsClipboard) writeImageFormat(base64Data string) error {
 	}
 
 	// Write BITMAPINFOHEADER
-	header := (*BITMAPINFOHEADER)(unsafe.Pointer(ptr))
+	header := (*BITMAPINFOHEADER)(winptr.FromUintptr(ptr))
 	header.BiSize = uint32(headerSize)
 	header.BiWidth = int32(width)
 	header.BiHeight = int32(height) // Positive = bottom-up
@@ -838,7 +840,7 @@ func (c *WindowsClipboard) writeImageFormat(base64Data string) error {
 	header.BiSizeImage = uint32(pixelDataSize)
 
 	// Write pixel data (bottom-up, BGRA)
-	pixelData := (*[1 << 26]byte)(unsafe.Pointer(ptr + uintptr(headerSize)))[:pixelDataSize:pixelDataSize]
+	pixelData := unsafe.Slice((*byte)(winptr.Add(ptr, uintptr(headerSize))), pixelDataSize)
 
 	for y := 0; y < height; y++ {
 		dstY := height - 1 - y // Bottom-up
