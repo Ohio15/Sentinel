@@ -40,6 +40,7 @@ import (
 	"github.com/sentinel/agent/internal/logforward"
 	"github.com/sentinel/agent/internal/mtls"
 	"github.com/sentinel/agent/internal/peripheral"
+	"github.com/sentinel/agent/internal/recert"
 )
 
 var Version = "1.77.10"
@@ -57,6 +58,7 @@ var (
 	showStatus     = flag.Bool("status", false, "Show service status")
 	forceUninstall = flag.Bool("force-uninstall", false, "Force uninstall using local kill token (no server needed)")
 	killToken      = flag.String("kill-token", "", "Kill token for force uninstall authorization")
+	reCertFlag     = flag.Bool("re-cert", false, "Rotate the agent's mTLS cert via /api/agent/re-cert before starting heartbeats (used after a reinstall over an existing enrollment)")
 )
 
 // Agent represents the main agent application
@@ -299,6 +301,32 @@ func main() {
 	// Save updated configuration
 	if err := cfg.Save(); err != nil {
 		log.Printf("Warning: Could not save config: %v", err)
+	}
+
+	// Certificate rotation: if --re-cert was passed OR the installer
+	// dropped a marker at <DataDir>/.re-cert-pending, swap in a fresh
+	// mTLS cert against the server's /api/agent/re-cert endpoint
+	// BEFORE any heartbeat loop starts. This is the recovery path for
+	// "reinstall over an existing enrollment" — we keep the same
+	// agent_id and device row, only the cert changes.
+	//
+	// The function is responsible for marker deletion on success and
+	// on terminal-failure (404/401). On retryable failures the marker
+	// stays so the next service restart tries again.
+	if *reCertFlag || recert.MarkerPresent() {
+		log.Println("[ReCert] Trigger detected (flag or marker file); performing cert rotation")
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		_, err := recert.Rotate(ctx, recert.DefaultOptions())
+		cancel()
+		if err != nil {
+			// Log and continue — heartbeat loop will reveal the
+			// downstream impact (cert still old, or still missing,
+			// depending on classification). We deliberately do not
+			// exit the process: in service mode that would just
+			// trigger an SCM restart loop which is worse than the
+			// agent connecting and reporting errors.
+			log.Printf("[ReCert] Rotation did not complete cleanly: %v", err)
+		}
 	}
 
 	// Create agent
