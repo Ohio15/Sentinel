@@ -1,9 +1,9 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -152,7 +152,24 @@ func getInstallInstructions() string {
 </ol>`
 }
 
-// buildPatchedInstaller creates a patched installer EXE with embedded config
+// buildPatchedInstaller creates a patched installer EXE with embedded config.
+//
+// Format the deployed InnoSetup template expects (see
+// installers/windows/sentinel-setup.iss ReadConfigViaPowerShell): a UTF-8
+// marker `---SENTINEL-CONFIG---` somewhere in the LAST 10 KB of the EXE,
+// followed immediately by UTF-8 JSON that must start with `{` and contain
+// `"server_url"`. The PowerShell extractor reads everything from the byte
+// after the marker through end-of-file as the config payload and writes it
+// verbatim to C:\ProgramData\Sentinel\config.json (and {app}\config.json as
+// a diagnostic copy). The agent then reads that file on first start to do
+// initial enrollment.
+//
+// The previous implementation used bytes.Replace against
+// `SENTINEL_CONFIG_SERVER:...:END` / `SENTINEL_CONFIG_TOKEN:...:END`
+// placeholders that the current template was NOT built with — so the
+// replace was always a silent no-op (returning a byte-identical unpatched
+// installer) and every customer-facing install link silently failed to
+// enroll. See GitHub issue #26 for the diagnosis.
 func buildPatchedInstaller(serverURL, enrollmentToken string) ([]byte, error) {
 	installerPath := findInstallerTemplate()
 	if installerPath == "" {
@@ -164,30 +181,35 @@ func buildPatchedInstaller(serverURL, enrollmentToken string) ([]byte, error) {
 	}
 	log.Printf("Using installer template from: %s", installerPath)
 
-	// Binary patch the placeholders
-	// The installer has these placeholders that get replaced:
-	// SENTINEL_CONFIG_SERVER:http://_______________________________________________:END
-	// SENTINEL_CONFIG_TOKEN:__________________________________________________________:END
-
-	// Patch server URL (pad to 50 chars with underscores to match placeholder)
-	serverPlaceholder := []byte("SENTINEL_CONFIG_SERVER:http://_______________________________________________:END")
-	serverValue := fmt.Sprintf("SENTINEL_CONFIG_SERVER:%s", padRight(serverURL, 50, '_')) + ":END"
-	installerData = bytes.Replace(installerData, serverPlaceholder, []byte(serverValue), 1)
-
-	// Patch enrollment token (pad to 64 chars with underscores to match placeholder)
-	tokenPlaceholder := []byte("SENTINEL_CONFIG_TOKEN:__________________________________________________________:END")
-	tokenValue := fmt.Sprintf("SENTINEL_CONFIG_TOKEN:%s", padRight(enrollmentToken, 64, '_')) + ":END"
-	installerData = bytes.Replace(installerData, tokenPlaceholder, []byte(tokenValue), 1)
-
-	return installerData, nil
-}
-
-// padRight pads a string to the specified length with the given character
-func padRight(s string, length int, pad rune) string {
-	if len(s) >= length {
-		return s[:length]
+	// Minimal JSON payload — the agent's Config struct
+	// (agent/internal/config/config.go) takes the rest from defaults / from
+	// what the server returns at enrollment. We deliberately don't pre-set
+	// agent_id, device_id, enrolled, etc. — those are populated by the
+	// enrollment handshake.
+	configJSON, err := json.Marshal(struct {
+		ServerURL       string `json:"server_url"`
+		EnrollmentToken string `json:"enrollment_token"`
+	}{
+		ServerURL:       serverURL,
+		EnrollmentToken: enrollmentToken,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal embedded install config: %w", err)
 	}
-	return s + strings.Repeat(string(pad), length-len(s))
+
+	const marker = "---SENTINEL-CONFIG---"
+	if len(configJSON)+len(marker) > 10000 {
+		// The extractor searches only the last 10 KB. Refusing to ship a
+		// payload too large to be found beats silently producing a
+		// non-enrollable installer.
+		return nil, fmt.Errorf("embedded config too large (%d bytes) — extractor searches last 10000 bytes only", len(configJSON)+len(marker))
+	}
+
+	patched := make([]byte, 0, len(installerData)+len(marker)+len(configJSON))
+	patched = append(patched, installerData...)
+	patched = append(patched, []byte(marker)...)
+	patched = append(patched, configJSON...)
+	return patched, nil
 }
 
 // downloadInstallerHandler serves the installer EXE for a download token
