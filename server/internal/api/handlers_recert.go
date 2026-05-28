@@ -31,6 +31,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -165,14 +166,24 @@ func handleAgentReCert(services *Services) gin.HandlerFunc {
 		}
 
 		// 3. Revocation check. The PKI helper does best-effort lookup against
-		//    the client_certificates table; a missing row returns false (not an
-		//    error) because the cert may simply pre-date the tracking table.
+		//    the client_certificates table; a missing row returns (false, nil)
+		//    because the cert may simply pre-date the tracking table. A real
+		//    error here means we cannot prove the cert is NOT revoked, so we
+		//    MUST fail closed. The previous "fall through on error" behavior
+		//    let a revoked cert reissue itself during a DB hiccup, which is
+		//    exactly the scenario the revocation check exists to prevent.
 		ctx := c.Request.Context()
 		revoked, err := services.PKI.IsCertificateRevoked(ctx, oldSerial)
 		if err != nil {
-			log.Printf("[re-cert] Warning: revocation check failed for serial=%s: %v", oldSerial, err)
-			// fall through — DB hiccup must not block legitimate re-cert
-		} else if revoked {
+			log.Printf("[re-cert] Revocation check failed for serial=%s agent=%s: %v — failing closed", oldSerial, agentID, err)
+			c.Header("Retry-After", strconv.Itoa(30))
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error":   "revocation_check_failed",
+				"message": "Could not verify cert revocation status. Retry in 30 seconds.",
+			})
+			return
+		}
+		if revoked {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Certificate has been revoked"})
 			return
 		}

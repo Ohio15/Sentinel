@@ -176,10 +176,16 @@ func (p *PKI) IssueClientCertificate(ctx context.Context, agentID string, device
 		IssuedAt:     now,
 	}
 
-	// Record in database
+	// Record in database. Failing to record is treated as a hard failure —
+	// returning a cert that isn't in client_certificates creates a "ghost
+	// cert" that the revocation check (IsCertificateRevoked) cannot find
+	// and so always reports unrevoked, no matter what an operator does in
+	// the UI. That's exactly the bypass we cannot ship. Fail loudly so the
+	// caller can retry or surface the DB failure instead of issuing a cert
+	// that is silently outside the revocation regime.
 	if err := p.recordCertificate(ctx, agentID, deviceID, orgID, bundle); err != nil {
-		log.Printf("[PKI] Warning: Failed to record certificate in database: %v", err)
-		// Continue anyway - the certificate is still valid
+		log.Printf("[PKI] Failed to record certificate for agent=%s serial=%s: %v", agentID, serialHex, err)
+		return nil, fmt.Errorf("failed to record certificate (refusing to issue ghost cert): %w", err)
 	}
 
 	log.Printf("[PKI] Issued client certificate for agent %s, serial=%s, expires=%s",
