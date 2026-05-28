@@ -14,14 +14,27 @@
 //   - If the cert does NOT map to a known device the endpoint returns 404 with
 //     a machine-readable error code so the installer can fall back to a fresh
 //     install_code re-enrollment. We do NOT auto-recreate the device row.
-//   - Per-agent rate limit: 5 requests/hour. Enforced in-process via reCertRateLimiter
-//     (sync.Map keyed on certificate CN). The mTLS listener already has a per-IP
-//     limit; the per-agent limit prevents a single rogue agent from churning certs
-//     even from changing IPs.
-//   - The PKI.IssueClientCertificate call records the new cert row and atomically
-//     updates devices.client_cert_* fields. Concurrent re-cert calls are serialized
-//     by the PKI mutex; that satisfies the "no corrupted state on rapid re-cert"
-//     requirement without an explicit SELECT FOR UPDATE in this handler.
+//   - Per-agent rate limit: 5 LIVE (un-revoked) certs issued per rolling hour.
+//     Enforced via a DB COUNT against client_certificates inside the request
+//     transaction, after the device-row SELECT FOR UPDATE. Survives server
+//     restarts and is consistent across replicas. The mTLS listener has its
+//     own per-IP limit; this per-agent limit prevents a single agent's cert
+//     churn from exhausting PKI capacity. The COUNT filters revoked_at IS
+//     NULL so legitimate rotation (which revokes the prior serial on every
+//     success) is not penalised — the limit bounds the population of
+//     simultaneously-valid certs an agent can spawn, not the total issuance
+//     attempts.
+//   - Same-device concurrent re-cert flows serialize via SELECT FOR UPDATE on
+//     the devices row (held until the request transaction commits). Concurrent
+//     cert generation itself is also serialized by the PKI struct's internal
+//     mutex inside IssueClientCertificate. Caveat: IssueClientCertificate
+//     writes to client_certificates and updates devices on its OWN pool
+//     connection (NOT the request tx), so a request-tx rollback after PKI
+//     succeeded leaves the new cert + updated devices.client_cert_serial
+//     committed; the audit row and ca_cert_distributed_at bump are the only
+//     things rolled back. Net state is consistent (device points at the new
+//     cert and the old serial is revoked, both committed); only the audit
+//     trail is lost on rollback.
 package api
 
 import (
@@ -222,30 +235,43 @@ func handleAgentReCert(services *Services) gin.HandlerFunc {
 			return
 		}
 
-		// 6b. DB-backed per-agent rate limit (5 reissues per rolling hour).
-		//     Counts against client_certificates rather than an in-memory bucket
-		//     so the limit survives restarts and applies uniformly across
-		//     replicas. Uses the existing idx_client_certificates_agent_id index
-		//     (a composite (agent_id, issued_at) would be marginally faster but
-		//     the single-column index is correct and selective enough — agent_id
-		//     cardinality matches fleet size).
+		// 6b. DB-backed per-agent rate limit: max 5 LIVE certs issued per
+		//     rolling hour. Counts against client_certificates WHERE
+		//     revoked_at IS NULL so legitimate rotations (which revoke the
+		//     prior serial on every success at step 8) do NOT count toward
+		//     the limit. The bound is on simultaneously-valid certs the
+		//     agent can spawn, not total issuance attempts — preventing
+		//     ghost-cert accumulation without locking out operators who
+		//     legitimately re-rotate.
+		//
+		//     Uses idx_client_certificates_agent_id. A composite
+		//     (agent_id, issued_at) WHERE revoked_at IS NULL partial index
+		//     would be marginally faster but the single-column index is
+		//     correct and selective enough — agent_id cardinality matches
+		//     fleet size.
 		var recentCount int
 		if err := tx.QueryRow(ctx, `
 			SELECT COUNT(*) FROM client_certificates
-			WHERE agent_id = $1 AND issued_at > NOW() - INTERVAL '1 hour'
+			WHERE agent_id = $1
+			  AND issued_at > NOW() - INTERVAL '1 hour'
+			  AND revoked_at IS NULL
 		`, agentID).Scan(&recentCount); err != nil {
 			log.Printf("[re-cert] Rate limit lookup failed for agent=%s: %v", agentID, err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Rate limit check failed"})
 			return
 		}
 		if recentCount >= reCertHourLimit {
-			// Compute a real Retry-After based on when the oldest cert in the
-			// window will age out. Falls back to a full hour on lookup failure.
+			// Compute a real Retry-After based on when the oldest LIVE cert
+			// in the window will age out. Falls back to a full hour on lookup
+			// failure. Same revoked_at IS NULL filter as the count query so
+			// the oldest considered matches what's blocking us.
 			retryAfterSec := 3600
 			var oldestIssued time.Time
 			if err := tx.QueryRow(ctx, `
 				SELECT MIN(issued_at) FROM client_certificates
-				WHERE agent_id = $1 AND issued_at > NOW() - INTERVAL '1 hour'
+				WHERE agent_id = $1
+				  AND issued_at > NOW() - INTERVAL '1 hour'
+				  AND revoked_at IS NULL
 			`, agentID).Scan(&oldestIssued); err == nil {
 				if remaining := time.Until(oldestIssued.Add(time.Hour)); remaining > 0 {
 					retryAfterSec = int(remaining.Seconds())
