@@ -32,7 +32,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -66,69 +65,15 @@ type reCertResponse struct {
 	Serial     string    `json:"serial"`
 }
 
-// reCertRateLimiter enforces "max 5 re-cert calls per agent_id per hour".
-// Keyed on the certificate CN (which is the agent_id). Stale buckets are pruned
-// by a background goroutine that runs every 30 minutes — the bucket window is
-// 1 hour so 30 minutes guarantees we never delete an active window.
-type reCertRateLimiter struct {
-	mu      sync.Mutex
-	buckets map[string]*reCertBucket
-}
-
-type reCertBucket struct {
-	windowStart time.Time
-	count       int
-}
-
-const (
-	reCertWindow      = time.Hour
-	reCertMaxRequests = 5
-)
-
-var globalReCertLimiter = newReCertRateLimiter()
-
-func newReCertRateLimiter() *reCertRateLimiter {
-	l := &reCertRateLimiter{buckets: make(map[string]*reCertBucket)}
-	go l.cleanupLoop()
-	return l
-}
-
-// allow returns (allowed, retryAfter). When allowed=false the caller should
-// respond 429 with a Retry-After header derived from retryAfter (seconds).
-func (l *reCertRateLimiter) allow(agentID string) (bool, time.Duration) {
-	now := time.Now()
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	b, ok := l.buckets[agentID]
-	if !ok || now.Sub(b.windowStart) >= reCertWindow {
-		l.buckets[agentID] = &reCertBucket{windowStart: now, count: 1}
-		return true, 0
-	}
-
-	if b.count >= reCertMaxRequests {
-		// Window not yet over — caller should retry after the remaining duration.
-		return false, reCertWindow - now.Sub(b.windowStart)
-	}
-
-	b.count++
-	return true, 0
-}
-
-func (l *reCertRateLimiter) cleanupLoop() {
-	ticker := time.NewTicker(30 * time.Minute)
-	defer ticker.Stop()
-	for range ticker.C {
-		cutoff := time.Now().Add(-reCertWindow)
-		l.mu.Lock()
-		for k, b := range l.buckets {
-			if b.windowStart.Before(cutoff) {
-				delete(l.buckets, k)
-			}
-		}
-		l.mu.Unlock()
-	}
-}
+// H3 (qa-butcher): rate limiting moved out of process and into the database.
+// The previous in-memory reCertRateLimiter / reCertBucket / cleanupLoop was
+// reset on every process restart and was per-replica only, making the 5/hour
+// limit a soft suggestion that an attacker with stolen credentials could
+// evade by triggering or waiting for restarts. The replacement counts rows
+// in client_certificates (which already has issued_at and an agent_id index)
+// inside the same transaction that issues the new cert. See step 6b in
+// handleAgentReCert below.
+const reCertHourLimit = 5
 
 // handleAgentReCert returns the gin handler for POST /api/agent/re-cert.
 // See package doc comment for the full design.
@@ -188,20 +133,9 @@ func handleAgentReCert(services *Services) gin.HandlerFunc {
 			return
 		}
 
-		// 4. Per-agent rate limit (5/hour). Enforced after auth so probing an
-		//    invalid cert doesn't burn a real agent's bucket.
-		if allowed, retryAfter := globalReCertLimiter.allow(agentID); !allowed {
-			seconds := int(retryAfter.Seconds())
-			if seconds < 1 {
-				seconds = 1
-			}
-			c.Header("Retry-After", time.Duration(seconds*int(time.Second)).String())
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error":   "re_cert_rate_limited",
-				"message": "Re-cert requests are limited to 5 per agent per hour.",
-			})
-			return
-		}
+		// 4. (was: in-process per-agent rate limit). Moved into the tx as step
+		//    6b — see DB-backed check after the device lookup. The in-memory
+		//    bucket couldn't survive restarts or scale across replicas.
 
 		// 5. Optional CSR shape validation. The current PKI helper always
 		//    generates a fresh keypair server-side; an agent-supplied CSR is
@@ -284,6 +218,46 @@ func handleAgentReCert(services *Services) gin.HandlerFunc {
 			c.JSON(http.StatusNotFound, gin.H{
 				"error":   "device_not_found",
 				"message": "This cert does not match a known device. Use a fresh install_code to re-enroll.",
+			})
+			return
+		}
+
+		// 6b. DB-backed per-agent rate limit (5 reissues per rolling hour).
+		//     Counts against client_certificates rather than an in-memory bucket
+		//     so the limit survives restarts and applies uniformly across
+		//     replicas. Uses the existing idx_client_certificates_agent_id index
+		//     (a composite (agent_id, issued_at) would be marginally faster but
+		//     the single-column index is correct and selective enough — agent_id
+		//     cardinality matches fleet size).
+		var recentCount int
+		if err := tx.QueryRow(ctx, `
+			SELECT COUNT(*) FROM client_certificates
+			WHERE agent_id = $1 AND issued_at > NOW() - INTERVAL '1 hour'
+		`, agentID).Scan(&recentCount); err != nil {
+			log.Printf("[re-cert] Rate limit lookup failed for agent=%s: %v", agentID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Rate limit check failed"})
+			return
+		}
+		if recentCount >= reCertHourLimit {
+			// Compute a real Retry-After based on when the oldest cert in the
+			// window will age out. Falls back to a full hour on lookup failure.
+			retryAfterSec := 3600
+			var oldestIssued time.Time
+			if err := tx.QueryRow(ctx, `
+				SELECT MIN(issued_at) FROM client_certificates
+				WHERE agent_id = $1 AND issued_at > NOW() - INTERVAL '1 hour'
+			`, agentID).Scan(&oldestIssued); err == nil {
+				if remaining := time.Until(oldestIssued.Add(time.Hour)); remaining > 0 {
+					retryAfterSec = int(remaining.Seconds())
+					if retryAfterSec < 1 {
+						retryAfterSec = 1
+					}
+				}
+			}
+			c.Header("Retry-After", strconv.Itoa(retryAfterSec))
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":   "re_cert_rate_limited",
+				"message": "Re-cert requests are limited to 5 per agent per hour.",
 			})
 			return
 		}

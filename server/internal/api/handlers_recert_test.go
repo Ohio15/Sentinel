@@ -8,7 +8,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"testing"
-	"time"
 )
 
 // TestParseCSR_Valid generates a fresh CSR with a real ECDSA key and verifies
@@ -59,69 +58,12 @@ func TestParseCSR_TamperedSignature(t *testing.T) {
 	}
 }
 
-// TestReCertRateLimiter_Allow verifies the bucket logic: first 5 requests
-// in a window are allowed, the 6th is denied with a non-zero Retry-After,
-// and a new bucket starts cleanly after the window elapses.
-func TestReCertRateLimiter_Allow(t *testing.T) {
-	l := &reCertRateLimiter{buckets: make(map[string]*reCertBucket)}
-
-	for i := 0; i < reCertMaxRequests; i++ {
-		ok, retry := l.allow("agent-a")
-		if !ok {
-			t.Fatalf("request %d/%d denied unexpectedly", i+1, reCertMaxRequests)
-		}
-		if retry != 0 {
-			t.Errorf("request %d had non-zero Retry-After: %v", i+1, retry)
-		}
-	}
-	ok, retry := l.allow("agent-a")
-	if ok {
-		t.Fatal("request beyond limit was allowed")
-	}
-	if retry <= 0 || retry > reCertWindow {
-		t.Errorf("Retry-After out of bounds: %v (expected 0 < x <= %v)", retry, reCertWindow)
-	}
-}
-
-// TestReCertRateLimiter_IndependentAgents verifies that one agent hitting its
-// limit does not impact another agent's bucket. Critical because a misbehaving
-// agent must not be able to deny service to others by exhausting a shared pool.
-func TestReCertRateLimiter_IndependentAgents(t *testing.T) {
-	l := &reCertRateLimiter{buckets: make(map[string]*reCertBucket)}
-
-	for i := 0; i < reCertMaxRequests; i++ {
-		l.allow("noisy-agent")
-	}
-	if ok, _ := l.allow("noisy-agent"); ok {
-		t.Fatal("noisy agent should be over limit")
-	}
-	if ok, _ := l.allow("quiet-agent"); !ok {
-		t.Fatal("quiet agent was incorrectly blocked by noisy-agent's bucket")
-	}
-}
-
-// TestReCertRateLimiter_WindowReset simulates the window expiring by directly
-// rewinding the bucket's windowStart. Verifies that after the window the bucket
-// resets cleanly and the agent gets a fresh allowance.
-func TestReCertRateLimiter_WindowReset(t *testing.T) {
-	l := &reCertRateLimiter{buckets: make(map[string]*reCertBucket)}
-
-	for i := 0; i < reCertMaxRequests; i++ {
-		l.allow("agent-b")
-	}
-	// Rewind the bucket past the window boundary.
-	l.mu.Lock()
-	l.buckets["agent-b"].windowStart = time.Now().Add(-2 * reCertWindow)
-	l.mu.Unlock()
-
-	ok, retry := l.allow("agent-b")
-	if !ok {
-		t.Fatal("bucket did not reset after window elapsed")
-	}
-	if retry != 0 {
-		t.Errorf("fresh bucket should have zero Retry-After, got %v", retry)
-	}
-}
+// NOTE: TestReCertRateLimiter_* tests were removed when H3 moved rate limiting
+// from in-process buckets to a DB-backed query against client_certificates.
+// The DB-backed version is tested by an integration test that needs a real
+// test DB (5 inserted cert rows -> 6th re-cert returns 429) — that test is
+// tracked as a follow-up; the existing handler tests cover the pure-logic
+// pieces (parseCSR shape validation).
 
 // makeTestCSR generates a real ECDSA P-256 keypair and returns a PEM-encoded
 // CertificateRequest with the supplied CN. Helper used by parseCSR tests so we
