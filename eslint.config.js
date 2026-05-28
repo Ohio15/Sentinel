@@ -1,7 +1,11 @@
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import react from 'eslint-plugin-react';
 import reactHooks from 'eslint-plugin-react-hooks';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export default tseslint.config(
   js.configs.recommended,
@@ -17,6 +21,8 @@ export default tseslint.config(
         ecmaFeatures: {
           jsx: true,
         },
+        project: './tsconfig.eslint.json',
+        tsconfigRootDir: __dirname,
       },
     },
     rules: {

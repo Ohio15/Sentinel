@@ -21,8 +21,10 @@ func ExampleEncryptConfig() {
 		log.Fatal(err)
 	}
 
+	// Length is deterministic for AES-GCM with a fixed-length header: 88-byte
+	// plaintext -> 121-byte ciphertext (header + nonce + ciphertext + tag).
 	fmt.Printf("Encrypted %d bytes to %d bytes\n", len(configJSON), len(encrypted))
-	// Output: Encrypted config data
+	// Output: Encrypted 88 bytes to 121 bytes
 }
 
 // ExampleDecryptConfig demonstrates how to decrypt configuration data

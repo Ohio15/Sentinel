@@ -4,6 +4,8 @@ package filetransfer
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync/atomic"
 	"time"
 )
 
@@ -303,7 +305,15 @@ type ErrorMessage struct {
 	Details    string `json:"details,omitempty"`
 }
 
-// GenerateTransferID generates a unique transfer ID
+// transferIDCounter ensures uniqueness across rapid GenerateTransferID calls,
+// since time.Now() resolution on Windows can be coarser than ID call frequency
+// and concurrent StartUpload calls would otherwise collide and silently
+// overwrite each other in the manager's transfer map.
+var transferIDCounter atomic.Uint64
+
+// GenerateTransferID generates a unique transfer ID.
 func GenerateTransferID() string {
-	return time.Now().Format("20060102150405.000000")
+	return fmt.Sprintf("%s-%d",
+		time.Now().Format("20060102150405.000000"),
+		transferIDCounter.Add(1))
 }
