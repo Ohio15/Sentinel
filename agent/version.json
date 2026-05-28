@@ -1,12 +1,7 @@
 {
-  "version": "1.77.37",
-<<<<<<< HEAD
+  "version": "1.77.38",
   "releaseDate": "2026-05-28",
-  "changelog": "Reinstall-aware agent: --re-cert flag + C:\\ProgramData\\Sentinel\\.re-cert-pending marker handling. On startup with the marker present (written by the InnoSetup installer when re-installing on an enrolled machine), the agent decrypts its existing config, presents its current mTLS client cert to POST /api/agent/re-cert, atomically rotates client.crt/client.key/ca-cert.pem with timestamped .bak backups (last 3 retained), deletes the marker, then enters the normal heartbeat loop with the fresh cert. Identity (agent_id, device history) preserved across reinstalls. New internal/recert package with full test coverage. Server endpoint and installer marker writing land in companion branches fix/recert-server and fix/recert-installer.",
-=======
-  "releaseDate": "2026-05-22",
-  "changelog": "CI recovery: Win32/COM/D3D/MediaFoundation unsafe.Pointer vet cleanup via new internal/winptr helper package (encapsulates uintptr->unsafe.Pointer reinterpretation for non-Go-managed memory). ReconnectionManager.Stop idempotency via sync.Once (fixes panic-on-close of stopCh when Stop called twice). FileTransfer ID uniqueness via atomic counter appended to timestamp (fixes silent map-overwrite under concurrent StartUpload caused by Windows 15ms timer resolution exceeding ID-call frequency). Minor test fixes: dxgi_capture_test array-length to slice (non-constant compile error), ExampleEncryptConfig expected output matched to actual deterministic 88->121 byte length.",
->>>>>>> origin/main
+  "changelog": "Reinstall-aware agent on top of the 1.77.37 CI-recovery baseline: --re-cert flag + C:\\ProgramData\\Sentinel\\.re-cert-pending marker handling. On startup with the marker present (written by the InnoSetup installer when re-installing on an enrolled machine), the agent decrypts its existing config, presents its current mTLS client cert to POST /api/agent/re-cert, atomically rotates client.crt/client.key/ca-cert.pem with timestamped .bak backups (last 3 retained), deletes the marker, then enters the normal heartbeat loop with the fresh cert. Identity (agent_id, device history) preserved across reinstalls. New internal/recert package with full test coverage. Server endpoint and installer marker writing land in companion branches fix/recert-server and fix/recert-installer.",
   "platforms": [
     "windows",
     "linux",
