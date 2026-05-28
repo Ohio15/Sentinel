@@ -174,14 +174,29 @@ type AgentUpdateResponse struct {
 	VersionInfo    *AgentVersionInfo `json:"versionInfo,omitempty"`
 }
 
-// Agent binary paths by platform/arch
-var agentBinaryPaths = map[string]string{
-	"windows-amd64": "installers/sentinel-agent-windows-amd64.exe",
-	"windows-386":   "installers/sentinel-agent-windows-386.exe",
-	"linux-amd64":   "installers/sentinel-agent-linux-amd64",
-	"linux-arm64":   "installers/sentinel-agent-linux-arm64",
-	"darwin-amd64":  "installers/sentinel-agent-darwin-amd64",
-	"darwin-arm64":  "installers/sentinel-agent-darwin-arm64",
+// supportedAgentTargets is the set of (platform, arch) tuples the update server
+// is willing to serve. Actual filesystem lookup is delegated to the canonical
+// resolver in installer_paths.go so /app/installers and other production roots
+// are searched uniformly.
+var supportedAgentTargets = map[string]struct{ Platform, Arch string }{
+	"windows-amd64": {"windows", "amd64"},
+	"windows-386":   {"windows", "386"},
+	"windows-arm64": {"windows", "arm64"},
+	"linux-amd64":   {"linux", "amd64"},
+	"linux-arm64":   {"linux", "arm64"},
+	"darwin-amd64":  {"darwin", "amd64"},
+	"darwin-arm64":  {"darwin", "arm64"},
+}
+
+// resolveAgentBinary resolves the path to the agent binary for the given
+// platform/arch key (e.g. "windows-amd64"). Returns "" if the target is
+// unsupported or the binary is not present in any canonical search root.
+func resolveAgentBinary(key string) string {
+	t, ok := supportedAgentTargets[key]
+	if !ok {
+		return ""
+	}
+	return findPlatformBinary("agent", t.Platform, t.Arch)
 }
 
 // getCachedChecksum returns a cached SHA256 checksum for the given binary, recomputing every 60s.
@@ -273,10 +288,10 @@ func (r *Router) getAgentVersion(c *gin.Context) {
 		return
 	}
 
-	// Find binary for this platform
+	// Find binary for this platform via canonical resolver
 	key := fmt.Sprintf("%s-%s", platform, arch)
-	binaryPath, ok := agentBinaryPaths[key]
-	if !ok {
+	binaryPath := resolveAgentBinary(key)
+	if binaryPath == "" {
 		response.Available = false
 		c.JSON(http.StatusOK, response)
 		return
@@ -301,7 +316,11 @@ func (r *Router) getAgentVersion(c *gin.Context) {
 	if serverURL == "" {
 		serverURL = fmt.Sprintf("https://%s", c.Request.Host)
 	}
-	downloadURL := fmt.Sprintf("%s/api/agent/update/download?platform=%s&arch=%s", serverURL, platform, arch)
+	rawURL := fmt.Sprintf("%s/api/agent/update/download?platform=%s&arch=%s", serverURL, platform, arch)
+	// Sign URL with 10-min TTL so a URL leaked via log infra becomes useless
+	// quickly. Agents re-fetch /api/agent/version on every check, so the short
+	// TTL is invisible to them.
+	downloadURL := signAgentUpdateURL(rawURL, platform, arch, agentVersion.Version)
 
 	response.Available = true
 	response.VersionInfo = &AgentVersionInfo{
@@ -364,14 +383,25 @@ func (r *Router) downloadAgentUpdate(c *gin.Context) {
 	}
 
 	key := fmt.Sprintf("%s-%s", platform, arch)
-	binaryPath, ok := agentBinaryPaths[key]
-	if !ok {
+	binaryPath := resolveAgentBinary(key)
+	if binaryPath == "" {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Binary not found for platform"})
 		return
 	}
 
 	if _, err := os.Stat(binaryPath); os.IsNotExist(err) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Binary file not found"})
+		return
+	}
+
+	// Verify HMAC-signed URL parameters. Backward-compatible: if no signing
+	// secret is set the check is a no-op; if a sig IS present it must validate.
+	// requireSig=false during rollout so agents holding stale (unsigned) URLs
+	// don't get cut off; flip to true once the fleet is rotated.
+	currentVersion := getCurrentAgentVersion()
+	if err := verifyAgentUpdateURLSig(c.Request.URL.Query(), platform, arch, currentVersion, false); err != nil {
+		log.Printf("[AgentUpdate] Rejected signed URL: %v (ip=%s ua=%q)", err, c.ClientIP(), c.Request.UserAgent())
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired download URL"})
 		return
 	}
 

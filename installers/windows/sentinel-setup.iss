@@ -451,15 +451,24 @@ begin
   end;
 end;
 
-// Create Windows service with full error handling
-function CreateService(ServiceName, DisplayName, ExePath, Description: String): Boolean;
+// Create Windows service with full error handling.
+//
+// ExeArgs is appended after the quoted executable path inside binPath so the
+// agent receives flags like '--service' on startup. The agent (kardianos/service)
+// only registers with SCM when --service is present; without it it runs in
+// interactive mode and SCM times out after 30s with error 1053. Bug observed
+// 2026-05-22 on INS-055750. Pass an empty string for binaries that
+// auto-detect service mode (e.g. sentinel-watchdog uses svc.IsWindowsService()).
+function CreateService(ServiceName, DisplayName, ExePath, ExeArgs, Description: String): Boolean;
 var
   ResultCode: Integer;
   Params: String;
+  BinPath: String;
 begin
   Result := False;
   WriteLog('Creating service: ' + ServiceName);
   WriteLog('  Path: ' + ExePath);
+  WriteLog('  Args: ' + ExeArgs);
 
   // Verify executable exists
   if not FileExists(ExePath) then
@@ -476,8 +485,14 @@ begin
     Sleep(1000);
   end;
 
-  // Create the service
-  Params := 'create "' + ServiceName + '" binPath= "\"' + ExePath + '\"" start= auto DisplayName= "' + DisplayName + '"';
+  // Build binPath. Per sc.exe quoting rules the entire path-plus-args goes
+  // inside the outer "..." that wraps the binPath value, with the exe path
+  // itself escaped-quoted to survive the space in 'Program Files'.
+  BinPath := '\"' + ExePath + '\"';
+  if Length(ExeArgs) > 0 then
+    BinPath := BinPath + ' ' + ExeArgs;
+
+  Params := 'create "' + ServiceName + '" binPath= "' + BinPath + '" start= auto DisplayName= "' + DisplayName + '"';
   WriteLog('sc.exe ' + Params);
 
   if Exec('sc.exe', Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
@@ -540,22 +555,47 @@ begin
 end;
 
 // Write config file
+//
+// The agent reads its config from %ProgramData%\Sentinel\config.json
+// (internal/config/config.go:109). Writing to {app}\config.json instead
+// caused the agent to start with no config — root cause of the 1053 timeout
+// observed on INS-055750-20260522. We write to ProgramData first; falling
+// back to {app}\config.json only if the canonical write fails.
 function WriteConfigFile(ConfigJson: String): Boolean;
 var
-  ConfigPath: String;
+  ConfigDataPath: String;
+  ConfigAppPath: String;
+  ConfigDir: String;
 begin
   Result := False;
-  ConfigPath := ExpandConstant('{app}\config.json');
-  WriteLog('Writing config to: ' + ConfigPath);
+  ConfigDataPath := ExpandConstant('{commonappdata}\Sentinel\config.json');
+  ConfigAppPath  := ExpandConstant('{app}\config.json');
+  ConfigDir := ExpandConstant('{commonappdata}\Sentinel');
 
-  if SaveStringToFile(ConfigPath, ConfigJson, False) then
+  // Ensure ProgramData\Sentinel exists before writing
+  if not DirExists(ConfigDir) then
+    ForceDirectories(ConfigDir);
+
+  WriteLog('Writing config to: ' + ConfigDataPath);
+  if SaveStringToFile(ConfigDataPath, ConfigJson, False) then
   begin
-    WriteLog('Config file written successfully (' + IntToStr(Length(ConfigJson)) + ' bytes)');
+    WriteLog('Config file written to ProgramData (' + IntToStr(Length(ConfigJson)) + ' bytes)');
+    // Also drop a copy in the install dir for diagnostics / manual edit
+    SaveStringToFile(ConfigAppPath, ConfigJson, False);
     Result := True;
   end
   else
   begin
-    WriteLog('Failed to write config file');
+    WriteLog('Failed to write config to ProgramData, falling back to install dir');
+    if SaveStringToFile(ConfigAppPath, ConfigJson, False) then
+    begin
+      WriteLog('Config file written to install dir (' + IntToStr(Length(ConfigJson)) + ' bytes) — agent may not find it');
+      Result := True;
+    end
+    else
+    begin
+      WriteLog('Failed to write config file to either location');
+    end;
   end;
 end;
 
@@ -819,6 +859,7 @@ begin
     AgentCreated := CreateService('SentinelAgent',
                                   'Sentinel Agent',
                                   AgentPath,
+                                  '--service',
                                   'Sentinel RMM monitoring agent. Collects system metrics and executes remote commands.');
     if not AgentCreated then
     begin
@@ -834,6 +875,7 @@ begin
     WatchdogCreated := CreateService('SentinelWatchdog',
                                      'Sentinel Watchdog',
                                      WatchdogPath,
+                                     '',
                                      'Sentinel Watchdog service. Monitors and restarts the Sentinel Agent if it stops.');
     if not WatchdogCreated then
     begin

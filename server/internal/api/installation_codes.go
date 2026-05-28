@@ -41,11 +41,21 @@ type CreateInstallCodeResponse struct {
 }
 
 // ValidateCodeResponse is the response for code validation (used by installer)
+//
+// Token-leakage hardening (2026-05-21):
+//   - BootstrapURL is the new preferred field — a single-use, HMAC-signed URL
+//     (5-min TTL) that the installer GETs to retrieve the enrollment token.
+//     This keeps the token out of any intermediate proxy log / DevTools capture
+//     of the validate-code response itself.
+//   - EnrollmentToken is kept for backward compatibility with installer
+//     templates already in the field. Set INSTALL_TOKEN_OMIT_LEGACY=1 to drop
+//     it from responses once the fleet's installer templates have been rotated.
 type ValidateCodeResponse struct {
 	Valid           bool   `json:"valid"`
 	ServerURL       string `json:"serverUrl,omitempty"`       // Bootstrap API URL
 	AgentURL        string `json:"agentUrl,omitempty"`        // Agent connection URL (mTLS)
-	EnrollmentToken string `json:"enrollmentToken,omitempty"`
+	BootstrapURL    string `json:"bootstrapUrl,omitempty"`    // Signed redeem URL (preferred)
+	EnrollmentToken string `json:"enrollmentToken,omitempty"` // Legacy plaintext token (deprecated)
 	DeviceName      string `json:"deviceName,omitempty"`
 	Error           string `json:"error,omitempty"`
 }
@@ -189,11 +199,7 @@ func createInstallationCodeHandler(services *Services) gin.HandlerFunc {
 			publicURL = services.Config.ServerURL
 		}
 		if publicURL == "" {
-			scheme := "https"
-			if c.Request.TLS == nil {
-				scheme = "http"
-			}
-			publicURL = fmt.Sprintf("%s://%s", scheme, c.Request.Host)
+			publicURL = fmt.Sprintf("%s://%s", detectRequestScheme(c), c.Request.Host)
 		}
 		downloadURL := fmt.Sprintf("%s/api/download/agent", publicURL)
 
@@ -342,19 +348,86 @@ func validateInstallationCodeHandler(services *Services) gin.HandlerFunc {
 			bootstrapURL = services.Config.ServerURL
 		}
 		if bootstrapURL == "" {
-			scheme := "https"
-			if c.Request.TLS == nil {
-				scheme = "http"
-			}
-			bootstrapURL = fmt.Sprintf("%s://%s", scheme, c.Request.Host)
+			bootstrapURL = fmt.Sprintf("%s://%s", detectRequestScheme(c), c.Request.Host)
 		}
 
-		c.JSON(http.StatusOK, ValidateCodeResponse{
-			Valid:           true,
-			ServerURL:       bootstrapURL,
-			AgentURL:        services.Config.ServerURL,
-			EnrollmentToken: enrollmentToken,
-			DeviceName:      link.DeviceName,
+		// Build signed bootstrap URL (preferred path for new installers)
+		signedBootstrapURL := signBootstrapRedeemURL(bootstrapURL, link.ID)
+
+		resp := ValidateCodeResponse{
+			Valid:        true,
+			ServerURL:    bootstrapURL,
+			AgentURL:     services.Config.ServerURL,
+			BootstrapURL: signedBootstrapURL,
+			DeviceName:   link.DeviceName,
+		}
+		// Omit the plaintext token when explicitly disabled. Flip the env var
+		// only after the fleet's installer templates have been rotated to the
+		// new BootstrapURL-redeem flow.
+		if strings.ToLower(strings.TrimSpace(os.Getenv("INSTALL_TOKEN_OMIT_LEGACY"))) != "1" {
+			resp.EnrollmentToken = enrollmentToken
+		}
+		c.JSON(http.StatusOK, resp)
+	}
+}
+
+// redeemInstallCodeHandler exchanges a signed bootstrap URL for the enrollment
+// token. The signed URL is single-use (enforced by the link.status transition
+// to "redeemed") and time-boxed by the signature exp claim.
+//
+// Public endpoint — auth is the signature itself. Rate limit is applied at the
+// router level alongside validate-code.
+func redeemInstallCodeHandler(services *Services) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		linkIDStr := c.Query("link")
+		if linkIDStr == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "missing link parameter"})
+			return
+		}
+		linkID, err := uuid.Parse(linkIDStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid link parameter"})
+			return
+		}
+
+		if err := verifyBootstrapRedeemSig(c.Request.URL.Query(), linkID); err != nil {
+			log.Printf("[InstallRedeem] Rejected: %v (ip=%s ua=%q)", err, c.ClientIP(), c.Request.UserAgent())
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired redeem URL"})
+			return
+		}
+
+		ctx := c.Request.Context()
+		var enrollmentTokenID uuid.UUID
+		var enrollmentToken string
+		var status string
+		err = services.DB.Pool().QueryRow(ctx, `
+			SELECT l.enrollment_token_id, e.token, l.status
+			FROM agent_installation_links l
+			JOIN enrollment_tokens e ON l.enrollment_token_id = e.id
+			WHERE l.id = $1 AND l.deleted_at IS NULL
+		`, linkID).Scan(&enrollmentTokenID, &enrollmentToken, &status)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "link not found"})
+			return
+		}
+		if status == "redeemed" || status == "installed" {
+			c.JSON(http.StatusGone, gin.H{"error": "bootstrap URL already redeemed"})
+			return
+		}
+
+		// Atomically mark the link redeemed so a second call to this URL fails.
+		tag, err := services.DB.Pool().Exec(ctx, `
+			UPDATE agent_installation_links
+			SET status = 'redeemed', redeemed_at = NOW(), redeemed_ip = $1
+			WHERE id = $2 AND status NOT IN ('redeemed','installed')
+		`, c.ClientIP(), linkID)
+		if err != nil || tag.RowsAffected() == 0 {
+			c.JSON(http.StatusConflict, gin.H{"error": "bootstrap URL race lost"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"enrollmentToken": enrollmentToken,
 		})
 	}
 }
@@ -432,30 +505,25 @@ func logCodeValidation(services *Services, code, ipAddress, userAgent string, su
 // serveGenericInstallerHandler serves the generic installer (no embedded config)
 func serveGenericInstallerHandler(services *Services) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Find generic installer
-		installerPaths := []string{
-			"installers/sentinel-installer.exe",
-			"installers/sentinel-installer-generic.exe",
-			"installers/sentinel-installer-template.exe",
-			"release/agent/sentinel-installer.exe",
-			"release/agent/sentinel-installer-generic.exe",
-			"release/agent/sentinel-installer-template.exe",
-		}
-
-		var installerData []byte
-		var err error
-		for _, path := range installerPaths {
-			installerData, err = os.ReadFile(path)
-			if err == nil {
-				log.Printf("Serving generic installer from: %s", path)
-				break
-			}
-		}
-		if err != nil {
-			log.Printf("Generic installer not found: %v", err)
+		// Find generic installer: dedicated generic binaries first, fall back to
+		// the patcher template (still a valid Windows installer when not patched).
+		installerPath := findArtifact(
+			"sentinel-installer.exe",
+			"sentinel-installer-generic.exe",
+			"sentinel-installer-template.exe",
+		)
+		if installerPath == "" {
+			log.Printf("Generic installer not found")
 			c.JSON(http.StatusNotFound, gin.H{"error": "Installer not available"})
 			return
 		}
+		installerData, err := os.ReadFile(installerPath)
+		if err != nil {
+			log.Printf("Failed to read generic installer %s: %v", installerPath, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Installer read failed"})
+			return
+		}
+		log.Printf("Serving generic installer from: %s", installerPath)
 
 		// Serve the installer
 		c.Header("Content-Disposition", "attachment; filename=\"SentinelAgent-Installer.exe\"")

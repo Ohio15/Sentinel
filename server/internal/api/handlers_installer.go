@@ -115,7 +115,7 @@ func generateInstallerDownloadHandler(services *Services) gin.HandlerFunc {
 		grpcEndpoint := buildGRPCEndpoint(services, c)
 
 		// Generate or retrieve enrollment token for this organization
-		enrollmentToken, err := getOrCreateEnrollmentToken(c, services, userID)
+		enrollmentToken, err := mintOneTimeInstallerToken(c, services, userID)
 		if err != nil {
 			log.Printf("[Installer] Failed to get enrollment token: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate enrollment token"})
@@ -272,41 +272,33 @@ func extractHostFromURL(urlStr string) string {
 	return urlStr
 }
 
-// getOrCreateEnrollmentToken gets an existing enrollment token or creates a new one
-func getOrCreateEnrollmentToken(c *gin.Context, services *Services, userID *uuid.UUID) (string, error) {
+// mintOneTimeInstallerToken creates a fresh single-use enrollment token bound
+// to one installer download. The token expires in 24h and max_uses=1 — bootstrap
+// flow increments use_count, after which the token is rejected by validation
+// (agents.go:317, mobile_handlers.go:311).
+//
+// Replaces the prior org-shared 30-day getOrCreate model that allowed any user
+// who downloaded the installer to extract a long-lived token via `strings`.
+// Re-downloading mints a new token; the old one is left in place to allow the
+// in-flight installer to still enroll once.
+func mintOneTimeInstallerToken(c *gin.Context, services *Services, userID *uuid.UUID) (string, error) {
 	ctx := c.Request.Context()
-
-	// First, try to find an active, non-expired token for installer downloads
-	var existingToken string
-	err := services.DB.Pool().QueryRow(ctx, `
-		SELECT token FROM enrollment_tokens
-		WHERE organization_id = $1
-		  AND is_active = TRUE
-		  AND (expires_at IS NULL OR expires_at > NOW())
-		  AND name LIKE 'Installer Download%'
-		ORDER BY created_at DESC
-		LIMIT 1
-	`, constants.CurrentOrganizationID).Scan(&existingToken)
-
-	if err == nil && existingToken != "" {
-		return existingToken, nil
-	}
-
-	// Create a new token
 	newToken := uuid.New().String()
-	expiresAt := time.Now().Add(30 * 24 * time.Hour) // 30-day validity
+	expiresAt := time.Now().Add(24 * time.Hour)
+	maxUses := 1
 
-	_, err = services.DB.Pool().Exec(ctx, `
+	_, err := services.DB.Pool().Exec(ctx, `
 		INSERT INTO enrollment_tokens (
 			organization_id, token, name, description, created_by,
-			expires_at, is_active, is_legacy
-		) VALUES ($1, $2, $3, $4, $5, $6, TRUE, FALSE)
+			expires_at, max_uses, is_active, is_legacy
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, FALSE)
 	`, constants.CurrentOrganizationID,
 		newToken,
-		fmt.Sprintf("Installer Download - %s", time.Now().Format("2006-01-02")),
-		"Auto-generated token for installer download API",
+		fmt.Sprintf("Installer Download - %s", time.Now().UTC().Format(time.RFC3339)),
+		"Auto-generated one-time token for installer download API",
 		userID,
-		expiresAt)
+		expiresAt,
+		maxUses)
 
 	if err != nil {
 		return "", fmt.Errorf("failed to create enrollment token: %w", err)
@@ -315,56 +307,10 @@ func getOrCreateEnrollmentToken(c *gin.Context, services *Services, userID *uuid
 	return newToken, nil
 }
 
-// getBaseInstallerPath returns the path to the base installer template
+// getBaseInstallerPath returns the path to the base installer template.
+// Delegates to the canonical resolver — see installer_paths.go.
 func getBaseInstallerPath(platform, arch string) string {
-	// Map platform to directory structure
-	var baseName string
-	var extension string
-
-	switch platform {
-	case "windows":
-		baseName = "sentinel-setup-base"
-		extension = ".exe"
-	case "linux-deb":
-		baseName = "sentinel-agent-base-" + arch
-		extension = ".deb"
-	case "linux-rpm":
-		baseName = "sentinel-agent-base-" + arch
-		extension = ".rpm"
-	case "macos":
-		baseName = "sentinel-agent-base-" + arch
-		extension = ".pkg"
-	case "synology":
-		baseName = "sentinel-agent-base-" + arch
-		extension = ".spk"
-	default:
-		return ""
-	}
-
-	// Check multiple locations
-	searchPaths := []string{
-		filepath.Join("installers", platform, baseName+extension),
-		filepath.Join("installers", baseName+extension),
-		filepath.Join("release", "agent", baseName+extension),
-		filepath.Join("/app/installers", platform, baseName+extension),
-		filepath.Join("/app/installers", baseName+extension),
-	}
-
-	// For Windows, also check for template installer
-	if platform == "windows" {
-		searchPaths = append([]string{
-			filepath.Join("installers", "sentinel-installer-template.exe"),
-			filepath.Join("/app/installers", "sentinel-installer-template.exe"),
-		}, searchPaths...)
-	}
-
-	for _, path := range searchPaths {
-		if _, err := os.Stat(path); err == nil {
-			return path
-		}
-	}
-
-	return ""
+	return findBaseInstaller(platform, arch)
 }
 
 // injectConfigWindows appends JSON configuration to Windows EXE with marker
@@ -642,22 +588,28 @@ func padConfigString(s string, length int) string {
 
 // logInstallerDownload logs the installer download for auditing
 func logInstallerDownload(c *gin.Context, services *Services, platform, arch string, userID *uuid.UUID) {
-	ctx := c.Request.Context()
+	logArtifactDownload(c, services, "installer-template", platform, arch, nil)
+	_ = userID // retained for backward compatibility with existing callers
+}
 
-	// Try to log to database (don't fail if this fails)
-	// Uses existing agent_downloads table schema
+// logArtifactDownload records a single agent-artifact download in
+// agent_downloads, distinguished by the artifact column added in migration
+// 000057. Used by both the JWT-protected installer endpoint and the public
+// bootstrap endpoints — closes the bootstrap-handlers audit-logging gap
+// identified by the 2026-05-21 download-handler audit.
+func logArtifactDownload(c *gin.Context, services *Services, artifact, platform, arch string, tokenID *uuid.UUID) {
+	ctx := c.Request.Context()
 	_, err := services.DB.Pool().Exec(ctx, `
 		INSERT INTO agent_downloads (
-			platform, architecture, ip_address, user_agent
-		) VALUES ($1, $2, $3, $4)
-	`, platform, arch, c.ClientIP(), c.Request.UserAgent())
+			token_id, artifact, platform, architecture, ip_address, user_agent
+		) VALUES ($1, $2, $3, $4, $5, $6)
+	`, tokenID, artifact, platform, arch, c.ClientIP(), c.Request.UserAgent())
 
 	if err != nil {
-		// Table might not exist yet, just log
-		log.Printf("[Installer] Download logged: platform=%s arch=%s ip=%s user=%v (db log failed: %v)",
-			platform, arch, c.ClientIP(), userID, err)
+		log.Printf("[Download] artifact=%s platform=%s arch=%s ip=%s (db log failed: %v)",
+			artifact, platform, arch, c.ClientIP(), err)
 	} else {
-		log.Printf("[Installer] Download logged: platform=%s arch=%s ip=%s user=%v",
-			platform, arch, c.ClientIP(), userID)
+		log.Printf("[Download] artifact=%s platform=%s arch=%s ip=%s",
+			artifact, platform, arch, c.ClientIP())
 	}
 }

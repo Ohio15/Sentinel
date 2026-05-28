@@ -188,12 +188,7 @@ func downloadBootstrapHandler(services *Services) gin.HandlerFunc {
 		// Get server URL
 		serverURL := services.Config.ServerURL
 		if serverURL == "" {
-			// Construct from request
-			scheme := "http"
-			if c.Request.TLS != nil {
-				scheme = "https"
-			}
-			serverURL = fmt.Sprintf("%s://%s", scheme, c.Request.Host)
+			serverURL = fmt.Sprintf("%s://%s", detectRequestScheme(c), c.Request.Host)
 		}
 
 		// Embed configuration
@@ -206,8 +201,8 @@ func downloadBootstrapHandler(services *Services) gin.HandlerFunc {
 		}
 		filename := fmt.Sprintf("sentinel-bootstrap-%s-%s%s", platform, arch, ext)
 
-		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
-		c.Header("Content-Type", "application/octet-stream")
+		setBinaryDownloadHeaders(c, filename)
+		logArtifactDownload(c, services, "bootstrap", platform, arch, nil)
 		c.Data(http.StatusOK, "application/octet-stream", binaryData)
 	}
 }
@@ -275,11 +270,7 @@ func downloadBootstrapAgentHandler(services *Services) gin.HandlerFunc {
 		// Get server URL
 		serverURL := services.Config.ServerURL
 		if serverURL == "" {
-			scheme := "http"
-			if c.Request.TLS != nil {
-				scheme = "https"
-			}
-			serverURL = fmt.Sprintf("%s://%s", scheme, c.Request.Host)
+			serverURL = fmt.Sprintf("%s://%s", detectRequestScheme(c), c.Request.Host)
 		}
 
 		// Embed configuration
@@ -292,66 +283,32 @@ func downloadBootstrapAgentHandler(services *Services) gin.HandlerFunc {
 		}
 		filename := fmt.Sprintf("sentinel-agent-%s-%s%s", platform, arch, ext)
 
-		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
-		c.Header("Content-Type", "application/octet-stream")
+		setBinaryDownloadHeaders(c, filename)
+		logArtifactDownload(c, services, "agent", platform, arch, nil)
 		c.Data(http.StatusOK, "application/octet-stream", binaryData)
 	}
 }
 
 // Helper functions
 
-func getBootstrapBinaryPath(services *Services, platform, arch string) string {
-	// Check in multiple locations
-	baseName := fmt.Sprintf("sentinel-bootstrap-%s-%s", platform, arch)
-	if platform == "windows" {
-		baseName += ".exe"
-	}
-
-	// Check in various directories (server deployment locations)
-	paths := []string{
-		filepath.Join("agent", baseName),
-		filepath.Join("release", "agent", baseName),
-		filepath.Join("installers", baseName),
-		baseName,
-	}
-
-	for _, p := range paths {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-
-	return ""
+// setBinaryDownloadHeaders sets the canonical response headers for binary
+// installer/agent/watchdog downloads. Centralizes Content-Disposition,
+// Content-Type, and no-cache directives so a CDN or upstream proxy can't
+// cache an artifact that embeds per-tenant config (token, server URL).
+func setBinaryDownloadHeaders(c *gin.Context, filename string) {
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+	c.Header("Content-Type", "application/octet-stream")
+	c.Header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	c.Header("Pragma", "no-cache")
+	c.Header("X-Content-Type-Options", "nosniff")
 }
 
-func getAgentBinaryPath(services *Services, platform, arch string) string {
-	// Check in multiple locations
-	baseName := fmt.Sprintf("sentinel-agent-%s-%s", platform, arch)
-	if platform == "windows" {
-		baseName += ".exe"
-	}
+func getBootstrapBinaryPath(_ *Services, platform, arch string) string {
+	return findPlatformBinary("bootstrap", platform, arch)
+}
 
-	// Also check for standard names without platform suffix
-	standardName := "sentinel-agent"
-	if platform == "windows" {
-		standardName += ".exe"
-	}
-
-	paths := []string{
-		filepath.Join("release", "agent", baseName),
-		filepath.Join("release", "agent", standardName),
-		filepath.Join("agent", baseName),
-		filepath.Join("installers", baseName),
-		baseName,
-	}
-
-	for _, p := range paths {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-
-	return ""
+func getAgentBinaryPath(_ *Services, platform, arch string) string {
+	return findPlatformBinary("agent", platform, arch)
 }
 
 func getAgentVersion(services *Services) string {
@@ -503,33 +460,14 @@ func downloadBootstrapWatchdogHandler(services *Services) gin.HandlerFunc {
 		}
 		filename := fmt.Sprintf("sentinel-watchdog-%s-%s%s", platform, arch, ext)
 
-		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
-		c.Header("Content-Type", "application/octet-stream")
+		setBinaryDownloadHeaders(c, filename)
+		logArtifactDownload(c, services, "watchdog", platform, arch, nil)
 		c.Data(http.StatusOK, "application/octet-stream", binaryData)
 	}
 }
 
-func getWatchdogBinaryPath(services *Services, platform, arch string) string {
-	// Check in multiple locations
-	baseName := fmt.Sprintf("sentinel-watchdog-%s-%s", platform, arch)
-	if platform == "windows" {
-		baseName += ".exe"
-	}
-
-	paths := []string{
-		filepath.Join("release", "agent", baseName),
-		filepath.Join("agent", baseName),
-		filepath.Join("installers", baseName),
-		baseName,
-	}
-
-	for _, p := range paths {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-
-	return ""
+func getWatchdogBinaryPath(_ *Services, platform, arch string) string {
+	return findPlatformBinary("watchdog", platform, arch)
 }
 
 // downloadBootstrapDesktopHelperHandler serves the desktop helper binary for WebRTC remote desktop
@@ -578,33 +516,16 @@ func downloadBootstrapDesktopHelperHandler(services *Services) gin.HandlerFunc {
 
 		filename := fmt.Sprintf("sentinel-desktop-%s-%s.exe", platform, arch)
 
-		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
-		c.Header("Content-Type", "application/octet-stream")
+		setBinaryDownloadHeaders(c, filename)
+		logArtifactDownload(c, services, "desktop-helper", platform, arch, nil)
 		c.Data(http.StatusOK, "application/octet-stream", binaryData)
 	}
 }
 
-func getDesktopHelperBinaryPath(services *Services, platform, arch string) string {
-	// Check in multiple locations
-	baseName := fmt.Sprintf("sentinel-desktop-%s-%s", platform, arch)
-	if platform == "windows" {
-		baseName += ".exe"
-	}
-
-	paths := []string{
-		filepath.Join("release", "agent", baseName),
-		filepath.Join("agent", baseName),
-		filepath.Join("installers", baseName),
-		baseName,
-	}
-
-	for _, p := range paths {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-
-	return ""
+func getDesktopHelperBinaryPath(_ *Services, platform, arch string) string {
+	// Naming convention here is sentinel-desktop-{platform}-{arch}.exe (no
+	// "helper" suffix on the file itself — see installers/ dir for evidence).
+	return findPlatformBinary("desktop", platform, arch)
 }
 
 // generateConfiguredInstallerHandler generates a pre-configured installer with embedded server URL, token, and code
@@ -754,26 +675,15 @@ func generateDirectDownloadCode() string {
 
 // buildPatchedInstallerWithCode creates a patched installer EXE with embedded config AND installation code
 func buildPatchedInstallerWithCode(serverURL, enrollmentToken, installCode string) ([]byte, error) {
-	// Find installer template
-	installerPaths := []string{
-		"installers/sentinel-installer-template.exe",
-		"release/agent/sentinel-installer-template.exe",
-		"../installers/sentinel-installer-template.exe",
-		"/app/installers/sentinel-installer-template.exe",
+	installerPath := findInstallerTemplate()
+	if installerPath == "" {
+		return nil, fmt.Errorf("installer template not found")
 	}
-
-	var installerData []byte
-	var err error
-	for _, path := range installerPaths {
-		installerData, err = os.ReadFile(path)
-		if err == nil {
-			log.Printf("Using installer template from: %s", path)
-			break
-		}
-	}
+	installerData, err := os.ReadFile(installerPath)
 	if err != nil {
-		return nil, fmt.Errorf("installer template not found: %w", err)
+		return nil, fmt.Errorf("read installer template %s: %w", installerPath, err)
 	}
+	log.Printf("Using installer template from: %s", installerPath)
 
 	// Binary patch the placeholders
 	// The installer has these embedded variables that get patched:
