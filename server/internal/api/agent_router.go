@@ -14,9 +14,10 @@ import (
 // that the Traefik agent-gateway previously enforced via route configuration.
 //
 // Routes mounted:
-//   - GET  /ws/agent/mtls       — mTLS-authenticated agent WebSocket
-//   - POST /api/agent/certs/renew — certificate renewal (requires mTLS)
-//   - GET  /health              — health check (no auth required)
+//   - GET  /ws/agent/mtls           — mTLS-authenticated agent WebSocket
+//   - POST /api/agent/certs/renew   — certificate renewal (requires mTLS)
+//   - POST /api/agent/re-cert       — fresh cert issuance for reinstall flow (requires mTLS)
+//   - GET  /health                  — health check (no auth required)
 //
 // The rate limiter is applied to all routes except /health, matching the
 // Traefik agentRateLimit middleware behavior.
@@ -51,6 +52,14 @@ func NewAgentMTLSRouter(services *Services, limiter *middleware.AgentRateLimiter
 
 		// Certificate renewal endpoint — requires mTLS client cert
 		limited.POST("/api/agent/certs/renew", handleCertRenewal(services))
+
+		// Re-cert endpoint — used by installer when reinstalling an agent on a
+		// machine that still has a valid client cert. Mounted on /api/agent
+		// (NOT /api/agent/certs) to keep the installer-facing URL stable and
+		// distinct from the agent-self-service /certs/renew path. Per-agent
+		// rate limit (5/hour) is enforced inside the handler in addition to
+		// the per-IP limiter applied here.
+		limited.POST("/api/agent/re-cert", handleAgentReCert(services))
 	}
 
 	return r
