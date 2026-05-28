@@ -492,6 +492,15 @@ func main() {
 		}
 	}()
 
+	// Silent-agent detector: scans every 5 min for devices whose last_seen is
+	// past the silence cutoff and pushes a graduated heal command via the WS
+	// hub (when the connection is still open) or records a manual-review row
+	// (when it isn't). Closes the "agent went dark, requires onsite visit"
+	// failure mode that was the platform's longest-standing persistent issue.
+	silentDetector := api.NewSilentAgentDetector(db.Pool(), wsHub)
+	silentDetector.Start()
+	defer silentDetector.Stop()
+
 	// Wait for interrupt signal
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

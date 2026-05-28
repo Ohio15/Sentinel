@@ -83,6 +83,11 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 		agentVersion.Use(rateLimitMiddleware(cache, 600, 60, "agent-version")) // 600/min per IP for version polling
 		{
 			agentVersion.GET("/version", router.getAgentVersion)
+			// Layer-3 self-heal: watchdog polls this independently of the agent
+			// to detect a stale watchdog binary even when the agent process is
+			// wedged. The route was previously unregistered (404) — see the
+			// recovery-layer audit in PR #18.
+			agentVersion.GET("/watchdog/version", router.getWatchdogVersion)
 		}
 
 		// Agent update download & status (rate-limited + mandatory auth)

@@ -186,6 +186,16 @@ func (c *DataPlaneClient) createTransportCredentials() (credentials.TransportCre
 		return insecure.NewCredentials(), nil
 	}
 
+	// Lazy lookup: if the CA cert wasn't found at client-construction time,
+	// re-search at connect time. The cert is usually delivered as part of the
+	// initial mTLS auth response from the server, which happens AFTER the
+	// dataplane client is built. Without this re-check the dataplane stayed
+	// permanently disabled even after ca-cert.pem landed on disk (observed
+	// 2026-05-22 on PS-BSIKORA-LT).
+	if c.caCertPath == "" {
+		c.caCertPath = findCACertificate()
+	}
+
 	// Load CA certificate - gRPC requires proper TLS in production
 	if c.caCertPath == "" {
 		log.Printf("[gRPC] ERROR: No CA certificate configured - gRPC data plane DISABLED for security")

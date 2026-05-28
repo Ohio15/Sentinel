@@ -338,6 +338,84 @@ func (r *Router) getAgentVersion(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+// getWatchdogVersion is the Layer-3 self-heal companion to getAgentVersion.
+// Watchdog polls this independently so a wedged agent can't block its own
+// watchdog upgrade. Returns the canonical watchdog binary's version, sha256,
+// size, and a signed download URL (same TTL + signing as the agent path).
+func (r *Router) getWatchdogVersion(c *gin.Context) {
+	platform := c.Query("platform")
+	arch := c.Query("arch")
+	currentVersion := c.Query("current")
+
+	if platform == "" {
+		platform = runtime.GOOS
+	}
+	if arch == "" {
+		arch = runtime.GOARCH
+	}
+	switch arch {
+	case "x64", "x86_64":
+		arch = "amd64"
+	case "x86", "i386", "i686":
+		arch = "386"
+	}
+
+	// Watchdog version tracks the agent release row — they ship together.
+	agentVersion := getAgentVersionFromFile()
+
+	response := AgentUpdateResponse{
+		CurrentVersion: currentVersion,
+		LatestVersion:  agentVersion.Version,
+	}
+
+	binaryPath := findPlatformBinary("watchdog", platform, arch)
+	if binaryPath == "" {
+		response.Available = false
+		c.JSON(http.StatusOK, response)
+		return
+	}
+	info, err := os.Stat(binaryPath)
+	if err != nil {
+		response.Available = false
+		c.JSON(http.StatusOK, response)
+		return
+	}
+
+	if currentVersion != "" && !isNewerVersion(agentVersion.Version, currentVersion) {
+		response.Available = false
+		c.JSON(http.StatusOK, response)
+		return
+	}
+
+	checksum := getCachedChecksum("watchdog-"+platform+"-"+arch, binaryPath)
+	serverURL := r.config.PublicURL
+	if serverURL == "" {
+		serverURL = r.config.ServerURL
+	}
+	if serverURL == "" {
+		serverURL = fmt.Sprintf("https://%s", c.Request.Host)
+	}
+	// Watchdog has no per-instance auth token (it ships with the agent and
+	// shares its install). Route to the existing /api/bootstrap/watchdog
+	// endpoint which serves the binary without enrollment-token auth, plus
+	// our standard HMAC-signed URL TTL so a leaked URL becomes useless in 10m.
+	rawURL := fmt.Sprintf("%s/api/bootstrap/watchdog?platform=%s&arch=%s", serverURL, platform, arch)
+	downloadURL := signAgentUpdateURL(rawURL, platform, arch, agentVersion.Version)
+
+	response.Available = true
+	response.VersionInfo = &AgentVersionInfo{
+		Version:     agentVersion.Version,
+		Platform:    platform,
+		Arch:        arch,
+		DownloadURL: downloadURL,
+		Checksum:    checksum,
+		Size:        info.Size(),
+		ReleaseDate: agentVersion.ReleaseDate,
+		Required:    false,
+	}
+	c.JSON(http.StatusOK, response)
+}
+
 // downloadAgentUpdate serves the agent binary for updates
 // downloadCooldown tracks recent downloads to prevent storm from old agents
 // that spawn a new download goroutine on every heartbeat ack (~10s)
