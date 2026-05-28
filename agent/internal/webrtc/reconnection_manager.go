@@ -112,6 +112,7 @@ type ReconnectionManager struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	stopCh     chan struct{}
+	stopOnce   sync.Once
 	reconnectCh chan struct{}
 
 	// Keepalive
@@ -176,16 +177,18 @@ func (rm *ReconnectionManager) Start() {
 		rm.config.InitialDelay, rm.config.MaxDelay, rm.config.MaxAttempts)
 }
 
-// Stop stops the reconnection manager
+// Stop stops the reconnection manager. Safe to call multiple times.
 func (rm *ReconnectionManager) Stop() {
-	rm.cancel()
-	close(rm.stopCh)
+	rm.stopOnce.Do(func() {
+		rm.cancel()
+		close(rm.stopCh)
 
-	if rm.pingTicker != nil {
-		rm.pingTicker.Stop()
-	}
+		if rm.pingTicker != nil {
+			rm.pingTicker.Stop()
+		}
 
-	log.Printf("[ReconnectionManager] Stopped")
+		log.Printf("[ReconnectionManager] Stopped")
+	})
 }
 
 // NotifyConnected signals that connection is established

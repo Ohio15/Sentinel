@@ -9,6 +9,8 @@ import (
 	"sync"
 	"syscall"
 	"unsafe"
+
+	"github.com/sentinel/agent/internal/winptr"
 )
 
 // Media Foundation GUIDs
@@ -314,7 +316,7 @@ func (e *H264Encoder) initEncoder(preferHardware bool) error {
 	}
 
 	// Get first activate
-	activates := (*[100]uintptr)(unsafe.Pointer(activateArray))[:activateCount:activateCount]
+	activates := unsafe.Slice((*uintptr)(winptr.FromUintptr(activateArray)), activateCount)
 	activate := activates[0]
 
 	// Release unused activates
@@ -556,7 +558,7 @@ func (e *H264Encoder) createSample(data []byte) (uintptr, uintptr, error) {
 		return 0, 0, fmt.Errorf("Lock buffer failed: 0x%x", hr)
 	}
 
-	copy((*[1 << 30]byte)(unsafe.Pointer(bufPtr))[:len(data):len(data)], data)
+	copy(unsafe.Slice((*byte)(winptr.FromUintptr(bufPtr)), len(data)), data)
 	e.callMethod(buffer, vtUnlock)
 	e.callMethod(buffer, vtSetCurrentLength, uintptr(len(data)))
 
@@ -630,7 +632,7 @@ func (e *H264Encoder) getOutput() ([]byte, error) {
 	}
 
 	result := make([]byte, curLen)
-	copy(result, (*[1 << 30]byte)(unsafe.Pointer(bufPtr))[:curLen:curLen])
+	copy(result, unsafe.Slice((*byte)(winptr.FromUintptr(bufPtr)), curLen))
 	e.callMethod(outputBuffer, vtUnlock)
 
 	return result, nil
@@ -746,8 +748,8 @@ func (e *H264Encoder) setCodecValue(key *GUID, vt uint16, value int64) {
 }
 
 func (e *H264Encoder) queryInterface(obj uintptr, iid *GUID, out *uintptr) uintptr {
-	vtable := *(*uintptr)(unsafe.Pointer(obj))
-	method := *(*uintptr)(unsafe.Pointer(vtable + uintptr(vtQueryInterface)*unsafe.Sizeof(uintptr(0))))
+	vtable := *(*uintptr)(winptr.FromUintptr(obj))
+	method := *(*uintptr)(winptr.Add(vtable, uintptr(vtQueryInterface)*unsafe.Sizeof(uintptr(0))))
 	ret, _, _ := syscall.SyscallN(method, obj, uintptr(unsafe.Pointer(iid)), uintptr(unsafe.Pointer(out)))
 	return ret
 }
@@ -756,15 +758,15 @@ func (e *H264Encoder) release(obj uintptr) uintptr {
 	if obj == 0 {
 		return 0
 	}
-	vtable := *(*uintptr)(unsafe.Pointer(obj))
-	method := *(*uintptr)(unsafe.Pointer(vtable + uintptr(vtRelease)*unsafe.Sizeof(uintptr(0))))
+	vtable := *(*uintptr)(winptr.FromUintptr(obj))
+	method := *(*uintptr)(winptr.Add(vtable, uintptr(vtRelease)*unsafe.Sizeof(uintptr(0))))
 	ret, _, _ := syscall.SyscallN(method, obj)
 	return ret
 }
 
 func (e *H264Encoder) callMethod(obj uintptr, methodIndex int, args ...uintptr) uintptr {
-	vtable := *(*uintptr)(unsafe.Pointer(obj))
-	method := *(*uintptr)(unsafe.Pointer(vtable + uintptr(methodIndex)*unsafe.Sizeof(uintptr(0))))
+	vtable := *(*uintptr)(winptr.FromUintptr(obj))
+	method := *(*uintptr)(winptr.Add(vtable, uintptr(methodIndex)*unsafe.Sizeof(uintptr(0))))
 	allArgs := make([]uintptr, 1+len(args))
 	allArgs[0] = obj
 	copy(allArgs[1:], args)
