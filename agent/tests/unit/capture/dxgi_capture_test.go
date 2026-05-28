@@ -182,7 +182,6 @@ func TestDXGICapture_MultipleCaptures(t *testing.T) {
 
 	const targetFPS = 30
 	const duration = 2 * time.Second
-	const targetFrames = int(targetFPS * int(duration.Seconds()))
 
 	frameInterval := time.Second / time.Duration(targetFPS)
 	ticker := time.NewTicker(frameInterval)

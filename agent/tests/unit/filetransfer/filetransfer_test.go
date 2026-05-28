@@ -2,6 +2,7 @@ package filetransfer_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -445,7 +446,7 @@ func TestFileTransferManager_GetActiveTransfers(t *testing.T) {
 		req := &filetransfer.TransferRequest{
 			Direction:  filetransfer.DirectionUpload,
 			SourcePath: "/remote/source.txt",
-			DestPath:   filepath.Join(tmpDir, "file%d.txt"),
+			DestPath:   filepath.Join(tmpDir, fmt.Sprintf("file%d.txt", i)),
 			FileSize:   1000,
 		}
 		manager.StartUpload(ctx, req)

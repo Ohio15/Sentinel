@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"syscall"
 	"unsafe"
+
+	"github.com/sentinel/agent/internal/winptr"
 )
 
 var (
@@ -154,8 +156,8 @@ func getGPUName() string {
 
 	// Get first adapter
 	var adapter uintptr
-	vtable := *(*uintptr)(unsafe.Pointer(factory))
-	enumAdapters := *(*uintptr)(unsafe.Pointer(vtable + 7*unsafe.Sizeof(uintptr(0))))
+	vtable := *(*uintptr)(winptr.FromUintptr(factory))
+	enumAdapters := *(*uintptr)(winptr.Add(vtable, 7*unsafe.Sizeof(uintptr(0))))
 	hr, _, _ = syscall.SyscallN(enumAdapters, factory, 0, uintptr(unsafe.Pointer(&adapter)))
 	if hr != 0 {
 		return "Unknown"
@@ -164,8 +166,8 @@ func getGPUName() string {
 
 	// Get adapter description
 	var desc DXGI_ADAPTER_DESC
-	vtable = *(*uintptr)(unsafe.Pointer(adapter))
-	getDesc := *(*uintptr)(unsafe.Pointer(vtable + 8*unsafe.Sizeof(uintptr(0))))
+	vtable = *(*uintptr)(winptr.FromUintptr(adapter))
+	getDesc := *(*uintptr)(winptr.Add(vtable, 8*unsafe.Sizeof(uintptr(0))))
 	hr, _, _ = syscall.SyscallN(getDesc, adapter, uintptr(unsafe.Pointer(&desc)))
 	if hr != 0 {
 		return "Unknown"
@@ -332,8 +334,8 @@ func checkVendorID(vendorID uint32) bool {
 	defer releaseComObject(factory)
 
 	// Enumerate adapters looking for the vendor
-	vtable := *(*uintptr)(unsafe.Pointer(factory))
-	enumAdapters := *(*uintptr)(unsafe.Pointer(vtable + 7*unsafe.Sizeof(uintptr(0))))
+	vtable := *(*uintptr)(winptr.FromUintptr(factory))
+	enumAdapters := *(*uintptr)(winptr.Add(vtable, 7*unsafe.Sizeof(uintptr(0))))
 
 	for i := uint32(0); ; i++ {
 		var adapter uintptr
@@ -343,8 +345,8 @@ func checkVendorID(vendorID uint32) bool {
 		}
 
 		var desc DXGI_ADAPTER_DESC
-		vtable = *(*uintptr)(unsafe.Pointer(adapter))
-		getDesc := *(*uintptr)(unsafe.Pointer(vtable + 8*unsafe.Sizeof(uintptr(0))))
+		vtable = *(*uintptr)(winptr.FromUintptr(adapter))
+		getDesc := *(*uintptr)(winptr.Add(vtable, 8*unsafe.Sizeof(uintptr(0))))
 		syscall.SyscallN(getDesc, adapter, uintptr(unsafe.Pointer(&desc)))
 		releaseComObject(adapter)
 
@@ -377,7 +379,7 @@ func releaseComObject(obj uintptr) {
 	if obj == 0 {
 		return
 	}
-	vtable := *(*uintptr)(unsafe.Pointer(obj))
-	release := *(*uintptr)(unsafe.Pointer(vtable + 2*unsafe.Sizeof(uintptr(0))))
+	vtable := *(*uintptr)(winptr.FromUintptr(obj))
+	release := *(*uintptr)(winptr.Add(vtable, 2*unsafe.Sizeof(uintptr(0))))
 	syscall.SyscallN(release, obj)
 }
