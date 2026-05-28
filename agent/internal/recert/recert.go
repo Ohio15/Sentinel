@@ -337,10 +337,12 @@ func newMTLSClient(ident *identity) (*http.Client, error) {
 		return nil, fmt.Errorf("failed to parse client keypair: %w", err)
 	}
 
-	caPool, err := x509.SystemCertPool()
-	if err != nil || caPool == nil {
-		caPool = x509.NewCertPool()
-	}
+	// H5 (qa-butcher): pin to the Sentinel CA only. The system trust store is
+	// an attack surface here — the agent only ever talks to a Sentinel server
+	// signed by the Sentinel CA, and including system roots would let any
+	// compromised / rogue CA in the OS trust store intercept the cert rotation
+	// channel.
+	caPool := x509.NewCertPool()
 	if !caPool.AppendCertsFromPEM(ident.CACert) {
 		return nil, fmt.Errorf("failed to append CA cert to pool")
 	}
