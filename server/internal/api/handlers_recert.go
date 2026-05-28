@@ -132,12 +132,12 @@ func (l *reCertRateLimiter) cleanupLoop() {
 // See package doc comment for the full design.
 func handleAgentReCert(services *Services) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 1. mTLS auth: client cert must be present. The cert chain has already
-		//    been verified against the CA by Go's TLS stack (mTLSConfig in
-		//    tlsconfig.LoadAgentMTLSConfig sets ClientAuth to RequireAndVerifyClientCert).
-		//    We still validate expiry defensively because RequireAndVerifyClientCert
-		//    checks NotAfter at handshake time; this guards against clock drift
-		//    between the TLS handshake and handler execution.
+		// 1. mTLS auth: client cert must be present. The TLS stack has already
+		//    verified the chain against the CA because tlsconfig.LoadAgentMTLSConfig
+		//    sets ClientAuth = tls.RequireAndVerifyClientCert. We still validate
+		//    expiry defensively because the handshake-time check uses the TLS
+		//    layer's clock; this guards against clock drift between the handshake
+		//    and handler execution.
 		if c.Request.TLS == nil || len(c.Request.TLS.PeerCertificates) == 0 {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Client certificate required"})
 			return

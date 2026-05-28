@@ -75,8 +75,17 @@ func LoadAgentMTLSConfig(cfg Config) (*tls.Config, error) {
 		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 			return holder.get(), nil
 		},
-		ClientCAs:  caPool,
-		ClientAuth: tls.VerifyClientCertIfGiven,
+		ClientCAs: caPool,
+		// RequireAndVerifyClientCert is the only acceptable setting for the
+		// agent listener. VerifyClientCertIfGiven would let unauthenticated
+		// callers reach handlers that assume a verified PeerCertificate is
+		// present (re-cert, ws/agent/mtls, certs/renew). The /health route
+		// served on this listener doesn't need a cert either, but it is
+		// unreachable without completing the TLS handshake, which now requires
+		// one. Probes that previously reached /health without a cert must be
+		// updated to present the agent CA-signed client cert or moved to a
+		// separate listener.
+		ClientAuth: tls.RequireAndVerifyClientCert,
 		MinVersion: tls.VersionTLS12,
 		MaxVersion: tls.VersionTLS13,
 
