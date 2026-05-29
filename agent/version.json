@@ -1,7 +1,7 @@
 {
-  "version": "1.77.38",
-  "releaseDate": "2026-05-28",
-  "changelog": "Reinstall-aware agent on top of the 1.77.37 CI-recovery baseline: --re-cert flag + C:\\ProgramData\\Sentinel\\.re-cert-pending marker handling. On startup with the marker present (written by the InnoSetup installer when re-installing on an enrolled machine), the agent decrypts its existing config, presents its current mTLS client cert to POST /api/agent/re-cert, atomically rotates client.crt/client.key/ca-cert.pem with timestamped .bak backups (last 3 retained), deletes the marker, then enters the normal heartbeat loop with the fresh cert. Identity (agent_id, device history) preserved across reinstalls. New internal/recert package with full test coverage. Server endpoint and installer marker writing land in companion branches fix/recert-server and fix/recert-installer.",
+  "version": "1.77.39",
+  "releaseDate": "2026-05-29",
+  "changelog": "Build + deploy infrastructure cycle (no functional agent changes vs 1.77.38). Unblocks the v1.77.38 build chain that never published: #29 migration 058 idempotent for upgrade-in-place over a preexisting agent_health schema, #30 desktop package darwin headless stub so the cross-compile matrix succeeds for macOS amd64+arm64, #31 enrollment-paths cert issuance now subject to the same per-agent rate limit as re-cert (closes #22 H2/H3 gap), #32 macOS Distribution.xml embedded scripts wrapped in CDATA so productbuild's XML parser stops rejecting the JS '<' comparison, #33 capture tests skip cleanly when DXGI/GPU unavailable on CI runners. Server-side patcher fix from PR #27 (#26) is already live on production at version 1.78.0.",
   "platforms": [
     "windows",
     "linux",
