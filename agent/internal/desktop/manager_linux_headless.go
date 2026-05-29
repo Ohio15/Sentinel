@@ -1,4 +1,4 @@
-//go:build (linux && arm64) || (linux && arm)
+//go:build (linux && arm64) || (linux && arm) || darwin
 
 package desktop
 
@@ -7,8 +7,15 @@ import (
 	"errors"
 )
 
-// Headless stub for ARM Linux (Synology NAS, etc.)
-// Remote desktop not available without X11 display
+// Headless stub for platforms without a supported desktop-capture backend:
+//   - ARM Linux (Synology NAS, etc.) — no X11 display assumed
+//   - macOS (darwin) — no native capture backend has been built; the Sentinel
+//     server-side agent on Macs runs in headless / observability-only mode.
+//     This stub lets `cmd/sentinel-agent` cross-compile cleanly for darwin
+//     amd64 + arm64 (needed by build-installers.yml's GitHub Release matrix);
+//     attempting StartSession returns ErrHeadlessMode rather than crashing.
+// Remote desktop not available without X11 display (on Linux) or without a
+// native capture stack (on macOS).
 
 var ErrHeadlessMode = errors.New("remote desktop not available in headless mode")
 
