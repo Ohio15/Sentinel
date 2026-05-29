@@ -12,6 +12,7 @@ import (
 
 // TestDXGICapture_Initialize tests DXGI capture initialization
 func TestDXGICapture_Initialize(t *testing.T) {
+	requireDXGI(t)
 	tests := []struct {
 		name         string
 		monitorIndex int
