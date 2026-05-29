@@ -325,27 +325,41 @@ func handleAgentWebSocketWithCerts(services *Services) gin.HandlerFunc {
 			"success": true,
 		}
 
-		// Issue client certificate if PKI is available and agent doesn't have one
+		// Issue client certificate if PKI is available and agent doesn't have one.
+		// Per-agent issuance is rate-limited (#22): bounds the cert population a
+		// single agent_id can spawn, preventing a stolen-token attacker from
+		// repeatedly claiming HasClientCert=false to churn fresh certs.
 		if services.PKI != nil && !authPayload.HasClientCert {
-			log.Printf("[PKI] Issuing client certificate for agent %s", authPayload.AgentID)
-			bundle, err := services.PKI.IssueClientCertificate(
-				ctx,
-				authPayload.AgentID,
-				deviceID,
-				constants.CurrentOrganizationID,
-				services.Config.CertValidityYears,
-			)
-			if err != nil {
-				log.Printf("[PKI] Failed to issue certificate for agent %s: %v", authPayload.AgentID, err)
-				// Continue without certificate - agent can still function with token auth
-			} else {
-				authRespPayload["clientCert"] = bundle.ClientCert
-				authRespPayload["clientKey"] = bundle.ClientKey
-				authRespPayload["caCert"] = bundle.CACert
-				authRespPayload["certExpiresAt"] = bundle.ExpiresAt.Format(time.RFC3339)
-				authRespPayload["certSerial"] = bundle.SerialNumber
-				log.Printf("[PKI] Issued certificate for agent %s, serial=%s, expires=%s",
-					authPayload.AgentID, bundle.SerialNumber, bundle.ExpiresAt.Format(time.RFC3339))
+			allowed, retryAfter, rateErr := services.PKI.CheckIssuanceRate(ctx, authPayload.AgentID)
+			switch {
+			case rateErr != nil:
+				// Fail-closed: rate limit DB lookup failure means we can't
+				// prove the agent is under budget. Don't issue.
+				log.Printf("[PKI] Rate limit check failed for agent %s: %v — skipping cert issuance", authPayload.AgentID, rateErr)
+			case !allowed:
+				log.Printf("[PKI] Agent %s over cert issuance rate limit (retry after %s) — skipping issuance, token auth still valid",
+					authPayload.AgentID, retryAfter.Round(time.Second))
+			default:
+				log.Printf("[PKI] Issuing client certificate for agent %s", authPayload.AgentID)
+				bundle, err := services.PKI.IssueClientCertificate(
+					ctx,
+					authPayload.AgentID,
+					deviceID,
+					constants.CurrentOrganizationID,
+					services.Config.CertValidityYears,
+				)
+				if err != nil {
+					log.Printf("[PKI] Failed to issue certificate for agent %s: %v", authPayload.AgentID, err)
+					// Continue without certificate - agent can still function with token auth
+				} else {
+					authRespPayload["clientCert"] = bundle.ClientCert
+					authRespPayload["clientKey"] = bundle.ClientKey
+					authRespPayload["caCert"] = bundle.CACert
+					authRespPayload["certExpiresAt"] = bundle.ExpiresAt.Format(time.RFC3339)
+					authRespPayload["certSerial"] = bundle.SerialNumber
+					log.Printf("[PKI] Issued certificate for agent %s, serial=%s, expires=%s",
+						authPayload.AgentID, bundle.SerialNumber, bundle.ExpiresAt.Format(time.RFC3339))
+				}
 			}
 		}
 

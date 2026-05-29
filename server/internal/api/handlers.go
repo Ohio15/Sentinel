@@ -323,32 +323,47 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 		"success": true,
 	}
 
-	// Issue client certificate if PKI is available and agent indicates it needs one
+	// Issue client certificate if PKI is available and agent indicates it needs one.
+	// Per-agent issuance is rate-limited (#22): bounds the cert population a
+	// single agent_id can spawn, preventing a stolen-token attacker from
+	// repeatedly claiming HasClientCert=false to churn fresh certs.
 	if r.pki != nil && !authPayload.HasClientCert {
-		log.Printf("[PKI] Issuing client certificate for agent %s", authPayload.AgentID)
-		bundle, err := r.pki.IssueClientCertificate(
-			ctx,
-			authPayload.AgentID,
-			deviceID,
-			constants.CurrentOrganizationID,
-			r.config.CertValidityYears,
-		)
-		if err != nil {
-			log.Printf("[PKI] Failed to issue certificate for agent %s: %v", authPayload.AgentID, err)
-			// Continue without certificate - agent can still function with token auth
-		} else {
-			authRespPayload["clientCert"] = bundle.ClientCert
-			authRespPayload["clientKey"] = bundle.ClientKey
-			authRespPayload["caCert"] = bundle.CACert
-			authRespPayload["certExpiresAt"] = bundle.ExpiresAt.Format(time.RFC3339)
-			authRespPayload["certSerial"] = bundle.SerialNumber
-			// Log payload sizes so we can prove the response went on the wire
-			// with cert bytes — used to diagnose silent agent-side install
-			// failures (incident 2026-05-22, PS-BSIKORA-LT: cert recorded in DB
-			// but client-cert.pem never landed on disk).
-			log.Printf("[PKI] Issued certificate for agent %s, serial=%s, expires=%s, certBytes=%d, keyBytes=%d, caBytes=%d",
-				authPayload.AgentID, bundle.SerialNumber, bundle.ExpiresAt.Format(time.RFC3339),
-				len(bundle.ClientCert), len(bundle.ClientKey), len(bundle.CACert))
+		allowed, retryAfter, rateErr := r.pki.CheckIssuanceRate(ctx, authPayload.AgentID)
+		switch {
+		case rateErr != nil:
+			// Fail-closed: rate limit DB lookup failure means we can't prove
+			// the agent is under budget. Don't issue. Agent falls back to
+			// existing token auth which already proved valid above.
+			log.Printf("[PKI] Rate limit check failed for agent %s: %v — skipping cert issuance", authPayload.AgentID, rateErr)
+		case !allowed:
+			log.Printf("[PKI] Agent %s over cert issuance rate limit (retry after %s) — skipping issuance, token auth still valid",
+				authPayload.AgentID, retryAfter.Round(time.Second))
+		default:
+			log.Printf("[PKI] Issuing client certificate for agent %s", authPayload.AgentID)
+			bundle, err := r.pki.IssueClientCertificate(
+				ctx,
+				authPayload.AgentID,
+				deviceID,
+				constants.CurrentOrganizationID,
+				r.config.CertValidityYears,
+			)
+			if err != nil {
+				log.Printf("[PKI] Failed to issue certificate for agent %s: %v", authPayload.AgentID, err)
+				// Continue without certificate - agent can still function with token auth
+			} else {
+				authRespPayload["clientCert"] = bundle.ClientCert
+				authRespPayload["clientKey"] = bundle.ClientKey
+				authRespPayload["caCert"] = bundle.CACert
+				authRespPayload["certExpiresAt"] = bundle.ExpiresAt.Format(time.RFC3339)
+				authRespPayload["certSerial"] = bundle.SerialNumber
+				// Log payload sizes so we can prove the response went on the wire
+				// with cert bytes — used to diagnose silent agent-side install
+				// failures (incident 2026-05-22, PS-BSIKORA-LT: cert recorded in DB
+				// but client-cert.pem never landed on disk).
+				log.Printf("[PKI] Issued certificate for agent %s, serial=%s, expires=%s, certBytes=%d, keyBytes=%d, caBytes=%d",
+					authPayload.AgentID, bundle.SerialNumber, bundle.ExpiresAt.Format(time.RFC3339),
+					len(bundle.ClientCert), len(bundle.ClientKey), len(bundle.CACert))
+			}
 		}
 	}
 
