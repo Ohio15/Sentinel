@@ -10,8 +10,22 @@ name: Deploy Installers to NEXUS
 # (server/internal/api/installer_paths.go) re-stats on every request.
 
 on:
+  # release:published does NOT fire when softprops/action-gh-release@v2
+  # uses GITHUB_TOKEN to create the release — GitHub's documented
+  # anti-recursion default suppresses workflow_run-from-token chains.
+  # Keep this trigger anyway because manual / external release creation
+  # (e.g., gh release create from a maintainer's PAT) still works.
   release:
     types: [published]
+  # workflow_run is what actually catches the build-installers.yml chain.
+  # GitHub treats workflow_run as a system event independent of which
+  # token triggered the upstream workflow, so it fires regardless of
+  # whether build-installers ran from a tag push or a workflow_dispatch.
+  # The job below gates on conclusion=success and inspects the run's
+  # head_branch to recover the tag name.
+  workflow_run:
+    workflows: ['Build Installers']
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
@@ -26,6 +40,10 @@ jobs:
   deploy:
     name: Pull release assets onto NEXUS
     runs-on: self-hosted
+    # workflow_run fires on every completion regardless of conclusion;
+    # skip the job entirely when the triggering build failed so we don't
+    # waste runner time or accidentally deploy a stale prior tag.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - name: Resolve target tag
         id: tag
@@ -37,6 +55,18 @@ jobs:
             TAG="${{ inputs.tag }}"
           elif [ -n "${{ github.event.release.tag_name }}" ]; then
             TAG="${{ github.event.release.tag_name }}"
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            # build-installers.yml is triggered by a tag push, so the
+            # upstream run's head_branch is the tag name (e.g. "v1.77.39").
+            # Verify it looks like a version tag before trusting it — a
+            # workflow_dispatch from main would yield "main" here and we
+            # don't want to fall into a wrong-branch deploy.
+            CANDIDATE="${{ github.event.workflow_run.head_branch }}"
+            if [[ ! "$CANDIDATE" =~ ^v[0-9] ]]; then
+              echo "workflow_run head_branch=$CANDIDATE is not a version tag — falling back to latest release"
+              CANDIDATE=$(gh release view --repo "${{ github.repository }}" --json tagName -q .tagName)
+            fi
+            TAG="$CANDIDATE"
           else
             TAG=$(gh release view --repo "${{ github.repository }}" --json tagName -q .tagName)
           fi
