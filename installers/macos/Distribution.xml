@@ -45,7 +45,7 @@
 
     <!-- Installation check script -->
     <installation-check script="installationCheck()"/>
-    <script>
+    <script><![CDATA[
         function installationCheck() {
             // Check if running on macOS
             if (system.compareVersions(system.version.ProductVersion, '10.14') < 0) {
@@ -56,11 +56,11 @@
             }
             return true;
         }
-    </script>
+    ]]></script>
 
     <!-- Volume check -->
     <volume-check script="volumeCheck()"/>
-    <script>
+    <script><![CDATA[
         function volumeCheck() {
             // Require installation on the boot volume only
             if (my.target.systemVersion.ProductVersion === undefined) {
@@ -71,5 +71,5 @@
             }
             return true;
         }
-    </script>
+    ]]></script>
 </installer-gui-script>
