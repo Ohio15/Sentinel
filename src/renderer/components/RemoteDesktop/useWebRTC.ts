@@ -97,8 +97,10 @@ export function useWebRTC(options: UseWebRTCOptions) {
 
   // Request TURN credentials from signaling server
   const requestTurnCredentials = useCallback(async (): Promise<RTCIceServer[] | null> => {
+    const ws = wsService;
+    if (!ws) return null;
     return new Promise((resolve) => {
-      const unsub = wsService.on('turn_credentials', (data: unknown) => {
+      const unsub = ws.on('turn_credentials', (data: unknown) => {
         unsub();
         const creds = (data as { data?: { URLs?: string[]; Username?: string; Password?: string } }).data;
         if (creds?.URLs) {
@@ -112,7 +114,7 @@ export function useWebRTC(options: UseWebRTCOptions) {
           resolve(null);
         }
       });
-      wsService.send('request_turn_credentials', {});
+      ws.send('request_turn_credentials', {});
       // Timeout after 3s
       setTimeout(() => { unsub(); resolve(null); }, 3000);
     });
@@ -131,7 +133,7 @@ export function useWebRTC(options: UseWebRTCOptions) {
       await pc.setLocalDescription(offer);
 
       // Send renegotiation offer via signaling
-      wsService.send('webrtc_signal', {
+      wsService?.send('webrtc_signal', {
         agentId: agentId,
         sessionId: sessionIdRef.current,
         signal: {
@@ -291,8 +293,8 @@ export function useWebRTC(options: UseWebRTCOptions) {
 
     // Start ping interval when data channel opens
     const originalOnOpen = dc.onopen;
-    dc.onopen = () => {
-      originalOnOpen?.call(dc);
+    dc.onopen = (ev: Event) => {
+      originalOnOpen?.call(dc, ev);
       // Send ping every 2 seconds for RTT measurement
       pingIntervalRef.current = setInterval(() => {
         if (dc.readyState === 'open') {
@@ -306,8 +308,8 @@ export function useWebRTC(options: UseWebRTCOptions) {
 
     // Stop ping interval when data channel closes
     const originalOnClose = dc.onclose;
-    dc.onclose = () => {
-      originalOnClose?.call(dc);
+    dc.onclose = (ev: Event) => {
+      originalOnClose?.call(dc, ev);
       if (pingIntervalRef.current) {
         clearInterval(pingIntervalRef.current);
         pingIntervalRef.current = null;
@@ -390,6 +392,9 @@ export function useWebRTC(options: UseWebRTCOptions) {
     if (!wsService) {
       throw new Error('WebSocket service not available');
     }
+    // Capture a non-null local reference so narrowing holds inside the nested
+    // callbacks/closures below (module-level bindings lose narrowing there).
+    const ws = wsService;
 
     // Clean up any existing connection/subscriptions FIRST
     unsubscribeSignalRef.current?.();
@@ -421,14 +426,14 @@ export function useWebRTC(options: UseWebRTCOptions) {
     setSessionId(newSessionId);
 
     // Ensure WebSocket is connected
-    if (!wsService.isConnected) {
+    if (!ws.isConnected) {
       console.log('[WebRTC] Waiting for WebSocket connection...');
-      wsService.connect();
+      ws.connect();
 
       // Wait for connection (up to 5 seconds)
       const connected = await new Promise<boolean>((resolve) => {
         const checkInterval = setInterval(() => {
-          if (wsService.isConnected) {
+          if (ws.isConnected) {
             clearInterval(checkInterval);
             resolve(true);
           }
@@ -466,7 +471,7 @@ export function useWebRTC(options: UseWebRTCOptions) {
     const pc = initPeerConnection(iceServers);
 
     // Subscribe to WebRTC signals from server
-    unsubscribeSignalRef.current = wsService.on('webrtc_signal', (data: unknown) => {
+    unsubscribeSignalRef.current = ws.on('webrtc_signal', (data: unknown) => {
       const signal = data as {
         sessionId?: string;
         signal?: {
@@ -496,7 +501,7 @@ export function useWebRTC(options: UseWebRTCOptions) {
 
     // Subscribe to response messages (for SDP answer)
     console.log('[WebRTC] Subscribing to response events for session:', newSessionId);
-    unsubscribeResponseRef.current = wsService.on('response', (data: unknown) => {
+    unsubscribeResponseRef.current = ws.on('response', (data: unknown) => {
       const response = data as {
         success?: boolean;
         error?: string;
@@ -548,7 +553,7 @@ export function useWebRTC(options: UseWebRTCOptions) {
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         console.log('[WebRTC] Sending ICE candidate');
-        wsService.send('webrtc_signal', {
+        ws.send('webrtc_signal', {
           agentId: agentId,
           sessionId: newSessionId,
           signal: {
@@ -569,7 +574,7 @@ export function useWebRTC(options: UseWebRTCOptions) {
     await pc.setLocalDescription(offer);
 
     console.log('[WebRTC] Sending offer, SDP length:', offer.sdp?.length);
-    wsService.send('webrtc_start', {
+    ws.send('webrtc_start', {
       agentId: agentId,
       sessionId: newSessionId,
       offerSdp: offer.sdp,
