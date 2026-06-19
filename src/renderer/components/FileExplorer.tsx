@@ -94,7 +94,7 @@ export const FileExplorer = memo(function FileExplorer({ deviceId, isOnline, isA
 
   const navigateUp = () => {
     const isWindows = currentPath.includes('\\') || /^[A-Za-z]:/.test(currentPath);
-    const parts = currentPath.split(/[\\\/]/).filter(Boolean);
+    const parts = currentPath.split(/[\\/]/).filter(Boolean);
 
     if (parts.length <= 1) {
       // At root or drive root - go back to drives view
@@ -160,7 +160,7 @@ export const FileExplorer = memo(function FileExplorer({ deviceId, isOnline, isA
 
     const isWindows = currentPath.includes('\\') || /^[A-Za-z]:/.test(currentPath);
     const separator = isWindows ? '\\' : '/';
-    const parts = currentPath.split(/[\\\/]/).filter(Boolean);
+    const parts = currentPath.split(/[\\/]/).filter(Boolean);
 
     const segments: { name: string; path: string }[] = [];
     let accumulatedPath = '';

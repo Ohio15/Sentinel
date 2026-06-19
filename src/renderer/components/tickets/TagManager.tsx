@@ -110,11 +110,12 @@ export function TagManager({
     if (disabled) return;
 
     switch (e.key) {
-      case 'ArrowDown':
+      case 'ArrowDown': {
         e.preventDefault();
         const maxIndex = filteredTags.length + (canCreateNew ? 0 : -1);
         setHighlightedIndex((prev) => Math.min(prev + 1, maxIndex));
         break;
+      }
 
       case 'ArrowUp':
         e.preventDefault();

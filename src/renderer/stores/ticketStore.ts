@@ -204,15 +204,11 @@ export const useTicketStore = create<TicketState>((set, get) => ({
   },
 
   addComment: async (comment: Omit<TicketComment, 'id' | 'createdAt'>) => {
-    try {
-      const newComment = await ticketsService.addComment(comment);
-      set((state) => ({
-        ticketComments: [...state.ticketComments, newComment as TicketComment],
-      }));
-      return newComment as TicketComment;
-    } catch (error: unknown) {
-      throw error;
-    }
+    const newComment = await ticketsService.addComment(comment);
+    set((state) => ({
+      ticketComments: [...state.ticketComments, newComment as TicketComment],
+    }));
+    return newComment as TicketComment;
   },
 
   fetchActivity: async (ticketId: string) => {

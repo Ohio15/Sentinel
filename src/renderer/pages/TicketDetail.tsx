@@ -119,7 +119,7 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
     onBack();
   };
 
-  const useTemplate = (template: { content: string }) => {
+  const applyTemplate = (template: { content: string }) => {
     setNewComment(template.content);
   };
 
@@ -374,7 +374,7 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
                           {templates.map((t) => (
                             <button
                               key={t.id}
-                              onClick={() => useTemplate(t)}
+                              onClick={() => applyTemplate(t)}
                               className="text-sm text-primary hover:underline"
                             >
                               {t.name}
