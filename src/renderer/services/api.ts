@@ -4,7 +4,8 @@
 import { getApiBaseUrl } from './env';
 
 interface ApiError {
-  message: string;
+  message?: string;
+  error?: string;
   code?: string;
 }
 
@@ -113,7 +114,7 @@ class ApiService {
         }
       }
       const error: ApiError = await response.json().catch(() => ({ message: 'Request failed' }));
-      throw new Error(error.message || 'Request failed');
+      throw new Error(error.error || error.message || `Request failed (HTTP ${response.status})`);
     }
 
     // Handle empty responses with JSON parse error protection
