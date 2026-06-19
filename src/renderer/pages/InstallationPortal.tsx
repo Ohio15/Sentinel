@@ -64,7 +64,7 @@ export default function InstallationPortal() {
       }
     };
 
-    validateLink();
+    void validateLink();
   }, [downloadToken]);
 
   // Poll for installation status after download
@@ -85,7 +85,7 @@ export default function InstallationPortal() {
   useEffect(() => {
     if (!hasDownloaded || currentStep === 'connected') return;
 
-    const interval = setInterval(pollStatus, 10000); // Poll every 10 seconds
+    const interval = setInterval(() => { void pollStatus(); }, 10000); // Poll every 10 seconds
     return () => clearInterval(interval);
   }, [hasDownloaded, currentStep, pollStatus]);
 
@@ -296,7 +296,7 @@ export default function InstallationPortal() {
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
           <div className="text-center">
             <button
-              onClick={handleDownload}
+              onClick={() => { void handleDownload(); }}
               disabled={downloading || !linkInfo.downloadAvailable}
               className="inline-flex items-center gap-3 px-8 py-4 bg-indigo-600 text-white rounded-xl font-semibold text-lg hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed transition-colors shadow-lg hover:shadow-xl"
             >

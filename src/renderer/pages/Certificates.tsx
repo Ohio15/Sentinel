@@ -231,8 +231,8 @@ export function Certificates() {
   const [showRenewConfirm, setShowRenewConfirm] = useState(false);
 
   useEffect(() => {
-    fetchCertificates();
-    fetchAgentStatuses();
+    void fetchCertificates();
+    void fetchAgentStatuses();
     const unsubscribe = subscribeToEvents();
     return unsubscribe;
   }, []);
@@ -284,7 +284,7 @@ export function Certificates() {
             {renewing ? 'Renewing...' : 'Renew Certificates'}
           </button>
           <button
-            onClick={handleDistribute}
+            onClick={() => { void handleDistribute(); }}
             disabled={distributing || certificates.length === 0}
             className="btn btn-primary flex items-center gap-2"
           >
@@ -342,7 +342,7 @@ export function Certificates() {
                 Cancel
               </button>
               <button
-                onClick={handleRenew}
+                onClick={() => { void handleRenew(); }}
                 className="btn btn-primary"
                 disabled={renewing}
               >

@@ -25,7 +25,7 @@ export function PopOutPerformance({ windowId }: PopOutPerformanceProps) {
   // Fetch device info on mount
   useEffect(() => {
     if (deviceId) {
-      fetchDevice(deviceId);
+      void fetchDevice(deviceId);
     }
   }, [deviceId, fetchDevice]);
 
@@ -106,7 +106,7 @@ export function PopOutPerformance({ windowId }: PopOutPerformanceProps) {
         <div className="flex items-center gap-2">
           {/* Re-attach button */}
           <button
-            onClick={handleReattach}
+            onClick={() => { void handleReattach(); }}
             disabled={isReattaching}
             className="flex items-center gap-2 px-3 py-1.5 text-sm bg-primary/10 text-primary hover:bg-primary/20 rounded transition-colors disabled:opacity-50"
             title="Re-attach to main window"

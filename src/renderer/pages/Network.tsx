@@ -72,7 +72,7 @@ function AutomationTab() {
   const [newAction, setNewAction] = useState({ name: '', actionType: 'speed_test', cronExpression: '', isActive: false });
 
   useEffect(() => {
-    fetchScheduledActions();
+    void fetchScheduledActions();
   }, [fetchScheduledActions]);
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -116,7 +116,7 @@ function AutomationTab() {
       </div>
 
       {showCreate && (
-        <form onSubmit={handleCreate} className="bg-surface border border-border rounded-lg p-4 space-y-3">
+        <form onSubmit={(e) => { void handleCreate(e); }} className="bg-surface border border-border rounded-lg p-4 space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm text-text-secondary mb-1">Name</label>
@@ -223,7 +223,7 @@ function AutomationTab() {
                   <td className="px-4 py-3 font-mono text-text-secondary text-xs">{action.cronExpression}</td>
                   <td className="px-4 py-3">
                     <button
-                      onClick={() => handleToggle(action)}
+                      onClick={() => { void handleToggle(action); }}
                       className={`px-2 py-1 rounded-full text-xs font-medium ${
                         action.isActive ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'
                       }`}
@@ -236,7 +236,7 @@ function AutomationTab() {
                   </td>
                   <td className="px-4 py-3 text-right">
                     <button
-                      onClick={() => handleDelete(action.id)}
+                      onClick={() => { void handleDelete(action.id); }}
                       className="text-red-400 hover:text-red-300 text-xs"
                     >
                       Delete
@@ -268,7 +268,7 @@ function AuditTab() {
 
   const loadPage = useCallback(
     (page: number) => {
-      fetchAuditLogs({ page, action: actionFilter || undefined, search: searchDebounced || undefined });
+      void fetchAuditLogs({ page, action: actionFilter || undefined, search: searchDebounced || undefined });
     },
     [fetchAuditLogs, actionFilter, searchDebounced]
   );

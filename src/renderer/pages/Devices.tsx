@@ -115,7 +115,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    loadServerInfo();
+    void loadServerInfo();
   }, []);
 
   // Close action menu when clicking outside
@@ -134,8 +134,8 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
   // Fetch installation links when on links tab
   useEffect(() => {
     if (activeTab === 'installation' && installationSubTab === 'links') {
-      fetchLinks();
-      fetchLinkStats();
+      void fetchLinks();
+      void fetchLinkStats();
     }
   }, [activeTab, installationSubTab, linkFilter, linkSearch, linkPage]);
 
@@ -149,7 +149,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
   };
 
   const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
+    void navigator.clipboard.writeText(text);
     setCopiedUrl(text);
     setTimeout(() => setCopiedUrl(null), 2000);
   };
@@ -310,8 +310,8 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
       };
       const result = await api.createAgentLink(linkData);
       setCreateLinkResult(result);
-      fetchLinks();
-      fetchLinkStats();
+      void fetchLinks();
+      void fetchLinkStats();
     } catch (err: any) {
       alert(err.response?.data?.error || err.message || 'Failed to create link');
     } finally {
@@ -323,7 +323,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
     try {
       await api.resendAgentLinkEmail(linkId);
       alert('Email resent successfully');
-      fetchLinks();
+      void fetchLinks();
     } catch (err) {
       alert('Failed to resend email');
     }
@@ -333,8 +333,8 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
     if (!confirm('Are you sure you want to revoke this installation link?')) return;
     try {
       await api.revokeAgentLink(linkId);
-      fetchLinks();
-      fetchLinkStats();
+      void fetchLinks();
+      void fetchLinkStats();
     } catch (err) {
       alert('Failed to revoke link');
     }
@@ -344,8 +344,8 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
     if (!confirm('Are you sure you want to permanently delete this installation link? This cannot be undone.')) return;
     try {
       await api.deleteAgentLink(linkId);
-      fetchLinks();
-      fetchLinkStats();
+      void fetchLinks();
+      void fetchLinkStats();
     } catch (err) {
       alert('Failed to delete link');
     }
@@ -652,7 +652,16 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                         <p className="font-medium text-text-primary">{device.hostname}</p>
                       </td>
                       <td>
-                        <DeviceTypeCell device={device} onUpdate={updateDevice} />
+                        <DeviceTypeCell
+                          device={device}
+                          onUpdate={(id, data) => {
+                            updateDevice(id, data).catch((error) => {
+                              console.error('Failed to update device type:', error);
+                              setActionResult({ type: 'error', message: 'Failed to update device type.' });
+                              setTimeout(() => setActionResult(null), 5000);
+                            });
+                          }}
+                        />
                       </td>
                       {!currentClientId && (
                         <td>
@@ -691,9 +700,9 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                           <div className="flex gap-2">
                             <button
                               onClick={() => {
-                                if (confirmAction.action === 'disable') handleDisable(device.id);
-                                else if (confirmAction.action === 'uninstall') handleUninstall(device.id);
-                                else if (confirmAction.action === 'delete') handleDelete(device.id);
+                                if (confirmAction.action === 'disable') void handleDisable(device.id);
+                                else if (confirmAction.action === 'uninstall') void handleUninstall(device.id);
+                                else if (confirmAction.action === 'delete') void handleDelete(device.id);
                               }}
                               className="btn btn-danger text-xs py-1"
                             >
@@ -733,7 +742,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                               >
                                 {device.status === 'disabled' ? (
                                   <button
-                                    onClick={() => handleEnable(device.id)}
+                                    onClick={() => { void handleEnable(device.id); }}
                                     className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 text-success flex items-center gap-2 rounded-t-lg"
                                   >
                                     <EnableIcon className="w-4 h-4" />
@@ -752,7 +761,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                                   </button>
                                 )}
                                 <button
-                                  onClick={() => handleForceUpdate(device.id)}
+                                  onClick={() => { void handleForceUpdate(device.id); }}
                                   className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 text-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                                   disabled={device.status !== 'online'}
                                   title={device.status !== 'online' ? 'Device must be online to force update' : 'Force the agent to check for updates'}
@@ -871,7 +880,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                 </div>
                 <div className="flex flex-col gap-2">
                   <button
-                    onClick={() => handleDownloadInstaller('windows', 'amd64')}
+                    onClick={() => { void handleDownloadInstaller('windows', 'amd64'); }}
                     disabled={downloadingPlatform !== null}
                     className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -879,7 +888,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                     <span className="text-sm font-medium">x64 .exe</span>
                   </button>
                   <button
-                    onClick={() => handleDownloadInstaller('windows', 'arm64')}
+                    onClick={() => { void handleDownloadInstaller('windows', 'arm64'); }}
                     disabled={downloadingPlatform !== null}
                     className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -897,7 +906,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                 </div>
                 <div className="flex flex-col gap-2">
                   <button
-                    onClick={() => handleDownloadInstaller('linux-deb', 'amd64')}
+                    onClick={() => { void handleDownloadInstaller('linux-deb', 'amd64'); }}
                     disabled={downloadingPlatform !== null}
                     className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -905,7 +914,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                     <span className="text-sm font-medium">Debian/Ubuntu .deb</span>
                   </button>
                   <button
-                    onClick={() => handleDownloadInstaller('linux-rpm', 'amd64')}
+                    onClick={() => { void handleDownloadInstaller('linux-rpm', 'amd64'); }}
                     disabled={downloadingPlatform !== null}
                     className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -923,7 +932,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                 </div>
                 <div className="flex flex-col gap-2">
                   <button
-                    onClick={() => handleDownloadInstaller('macos', 'amd64')}
+                    onClick={() => { void handleDownloadInstaller('macos', 'amd64'); }}
                     disabled={downloadingPlatform !== null}
                     className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-gray-600 hover:bg-gray-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -931,7 +940,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                     <span className="text-sm font-medium">Intel .pkg</span>
                   </button>
                   <button
-                    onClick={() => handleDownloadInstaller('macos', 'arm64')}
+                    onClick={() => { void handleDownloadInstaller('macos', 'arm64'); }}
                     disabled={downloadingPlatform !== null}
                     className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-gray-600 hover:bg-gray-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -949,7 +958,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                 </div>
                 <div className="flex flex-col gap-2">
                   <button
-                    onClick={() => handleDownloadInstaller('synology', 'amd64')}
+                    onClick={() => { void handleDownloadInstaller('synology', 'amd64'); }}
                     disabled={downloadingPlatform !== null}
                     className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -957,7 +966,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                     <span className="text-sm font-medium">x64 .spk</span>
                   </button>
                   <button
-                    onClick={() => handleDownloadInstaller('synology', 'arm64')}
+                    onClick={() => { void handleDownloadInstaller('synology', 'arm64'); }}
                     disabled={downloadingPlatform !== null}
                     className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -1089,10 +1098,10 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                             <td className="text-sm text-text-secondary">{link.downloadCount}</td>
                             <td>
                               <div className="flex items-center justify-end gap-2">
-                                <button onClick={() => handleViewLinkDetails(link)} className="text-text-secondary hover:text-text-primary p-1" title="View Details"><EyeIcon className="w-4 h-4" /></button>
-                                {link.status === 'pending' && <button onClick={() => handleResendEmail(link.id)} className="text-text-secondary hover:text-primary p-1" title="Resend Email"><MailIcon className="w-4 h-4" /></button>}
-                                {!['installed', 'revoked', 'expired'].includes(link.status) && <button onClick={() => handleRevokeLink(link.id)} className="text-text-secondary hover:text-danger p-1" title="Revoke Link"><BanIcon className="w-4 h-4" /></button>}
-                                {['revoked', 'expired'].includes(link.status) && <button onClick={() => handleDeleteLink(link.id)} className="text-text-secondary hover:text-danger p-1" title="Delete Link"><TrashIcon className="w-4 h-4" /></button>}
+                                <button onClick={() => { void handleViewLinkDetails(link); }} className="text-text-secondary hover:text-text-primary p-1" title="View Details"><EyeIcon className="w-4 h-4" /></button>
+                                {link.status === 'pending' && <button onClick={() => { void handleResendEmail(link.id); }} className="text-text-secondary hover:text-primary p-1" title="Resend Email"><MailIcon className="w-4 h-4" /></button>}
+                                {!['installed', 'revoked', 'expired'].includes(link.status) && <button onClick={() => { void handleRevokeLink(link.id); }} className="text-text-secondary hover:text-danger p-1" title="Revoke Link"><BanIcon className="w-4 h-4" /></button>}
+                                {['revoked', 'expired'].includes(link.status) && <button onClick={() => { void handleDeleteLink(link.id); }} className="text-text-secondary hover:text-danger p-1" title="Delete Link"><TrashIcon className="w-4 h-4" /></button>}
                               </div>
                             </td>
                           </tr>
@@ -1136,7 +1145,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                   </div>
                   <div className="flex justify-end gap-3 mt-6">
                     <button onClick={() => setShowCreateModal(false)} className="btn btn-secondary">Cancel</button>
-                    <button onClick={handleCreateLink} disabled={creatingLink || !linkFormData.deviceName || !linkFormData.userEmail} className="btn btn-primary">{creatingLink ? 'Creating...' : 'Create Link'}</button>
+                    <button onClick={() => { void handleCreateLink(); }} disabled={creatingLink || !linkFormData.deviceName || !linkFormData.userEmail} className="btn btn-primary">{creatingLink ? 'Creating...' : 'Create Link'}</button>
                   </div>
                 </>
               ) : (
@@ -1190,8 +1199,8 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
               )}
               {selectedLink.notes && <div className="mt-6"><h3 className="font-semibold text-text-primary mb-2">Notes</h3><p className="text-text-secondary text-sm">{selectedLink.notes}</p></div>}
               <div className="flex justify-end gap-3 mt-6 pt-6 border-t border-border">
-                {selectedLink.status === 'pending' && <button onClick={() => { handleResendEmail(selectedLink.id); setShowDetailModal(false); }} className="btn btn-secondary">Resend Email</button>}
-                {!['installed', 'revoked', 'expired'].includes(selectedLink.status) && <button onClick={() => { handleRevokeLink(selectedLink.id); setShowDetailModal(false); }} className="btn btn-danger">Revoke Link</button>}
+                {selectedLink.status === 'pending' && <button onClick={() => { void handleResendEmail(selectedLink.id); setShowDetailModal(false); }} className="btn btn-secondary">Resend Email</button>}
+                {!['installed', 'revoked', 'expired'].includes(selectedLink.status) && <button onClick={() => { void handleRevokeLink(selectedLink.id); setShowDetailModal(false); }} className="btn btn-danger">Revoke Link</button>}
                 <button onClick={() => setShowDetailModal(false)} className="btn btn-secondary">Close</button>
               </div>
             </div>

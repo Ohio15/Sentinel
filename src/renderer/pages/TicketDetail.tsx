@@ -67,9 +67,9 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
   const [ticketLinks, setTicketLinks] = useState<TicketLink[]>([]);
 
   useEffect(() => {
-    fetchTicket(ticketId);
-    fetchTemplates();
-    loadEnhancements();
+    void fetchTicket(ticketId);
+    void fetchTemplates();
+    void loadEnhancements();
   }, [ticketId]);
 
   const loadEnhancements = async () => {
@@ -391,7 +391,7 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
                     />
                     <div className="flex justify-end">
                       <button
-                        onClick={handleAddComment}
+                        onClick={() => { void handleAddComment(); }}
                         disabled={!newComment.trim()}
                         className="btn btn-primary"
                       >
@@ -446,7 +446,7 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
             <div className="space-y-2">
               {selectedTicket.status !== 'in_progress' && (
                 <button
-                  onClick={() => handleStatusChange('in_progress')}
+                  onClick={() => { void handleStatusChange('in_progress'); }}
                   className="w-full btn btn-secondary text-left"
                 >
                   Mark In Progress
@@ -454,7 +454,7 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
               )}
               {selectedTicket.status !== 'waiting' && (
                 <button
-                  onClick={() => handleStatusChange('waiting')}
+                  onClick={() => { void handleStatusChange('waiting'); }}
                   className="w-full btn btn-secondary text-left"
                 >
                   Mark Waiting
@@ -462,7 +462,7 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
               )}
               {selectedTicket.status !== 'resolved' && (
                 <button
-                  onClick={() => handleStatusChange('resolved')}
+                  onClick={() => { void handleStatusChange('resolved'); }}
                   className="w-full btn btn-secondary text-left"
                 >
                   Resolve Ticket
@@ -470,7 +470,7 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
               )}
               {selectedTicket.status !== 'closed' && (
                 <button
-                  onClick={() => handleStatusChange('closed')}
+                  onClick={() => { void handleStatusChange('closed'); }}
                   className="w-full btn btn-secondary text-left"
                 >
                   Close Ticket
@@ -478,7 +478,7 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
               )}
               {selectedTicket.status === 'closed' && (
                 <button
-                  onClick={() => handleStatusChange('open')}
+                  onClick={() => { void handleStatusChange('open'); }}
                   className="w-full btn btn-secondary text-left"
                 >
                   Reopen Ticket
@@ -509,7 +509,7 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
             <h3 className="font-semibold text-text-primary mb-3">Category</h3>
             <CategorySelector
               value={selectedTicket.categoryId}
-              onChange={handleCategoryChange}
+              onChange={(categoryId) => { void handleCategoryChange(categoryId); }}
               categories={categories}
               placeholder="Select category..."
             />
@@ -578,7 +578,7 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
             <TagManager
               selectedTags={selectedTags}
               availableTags={availableTags}
-              onChange={handleTagsChange}
+              onChange={(tags) => { void handleTagsChange(tags); }}
               onCreateTag={handleCreateTag}
               placeholder="Add tags..."
             />
@@ -627,7 +627,7 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
               >
                 Cancel
               </button>
-              <button onClick={handleDelete} className="btn btn-danger">
+              <button onClick={() => { void handleDelete(); }} className="btn btn-danger">
                 Delete
               </button>
             </div>
@@ -678,7 +678,7 @@ function EditTicketModal({
             Edit Ticket
           </h2>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={(e) => { void handleSubmit(e); }} className="p-6 space-y-4">
           <div>
             <label className="label">Subject</label>
             <input

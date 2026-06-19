@@ -8,7 +8,7 @@ export function Clients() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchClients();
+    void fetchClients();
   }, [fetchClients]);
 
   const handleDelete = async (id: string) => {
@@ -91,7 +91,7 @@ export function Clients() {
                   {deleteConfirm === client.id ? (
                     <div className="flex items-center gap-1">
                       <button
-                        onClick={() => handleDelete(client.id)}
+                        onClick={() => { void handleDelete(client.id); }}
                         className="p-1.5 text-white bg-danger hover:bg-danger/80 transition-colors rounded text-xs"
                       >
                         Confirm
@@ -226,7 +226,7 @@ function ClientModal({ client, onClose, onSave }: ClientModalProps) {
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={(e) => { void handleSubmit(e); }} className="p-6 space-y-4">
           {error && (
             <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-red-700 text-sm">
               {error}

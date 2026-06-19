@@ -142,12 +142,12 @@ export default function AgentInstallations() {
   };
 
   useEffect(() => {
-    fetchLinks();
-    fetchCodes();
+    void fetchLinks();
+    void fetchCodes();
   }, [filter, search, page]);
 
   useEffect(() => {
-    fetchStats();
+    void fetchStats();
   }, []);
 
   const handleCreateLink = async () => {
@@ -163,8 +163,8 @@ export default function AgentInstallations() {
         sendEmail: formData.sendEmail,
       });
       setCreateResult(result);
-      fetchLinks();
-      fetchStats();
+      void fetchLinks();
+      void fetchStats();
     } catch (err: any) {
       alert(err.message || 'Failed to create link');
     } finally {
@@ -183,8 +183,8 @@ export default function AgentInstallations() {
         expirationDays: codeFormData.expirationDays,
       });
       setCodeResult(result);
-      fetchCodes();
-      fetchStats();
+      void fetchCodes();
+      void fetchStats();
     } catch (err: any) {
       alert(err.message || 'Failed to generate code');
     } finally {
@@ -196,7 +196,7 @@ export default function AgentInstallations() {
     try {
       await api?.resendAgentLinkEmail(linkId);
       alert('Email resent successfully');
-      fetchLinks();
+      void fetchLinks();
     } catch (err) {
       alert('Failed to resend email');
     }
@@ -206,8 +206,8 @@ export default function AgentInstallations() {
     if (!confirm('Are you sure you want to revoke this installation link?')) return;
     try {
       await api?.revokeAgentLink(linkId);
-      fetchLinks();
-      fetchStats();
+      void fetchLinks();
+      void fetchStats();
     } catch (err) {
       alert('Failed to revoke link');
     }
@@ -224,7 +224,7 @@ export default function AgentInstallations() {
   };
 
   const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
+    void navigator.clipboard.writeText(text);
   };
 
   const resetForm = () => {
@@ -325,21 +325,21 @@ export default function AgentInstallations() {
                     <td className="px-6 py-4 text-sm text-gray-500">{link.downloadCount}</td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <button onClick={() => handleViewDetails(link)} className="text-gray-400 hover:text-gray-600" title="View Details">
+                        <button onClick={() => { void handleViewDetails(link); }} className="text-gray-400 hover:text-gray-600" title="View Details">
                           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                           </svg>
                         </button>
                         {link.status === 'pending' && link.userEmail && (
-                          <button onClick={() => handleResendEmail(link.id)} className="text-gray-400 hover:text-indigo-600" title="Resend Email">
+                          <button onClick={() => { void handleResendEmail(link.id); }} className="text-gray-400 hover:text-indigo-600" title="Resend Email">
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                             </svg>
                           </button>
                         )}
                         {!['installed', 'revoked', 'expired'].includes(link.status) && (
-                          <button onClick={() => handleRevokeLink(link.id)} className="text-gray-400 hover:text-red-600" title="Revoke Link">
+                          <button onClick={() => { void handleRevokeLink(link.id); }} className="text-gray-400 hover:text-red-600" title="Revoke Link">
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
                             </svg>
@@ -521,7 +521,7 @@ export default function AgentInstallations() {
 
                   <div className="flex justify-end gap-3 mt-6">
                     <button onClick={() => setShowCreateModal(false)} className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg">Cancel</button>
-                    <button onClick={createMode === 'code' ? handleCreateCode : handleCreateLink}
+                    <button onClick={() => { void (createMode === 'code' ? handleCreateCode() : handleCreateLink()); }}
                       disabled={creating || (createMode === 'code' ? !codeFormData.deviceName : !formData.deviceName || !formData.userEmail)}
                       className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:bg-indigo-300">
                       {creating ? 'Creating...' : createMode === 'code' ? 'Generate Code' : 'Create Link'}
@@ -685,11 +685,11 @@ export default function AgentInstallations() {
               )}
               <div className="flex justify-end gap-3 mt-6 pt-6 border-t">
                 {selectedLink.status === 'pending' && selectedLink.userEmail && (
-                  <button onClick={() => { handleResendEmail(selectedLink.id); setShowDetailModal(false); }}
+                  <button onClick={() => { void handleResendEmail(selectedLink.id); setShowDetailModal(false); }}
                     className="px-4 py-2 text-indigo-600 hover:bg-indigo-50 rounded-lg">Resend Email</button>
                 )}
                 {!['installed', 'revoked', 'expired'].includes(selectedLink.status) && (
-                  <button onClick={() => { handleRevokeLink(selectedLink.id); setShowDetailModal(false); }}
+                  <button onClick={() => { void handleRevokeLink(selectedLink.id); setShowDetailModal(false); }}
                     className="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg">Revoke Link</button>
                 )}
                 <button onClick={() => setShowDetailModal(false)} className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg">Close</button>

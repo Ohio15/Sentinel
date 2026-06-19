@@ -42,7 +42,7 @@ export function TicketsCalendar({ onTicketSelect, onViewChange }: TicketsCalenda
   const calendarRef = useRef<FullCalendar>(null);
 
   useEffect(() => {
-    fetchTickets();
+    void fetchTickets();
   }, []);
 
   // Convert tickets to calendar events

@@ -249,7 +249,7 @@ export function Login() {
           type="button"
           onClick={() => {
             setAuthMethod('passkey-device');
-            handlePasskeyLogin(false);
+            void handlePasskeyLogin(false);
           }}
           disabled={passkeyLoading}
           className="w-full flex items-center gap-4 p-4 bg-gray-800 hover:bg-gray-750 border border-gray-700 hover:border-gray-600 rounded-lg transition-all group disabled:opacity-50"
@@ -273,7 +273,7 @@ export function Login() {
           type="button"
           onClick={() => {
             setAuthMethod('passkey-phone');
-            handlePasskeyLogin(true);
+            void handlePasskeyLogin(true);
           }}
           disabled={passkeyLoading}
           className="w-full flex items-center gap-4 p-4 bg-gray-800 hover:bg-gray-750 border border-gray-700 hover:border-gray-600 rounded-lg transition-all group disabled:opacity-50"
@@ -325,7 +325,7 @@ export function Login() {
         <h2 className="text-xl font-semibold text-white">Sign in with password</h2>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={(e) => { void handleSubmit(e); }} className="space-y-4">
         <Input
           label="Username or Email"
           type="text"
@@ -428,7 +428,7 @@ export function Login() {
             <p className="text-red-300 mb-4">{passkeyError}</p>
             <button
               type="button"
-              onClick={() => handlePasskeyLogin(authMethod === 'passkey-phone')}
+              onClick={() => { void handlePasskeyLogin(authMethod === 'passkey-phone'); }}
               className="px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-700 transition-colors"
             >
               Try again

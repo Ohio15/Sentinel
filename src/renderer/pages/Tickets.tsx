@@ -50,9 +50,9 @@ export function Tickets({ onTicketSelect, onViewChange }: TicketsProps) {
   };
 
   useEffect(() => {
-    fetchTickets();
-    fetchStats();
-    loadCategories();
+    void fetchTickets();
+    void fetchStats();
+    void loadCategories();
   }, []);
 
   const loadCategories = async () => {
@@ -368,7 +368,7 @@ export function Tickets({ onTicketSelect, onViewChange }: TicketsProps) {
           onCreate={async (ticket) => {
             await createTicket(ticket);
             setShowCreateModal(false);
-            fetchStats();
+            void fetchStats();
           }}
         />
       )}
@@ -434,7 +434,7 @@ function CreateTicketModal({
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    fetchDevices();
+    void fetchDevices();
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -466,7 +466,7 @@ function CreateTicketModal({
             </button>
           </div>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={(e) => { void handleSubmit(e); }} className="p-6 space-y-4">
           <div>
             <label className="label">Subject *</label>
             <input
