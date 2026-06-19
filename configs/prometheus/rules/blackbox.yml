@@ -1,0 +1,34 @@
+groups:
+  - name: blackbox
+    rules:
+      # Catches the exact failure mode of the 2026-06-18 sentinelrmm.us outage:
+      # backend healthy on the internal network (so `up`==1 and TargetDown stayed
+      # silent), but the external edge path returned 502 for every request.
+      # A blackbox probe of the public URL exercises Cloudflare -> Traefik ->
+      # backend, so probe_success flips to 0 on any broken hop.
+      - alert: PublicEndpointDown
+        expr: probe_success == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Public endpoint {{ $labels.instance }} is DOWN"
+          description: "Blackbox probe of {{ $labels.instance }} has failed for 2+ minutes. This tests the full external path (Cloudflare -> Traefik -> backend) that internal scrapes do not exercise. Check Traefik routing / container edge-network attachment / cloudflared."
+
+      - alert: PublicEndpoint5xx
+        expr: probe_http_status_code >= 500
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Public endpoint {{ $labels.instance }} returning HTTP {{ $value }}"
+          description: "Blackbox probe of {{ $labels.instance }} returned HTTP {{ $value }} for 1+ minute. A 502/503/504 here usually means Traefik cannot reach the backend upstream (e.g. container dropped off the edge network)."
+
+      - alert: PublicCertExpiringSoon
+        expr: (probe_ssl_earliest_cert_expiry - time()) / 86400 < 14
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "TLS cert for {{ $labels.instance }} expires in < 14 days"
+          description: "The certificate served at {{ $labels.instance }} expires in {{ $value | printf \"%.1f\" }} days. Check the Let's Encrypt renewal in Traefik."

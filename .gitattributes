@@ -1,0 +1,4 @@
+# Shell scripts must use LF so they run on the Linux Docker host (a CRLF in the
+# shebang line breaks execution). These are copied to NEXUS verbatim.
+*.sh text eol=lf
+ops/systemd/*.service text eol=lf
