@@ -4,55 +4,21 @@
  */
 import { api } from './api';
 import { wsService } from './websocket';
+// Canonical renderer domain types live in the stores (single source of truth).
+// The service layer is the HTTP/WebSocket boundary that produces these shapes,
+// so it imports them rather than maintaining parallel, looser duplicates.
+import type { Device, DeviceMetrics } from '../stores/deviceStore';
+import type { Alert, AlertRule } from '../stores/alertStore';
+import type { Ticket, TicketComment, TicketFilters } from '../stores/ticketStore';
+import type { Client } from '../stores/clientStore';
 
 // Re-export environment detection (for backwards compatibility during migration)
 export const isElectron = false;
 export const isWeb = true;
 
-// Type definitions
-export interface Device {
-  id: string;
-  hostname: string;
-  displayName?: string;
-  status: string;
-  platform: string;
-  agentId: string;
-  clientId?: string;
-  lastSeen?: string;
-  createdAt: string;
-  [key: string]: unknown;
-}
-
-export interface DeviceMetrics {
-  cpuPercent: number;
-  memoryPercent: number;
-  memoryTotalBytes?: number;
-  diskPercent: number;
-  diskTotalBytes?: number;
-  diskUsedBytes?: number;
-  timestamp: string;
-  [key: string]: unknown;
-}
-
-export interface Alert {
-  id: string;
-  deviceId: string;
-  severity: string;
-  message: string;
-  status: string;
-  createdAt: string;
-  [key: string]: unknown;
-}
-
-export interface AlertRule {
-  id: string;
-  name: string;
-  description?: string;
-  enabled: boolean;
-  conditions: unknown[];
-  severity: string;
-  [key: string]: unknown;
-}
+// Re-export the canonical domain types so existing `from '../services'` type
+// imports keep resolving to the same single definition.
+export type { Device, DeviceMetrics, Alert, AlertRule, Ticket, TicketComment, Client };
 
 // Devices Service
 export const devices = {
@@ -434,35 +400,11 @@ export const enrollmentTokens = {
   },
 };
 
-// Tickets service
-export interface Ticket {
-  id: string;
-  ticketNumber: number;
-  subject: string;
-  description?: string;
-  status: string;
-  priority: string;
-  type: string;
-  deviceId?: string;
-  createdAt: string;
-  updatedAt: string;
-  [key: string]: unknown;
-}
-
-export interface TicketComment {
-  id: string;
-  ticketId: string;
-  content: string;
-  isInternal: boolean;
-  authorName: string;
-  createdAt: string;
-  [key: string]: unknown;
-}
-
+// Tickets service (Ticket / TicketComment types imported from ticketStore)
 export const tickets = {
-  async list(filters?: Record<string, unknown>): Promise<Ticket[]> {
+  async list(filters?: TicketFilters | Record<string, unknown>): Promise<Ticket[]> {
     const result = await api!.makeRequest<{ tickets?: Ticket[] } | Ticket[]>('GET', '/tickets', undefined, filters as Record<string, string>);
-    return (result as any).tickets || result || [];
+    return (result as { tickets?: Ticket[] }).tickets || (result as Ticket[]) || [];
   },
 
   async get(id: string): Promise<Ticket> {
@@ -505,22 +447,12 @@ export const tickets = {
   },
 };
 
-// Clients service
-export interface Client {
-  id: string;
-  name: string;
-  description?: string;
-  color?: string;
-  deviceCount?: number;
-  createdAt: string;
-  updatedAt: string;
-  [key: string]: unknown;
-}
-
+// Clients service (Client type imported from clientStore)
 export const clients = {
   async list(): Promise<Client[]> {
     const result = await api!.getClients();
-    return result || [];
+    // getClients() returns the untyped HTTP payload; the API contract is Client[].
+    return (result as Client[]) || [];
   },
 
   async get(id: string): Promise<Client> {

@@ -60,7 +60,9 @@ export interface Device {
   macAddress: string;
   tags: string[];
   metadata: Record<string, unknown>;
-  clientId?: string;
+  // null = explicitly unassigned from any client (distinct from "field absent").
+  // updateDevice() can clear the assignment by sending clientId: null.
+  clientId?: string | null;
   isDisabled?: boolean;
   disabledAt?: string;
   powerManagement?: PowerManagement;
