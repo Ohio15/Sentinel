@@ -3,7 +3,13 @@
 ; Professional installer with embedded config support, robust logging, and rollback
 
 #define MyAppName "Sentinel Agent"
-#define MyAppVersion "1.73.1"
+; Version is injected by CI (ISCC /DMyAppVersion=...) so the installer always
+; reports the actual agent binary version. The fallback below is only used for
+; local builds without the define; keep it roughly in step with
+; installers/version.json (the published agent binary version).
+#ifndef MyAppVersion
+  #define MyAppVersion "1.77.10"
+#endif
 #define MyAppPublisher "Sentinel RMM"
 #define MyAppURL "https://sentinelrmm.us"
 #define MyAppExeName "sentinel-agent.exe"
@@ -781,8 +787,14 @@ begin
   // {app}\config.json (e.g. C:\Program Files\Sentinel\config.json). We probe
   // the install path from the HKLM\SOFTWARE\Sentinel\InstallPath registry
   // value first (handles non-default install dirs), and fall back to the
-  // default {app} expansion. We also accept a ProgramData-level config.json
+  // default install directory. We also accept a ProgramData-level config.json
   // for forward-compat with any deployment that places config there.
+  //
+  // NOTE: InitializeSetup runs BEFORE the wizard initializes the {app}
+  // constant, so expanding {app} here throws "An attempt was made to expand
+  // the 'app' constant before it was initialized." The default install dir is
+  // {autopf}\Sentinel (= DefaultDirName), which is available this early (see
+  // the {autopf} expansion logged above), so we expand that explicitly.
   if RegQueryStringValue(HKLM, 'SOFTWARE\Sentinel', 'InstallPath', RegisteredPath) then
   begin
     if (RegisteredPath <> '') and FileExists(RegisteredPath + '\config.json') then
@@ -795,11 +807,11 @@ begin
 
   if not IsReinstall then
   begin
-    DefaultAppConfig := ExpandConstant('{app}\config.json');
+    DefaultAppConfig := ExpandConstant('{autopf}\Sentinel\config.json');
     if FileExists(DefaultAppConfig) then
     begin
       IsReinstall := True;
-      ExistingInstallPath := ExpandConstant('{app}');
+      ExistingInstallPath := ExpandConstant('{autopf}\Sentinel');
       WriteLog('Existing config detected at default install path: ' + DefaultAppConfig);
     end;
   end;

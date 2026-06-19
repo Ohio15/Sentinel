@@ -141,7 +141,10 @@ jobs:
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { $iscc = "C:\Program Files\Inno Setup 6\ISCC.exe" }
           if (-not (Test-Path $iscc)) { throw "ISCC.exe not found after choco install" }
-          & $iscc "installers/windows/sentinel-setup.iss"
+          # Inject the resolved build version so the installer's AppVersion matches
+          # the bundled agent binary (the .iss falls back to a hardcoded value only
+          # when this define is absent).
+          & $iscc "/DMyAppVersion=${{ needs.build-binaries-linux.outputs.version }}" "installers/windows/sentinel-setup.iss"
           if (-not (Test-Path "release/agent/sentinel-installer-template.exe")) {
             throw "Inno Setup output missing"
           }
