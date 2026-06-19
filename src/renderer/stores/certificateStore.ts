@@ -107,7 +107,7 @@ export const useCertificateStore = create<CertificateState>((set, get) => ({
     const unsubDistributed = certsService.onDistributed((result: any) => {
       console.log('[Certs] Distribution result:', result);
       // Refresh agent statuses after distribution
-      get().fetchAgentStatuses();
+      void get().fetchAgentStatuses();
     });
 
     const unsubConfirmed = certsService.onAgentConfirmed((data: any) => {

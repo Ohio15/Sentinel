@@ -91,14 +91,14 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     const refreshTime = Math.min(expiresIn - 300, expiresIn * 0.8) * 1000;
     if (refreshTime <= 0) {
       console.log('[AuthStore] Token expiring too soon, refreshing immediately');
-      get().refreshAccessToken();
+      void get().refreshAccessToken();
       return;
     }
 
     console.log(`[AuthStore] Scheduling token refresh in ${Math.round(refreshTime / 1000 / 60)} minutes`);
     const timer = setTimeout(() => {
       console.log('[AuthStore] Auto-refreshing token...');
-      get().refreshAccessToken();
+      void get().refreshAccessToken();
     }, refreshTime);
 
     set({ _refreshTimer: timer });
