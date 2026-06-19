@@ -1,0 +1,15 @@
+[Unit]
+Description=Ensure critical containers are attached to the edge Docker network
+Documentation=https://github.com/Ohio15/Sentinel
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/ensure-edge-network.sh
+# Bounded so a stuck docker can't hang boot forever (script waits up to ~60s/container).
+TimeoutStartSec=400
+
+[Install]
+WantedBy=multi-user.target

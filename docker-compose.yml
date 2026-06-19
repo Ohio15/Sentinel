@@ -333,6 +333,28 @@ services:
           cpus: '0.25'
           memory: 64M
 
+  # Monitoring - Blackbox exporter (synthetic end-to-end probes of public URLs).
+  # Probes https://sentinelrmm.us/health from inside the stack, exercising the
+  # full external path (Cloudflare -> Traefik -> backend). Catches edge/routing
+  # outages that internal scrapes miss (see PublicEndpointDown alert).
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    container_name: sentinel-blackbox-exporter
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/blackbox_exporter/config.yml'
+    volumes:
+      - ./configs/blackbox/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    networks:
+      - sentinel-network
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 64M
+
 networks:
   sentinel-network:
     driver: bridge

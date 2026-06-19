@@ -27,3 +27,22 @@ scrape_configs:
     static_configs:
       - targets: ['cadvisor:8080']
     scrape_interval: 30s
+
+  # Synthetic end-to-end probe of the PUBLIC URL via blackbox-exporter.
+  # Exercises Cloudflare -> Traefik -> backend, catching edge/routing failures
+  # that the internal 'sentinel-backend' scrape (same Docker network) misses.
+  - job_name: 'blackbox-public'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - https://sentinelrmm.us/health
+    scrape_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
