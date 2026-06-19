@@ -494,7 +494,7 @@ export function useFileTransfer(options: UseFileTransferOptions): UseFileTransfe
 
     // Start sending chunks after a brief delay to let the agent process the start message
     setTimeout(() => {
-      sendFileChunks(transferId, file);
+      void sendFileChunks(transferId, file);
     }, 100);
   }, [currentPath, sendMessage, syncTransfers]);
 

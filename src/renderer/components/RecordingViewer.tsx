@@ -96,7 +96,7 @@ export function RecordingViewer({ recordingId, onClose }: RecordingViewerProps) 
       }
     };
 
-    loadData();
+    void loadData();
   }, [recordingId]);
 
   // Playback control

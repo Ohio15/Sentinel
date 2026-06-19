@@ -74,7 +74,7 @@ export function RecordingsList({ deviceId, onViewRecording, onRefresh }: Recordi
   }, [deviceId]);
 
   useEffect(() => {
-    loadRecordings();
+    void loadRecordings();
   }, [loadRecordings]);
 
   // Expose refresh function globally so parent can trigger refresh
@@ -172,7 +172,7 @@ export function RecordingsList({ deviceId, onViewRecording, onRefresh }: Recordi
       <div className="flex items-center justify-center py-8 text-error">
         <span>{error}</span>
         <button
-          onClick={loadRecordings}
+          onClick={() => { void loadRecordings(); }}
           className="ml-4 text-sm underline hover:no-underline"
         >
           Retry
@@ -285,7 +285,7 @@ export function RecordingsList({ deviceId, onViewRecording, onRefresh }: Recordi
                     deleteConfirm === recording.id ? (
                       <div className="flex items-center gap-1">
                         <button
-                          onClick={() => handleDelete(recording.id)}
+                          onClick={() => { void handleDelete(recording.id); }}
                           className="p-1.5 hover:bg-error/20 text-error rounded transition-colors"
                           title="Confirm delete"
                         >

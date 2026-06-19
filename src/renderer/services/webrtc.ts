@@ -265,7 +265,7 @@ export class WebRTCService {
       // Check if this is a WebRTC answer response
       if (response.data?.answerSdp) {
         console.log('[WebRTC] Received answer, SDP length:', response.data.answerSdp.length);
-        this.setRemoteAnswer(response.data.answerSdp);
+        void this.setRemoteAnswer(response.data.answerSdp);
       }
     }
   }
@@ -334,7 +334,7 @@ export class WebRTCService {
     };
 
     if (signalObj.type === 'candidate' && signalObj.candidate) {
-      this.handleRemoteCandidate(signalObj.candidate);
+      void this.handleRemoteCandidate(signalObj.candidate);
     }
   }
 

@@ -54,7 +54,7 @@ export function RecordingControls({ deviceId, onRecordingChange, onRecordingStop
 
   // Check for active recording on mount
   useEffect(() => {
-    checkActiveRecording();
+    void checkActiveRecording();
   }, [deviceId]);
 
   // Timer for elapsed time
@@ -204,7 +204,7 @@ export function RecordingControls({ deviceId, onRecordingChange, onRecordingStop
         <>
           {/* Recording button - turns red with outline when recording */}
           <button
-            onClick={stopRecording}
+            onClick={() => { void stopRecording(); }}
             disabled={isLoading}
             className="flex items-center gap-2 px-4 py-1.5 bg-error/10 hover:bg-error/20 border-2 border-error text-error rounded-lg transition-colors disabled:opacity-50"
           >
@@ -222,7 +222,7 @@ export function RecordingControls({ deviceId, onRecordingChange, onRecordingStop
       ) : (
         /* Start recording button - outlined style */
         <button
-          onClick={startRecording}
+          onClick={() => { void startRecording(); }}
           disabled={isLoading}
           className="flex items-center gap-2 px-4 py-1.5 bg-transparent hover:bg-hover border-2 border-border hover:border-text-secondary rounded-lg transition-colors disabled:opacity-50"
         >

@@ -163,7 +163,7 @@ export function useWebRTC(options: UseWebRTCOptions) {
         }
       } else if (pc.iceConnectionState === 'failed') {
         if (iceRestartAttemptsRef.current < maxICERestarts) {
-          attemptICERestart();
+          void attemptICERestart();
         } else {
           setConnectionState('failed');
         }
@@ -172,7 +172,7 @@ export function useWebRTC(options: UseWebRTCOptions) {
         console.log('[WebRTC] ICE disconnected, will attempt restart in 3s...');
         iceRestartTimeoutRef.current = setTimeout(() => {
           if (pc.iceConnectionState === 'disconnected') {
-            attemptICERestart();
+            void attemptICERestart();
           }
         }, 3000);
       }
@@ -489,7 +489,7 @@ export function useWebRTC(options: UseWebRTCOptions) {
       if (signalData && typeof signalData === 'object') {
         const signalObj = signalData as { type?: string; candidate?: string };
         if (signalObj.type === 'candidate' && signalObj.candidate) {
-          handleRemoteCandidate(signalObj.candidate);
+          void handleRemoteCandidate(signalObj.candidate);
         }
       }
     });
@@ -539,7 +539,7 @@ export function useWebRTC(options: UseWebRTCOptions) {
         // Handle successful answer
         if (response.data?.answerSdp) {
           console.log('[WebRTC] Received answer, SDP length:', response.data.answerSdp.length);
-          setRemoteAnswer(response.data.answerSdp);
+          void setRemoteAnswer(response.data.answerSdp);
         }
       }
     });

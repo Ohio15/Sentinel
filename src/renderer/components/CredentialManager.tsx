@@ -100,7 +100,7 @@ export function CredentialManager() {
   const [newKeyResult, setNewKeyResult] = useState<APIKeyWithSecret | null>(null);
 
   useEffect(() => {
-    loadCredentialStatus();
+    void loadCredentialStatus();
   }, []);
 
   const loadCredentialStatus = async () => {
@@ -272,7 +272,7 @@ export function CredentialManager() {
         <div className="text-red-500 text-center py-4">
           <p>{error}</p>
           <button
-            onClick={loadCredentialStatus}
+            onClick={() => { void loadCredentialStatus(); }}
             className="mt-2 text-blue-500 hover:underline"
           >
             Retry
@@ -410,7 +410,7 @@ export function CredentialManager() {
           {/* Actions */}
           <div className="flex gap-3">
             <button
-              onClick={handleRotateJWT}
+              onClick={() => { void handleRotateJWT(); }}
               disabled={rotating}
               className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
@@ -427,7 +427,7 @@ export function CredentialManager() {
               )}
             </button>
             <button
-              onClick={loadCredentialStatus}
+              onClick={() => { void loadCredentialStatus(); }}
               className="px-4 py-2 border border-border rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 text-text-primary"
             >
               Refresh
@@ -486,7 +486,7 @@ export function CredentialManager() {
               <div className="mt-3 flex gap-2">
                 <button
                   onClick={() => {
-                    navigator.clipboard.writeText(newKeyResult.fullKey);
+                    void navigator.clipboard.writeText(newKeyResult.fullKey);
                     alert('API key copied to clipboard');
                   }}
                   className="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700"
@@ -563,7 +563,7 @@ export function CredentialManager() {
 
               <div className="flex gap-2 mt-4">
                 <button
-                  onClick={handleCreateAPIKey}
+                  onClick={() => { void handleCreateAPIKey(); }}
                   disabled={creatingKey}
                   className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50"
                 >
@@ -609,7 +609,7 @@ export function CredentialManager() {
                     </div>
                     {!key.revokedAt && (
                       <button
-                        onClick={() => handleRevokeKey(key.id, key.name)}
+                        onClick={() => { void handleRevokeKey(key.id, key.name); }}
                         className="text-red-500 hover:text-red-700 text-sm"
                       >
                         Revoke

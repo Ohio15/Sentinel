@@ -139,20 +139,22 @@ export function TicketLinks({
       return;
     }
 
-    const timeoutId = setTimeout(async () => {
-      setIsSearching(true);
-      try {
-        const results = await searchTickets(searchQuery);
-        // Filter out current ticket and already linked tickets
-        const linkedIds = new Set(links.map((l) => l.targetTicketId));
-        linkedIds.add(ticketId);
-        setSearchResults(results.filter((r) => !linkedIds.has(r.id)));
-      } catch (error) {
-        console.error('Failed to search tickets:', error);
-        setSearchResults([]);
-      } finally {
-        setIsSearching(false);
-      }
+    const timeoutId = setTimeout(() => {
+      void (async () => {
+        setIsSearching(true);
+        try {
+          const results = await searchTickets(searchQuery);
+          // Filter out current ticket and already linked tickets
+          const linkedIds = new Set(links.map((l) => l.targetTicketId));
+          linkedIds.add(ticketId);
+          setSearchResults(results.filter((r) => !linkedIds.has(r.id)));
+        } catch (error) {
+          console.error('Failed to search tickets:', error);
+          setSearchResults([]);
+        } finally {
+          setIsSearching(false);
+        }
+      })();
     }, 300);
 
     return () => clearTimeout(timeoutId);
@@ -281,7 +283,7 @@ export function TicketLinks({
                 <button
                   key={ticket.id}
                   type="button"
-                  onClick={() => handleAddLink(ticket.id)}
+                  onClick={() => { void handleAddLink(ticket.id); }}
                   disabled={isSubmitting}
                   className="w-full flex items-center gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-left disabled:opacity-50"
                 >
@@ -374,7 +376,7 @@ export function TicketLinks({
                         {!disabled && (
                           <button
                             type="button"
-                            onClick={() => handleRemoveLink(link.id)}
+                            onClick={() => { void handleRemoveLink(link.id); }}
                             disabled={removingLinkId === link.id}
                             className="p-1 text-gray-400 hover:text-red-500 rounded disabled:opacity-50"
                             title="Remove link"

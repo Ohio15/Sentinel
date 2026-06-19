@@ -122,7 +122,7 @@ export function useClipboard(options: UseClipboardOptions): UseClipboardReturn {
       }
     }
 
-    checkPermission();
+    void checkPermission();
   }, []);
 
   // Listen for clipboard messages on the data channel
@@ -139,7 +139,7 @@ export function useClipboard(options: UseClipboardOptions): UseClipboardReturn {
 
         switch (data.type) {
           case 'clipboard.update':
-            handleRemoteClipboardUpdate(data as ClipboardUpdateMessage);
+            void handleRemoteClipboardUpdate(data as ClipboardUpdateMessage);
             break;
 
           case 'clipboard.ack':
@@ -234,22 +234,24 @@ export function useClipboard(options: UseClipboardOptions): UseClipboardReturn {
 
     function handleCopy() {
       // Small delay to let the browser update the clipboard
-      setTimeout(async () => {
-        if (!clipboardEnabledRef.current || directionRef.current === 'disabled') return;
-        if (
-          directionRef.current !== 'bidirectional' &&
-          directionRef.current !== 'viewer-to-host'
-        )
-          return;
+      setTimeout(() => {
+        void (async () => {
+          if (!clipboardEnabledRef.current || directionRef.current === 'disabled') return;
+          if (
+            directionRef.current !== 'bidirectional' &&
+            directionRef.current !== 'viewer-to-host'
+          )
+            return;
 
-        try {
-          const text = await navigator.clipboard.readText();
-          if (text) {
-            sendClipboardText(text);
+          try {
+            const text = await navigator.clipboard.readText();
+            if (text) {
+              sendClipboardText(text);
+            }
+          } catch (err) {
+            console.warn('[useClipboard] Failed to read clipboard after copy:', err);
           }
-        } catch (err) {
-          console.warn('[useClipboard] Failed to read clipboard after copy:', err);
-        }
+        })();
       }, 50);
     }
 
