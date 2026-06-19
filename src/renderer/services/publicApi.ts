@@ -48,7 +48,7 @@ class PublicApiService {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ message: 'Request failed' }));
-      const err = new Error(error.message || 'Request failed') as any;
+      const err = new Error(error.error || error.message || `Request failed (HTTP ${response.status})`) as any;
       err.response = { data: error };
       throw err;
     }
