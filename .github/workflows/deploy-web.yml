@@ -35,7 +35,11 @@ jobs:
       - name: Verify deployment
         id: healthcheck
         run: |
-          FRONTEND_IP=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' sentinel-frontend)
+          # sentinel-frontend is attached to BOTH 'edge' and the sentinel
+          # network, so ranging over all Networks concatenates two IPs into one
+          # garbage string -> curl gets HTTP 000 -> a false-negative health check
+          # that needlessly rolls back a good deploy. Read the edge IP only.
+          FRONTEND_IP=$(docker inspect -f '{{(index .NetworkSettings.Networks "edge").IPAddress}}' sentinel-frontend)
           echo "Frontend container IP: $FRONTEND_IP"
           for i in 1 2 3 4 5; do
             sleep 5
