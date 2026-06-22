@@ -13,8 +13,15 @@ jobs:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
 
     steps:
-      - name: Pull latest code
-        run: cd ~/Sentinel && git pull origin main
+      - name: Sync deploy host to origin/main
+        # Use fetch + reset --hard rather than `git pull`. The deploy host is a
+        # pure mirror of main; any local drift on it (e.g. a hand-edited compose
+        # file applied as a stopgap before a PR merged) makes `git pull` abort
+        # with "local changes would be overwritten", silently blocking deploys.
+        # reset --hard forces the tree to match origin/main, discarding tracked
+        # drift and overwriting now-tracked paths. Untracked runtime state
+        # (.env, certs/, backups/) is preserved.
+        run: cd ~/Sentinel && git fetch origin main && git reset --hard origin/main
 
       - name: Save current image for rollback
         run: |
