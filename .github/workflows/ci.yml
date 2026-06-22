@@ -144,7 +144,7 @@ jobs:
           done
 
       - name: Run validation script
-        run: ./scripts/validate-critical-paths.sh http://localhost:8091
+        run: bash ./scripts/validate-critical-paths.sh http://localhost:8091
 
       - name: Tear down test environment
         if: always()
