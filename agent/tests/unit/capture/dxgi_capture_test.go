@@ -106,6 +106,7 @@ func TestDXGICapture_CaptureFrameLatency(t *testing.T) {
 		t.Skipf("DXGI capture not available: %v", err)
 	}
 	defer cap.Release()
+	requireLiveCapture(t)
 
 	stats := testutil.NewLatencyStats()
 	const iterations = 100
@@ -180,6 +181,7 @@ func TestDXGICapture_MultipleCaptures(t *testing.T) {
 		t.Skipf("DXGI capture not available: %v", err)
 	}
 	defer cap.Release()
+	requireLiveCapture(t)
 
 	const targetFPS = 30
 	const duration = 2 * time.Second
