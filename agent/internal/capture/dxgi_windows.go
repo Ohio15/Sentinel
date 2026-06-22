@@ -271,7 +271,7 @@ func (c *DXGICapture) initialize() error {
 	var dxgiDevice uintptr
 	hr = c.queryInterface(device, &IID_IDXGIDevice, &dxgiDevice)
 	if hr != 0 {
-		c.Release()
+		c.cleanup() // already holding c.mu; Release() would re-lock and deadlock
 		return fmt.Errorf("QueryInterface IDXGIDevice failed: 0x%x", hr)
 	}
 	defer c.release(dxgiDevice)
@@ -280,7 +280,7 @@ func (c *DXGICapture) initialize() error {
 	var adapter uintptr
 	hr = c.callMethod(dxgiDevice, 7, uintptr(unsafe.Pointer(&adapter))) // GetParent
 	if hr != 0 {
-		c.Release()
+		c.cleanup() // already holding c.mu; Release() would re-lock and deadlock
 		return fmt.Errorf("GetAdapter failed: 0x%x", hr)
 	}
 	defer c.release(adapter)
@@ -289,7 +289,7 @@ func (c *DXGICapture) initialize() error {
 	var output uintptr
 	hr = c.callMethod(adapter, vtEnumOutputs, uintptr(c.monitorIndex), uintptr(unsafe.Pointer(&output)))
 	if hr != 0 {
-		c.Release()
+		c.cleanup() // already holding c.mu; Release() would re-lock and deadlock
 		return fmt.Errorf("EnumOutputs failed: 0x%x (monitor %d may not exist)", hr, c.monitorIndex)
 	}
 	defer c.release(output)
@@ -298,7 +298,7 @@ func (c *DXGICapture) initialize() error {
 	var outputDesc DXGI_OUTPUT_DESC
 	hr = c.callMethod(output, vtGetDesc, uintptr(unsafe.Pointer(&outputDesc)))
 	if hr != 0 {
-		c.Release()
+		c.cleanup() // already holding c.mu; Release() would re-lock and deadlock
 		return fmt.Errorf("GetDesc failed: 0x%x", hr)
 	}
 
@@ -310,7 +310,7 @@ func (c *DXGICapture) initialize() error {
 	var output1 uintptr
 	hr = c.queryInterface(output, &IID_IDXGIOutput1, &output1)
 	if hr != 0 {
-		c.Release()
+		c.cleanup() // already holding c.mu; Release() would re-lock and deadlock
 		return fmt.Errorf("QueryInterface IDXGIOutput1 failed: 0x%x", hr)
 	}
 	c.output1 = output1
@@ -319,7 +319,7 @@ func (c *DXGICapture) initialize() error {
 	var duplication uintptr
 	hr = c.callMethod(output1, vtDuplicateOutput, device, uintptr(unsafe.Pointer(&duplication)))
 	if hr != 0 {
-		c.Release()
+		c.cleanup() // already holding c.mu; Release() would re-lock and deadlock
 		return fmt.Errorf("DuplicateOutput failed: 0x%x", hr)
 	}
 	c.duplication = duplication
@@ -345,7 +345,7 @@ func (c *DXGICapture) initialize() error {
 		uintptr(unsafe.Pointer(&stagingTex)),
 	)
 	if hr != 0 {
-		c.Release()
+		c.cleanup() // already holding c.mu; Release() would re-lock and deadlock
 		return fmt.Errorf("CreateTexture2D (staging) failed: 0x%x", hr)
 	}
 	c.stagingTex = stagingTex
