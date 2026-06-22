@@ -129,7 +129,7 @@ export function useFileTransfer(options: UseFileTransferOptions): UseFileTransfe
   const uploadState = useRef<Map<string, { resolve: () => void; reject: (err: Error) => void }>>(new Map());
 
   // Track download chunk accumulation per transfer
-  const downloadState = useRef<Map<string, { chunks: Uint8Array[]; totalSize: number; fileName: string }>>(new Map());
+  const downloadState = useRef<Map<string, { chunks: Uint8Array<ArrayBuffer>[]; totalSize: number; fileName: string }>>(new Map());
 
   // ─── Data Channel Setup ──────────────────────────────────────────────────
 
@@ -293,7 +293,7 @@ export function useFileTransfer(options: UseFileTransferOptions): UseFileTransfe
 
     // chunk.data is a byte array from JSON (Go encodes []byte as base64 in JSON)
     // Decode base64 string or handle raw byte array
-    let bytes: Uint8Array;
+    let bytes: Uint8Array<ArrayBuffer>;
     if (typeof (chunk.data as unknown) === 'string') {
       // Base64 encoded
       const binary = atob(chunk.data as unknown as string);
@@ -494,7 +494,7 @@ export function useFileTransfer(options: UseFileTransferOptions): UseFileTransfe
 
     // Start sending chunks after a brief delay to let the agent process the start message
     setTimeout(() => {
-      sendFileChunks(transferId, file);
+      void sendFileChunks(transferId, file);
     }, 100);
   }, [currentPath, sendMessage, syncTransfers]);
 

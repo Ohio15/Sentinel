@@ -82,7 +82,7 @@ export function TicketAnalytics({ onViewChange }: TicketAnalyticsProps) {
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
-    loadAnalytics();
+    void loadAnalytics();
   }, [dateRange]);
 
   const loadAnalytics = async () => {
@@ -157,7 +157,7 @@ export function TicketAnalytics({ onViewChange }: TicketAnalyticsProps) {
             <option value="90">Last 90 days</option>
           </select>
           <button
-            onClick={handleRefresh}
+            onClick={() => { void handleRefresh(); }}
             disabled={refreshing}
             className="btn btn-secondary flex items-center gap-2"
           >

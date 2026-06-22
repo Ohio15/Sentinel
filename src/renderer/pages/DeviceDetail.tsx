@@ -227,9 +227,9 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
   // Real-time metrics subscription moved to individual components (OverviewMetrics, PerformanceView)
 
   useEffect(() => {
-    fetchDevice(deviceId);
-    fetchMetrics(deviceId, 24);
-    fetchClients();
+    void fetchDevice(deviceId);
+    void fetchMetrics(deviceId, 24);
+    void fetchClients();
   }, [deviceId]);
 
   // Redirect from remote tab if device is Linux (no X11 display support)
@@ -379,7 +379,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
       `Installed RAM: ${selectedDevice.totalMemory ? formatBytes(selectedDevice.totalMemory) : 'N/A'}`,
       `System type: ${selectedDevice.architecture}`,
     ].join("\n");
-    navigator.clipboard.writeText(specs);
+    void navigator.clipboard.writeText(specs);
   };
 
   const copyWindowsSpecs = () => {
@@ -389,7 +389,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
       `Version: ${selectedDevice.osVersion}`,
       `OS build: ${selectedDevice.osBuild || 'N/A'}`,
     ].join("\n");
-    navigator.clipboard.writeText(specs);
+    void navigator.clipboard.writeText(specs);
   };
 
   if (loading) {
@@ -488,7 +488,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                 {/* Pop-out button for Performance tab */}
                 {tab.id === 'performance' && activeTab === 'performance' && (
                   <button
-                    onClick={handlePopOut}
+                    onClick={() => { void handlePopOut(); }}
                     className="ml-1 p-1.5 text-text-secondary hover:text-primary hover:bg-hover rounded transition-colors"
                     title="Pop out to new window"
                     disabled={isPopOutOpen(deviceId, 'performance')}
@@ -529,14 +529,14 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                           value={editedName}
                           onChange={(e) => setEditedName(e.target.value)}
                           onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleSaveName();
+                            if (e.key === 'Enter') void handleSaveName();
                             if (e.key === 'Escape') handleCancelEdit();
                           }}
                           className="text-2xl font-bold text-text-primary bg-surface-alt border border-border rounded-lg px-3 py-1 focus:outline-none focus:ring-2 focus:ring-primary"
                           autoFocus
                         />
                         <button
-                          onClick={handleSaveName}
+                          onClick={() => { void handleSaveName(); }}
                           className="p-2 hover:bg-green-100 dark:hover:bg-green-900/30 rounded-lg transition-colors"
                           title="Save"
                         >
@@ -577,7 +577,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                   <div className="flex gap-2">
                     {/* Wake Button - only enabled if WoL supported */}
                     <button
-                      onClick={() => handleWake()}
+                      onClick={() => { void handleWake(); }}
                       disabled={!selectedDevice.powerManagement?.wolSupported || selectedDevice.status === 'online'}
                       className={`p-2 rounded-lg border transition-colors ${
                         selectedDevice.powerManagement?.wolSupported && selectedDevice.status !== 'online'
@@ -596,7 +596,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                     </button>
                     {/* Restart Button - only enabled if device is online */}
                     <button
-                      onClick={() => handleRestart()}
+                      onClick={() => { void handleRestart(); }}
                       disabled={selectedDevice.status !== 'online'}
                       className={`p-2 rounded-lg border transition-colors ${
                         selectedDevice.status === 'online'
@@ -609,7 +609,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                     </button>
                     {/* Shutdown Button - only enabled if device is online */}
                     <button
-                      onClick={() => handleShutdown()}
+                      onClick={() => { void handleShutdown(); }}
                       disabled={selectedDevice.status !== 'online'}
                       className={`p-2 rounded-lg border transition-colors ${
                         selectedDevice.status === 'online'
@@ -646,7 +646,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                   <div className="flex items-center gap-2">
                     <select
                       value={selectedDevice.clientId || ''}
-                      onChange={(e) => handleAssignClient(e.target.value || null)}
+                      onChange={(e) => { void handleAssignClient(e.target.value || null); }}
                       className="input min-w-[200px]"
                       autoFocus
                     >
@@ -804,13 +804,13 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                   type="text"
                   value={command}
                   onChange={e => setCommand(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && executeCommand()}
+                  onKeyDown={e => { if (e.key === 'Enter') void executeCommand(); }}
                   placeholder="Enter command..."
                   className="input flex-1"
                   disabled={selectedDevice.status !== 'online'}
                 />
                 <button
-                  onClick={executeCommand}
+                  onClick={() => { void executeCommand(); }}
                   disabled={isExecuting || selectedDevice.status !== 'online' || !command.trim()}
                   className="btn btn-primary"
                 >

@@ -260,7 +260,7 @@ export function TicketsKanban({ onTicketSelect, onViewChange }: TicketsKanbanPro
   );
 
   useEffect(() => {
-    fetchTickets();
+    void fetchTickets();
   }, []);
 
   // Group tickets by status
@@ -369,7 +369,7 @@ export function TicketsKanban({ onTicketSelect, onViewChange }: TicketsKanbanPro
         sensors={sensors}
         collisionDetection={closestCorners}
         onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
+        onDragEnd={(event) => { void handleDragEnd(event); }}
       >
         <div className="flex gap-4 overflow-x-auto pb-4">
           {columns.map((column) => (

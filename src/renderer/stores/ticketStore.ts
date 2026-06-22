@@ -140,8 +140,8 @@ export const useTicketStore = create<TicketState>((set, get) => ({
       set({ selectedTicket: ticket as Ticket, loading: false });
       // Also fetch comments and activity
       if (ticket) {
-        get().fetchComments(id);
-        get().fetchActivity(id);
+        void get().fetchComments(id);
+        void get().fetchActivity(id);
       }
     } catch (error: unknown) {
       set({ error: error instanceof Error ? error.message : 'Unknown error', loading: false });
@@ -204,15 +204,11 @@ export const useTicketStore = create<TicketState>((set, get) => ({
   },
 
   addComment: async (comment: Omit<TicketComment, 'id' | 'createdAt'>) => {
-    try {
-      const newComment = await ticketsService.addComment(comment);
-      set((state) => ({
-        ticketComments: [...state.ticketComments, newComment as TicketComment],
-      }));
-      return newComment as TicketComment;
-    } catch (error: unknown) {
-      throw error;
-    }
+    const newComment = await ticketsService.addComment(comment);
+    set((state) => ({
+      ticketComments: [...state.ticketComments, newComment as TicketComment],
+    }));
+    return newComment as TicketComment;
   },
 
   fetchActivity: async (ticketId: string) => {
@@ -244,7 +240,7 @@ export const useTicketStore = create<TicketState>((set, get) => ({
 
   setFilters: (filters: TicketFilters) => {
     set({ filters });
-    get().fetchTickets(filters);
+    void get().fetchTickets(filters);
   },
 
   clearSelectedTicket: () => {

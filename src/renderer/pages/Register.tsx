@@ -52,7 +52,7 @@ export function Register() {
       }
     };
 
-    validateToken();
+    void validateToken();
   }, [token]);
 
   const handleSubmit = async (e: FormEvent) => {
@@ -155,7 +155,7 @@ export function Register() {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={(e) => { void handleSubmit(e); }} className="space-y-4">
             <Input
               label="Username"
               type="text"

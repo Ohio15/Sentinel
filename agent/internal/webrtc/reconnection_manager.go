@@ -183,9 +183,11 @@ func (rm *ReconnectionManager) Stop() {
 		rm.cancel()
 		close(rm.stopCh)
 
+		rm.mu.Lock()
 		if rm.pingTicker != nil {
 			rm.pingTicker.Stop()
 		}
+		rm.mu.Unlock()
 
 		log.Printf("[ReconnectionManager] Stopped")
 	})
@@ -484,14 +486,18 @@ func (rm *ReconnectionManager) calculateBackoff(attempt int) time.Duration {
 
 // keepaliveLoop sends periodic keepalive pings
 func (rm *ReconnectionManager) keepaliveLoop() {
-	rm.pingTicker = time.NewTicker(rm.config.KeepAliveInterval)
-	defer rm.pingTicker.Stop()
+	ticker := time.NewTicker(rm.config.KeepAliveInterval)
+	defer ticker.Stop()
+
+	rm.mu.Lock()
+	rm.pingTicker = ticker
+	rm.mu.Unlock()
 
 	for {
 		select {
 		case <-rm.stopCh:
 			return
-		case <-rm.pingTicker.C:
+		case <-ticker.C:
 			rm.checkKeepalive()
 		}
 	}

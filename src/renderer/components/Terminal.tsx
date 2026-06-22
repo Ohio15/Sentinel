@@ -111,7 +111,7 @@ export const Terminal = memo(function Terminal({ deviceId, isOnline }: TerminalP
           </button>
         ) : (
           <button
-            onClick={handleConnect}
+            onClick={() => { void handleConnect(); }}
             disabled={connecting}
             className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 transition-colors disabled:opacity-50"
           >
@@ -129,7 +129,7 @@ export const Terminal = memo(function Terminal({ deviceId, isOnline }: TerminalP
           <pre key={i} className="whitespace-pre-wrap">{line}</pre>
         ))}
         {connected && (
-          <form onSubmit={handleSubmit} className="flex items-center">
+          <form onSubmit={(e) => { void handleSubmit(e); }} className="flex items-center">
             <span className="text-green-400">$</span>
             <input
               ref={inputRef}

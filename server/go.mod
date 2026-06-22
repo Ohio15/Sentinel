@@ -2,7 +2,7 @@ module github.com/sentinel/server
 
 go 1.25.0
 
-toolchain go1.25.9
+toolchain go1.25.11
 
 require (
 	github.com/gin-gonic/gin v1.9.1

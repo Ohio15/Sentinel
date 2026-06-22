@@ -21,8 +21,10 @@ services:
       POSTGRES_DB: sentinel_test
       POSTGRES_USER: sentinel_test
       POSTGRES_PASSWORD: test_password_only_for_testing_123
-    ports:
-      - "5433:5432"  # Different port than production
+    # No host port published: the test backend reaches this over the
+    # sentinel-test-network (postgres-test:5432), and CI only talks to the
+    # backend (8091). Publishing 5433 collided with apm-postgres on the shared
+    # self-hosted runner ("port is already allocated").
     # Use tmpfs for fast ephemeral storage (data lost on restart)
     tmpfs:
       - /var/lib/postgresql/data
@@ -38,8 +40,8 @@ services:
   redis-test:
     image: redis:7-alpine
     container_name: sentinel-test-redis
-    ports:
-      - "6380:6379"  # Different port than production
+    # No host port published: reached internally as redis-test:6379. Avoids
+    # cross-project host-port collisions on the shared self-hosted runner.
     networks:
       - sentinel-test-network
     healthcheck:

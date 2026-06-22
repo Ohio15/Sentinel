@@ -30,8 +30,8 @@ export function Alerts() {
   const [editingRule, setEditingRule] = useState<AlertRule | null>(null);
 
   useEffect(() => {
-    fetchAlerts();
-    fetchRules();
+    void fetchAlerts();
+    void fetchRules();
   }, []);
 
   // Get device IDs that belong to the current client for filtering alerts
@@ -120,8 +120,8 @@ export function Alerts() {
                 <AlertCard
                   key={alert.id}
                   alert={alert}
-                  onAcknowledge={() => acknowledgeAlert(alert.id)}
-                  onResolve={() => resolveAlert(alert.id)}
+                  onAcknowledge={() => { void acknowledgeAlert(alert.id); }}
+                  onResolve={() => { void resolveAlert(alert.id); }}
                 />
               ))}
             </div>
@@ -175,7 +175,7 @@ export function Alerts() {
                       </td>
                       <td>
                         <button
-                          onClick={() => updateRule(rule.id, { enabled: !rule.enabled })}
+                          onClick={() => { void updateRule(rule.id, { enabled: !rule.enabled }); }}
                           className={`text-sm font-medium ${
                             rule.enabled ? 'text-success' : 'text-text-secondary'
                           }`}
@@ -192,7 +192,7 @@ export function Alerts() {
                             <EditIcon className="w-4 h-4" />
                           </button>
                           <button
-                            onClick={() => deleteRule(rule.id)}
+                            onClick={() => { void deleteRule(rule.id); }}
                             className="text-text-secondary hover:text-danger transition-colors"
                           >
                             <TrashIcon className="w-4 h-4" />
@@ -214,13 +214,15 @@ export function Alerts() {
         <RuleModal
           rule={editingRule}
           onClose={() => setShowRuleModal(false)}
-          onSave={async (rule) => {
-            if (editingRule) {
-              await updateRule(editingRule.id, rule);
-            } else {
-              await createRule(rule as any);
-            }
-            setShowRuleModal(false);
+          onSave={(rule) => {
+            void (async () => {
+              if (editingRule) {
+                await updateRule(editingRule.id, rule);
+              } else {
+                await createRule(rule as any);
+              }
+              setShowRuleModal(false);
+            })();
           }}
         />
       )}
@@ -267,7 +269,7 @@ function AlertCard({
 
   const handleToggleExpand = () => {
     if (!expanded && transfers.length === 0) {
-      loadTransfers();
+      void loadTransfers();
     }
     setExpanded(!expanded);
   };

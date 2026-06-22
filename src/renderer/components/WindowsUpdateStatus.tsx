@@ -45,7 +45,7 @@ export function WindowsUpdateStatus({ deviceId, osType }: WindowsUpdateStatusPro
       }
     }
 
-    fetchUpdateStatus();
+    void fetchUpdateStatus();
 
     // Subscribe to real-time update status changes
     const unsubscribe = updatesService.onStatus((data: unknown) => {

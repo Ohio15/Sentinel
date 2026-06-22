@@ -150,12 +150,12 @@ export function Settings() {
   const [showAddTenant, setShowAddTenant] = useState(false);
 
   useEffect(() => {
-    loadData();
+    void loadData();
   }, []);
 
   useEffect(() => {
     if (activeTab === 'portal') {
-      loadPortalData();
+      void loadPortalData();
     }
   }, [activeTab]);
 
@@ -230,7 +230,7 @@ export function Settings() {
       await portalService.createClientTenant(newTenant);
       setNewTenant({ clientId: '', tenantId: '', tenantName: '' });
       setShowAddTenant(false);
-      loadPortalData();
+      await loadPortalData();
     } catch (error: unknown) {
       alert(`Error adding tenant mapping: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
@@ -241,7 +241,7 @@ export function Settings() {
 
     try {
       await portalService.deleteClientTenant(id);
-      loadPortalData();
+      await loadPortalData();
     } catch (error: unknown) {
       alert(`Error deleting tenant mapping: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
@@ -502,7 +502,7 @@ export function Settings() {
           </div>
 
           <div className="flex justify-end">
-            <button onClick={handleSave} disabled={saving} className="btn btn-primary">
+            <button onClick={() => { void handleSave(); }} disabled={saving} className="btn btn-primary">
               {saving ? 'Saving...' : 'Save Settings'}
             </button>
           </div>
@@ -609,7 +609,7 @@ export function Settings() {
             )}
             <div className="flex items-center gap-4 mt-4">
               <button
-                onClick={handleConnectBackend}
+                onClick={() => { void handleConnectBackend(); }}
                 disabled={backendConnecting}
                 className="btn btn-primary"
               >
@@ -717,7 +717,7 @@ export function Settings() {
                 </div>
               </div>
               <div className="flex justify-end mt-6">
-                <button onClick={handleSavePortalSettings} disabled={savingPortal} className="btn btn-primary">
+                <button onClick={() => { void handleSavePortalSettings(); }} disabled={savingPortal} className="btn btn-primary">
                   {savingPortal ? 'Saving...' : 'Save Azure AD Settings'}
                 </button>
               </div>
@@ -882,7 +882,7 @@ export function Settings() {
                 )}
               </div>
               <div className="flex justify-end mt-6">
-                <button onClick={handleSavePortalSettings} disabled={savingPortal} className="btn btn-primary">
+                <button onClick={() => { void handleSavePortalSettings(); }} disabled={savingPortal} className="btn btn-primary">
                   {savingPortal ? 'Saving...' : 'Save Email Settings'}
                 </button>
               </div>
@@ -954,7 +954,7 @@ export function Settings() {
                     </div>
                   )}
                   <div className="flex gap-2 mt-4">
-                    <button onClick={handleAddTenant} className="btn btn-primary">
+                    <button onClick={() => { void handleAddTenant(); }} className="btn btn-primary">
                       Add Tenant
                     </button>
                     <button
@@ -995,7 +995,7 @@ export function Settings() {
                           <td className="py-2 px-4 text-text-secondary">{tenant.tenantName || '-'}</td>
                           <td className="py-2 px-4 text-right">
                             <button
-                              onClick={() => handleDeleteTenant(tenant.id)}
+                              onClick={() => { void handleDeleteTenant(tenant.id); }}
                               className="text-danger hover:text-red-700"
                             >
                               Remove

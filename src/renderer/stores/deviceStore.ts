@@ -33,7 +33,7 @@ export interface Device {
   agentId: string;
   hostname: string;
   displayName?: string;
-  deviceType?: 'desktop' | 'laptop' | 'server' | 'tablet' | 'virtual';
+  deviceType?: string;
   osType: string;
   osVersion: string;
   osBuild?: string;
@@ -60,7 +60,9 @@ export interface Device {
   macAddress: string;
   tags: string[];
   metadata: Record<string, unknown>;
-  clientId?: string;
+  // null = explicitly unassigned from any client (distinct from "field absent").
+  // updateDevice() can clear the assignment by sending clientId: null.
+  clientId?: string | null;
   isDisabled?: boolean;
   disabledAt?: string;
   powerManagement?: PowerManagement;
@@ -141,7 +143,7 @@ interface DeviceState {
   enableDevice: (id: string) => Promise<void>;
   uninstallDevice: (id: string) => Promise<void>;
   forceUpdateDevice: (id: string) => Promise<void>;
-  updateDevice: (id: string, data: { displayName?: string; tags?: string[]; clientId?: string | null }) => Promise<void>;
+  updateDevice: (id: string, data: { displayName?: string; tags?: string[]; clientId?: string | null; deviceType?: string }) => Promise<void>;
   // Power management
   shutdownDevice: (id: string) => Promise<void>;
   restartDevice: (id: string) => Promise<void>;
@@ -268,7 +270,7 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
     }
   },
 
-  updateDevice: async (id: string, data: { displayName?: string; tags?: string[]; clientId?: string | null }) => {
+  updateDevice: async (id: string, data: { displayName?: string; tags?: string[]; clientId?: string | null; deviceType?: string }) => {
     try {
       await devicesService.update(id, data);
       const { devices, selectedDevice } = get();
@@ -318,40 +320,42 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
   subscribeToUpdates: () => {
     // Periodic refresh every 10 seconds for faster agent detection
     const refreshInterval = setInterval(() => {
-      get().fetchDevices(undefined, false); // Background refresh, no loading indicator
+      void get().fetchDevices(undefined, false); // Background refresh, no loading indicator
     }, 10000);
 
     // Refresh on window focus for immediate updates after tab switch
     const handleFocus = () => {
       console.log('[DeviceStore] Window focused, refreshing devices...');
-      get().fetchDevices(undefined, false); // Background refresh, no loading indicator
+      void get().fetchDevices(undefined, false); // Background refresh, no loading indicator
     };
     window.addEventListener('focus', handleFocus);
 
-    const unsubOnline = events.on('devices:online', async (rawData) => {
-      const data = rawData as { agentId: string; deviceId?: string };
-      const { devices } = get();
-      const existingDevice = devices.find(d => d.agentId === data.agentId);
+    const unsubOnline = events.on('devices:online', (rawData) => {
+      void (async () => {
+        const data = rawData as { agentId: string; deviceId?: string };
+        const { devices } = get();
+        const existingDevice = devices.find(d => d.agentId === data.agentId);
 
-      if (existingDevice) {
-        // Device exists in store, just update status
-        const updated = devices.map(d =>
-          d.agentId === data.agentId ? { ...d, status: 'online' as const } : d
-        );
-        set({ devices: updated });
-      } else if (data.deviceId) {
-        // New device - fetch it and add to store
-        console.log('[DeviceStore] New device online, fetching:', data.deviceId);
-        try {
-          const newDevice = await devicesService.get(data.deviceId) as unknown as Device;
-          if (newDevice) {
-            set({ devices: [...devices, { ...newDevice, status: 'online' as const }] });
-            console.log('[DeviceStore] Added new device to store:', newDevice.hostname);
+        if (existingDevice) {
+          // Device exists in store, just update status
+          const updated = devices.map(d =>
+            d.agentId === data.agentId ? { ...d, status: 'online' as const } : d
+          );
+          set({ devices: updated });
+        } else if (data.deviceId) {
+          // New device - fetch it and add to store
+          console.log('[DeviceStore] New device online, fetching:', data.deviceId);
+          try {
+            const newDevice = await devicesService.get(data.deviceId) as unknown as Device;
+            if (newDevice) {
+              set({ devices: [...devices, { ...newDevice, status: 'online' as const }] });
+              console.log('[DeviceStore] Added new device to store:', newDevice.hostname);
+            }
+          } catch (error) {
+            console.error('[DeviceStore] Failed to fetch new device:', error);
           }
-        } catch (error) {
-          console.error('[DeviceStore] Failed to fetch new device:', error);
         }
-      }
+      })();
     });
 
     const unsubOffline = events.on('devices:offline', (rawData) => {
@@ -367,7 +371,7 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
       const data = rawData as { deviceId: string };
       console.log('[DeviceStore] devices:updated received', data);
       // Refetch devices to get the latest list (no loading indicator)
-      get().fetchDevices(undefined, false);
+      void get().fetchDevices(undefined, false);
     });
 
     let metricsReceivedCount = 0;

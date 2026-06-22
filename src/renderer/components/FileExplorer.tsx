@@ -43,7 +43,7 @@ export const FileExplorer = memo(function FileExplorer({ deviceId, isOnline, isA
 
   useEffect(() => {
     if (isOnline && isActive && drives.length === 0) {
-      loadDrives();
+      void loadDrives();
     }
 
     const unsub = events.on('file_progress', (data: unknown) => {
@@ -94,11 +94,11 @@ export const FileExplorer = memo(function FileExplorer({ deviceId, isOnline, isA
 
   const navigateUp = () => {
     const isWindows = currentPath.includes('\\') || /^[A-Za-z]:/.test(currentPath);
-    const parts = currentPath.split(/[\\\/]/).filter(Boolean);
+    const parts = currentPath.split(/[\\/]/).filter(Boolean);
 
     if (parts.length <= 1) {
       // At root or drive root - go back to drives view
-      loadDrives();
+      void loadDrives();
       return;
     }
 
@@ -114,19 +114,19 @@ export const FileExplorer = memo(function FileExplorer({ deviceId, isOnline, isA
     } else {
       newPath = '/' + parts.join('/');
     }
-    loadDirectory(newPath);
+    void loadDirectory(newPath);
   };
 
   const navigateTo = (entry: FileEntry) => {
     if (entry.is_dir) {
-      loadDirectory(entry.path);
+      void loadDirectory(entry.path);
     } else {
       setSelectedFile(entry);
     }
   };
 
   const navigateToDrive = (drive: DriveInfo) => {
-    loadDirectory(drive.path);
+    void loadDirectory(drive.path);
   };
 
   const handleDownload = async (file: FileEntry) => {
@@ -160,7 +160,7 @@ export const FileExplorer = memo(function FileExplorer({ deviceId, isOnline, isA
 
     const isWindows = currentPath.includes('\\') || /^[A-Za-z]:/.test(currentPath);
     const separator = isWindows ? '\\' : '/';
-    const parts = currentPath.split(/[\\\/]/).filter(Boolean);
+    const parts = currentPath.split(/[\\/]/).filter(Boolean);
 
     const segments: { name: string; path: string }[] = [];
     let accumulatedPath = '';
@@ -220,7 +220,7 @@ export const FileExplorer = memo(function FileExplorer({ deviceId, isOnline, isA
           <UpIcon className="w-5 h-5" />
         </button>
         <button
-          onClick={() => viewMode === 'drives' ? loadDrives() : loadDirectory(currentPath)}
+          onClick={() => { void (viewMode === 'drives' ? loadDrives() : loadDirectory(currentPath)); }}
           className="p-1 text-text-secondary hover:text-text-primary transition-colors"
           title="Refresh"
         >
@@ -230,7 +230,7 @@ export const FileExplorer = memo(function FileExplorer({ deviceId, isOnline, isA
         {/* Breadcrumb Path Bar */}
         <div className="flex-1 flex items-center gap-1 px-3 py-1 bg-white dark:bg-slate-700 border border-border rounded text-sm overflow-x-auto">
           <button
-            onClick={loadDrives}
+            onClick={() => { void loadDrives(); }}
             className={`flex items-center gap-1 px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-slate-600 transition-colors whitespace-nowrap ${
               viewMode === 'drives' ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400' : 'text-text-primary'
             }`}
@@ -243,7 +243,7 @@ export const FileExplorer = memo(function FileExplorer({ deviceId, isOnline, isA
             <React.Fragment key={segment.path}>
               <ChevronRightIcon className="w-4 h-4 text-gray-400 dark:text-gray-500 flex-shrink-0" />
               <button
-                onClick={() => loadDirectory(segment.path)}
+                onClick={() => { void loadDirectory(segment.path); }}
                 className="px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-slate-600 transition-colors whitespace-nowrap font-mono text-text-primary"
               >
                 {segment.name}
@@ -374,7 +374,7 @@ export const FileExplorer = memo(function FileExplorer({ deviceId, isOnline, isA
                     <td onClick={e => e.stopPropagation()}>
                       {!file.is_dir && (
                         <button
-                          onClick={() => handleDownload(file)}
+                          onClick={() => { void handleDownload(file); }}
                           className="p-1 text-text-secondary hover:text-primary transition-colors"
                           title="Download"
                         >

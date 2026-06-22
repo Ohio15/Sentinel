@@ -134,7 +134,7 @@ export default function SupportPortal() {
       return;
     }
 
-    (async () => {
+    void (async () => {
       try {
         const me = await api.getMe();
         setUser(me);
@@ -266,7 +266,7 @@ export default function SupportPortal() {
         {showCreateForm && !selectedTicket && (
           <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 mb-6">
             <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Create Support Ticket</h3>
-            <form onSubmit={handleCreateTicket} className="space-y-4">
+            <form onSubmit={(e) => { void handleCreateTicket(e); }} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Subject</label>
                 <input
@@ -371,7 +371,7 @@ export default function SupportPortal() {
               )}
 
               {/* Add Comment */}
-              <form onSubmit={handleAddComment} className="mt-6">
+              <form onSubmit={(e) => { void handleAddComment(e); }} className="mt-6">
                 <textarea
                   value={newComment}
                   onChange={(e) => setNewComment(e.target.value)}
@@ -425,7 +425,7 @@ export default function SupportPortal() {
                   {tickets.map((ticket) => (
                     <tr
                       key={ticket.id}
-                      onClick={() => handleSelectTicket(ticket)}
+                      onClick={() => { void handleSelectTicket(ticket); }}
                       className="hover:bg-slate-50 dark:hover:bg-slate-700/30 cursor-pointer transition-colors"
                     >
                       <td className="px-6 py-4 text-sm text-slate-500 dark:text-slate-400">

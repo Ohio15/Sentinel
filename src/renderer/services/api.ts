@@ -381,7 +381,7 @@ class ApiService {
     return this.get<unknown>('/settings');
   }
 
-  async updateSettings(data: Record<string, unknown>) {
+  async updateSettings(data: object) {
     return this.put('/settings', data);
   }
 

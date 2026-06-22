@@ -84,7 +84,7 @@ export function PasskeyManager() {
 
   useEffect(() => {
     setIsSupported(browserSupportsWebAuthn());
-    loadPasskeys();
+    void loadPasskeys();
   }, []);
 
   const loadPasskeys = async () => {
@@ -126,7 +126,7 @@ export function PasskeyManager() {
       });
 
       alert('Passkey registered successfully');
-      loadPasskeys();
+      void loadPasskeys();
     } catch (err: any) {
       if (err.name === 'NotAllowedError') {
         setError('Registration was cancelled');
@@ -145,7 +145,7 @@ export function PasskeyManager() {
 
     try {
       await passkeysService.delete(id);
-      loadPasskeys();
+      void loadPasskeys();
     } catch (err) {
       alert('Failed to delete passkey');
     }
@@ -162,7 +162,7 @@ export function PasskeyManager() {
     try {
       await passkeysService.rename(editingId, editName.trim());
       setEditingId(null);
-      loadPasskeys();
+      void loadPasskeys();
     } catch (err) {
       alert('Failed to rename passkey');
     }
@@ -220,7 +220,7 @@ export function PasskeyManager() {
           </div>
         </div>
         <button
-          onClick={handleAddPasskey}
+          onClick={() => { void handleAddPasskey(); }}
           disabled={isRegistering}
           className="btn btn-primary flex items-center gap-2"
         >
@@ -274,7 +274,7 @@ export function PasskeyManager() {
                       className="input text-sm"
                       autoFocus
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleSaveEdit();
+                        if (e.key === 'Enter') void handleSaveEdit();
                         if (e.key === 'Escape') handleCancelEdit();
                       }}
                     />
@@ -291,7 +291,7 @@ export function PasskeyManager() {
                 {editingId === passkey.id ? (
                   <>
                     <button
-                      onClick={handleSaveEdit}
+                      onClick={() => { void handleSaveEdit(); }}
                       className="p-2 text-green-600 hover:bg-green-100 dark:hover:bg-green-900/30 rounded-lg"
                       title="Save"
                     >
@@ -315,7 +315,7 @@ export function PasskeyManager() {
                       <EditIcon className="w-4 h-4" />
                     </button>
                     <button
-                      onClick={() => handleDelete(passkey.id, passkey.name)}
+                      onClick={() => { void handleDelete(passkey.id, passkey.name); }}
                       className="p-2 text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg"
                       title="Delete"
                     >

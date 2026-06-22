@@ -110,11 +110,12 @@ export function TagManager({
     if (disabled) return;
 
     switch (e.key) {
-      case 'ArrowDown':
+      case 'ArrowDown': {
         e.preventDefault();
         const maxIndex = filteredTags.length + (canCreateNew ? 0 : -1);
         setHighlightedIndex((prev) => Math.min(prev + 1, maxIndex));
         break;
+      }
 
       case 'ArrowUp':
         e.preventDefault();
@@ -126,11 +127,11 @@ export function TagManager({
         if (highlightedIndex >= 0 && highlightedIndex < filteredTags.length) {
           addTag(filteredTags[highlightedIndex]);
         } else if (highlightedIndex === filteredTags.length && canCreateNew) {
-          handleCreateTag();
+          void handleCreateTag();
         } else if (filteredTags.length === 1) {
           addTag(filteredTags[0]);
         } else if (canCreateNew && filteredTags.length === 0) {
-          handleCreateTag();
+          void handleCreateTag();
         }
         break;
 
@@ -232,7 +233,7 @@ export function TagManager({
           {canCreateNew && (
             <button
               type="button"
-              onClick={handleCreateTag}
+              onClick={() => { void handleCreateTag(); }}
               disabled={isCreating}
               className={`
                 w-full flex items-center gap-2 px-3 py-2 text-left text-sm

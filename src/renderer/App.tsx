@@ -40,7 +40,7 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     // checkAuth has internal flag to prevent duplicate calls
-    checkAuth();
+    void checkAuth();
   }, []); // Empty deps - checkAuth guards against duplicate calls internally
 
   if (isLoading) return (<div className="min-h-screen bg-background flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>);
@@ -57,13 +57,13 @@ function MainLayout() {
   const { currentClientId, fetchClients } = useClientStore();
 
   useEffect(() => {
-    fetchClients();
+    void fetchClients();
     const unsubDevices = subscribeToUpdates();
     const unsubAlerts = subscribeToAlerts();
     return () => { unsubDevices(); unsubAlerts(); };
   }, []);
 
-  useEffect(() => { fetchDevices(currentClientId); fetchAlerts(); }, [currentClientId]);
+  useEffect(() => { void fetchDevices(currentClientId); void fetchAlerts(); }, [currentClientId]);
 
   const handleNavigate = (page: Page) => {
     setCurrentPage(page);

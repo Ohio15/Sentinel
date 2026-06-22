@@ -24,7 +24,7 @@ export function Scripts() {
   const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
-    loadScripts();
+    void loadScripts();
   }, []);
 
   // Filter scripts by OS and search term
@@ -175,7 +175,7 @@ export function Scripts() {
                   <button onClick={() => handleEdit(selectedScript)} className="btn btn-secondary">
                     Edit
                   </button>
-                  <button onClick={() => handleDelete(selectedScript.id)} className="btn btn-danger">
+                  <button onClick={() => { void handleDelete(selectedScript.id); }} className="btn btn-danger">
                     Delete
                   </button>
                 </div>
@@ -221,7 +221,7 @@ export function Scripts() {
         <ScriptModal
           script={editingScript}
           onClose={() => setShowModal(false)}
-          onSave={handleSave}
+          onSave={(script) => { void handleSave(script); }}
         />
       )}
     </div>
@@ -342,7 +342,7 @@ function ExecuteScriptForm({ scriptId }: { scriptId: string }) {
           Clear
         </button>
         <button
-          onClick={handleExecute}
+          onClick={() => { void handleExecute(); }}
           disabled={executing || selectedDevices.length === 0}
           className="btn btn-primary text-sm ml-auto"
         >

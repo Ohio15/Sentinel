@@ -7,7 +7,7 @@ export function ClientSelector() {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fetchClients();
+    void fetchClients();
   }, [fetchClients]);
 
   useEffect(() => {

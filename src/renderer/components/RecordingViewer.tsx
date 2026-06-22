@@ -96,7 +96,7 @@ export function RecordingViewer({ recordingId, onClose }: RecordingViewerProps) 
       }
     };
 
-    loadData();
+    void loadData();
   }, [recordingId]);
 
   // Playback control
@@ -119,6 +119,7 @@ export function RecordingViewer({ recordingId, onClose }: RecordingViewerProps) 
         }
       };
     }
+    return undefined;
   }, [isPlaying, playbackSpeed, metrics.length]);
 
   const handlePlay = () => {

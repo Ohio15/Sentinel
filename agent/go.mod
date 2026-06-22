@@ -2,7 +2,7 @@ module github.com/sentinel/agent
 
 go 1.25.0
 
-toolchain go1.25.10
+toolchain go1.25.11
 
 require (
 	github.com/Microsoft/go-winio v0.6.2

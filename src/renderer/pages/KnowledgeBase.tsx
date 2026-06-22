@@ -66,7 +66,7 @@ export function KnowledgeBase() {
   const [editingCategory, setEditingCategory] = useState<KBCategory | null>(null);
 
   useEffect(() => {
-    loadData();
+    void loadData();
   }, []);
 
   const loadData = async () => {
@@ -390,7 +390,7 @@ export function KnowledgeBase() {
                         <div className="flex items-center justify-end gap-2">
                           {article.status === 'draft' && (
                             <button
-                              onClick={() => handlePublishArticle(article)}
+                              onClick={() => { void handlePublishArticle(article); }}
                               className="p-1.5 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/30 rounded"
                               title="Publish"
                             >
@@ -398,14 +398,14 @@ export function KnowledgeBase() {
                             </button>
                           )}
                           <button
-                            onClick={() => handleToggleFeatured(article)}
+                            onClick={() => { void handleToggleFeatured(article); }}
                             className={`p-1.5 rounded ${article.isFeatured ? 'text-yellow-500 bg-yellow-50 dark:bg-yellow-900/30' : 'text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
                             title={article.isFeatured ? 'Unfeature' : 'Feature'}
                           >
                             <Star className={`w-4 h-4 ${article.isFeatured ? 'fill-yellow-500' : ''}`} />
                           </button>
                           <button
-                            onClick={() => handleTogglePinned(article)}
+                            onClick={() => { void handleTogglePinned(article); }}
                             className={`p-1.5 rounded ${article.isPinned ? 'text-blue-500 bg-blue-50 dark:bg-blue-900/30' : 'text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
                             title={article.isPinned ? 'Unpin' : 'Pin'}
                           >
@@ -422,7 +422,7 @@ export function KnowledgeBase() {
                             <Edit className="w-4 h-4" />
                           </button>
                           <button
-                            onClick={() => handleDeleteArticle(article.id)}
+                            onClick={() => { void handleDeleteArticle(article.id); }}
                             className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded"
                             title="Delete"
                           >
@@ -450,9 +450,9 @@ export function KnowledgeBase() {
           }}
           onSave={(data) => {
             if (editingArticle) {
-              handleUpdateArticle(editingArticle.id, data);
+              void handleUpdateArticle(editingArticle.id, data);
             } else {
-              handleCreateArticle(data);
+              void handleCreateArticle(data);
             }
           }}
         />
@@ -466,19 +466,21 @@ export function KnowledgeBase() {
             setShowCategoryModal(false);
             setEditingCategory(null);
           }}
-          onSave={async (data) => {
-            try {
-              if (editingCategory) {
-                await kbService.categories.update(editingCategory.id, data);
-              } else {
-                await kbService.categories.create(data as { name: string });
+          onSave={(data) => {
+            void (async () => {
+              try {
+                if (editingCategory) {
+                  await kbService.categories.update(editingCategory.id, data);
+                } else {
+                  await kbService.categories.create(data as { name: string });
+                }
+                await loadData();
+                setShowCategoryModal(false);
+                setEditingCategory(null);
+              } catch (error) {
+                console.error('Failed to save category:', error);
               }
-              await loadData();
-              setShowCategoryModal(false);
-              setEditingCategory(null);
-            } catch (error) {
-              console.error('Failed to save category:', error);
-            }
+            })();
           }}
         />
       )}
@@ -561,7 +563,7 @@ function ArticleModal({
             {article ? 'Edit Article' : 'New Article'}
           </h2>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={(e) => { void handleSubmit(e); }} className="p-6 space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
               <label className="label">Title *</label>
@@ -721,7 +723,7 @@ function CategoryModal({
             {category ? 'Edit Category' : 'New Category'}
           </h2>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={(e) => { void handleSubmit(e); }} className="p-6 space-y-4">
           <div>
             <label className="label">Name *</label>
             <input

@@ -246,11 +246,13 @@ export const HighPerformanceRemoteDesktop = memo(function HighPerformanceRemoteD
   useEffect(() => {
     if (!isConnected) return;
 
-    const interval = setInterval(async () => {
-      const newStats = await getStats();
-      if (newStats) {
-        setStats(newStats);
-      }
+    const interval = setInterval(() => {
+      void (async () => {
+        const newStats = await getStats();
+        if (newStats) {
+          setStats(newStats);
+        }
+      })();
     }, 1000);
 
     return () => clearInterval(interval);
@@ -261,9 +263,9 @@ export const HighPerformanceRemoteDesktop = memo(function HighPerformanceRemoteD
     if (!containerRef.current) return;
 
     if (!isFullscreen) {
-      containerRef.current.requestFullscreen?.();
+      void containerRef.current.requestFullscreen?.();
     } else {
-      document.exitFullscreen?.();
+      void document.exitFullscreen?.();
     }
     setIsFullscreen(!isFullscreen);
   }, [isFullscreen]);
@@ -459,7 +461,7 @@ export const HighPerformanceRemoteDesktop = memo(function HighPerformanceRemoteD
             </button>
           ) : (
             <button
-              onClick={handleConnect}
+              onClick={() => { void handleConnect(); }}
               disabled={connectionState === 'connecting'}
               className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 transition-colors disabled:opacity-50"
             >
@@ -535,7 +537,7 @@ export const HighPerformanceRemoteDesktop = memo(function HighPerformanceRemoteD
                 <button
                   onClick={() => {
                     setError(null);
-                    handleConnect();
+                    void handleConnect();
                   }}
                   className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
                 >
