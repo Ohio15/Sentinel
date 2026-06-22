@@ -133,6 +133,10 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       const newToken = response.accessToken || response.token;
       const expiresIn = response.expiresIn;
 
+      if (!newToken) {
+        throw new Error('Refresh response did not include an access token');
+      }
+
       const expiresAt = Date.now() + (expiresIn * 1000);
       localStorage.setItem('token', newToken);
       localStorage.setItem('tokenExpiresAt', expiresAt.toString());

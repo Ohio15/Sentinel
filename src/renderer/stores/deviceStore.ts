@@ -33,7 +33,7 @@ export interface Device {
   agentId: string;
   hostname: string;
   displayName?: string;
-  deviceType?: 'desktop' | 'laptop' | 'server' | 'tablet' | 'virtual';
+  deviceType?: string;
   osType: string;
   osVersion: string;
   osBuild?: string;
@@ -143,7 +143,7 @@ interface DeviceState {
   enableDevice: (id: string) => Promise<void>;
   uninstallDevice: (id: string) => Promise<void>;
   forceUpdateDevice: (id: string) => Promise<void>;
-  updateDevice: (id: string, data: { displayName?: string; tags?: string[]; clientId?: string | null }) => Promise<void>;
+  updateDevice: (id: string, data: { displayName?: string; tags?: string[]; clientId?: string | null; deviceType?: string }) => Promise<void>;
   // Power management
   shutdownDevice: (id: string) => Promise<void>;
   restartDevice: (id: string) => Promise<void>;
@@ -270,7 +270,7 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
     }
   },
 
-  updateDevice: async (id: string, data: { displayName?: string; tags?: string[]; clientId?: string | null }) => {
+  updateDevice: async (id: string, data: { displayName?: string; tags?: string[]; clientId?: string | null; deviceType?: string }) => {
     try {
       await devicesService.update(id, data);
       const { devices, selectedDevice } = get();

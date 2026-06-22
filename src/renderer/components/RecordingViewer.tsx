@@ -119,6 +119,7 @@ export function RecordingViewer({ recordingId, onClose }: RecordingViewerProps) 
         }
       };
     }
+    return undefined;
   }, [isPlaying, playbackSpeed, metrics.length]);
 
   const handlePlay = () => {

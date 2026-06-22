@@ -15,7 +15,7 @@ import {
   bufferToBase64URLString,
   WebAuthnAbortService,
 } from '@simplewebauthn/browser';
-import { useAuthStore } from '../stores/authStore';
+import { useAuthStore, type User } from '../stores/authStore';
 import { Input } from '../components/ui';
 import { api } from '../services/api';
 import { connection } from '../services';
@@ -126,7 +126,7 @@ export function Login() {
       localStorage.setItem('tokenExpiresAt', expiresAt.toString());
 
       useAuthStore.setState({
-        user: user as Parameters<typeof useAuthStore.setState>[0]['user'],
+        user: user as User,
         token: accessToken,
         refreshToken,
         tokenExpiresAt: expiresAt,

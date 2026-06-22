@@ -666,7 +666,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                       {!currentClientId && (
                         <td>
                           {(() => {
-                            const client = getClientName(device.clientId);
+                            const client = getClientName(device.clientId ?? undefined);
                             if (client) {
                               return (
                                 <div className="flex items-center gap-2">
@@ -1273,7 +1273,7 @@ const deviceTypeConfig: Record<string, { icon: string; label: string; color: str
 
 function DeviceTypeCell({ device, onUpdate }: { device: Device; onUpdate: (id: string, data: { deviceType?: string }) => void }) {
   const [isEditing, setIsEditing] = useState(false);
-  const [selectedType, setSelectedType] = useState(device.deviceType || 'desktop');
+  const [selectedType, setSelectedType] = useState<string>(device.deviceType || 'desktop');
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const currentType = device.deviceType || 'desktop';

@@ -552,7 +552,7 @@ export const kb = {
       return api!.makeRequest('POST', '/kb/categories', data);
     },
 
-    async update(id: string, data: Partial<{ name: string; description: string; color: string }>): Promise<unknown> {
+    async update(id: string, data: Partial<{ name: string; description: string | null; color: string }>): Promise<unknown> {
       return api!.makeRequest('PUT', `/kb/categories/${id}`, data);
     },
 
@@ -584,8 +584,8 @@ export const kb = {
 
     async update(id: string, data: Partial<{
       title: string;
-      content: string;
-      categoryId: string;
+      content: string | null;
+      categoryId: string | null;
       tags: string[];
       isFeatured: boolean;
       isPinned: boolean;
@@ -617,7 +617,7 @@ export const settings = {
     return api!.getSettings();
   },
 
-  async update(data: Record<string, unknown>): Promise<void> {
+  async update(data: object): Promise<void> {
     await api!.updateSettings(data);
   },
 };
@@ -730,7 +730,7 @@ export const portal = {
     return api!.makeRequest('GET', '/portal/settings');
   },
 
-  async updateSettings(data: Record<string, unknown>): Promise<void> {
+  async updateSettings(data: object): Promise<void> {
     await api!.makeRequest('PUT', '/portal/settings', data);
   },
 

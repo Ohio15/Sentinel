@@ -78,6 +78,7 @@ export function RecordingControls({ deviceId, onRecordingChange, onRecordingStop
     } else {
       setElapsedTime(0);
     }
+    return undefined;
   }, [isRecording, activeRecording]);
 
   const checkActiveRecording = useCallback(async () => {

@@ -147,7 +147,7 @@ export class WebRTCService {
 
     // Handle ICE candidates
     this.pc.onicecandidate = (event) => {
-      if (event.candidate) {
+      if (event.candidate && wsService) {
         console.log('[WebRTC] Sending ICE candidate');
         wsService.send('webrtc_signal', {
           agentId: this.agentId,
