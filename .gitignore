@@ -71,3 +71,23 @@ update_main_ts.py
 
 # Screenshots
 *.png
+
+# --- Build/installer binaries & packages (standing rule: binaries never in git) ---
+# Agent packages and watchdog binaries published to installers/ by the build,
+# plus their timestamped backups. Source (scripts, specs, systemd units, docs)
+# under installers/ stays tracked; only the built artifacts are ignored.
+installers/*.pkg
+installers/*.rpm
+installers/*.deb
+installers/*.spk
+installers/sentinel-watchdog-linux-*
+
+# Timestamped backups (broadens the existing *.bak to *.bak-<timestamp>)
+*.bak-*
+backups/
+
+# Deprecated dnsmasq config (replaced by AdGuardHome on NEXUS)
+configs/dnsmasq/
+
+# openssl extension scratch files (certs/*.key|pem|crt|srl|cnf already ignored)
+certs/*.ext
