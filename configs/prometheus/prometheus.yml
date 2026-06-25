@@ -46,3 +46,33 @@ scrape_configs:
         target_label: instance
       - target_label: __address__
         replacement: blackbox-exporter:9115
+
+  # Synthetic probe of INTERNAL .nexus routes (Traefik Docker-provider routes).
+  # These resolve only via NEXUS AdGuard, so blackbox can't use public DNS;
+  # extra_hosts (docker-compose.override.yml) maps each name to the host IP so
+  # SNI/Host stay the real .nexus name and Traefik routes by Host. The
+  # http_2xx_internal module accepts the self-signed *.nexus cert.
+  # Catches the 2026-06-05 failure mode: Docker-provider routes silently 404 for
+  # weeks while file-provider routes (probed publicly) stayed green.
+  - job_name: 'blackbox-internal'
+    metrics_path: /probe
+    params:
+      module: [http_2xx_internal]
+    static_configs:
+      - targets:
+          - https://updates.nexus/manifest.json
+          - https://grafana.nexus/api/health
+          - https://apm.nexus/
+          - https://openclaw.nexus/
+          - https://toolvault.nexus/
+          - https://sentinel.nexus/
+        labels:
+          scope: internal
+    scrape_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

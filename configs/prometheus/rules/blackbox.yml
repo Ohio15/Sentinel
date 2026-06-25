@@ -5,15 +5,17 @@ groups:
       # backend healthy on the internal network (so `up`==1 and TargetDown stayed
       # silent), but the external edge path returned 502 for every request.
       # A blackbox probe of the public URL exercises Cloudflare -> Traefik ->
-      # backend, so probe_success flips to 0 on any broken hop.
+      # backend, so probe_success flips to 0 on any broken hop. Also covers the
+      # internal .nexus probes (job blackbox-internal) — the 2026-06-05 Docker-
+      # provider outage that 404'd every label route for weeks.
       - alert: PublicEndpointDown
         expr: probe_success == 0
         for: 2m
         labels:
           severity: critical
         annotations:
-          summary: "Public endpoint {{ $labels.instance }} is DOWN"
-          description: "Blackbox probe of {{ $labels.instance }} has failed for 2+ minutes. This tests the full external path (Cloudflare -> Traefik -> backend) that internal scrapes do not exercise. Check Traefik routing / container edge-network attachment / cloudflared."
+          summary: "Endpoint {{ $labels.instance }} is DOWN"
+          description: "Blackbox probe of {{ $labels.instance }} has failed for 2+ minutes. This tests the full routed path (public: Cloudflare -> Traefik -> backend; internal: Traefik -> backend) that internal scrapes do not exercise. Check Traefik routing / container edge-network attachment / cloudflared."
 
       - alert: PublicEndpoint5xx
         expr: probe_http_status_code >= 500
@@ -21,11 +23,14 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "Public endpoint {{ $labels.instance }} returning HTTP {{ $value }}"
+          summary: "Endpoint {{ $labels.instance }} returning HTTP {{ $value }}"
           description: "Blackbox probe of {{ $labels.instance }} returned HTTP {{ $value }} for 1+ minute. A 502/503/504 here usually means Traefik cannot reach the backend upstream (e.g. container dropped off the edge network)."
 
+      # Scoped to public endpoints only: internal .nexus routes use a self-signed
+      # *.nexus wildcard that is not Let's Encrypt-managed, so its expiry is not
+      # actionable here and would only generate noise.
       - alert: PublicCertExpiringSoon
-        expr: (probe_ssl_earliest_cert_expiry - time()) / 86400 < 14
+        expr: (probe_ssl_earliest_cert_expiry{scope!="internal"} - time()) / 86400 < 14
         for: 1h
         labels:
           severity: warning

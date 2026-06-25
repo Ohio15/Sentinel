@@ -1,0 +1,17 @@
+# Sentinel compose override.
+#
+# blackbox-exporter probes internal .nexus routes (job blackbox-internal in
+# configs/prometheus/prometheus.yml), but the container resolves DNS via the
+# host's public resolvers (8.8.8.8/1.1.1.1) where *.nexus does not exist. Map
+# each probed .nexus host to the NEXUS host IP so the name resolves; SNI/Host
+# stay the real .nexus name and Traefik routes by Host (cert verification is
+# skipped in the http_2xx_internal module for the self-signed *.nexus cert).
+services:
+  blackbox-exporter:
+    extra_hosts:
+      - "updates.nexus:192.168.1.20"
+      - "grafana.nexus:192.168.1.20"
+      - "apm.nexus:192.168.1.20"
+      - "openclaw.nexus:192.168.1.20"
+      - "toolvault.nexus:192.168.1.20"
+      - "sentinel.nexus:192.168.1.20"

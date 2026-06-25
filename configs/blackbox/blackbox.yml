@@ -12,3 +12,22 @@ modules:
       fail_if_not_ssl: true
       preferred_ip_protocol: ip4
       follow_redirects: true
+
+  # Internal .nexus routes terminate TLS at Traefik with the self-signed
+  # *.nexus wildcard, so the chain can't be verified — skip verification (the
+  # signal we want is "did Traefik route to a healthy backend", not cert trust;
+  # cert validity for .nexus is excluded from the cert-expiry alert). Targets
+  # resolve via extra_hosts (docker-compose.override.yml) to the host IP, so SNI
+  # and Host stay the real .nexus name and Traefik routes correctly.
+  http_2xx_internal:
+    prober: http
+    timeout: 10s
+    http:
+      method: GET
+      valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+      valid_status_codes: [200]
+      fail_if_not_ssl: true
+      preferred_ip_protocol: ip4
+      follow_redirects: true
+      tls_config:
+        insecure_skip_verify: true
