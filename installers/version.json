@@ -1,11 +1,11 @@
 {
-    "version":  "1.77.10",
-    "releaseDate":  "2026-05-05",
-    "changelog":  "Phase 2 Stage 1 release-pipeline-gap fix (incident df7a7ff8). The v1.77.10 source code was tagged on 2026-04-27 but binaries were never built/published and no agent_releases row was inserted — see issue #12 backstory. This release publishes the v1.77.10 binaries that should have shipped 2026-04-27 (rebuilt fresh from the unchanged agent source) and inserts the matching agent_releases row, lifting the Wave 1 announcement gate. Surviving fleet (currently on 1.77.3/1.77.4) can now upgrade to 1.77.10 via the existing self-poll path. Server convention going forward: installers/version.json reflects the published agent binary version; package.json reflects the server/repo version. They diverge for server-only releases (e.g., v1.77.15-17 were server-only and did not change agent binaries).",
-    "platforms":  [
-                      "windows",
-                      "linux",
-                      "darwin"
-                  ],
-    "minAppVersion":  "1.50.0"
+  "version": "1.77.39",
+  "releaseDate": "2026-06-19",
+  "changelog": "Aligned to agent/version.json 1.77.39 (lockstep reconciliation, no forward bump). Convention reminder: installers/version.json reflects the published agent binary version; package.json reflects the server/repo version. They may diverge for server-only releases. Actual fleet updates remain gated by agent_releases DB rows — confirm a 1.77.39 row exists before announcing.",
+  "platforms": [
+    "windows",
+    "linux",
+    "darwin"
+  ],
+  "minAppVersion": "1.50.0"
 }

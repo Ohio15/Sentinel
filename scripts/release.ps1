@@ -36,6 +36,17 @@ Write-Host "Version: $Version"
 Write-Host "Date: $ReleaseDate"
 Write-Host ""
 
+# Guard: refuse a version whose tag already exists (locally or on origin).
+# Tags are permanent — v1.77.40 was burned on a commit whose version files
+# still said 1.77.39, so tag-name/file drift is a real, observed failure mode.
+Push-Location $ProjectRoot
+$existingLocal  = git tag -l "v$Version"
+$existingRemote = git ls-remote --tags origin "refs/tags/v$Version"
+Pop-Location
+if ($existingLocal -or $existingRemote) {
+    throw "Tag v$Version already exists (local: '$existingLocal', remote: '$existingRemote'). Pick the next free version."
+}
+
 # Files to update
 $FilesToUpdate = @(
     @{
@@ -47,12 +58,11 @@ $FilesToUpdate = @(
         Path = "$ProjectRoot/agent/cmd/sentinel-watchdog/main.go"
         Pattern = 'Version = "[^"]*"'
         Replacement = "Version = `"$Version`""
-    },
-    @{
-        Path = "$ProjectRoot/package.json"
-        Pattern = '"version": "[^"]*"'
-        Replacement = "`"version`": `"$Version`""
     }
+    # NOTE: root package.json is deliberately NOT updated here — it tracks the
+    # server/repo version line, which diverges from the agent line on
+    # server-only releases. Bumping it to the agent version could silently
+    # DOWNGRADE it (server line is ahead, e.g. 1.78.x vs agent 1.77.x).
 )
 
 $JsonFiles = @(
@@ -123,7 +133,7 @@ Push-Location $ProjectRoot
 git add agent/cmd/sentinel-agent/main.go
 git add agent/cmd/sentinel-watchdog/main.go
 git add agent/version.json
-git add package.json
+git add release/agent/version.json
 git add installers/version.json
 git add installers/sentinel-agent-windows-amd64.exe
 git add installers/sentinel-watchdog-windows-amd64.exe
@@ -135,6 +145,11 @@ if ($Changelog -ne "") {
 
 git commit -m "$commitMsg`n`nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 git push
+
+# Tag AT the release commit so the tag name and the version files can never
+# drift (the guard above already ensured the tag is free).
+git tag -a "v$Version" -m "Release v$Version"
+git push origin "v$Version"
 
 Pop-Location
 

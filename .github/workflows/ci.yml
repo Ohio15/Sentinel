@@ -7,6 +7,16 @@ on:
     branches: [main]
 
 jobs:
+  # Version lockstep guard — fails fast if the agent/release version files drift.
+  # Source of truth is agent/version.json (see scripts/check-version-consistency.sh).
+  version-consistency:
+    name: Version Consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check version files are in lockstep
+        run: bash scripts/check-version-consistency.sh
+
   # Security Scanning (runs in parallel with build jobs)
   security-scan:
     name: Security Scanning
