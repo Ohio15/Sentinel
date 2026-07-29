@@ -309,13 +309,17 @@ func OpenFileHardened(path string, appendMode bool, allowedBases, deniedBases []
 // verifyRealPathContainment enforces that realPath is inside an allowed base
 // (when allowedBases is non-empty) and outside every denied base.
 func verifyRealPathContainment(realPath string, allowedBases, deniedBases []string) error {
-	clean := filepath.Clean(realPath)
+	// Canonicalize the candidate AND every base the same way (resolve symlinks
+	// and 8.3 short names) so comparisons are consistent regardless of how each
+	// side is spelled — otherwise denied bases silently miss and legitimate
+	// allowed paths falsely "escape".
+	clean := resolveForCompare(realPath)
 
 	for _, denied := range deniedBases {
 		if denied == "" {
 			continue
 		}
-		if isSubPath(clean, filepath.Clean(denied)) {
+		if isSubPath(clean, resolveForCompare(denied)) {
 			return fmt.Errorf("resolved real path is within a protected directory: %s", clean)
 		}
 	}
@@ -323,11 +327,10 @@ func verifyRealPathContainment(realPath string, allowedBases, deniedBases []stri
 	if len(allowedBases) > 0 {
 		allowed := false
 		for _, base := range allowedBases {
-			resolvedBase, err := filepath.EvalSymlinks(base)
-			if err != nil {
+			if base == "" {
 				continue
 			}
-			if isSubPath(clean, filepath.Clean(resolvedBase)) {
+			if isSubPath(clean, resolveForCompare(base)) {
 				allowed = true
 				break
 			}

@@ -129,6 +129,28 @@ func getDefaultAllowedBases() []string {
 
 // isSubPath checks if child path is within parent directory (directory-boundary aware)
 // SECURITY FIX: This fixes the prefix-matching vulnerability where "admin-attacker" matched "admin"
+// resolveForCompare canonicalizes p to the same form used for base comparison:
+// it resolves symlinks and Windows 8.3 short names (e.g. C:\Users\RUNNER~1) to
+// their long canonical form. Without this, a candidate spelled one way and a
+// base spelled another never match, which both breaks legitimate transfers and
+// (worse) causes denied-base checks to silently miss. For a not-yet-existing
+// target it resolves the deepest existing ancestor and re-appends the remainder.
+func resolveForCompare(p string) string {
+	p = filepath.Clean(p)
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return filepath.Clean(r)
+	}
+	dir, rest := filepath.Dir(p), filepath.Base(p)
+	for dir != filepath.Dir(dir) { // walk up until filesystem root
+		if r, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Clean(filepath.Join(r, rest))
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
+		dir = filepath.Dir(dir)
+	}
+	return p
+}
+
 func isSubPath(child, parent string) bool {
 	// Clean both paths
 	child = filepath.Clean(child)
@@ -253,7 +275,7 @@ func (ft *FileTransfer) validatePath(requestedPath string, operation string) (st
 	// live under an allowed drive base.
 	if isMutatingOperation(operation) {
 		for _, denied := range ft.deniedBases {
-			if isSubPath(cleanPath, denied) {
+			if isSubPath(cleanPath, resolveForCompare(denied)) {
 				log.Printf("[SECURITY] Rejected mutating operation on protected path: %s, operation: %s", cleanPath, operation)
 				return "", fmt.Errorf("access denied: path is within a protected directory")
 			}
