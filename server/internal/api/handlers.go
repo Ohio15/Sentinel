@@ -239,6 +239,21 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 		return
 	}
 
+	// Token→cert binding hardening (decision 0e6e20d7). The agent authenticated
+	// with its enrollment token over this (tunnel-terminated) WS path. If it also
+	// holds an active mTLS client certificate, it SHOULD be connecting via direct
+	// mTLS (/ws/agent/mtls on :8443) instead — token-over-tunnel exposes it to
+	// on-path / token-theft impersonation that the cert would prevent. In WARN
+	// mode (default) we log + count and still allow; when EnforceAgentCertBinding
+	// is on we reject and the agent must use direct mTLS. This runs before any
+	// auto-enroll / cert-issuance side effects so an enforced reject is clean.
+	if evaluateAgentCertBinding(context.Background(), r.db.Pool(), authPayload.AgentID, c.ClientIP(), r.config.EnforceAgentCertBinding) {
+		log.Printf("[CERT-BINDING] REJECTED agent %s from %s: enforcement on and agent holds an active client cert — must use direct mTLS", authPayload.AgentID, c.ClientIP())
+		conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Certificate-bound agent must authenticate via direct mTLS"}`)})
+		conn.Close()
+		return
+	}
+
 	// Get device ID - or auto-enroll if device was deleted
 	ctx := context.Background()
 	var deviceID uuid.UUID
