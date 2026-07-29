@@ -10,8 +10,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/sentinel/agent/internal/hardware"
 	"github.com/sentinel/agent/internal/crypto"
+	"github.com/sentinel/agent/internal/hardware"
+	"github.com/sentinel/agent/internal/ipc"
 )
 
 // Embedded configuration placeholders - these get replaced in the binary at download time
@@ -154,13 +155,17 @@ func Load() (*Config, error) {
 
 	// Check if config is encrypted
 	var jsonData []byte
+	var reSealNeeded bool
 	if crypto.IsEncrypted(data) {
-		// Decrypt the config
-		decrypted, err := crypto.DecryptConfig(data)
+		// Decrypt the config. If it was encrypted under the legacy
+		// world-readable key scheme, usedLegacy is true and we must re-seal it
+		// under the hardened key (AG-H3).
+		decrypted, usedLegacy, err := crypto.DecryptConfigMigrate(data)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decrypt config: %w", err)
 		}
 		jsonData = decrypted
+		reSealNeeded = usedLegacy
 	} else {
 		// Unencrypted config - migrate to encrypted format
 		log.Println("[CONFIG] Migrating unencrypted config to encrypted format")
@@ -189,16 +194,22 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 	foldLegacyAliases(cfg)
-	if ensureAgentID(cfg) {
-		// Persist the regenerated agent_id so the next Load() doesn't have to
-		// redo the fingerprint work. Best-effort — if save fails, we still
-		// proceed (the in-memory cfg has the regenerated ID).
+	regenerated := ensureAgentID(cfg)
+
+	instance = cfg
+
+	// Re-seal if the config was decrypted under the legacy world-readable key
+	// scheme (AG-H3), or if the agent_id was regenerated. saveUnlocked rewrites
+	// under the hardened key with a protected ACL, closing the exposure on the
+	// next load. Best-effort: the in-memory cfg is already correct if it fails.
+	if reSealNeeded || regenerated {
 		if err := cfg.saveUnlocked(); err != nil {
-			log.Printf("[CONFIG] Warning: failed to persist regenerated agent_id: %v", err)
+			log.Printf("[CONFIG] Warning: failed to re-seal config under hardened key: %v", err)
+		} else if reSealNeeded {
+			log.Println("[CONFIG] Re-sealed config from legacy key scheme under hardened key (AG-H3)")
 		}
 	}
 
-	instance = cfg
 	return cfg, nil
 }
 
@@ -259,8 +270,11 @@ func (c *Config) saveUnlocked() error {
 		return fmt.Errorf("failed to encrypt config: %w", err)
 	}
 
-	// Write encrypted data to file with restrictive permissions
-	if err := os.WriteFile(configPath, encryptedData, 0600); err != nil {
+	// Write encrypted data with a SYSTEM+Administrators-only DACL on Windows
+	// (owner-only mode elsewhere). config.json holds the enrollment token; a
+	// world-readable ACL is exactly the AG-H3/AG-CRIT1 exposure being closed, so
+	// this fails rather than leaving the file with an inherited ACL.
+	if err := ipc.SecureWriteFileStrict(configPath, encryptedData, 0600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 

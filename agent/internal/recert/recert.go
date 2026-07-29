@@ -313,9 +313,15 @@ func loadIdentity(serverURLOverride string) (*identity, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: cannot read client cert: %v", ErrMissingIdentity, err)
 	}
-	ident.ClientKey, err = os.ReadFile(paths.ClientKeyPath())
+	sealedKey, err := os.ReadFile(paths.ClientKeyPath())
 	if err != nil {
 		return nil, fmt.Errorf("%w: cannot read client key: %v", ErrMissingIdentity, err)
+	}
+	// Unseal the key if it was DPAPI-sealed at rest (Windows). A legacy
+	// plaintext key is returned unchanged so pre-sealing installs still rotate.
+	ident.ClientKey, err = crypto.UnsealMachineData(sealedKey)
+	if err != nil {
+		return nil, fmt.Errorf("%w: cannot unseal client key: %v", ErrMissingIdentity, err)
 	}
 	ident.CACert, err = os.ReadFile(paths.CACertPath())
 	if err != nil {
@@ -516,21 +522,38 @@ func installNewCerts(resp *Response, now time.Time) error {
 		return fmt.Errorf("ensure certs dir: %w", err)
 	}
 
+	// Seal the private key at rest (DPAPI machine scope on Windows). The bytes
+	// written to client.key are the sealed blob; loadIdentity unseals on read.
+	sealedKey, err := crypto.SealMachineData([]byte(resp.Key))
+	if err != nil {
+		return fmt.Errorf("seal client key: %w", err)
+	}
+
+	// All three identity files are written 0600 and, before being renamed into
+	// place, receive a SYSTEM+Administrators-only DACL so the rotated key never
+	// exists on disk with the inherited world-readable ACL (AG-CRIT1/AG-H2).
 	entries := []certEntry{
-		{live: paths.ClientCertPath(), perm: 0644, data: []byte(resp.Cert)},
-		{live: paths.ClientKeyPath(), perm: 0600, data: []byte(resp.Key)},
-		{live: paths.CACertPath(), perm: 0644, data: []byte(resp.CACert)},
+		{live: paths.ClientCertPath(), perm: 0600, data: []byte(resp.Cert)},
+		{live: paths.ClientKeyPath(), perm: 0600, data: sealedKey},
+		{live: paths.CACertPath(), perm: 0600, data: []byte(resp.CACert)},
 	}
 
 	ts := now.UTC().Format("20060102T150405Z")
 
-	// Phase 1: write .new files with fsync.
+	// Phase 1: write .new files with fsync, then seal each with a protected
+	// DACL before it is renamed into place (an explicit file DACL survives the
+	// rename). If the DACL cannot be applied we refuse to proceed rather than
+	// leaving a world-readable key.
 	for _, e := range entries {
 		newPath := e.live + ".new"
 		if err := writeAndSync(newPath, e.data, e.perm); err != nil {
 			// Clean up any partial .new files before bailing.
 			cleanupPartial(entries)
 			return fmt.Errorf("write %s: %w", newPath, err)
+		}
+		if err := ipc.SecureFileStrict(newPath); err != nil {
+			cleanupPartial(entries)
+			return fmt.Errorf("secure %s: %w", newPath, err)
 		}
 	}
 

@@ -31,6 +31,9 @@ const dirSecurityDescriptor = "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
 // setFileACL applies a restrictive Windows DACL to the given file path,
 // allowing access only to SYSTEM and Builtin Administrators.
 func setFileACL(path string) error {
+	if TestDisableACL {
+		return nil
+	}
 	sd, err := windows.SecurityDescriptorFromString(fileSecurityDescriptor)
 	if err != nil {
 		return fmt.Errorf("failed to parse file security descriptor: %w", err)
@@ -57,6 +60,9 @@ func setFileACL(path string) error {
 // setDirectoryACL applies a restrictive Windows DACL to the given directory,
 // allowing access only to SYSTEM and Builtin Administrators, with inheritance.
 func setDirectoryACL(path string) error {
+	if TestDisableACL {
+		return nil
+	}
 	sd, err := windows.SecurityDescriptorFromString(dirSecurityDescriptor)
 	if err != nil {
 		return fmt.Errorf("failed to parse directory security descriptor: %w", err)
@@ -151,6 +157,9 @@ func EnsureSecureDir(path string, perm os.FileMode) error {
 // key) before its contents are trusted. Returns an error describing the first
 // discrepancy found.
 func VerifyFileSecurity(path string) error {
+	if TestDisableACL {
+		return nil
+	}
 	sd, err := windows.GetNamedSecurityInfo(
 		path,
 		windows.SE_FILE_OBJECT,
