@@ -8,8 +8,11 @@ groups:
       # backend, so probe_success flips to 0 on any broken hop. Also covers the
       # internal .nexus probes (job blackbox-internal) — the 2026-06-05 Docker-
       # provider outage that 404'd every label route for weeks.
+      # Scoped to the HTTP probe jobs: other blackbox jobs (e.g. the ICMP
+      # blackbox-wan-patriot witness) have their own purpose-built alerts, and
+      # this rule's Traefik/cloudflared guidance is wrong for them.
       - alert: PublicEndpointDown
-        expr: probe_success == 0
+        expr: probe_success{job=~"blackbox-public|blackbox-internal"} == 0
         for: 2m
         labels:
           severity: critical
