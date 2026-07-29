@@ -13,6 +13,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,6 +26,7 @@ import (
 	"github.com/sentinel/agent/internal/ipc"
 	"github.com/sentinel/agent/internal/protection"
 	"github.com/sentinel/agent/internal/selfupdate"
+	"github.com/sentinel/agent/internal/updatesig"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/debug"
@@ -1439,10 +1441,27 @@ func (ws *watchdogService) applyUpdate(request *ipc.UpdateRequest) {
 	logMessage(fmt.Sprintf("[ApplyUpdate] === SUCCESS === Update to v%s completed in %v", request.Version, totalDuration))
 }
 
-// verifyStagedFile verifies the staged update file exists and checksum matches
+// verifyStagedFile verifies the staged update file exists, its paths are sane,
+// and — the real trust anchor — its Ed25519 signature validates over the exact
+// staged bytes against the public key embedded in THIS watchdog binary. This is
+// the last gate before the agent binary is swapped (RW-1 / AG-C1, AG-C2, AG-H5).
 func (ws *watchdogService) verifyStagedFile(request *ipc.UpdateRequest) error {
+	// WD-H4 / AG-H5: constrain the paths before touching the filesystem. The
+	// staged file must live inside the staging directory and the target must be
+	// exactly the known agent executable — never an arbitrary path from the
+	// request. filepath.Clean + exact/prefix match, no shell, no templating.
+	stagedClean := filepath.Clean(request.StagedPath)
+	stagingRoot := filepath.Clean(ipc.StagingDir)
+	if stagedClean != stagingRoot && !strings.HasPrefix(stagedClean, stagingRoot+string(os.PathSeparator)) {
+		return fmt.Errorf("staged path %q is outside the staging directory %q — rejecting", stagedClean, stagingRoot)
+	}
+	expectedTarget := filepath.Clean(filepath.Join(ws.installPath, "sentinel-agent.exe"))
+	if filepath.Clean(request.TargetPath) != expectedTarget {
+		return fmt.Errorf("target path %q does not match the known agent executable %q — rejecting", filepath.Clean(request.TargetPath), expectedTarget)
+	}
+
 	// Check file exists
-	info, err := os.Stat(request.StagedPath)
+	info, err := os.Stat(stagedClean)
 	if err != nil {
 		return fmt.Errorf("staged file not found: %w", err)
 	}
@@ -1451,26 +1470,26 @@ func (ws *watchdogService) verifyStagedFile(request *ipc.UpdateRequest) error {
 		return fmt.Errorf("staged file is empty")
 	}
 
-	// Reject requests with empty checksum — all updates must have integrity verification
-	if request.Checksum == "" {
-		return fmt.Errorf("update request missing checksum — rejecting for security")
-	}
-
-	// Verify checksum matches staged file
-	file, err := os.Open(request.StagedPath)
+	// Read the staged bytes once for both the (optional) checksum and the
+	// (mandatory) signature verification.
+	stagedBytes, err := os.ReadFile(stagedClean)
 	if err != nil {
-		return fmt.Errorf("failed to open staged file: %w", err)
-	}
-	defer file.Close()
-
-	hasher := sha256.New()
-	if _, err := io.Copy(hasher, file); err != nil {
-		return fmt.Errorf("failed to hash staged file: %w", err)
+		return fmt.Errorf("failed to read staged file: %w", err)
 	}
 
-	actualChecksum := hex.EncodeToString(hasher.Sum(nil))
-	if actualChecksum != request.Checksum {
-		return fmt.Errorf("checksum mismatch: expected %s, got %s", request.Checksum, actualChecksum)
+	// Transport-integrity checksum, when present (defense in depth only).
+	if request.Checksum != "" {
+		h := sha256.Sum256(stagedBytes)
+		actualChecksum := hex.EncodeToString(h[:])
+		if actualChecksum != request.Checksum {
+			return fmt.Errorf("checksum mismatch: expected %s, got %s", request.Checksum, actualChecksum)
+		}
+	}
+
+	// RW-1: mandatory signature verification. Empty/invalid signature is rejected
+	// (fail closed) — there is no self-computed-checksum fallback.
+	if err := updatesig.Verify(stagedBytes, request.Signature); err != nil {
+		return fmt.Errorf("signature verification failed for staged agent v%s: %w", request.Version, err)
 	}
 
 	return nil
@@ -2252,6 +2271,13 @@ type ServerVersionInfo struct {
 	ReleaseDate string `json:"releaseDate"`
 	Changelog   string `json:"changelog"`
 	Required    bool   `json:"required"`
+	// Signature is the base64 Ed25519 detached signature over the raw binary
+	// bytes, served by the update server. The independent poller verifies it
+	// against the embedded public key over the bytes it downloaded, before the
+	// update request is written (RW-1 / WD-H2). Empty is rejected.
+	Signature string `json:"signature"`
+	// SignedDowngrade authorizes a non-upgrade target (anti-rollback, AG-H4).
+	SignedDowngrade bool `json:"signedDowngrade,omitempty"`
 }
 
 // independentUpdatePoller runs a background loop that polls the server for updates
@@ -2479,6 +2505,27 @@ func (ws *watchdogService) pollServerForUpdates(serverURL string) error {
 	return ws.downloadAndStageUpdate(versionResp.VersionInfo, serverURL)
 }
 
+// validateDownloadOrigin enforces that downloadURL is https and shares the host
+// of the configured serverURL. Returns an error otherwise (WD-H3).
+func validateDownloadOrigin(downloadURL, serverURL string) error {
+	parsed, err := url.Parse(downloadURL)
+	if err != nil {
+		return fmt.Errorf("invalid download URL: %w", err)
+	}
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("refusing non-https download URL (scheme %q)", parsed.Scheme)
+	}
+	srv, err := url.Parse(serverURL)
+	if err != nil || srv.Host == "" {
+		// No usable server origin to pin against — enforce https only.
+		return nil
+	}
+	if parsed.Host != srv.Host {
+		return fmt.Errorf("download host %q is not the configured server origin %q", parsed.Host, srv.Host)
+	}
+	return nil
+}
+
 // downloadAndStageUpdate downloads the update binary and creates an update request
 func (ws *watchdogService) downloadAndStageUpdate(info *ServerVersionInfo, serverURL string) error {
 	// Ensure staging directory exists
@@ -2490,6 +2537,14 @@ func (ws *watchdogService) downloadAndStageUpdate(info *ServerVersionInfo, serve
 	downloadURL := info.DownloadURL
 	if downloadURL == "" {
 		downloadURL = fmt.Sprintf("%s/api/agent/update/download?platform=windows&arch=amd64", serverURL)
+	}
+
+	// WD-H3: constrain the download to the configured server origin over https so
+	// a tampered version-check response cannot redirect the fetch to an
+	// attacker-controlled host. Signature verification is the primary control;
+	// this removes the fetch itself as an SSRF/exfil vector.
+	if err := validateDownloadOrigin(downloadURL, serverURL); err != nil {
+		return fmt.Errorf("download URL rejected: %w", err)
 	}
 
 	logMessage(fmt.Sprintf("[IndependentPoll] Downloading update from %s", downloadURL))
@@ -2547,24 +2602,42 @@ func (ws *watchdogService) downloadAndStageUpdate(info *ServerVersionInfo, serve
 		return fmt.Errorf("size mismatch: expected %d, got %d", info.Size, written)
 	}
 
-	// Verify checksum if provided
+	// Verify checksum if provided (transport-integrity only)
 	actualChecksum := hex.EncodeToString(hasher.Sum(nil))
 	if info.Checksum != "" && actualChecksum != info.Checksum {
 		os.Remove(stagedPath)
 		return fmt.Errorf("checksum mismatch: expected %s, got %s", info.Checksum, actualChecksum)
 	}
 
-	logMessage(fmt.Sprintf("[IndependentPoll] Downloaded %d bytes, checksum: %s", written, actualChecksum))
+	// RW-1 / WD-H2: authenticity gate over the exact downloaded bytes against the
+	// embedded public key. Do NOT self-compute a signature or trust the checksum
+	// alone — the same channel supplies both bytes and checksum. Fail closed on
+	// empty/invalid signature.
+	stagedBytes, readErr := os.ReadFile(stagedPath)
+	if readErr != nil {
+		os.Remove(stagedPath)
+		return fmt.Errorf("failed to read staged file for signature verification: %w", readErr)
+	}
+	if sigErr := updatesig.Verify(stagedBytes, info.Signature); sigErr != nil {
+		os.Remove(stagedPath)
+		return fmt.Errorf("signature verification failed for update v%s: %w", info.Version, sigErr)
+	}
 
-	// Create update request for the existing update machinery
+	logMessage(fmt.Sprintf("[IndependentPoll] Downloaded %d bytes, checksum + signature verified: %s", written, actualChecksum))
+
+	// Create update request for the existing update machinery. Carry the
+	// signature through so applyUpdate re-verifies against the embedded key
+	// immediately before the swap.
 	targetPath := filepath.Join(ws.installPath, "sentinel-agent.exe")
 	request := &ipc.UpdateRequest{
-		Version:     info.Version,
-		StagedPath:  stagedPath,
-		Checksum:    actualChecksum,
-		RequestedAt: time.Now(),
-		RequestedBy: "watchdog-independent-poll",
-		TargetPath:  targetPath,
+		Version:         info.Version,
+		StagedPath:      stagedPath,
+		Checksum:        actualChecksum,
+		RequestedAt:     time.Now(),
+		RequestedBy:     "watchdog-independent-poll",
+		TargetPath:      targetPath,
+		Signature:       info.Signature,
+		SignedDowngrade: info.SignedDowngrade,
 	}
 
 	if err := ipc.WriteUpdateRequest(request); err != nil {
