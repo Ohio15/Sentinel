@@ -128,6 +128,15 @@ func getBlacklistedPatterns() []*regexp.Regexp {
 		`usermod`,
 		`passwd`,
 		`chpasswd`,
+		// Windows local account creation / privilege grant (AG-H newline:
+		// previously reachable only via the newline whitelist bypass, e.g.
+		// "whoami\nnet user hacker P@ss /add"). Deny account create/enable and
+		// group membership grants outright.
+		`net\s+user\s+.*/add`,
+		`net\s+user\s+.*/active`,
+		`net\s+localgroup\s+.*/add`,
+		`New-LocalUser`,
+		`Add-LocalGroupMember`,
 
 		// Service manipulation (dangerous operations)
 		`systemctl\s+(stop|disable|mask)`,
@@ -306,7 +315,13 @@ func (cv *CommandValidator) Validate(command string, cmdType string) error {
 // IMPORTANT: Bare & is matched only when preceded by whitespace or start-of-string
 // to avoid splitting on & inside URLs (e.g., "?platform=windows&arch=amd64").
 // The ; and | are always separators regardless of context.
-var shellSeparatorPattern = regexp.MustCompile(`\s*(\|\||&&)\s*|(?:^|\s)(&)(?:\s|$)|\s*([;|])\s*`)
+//
+// AG-H newline: newline (\n) and carriage-return (\r) are ALSO hard command
+// separators. Both cmd.exe and POSIX shells execute each line independently, so
+// "whoami\nnet user hacker /add" runs two commands. Without splitting on
+// newlines, extractBaseCommand only validated the first line ("whoami") and the
+// remainder ran unchecked. Treat them as separators so every line is validated.
+var shellSeparatorPattern = regexp.MustCompile(`\s*(\|\||&&)\s*|(?:^|\s)(&)(?:\s|$)|\s*([;|])\s*|[\r\n]+`)
 
 // extractAllBaseCommands splits a command string on shell separators and extracts
 // the base command from each sub-command. This ensures every command in a chain
@@ -526,5 +541,205 @@ func ValidateScript(script string, language string) error {
 		}
 	}
 
+	// AG-H script: a blacklist alone lets any binary/cmdlet run as SYSTEM if it
+	// dodges the patterns above. Enforce a deny-by-default command policy — every
+	// executable line of a shell-family script must invoke only whitelisted
+	// commands, and Python scripts may not use arbitrary code/subprocess
+	// execution primitives.
+	if err := validateScriptCommands(script, language); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// pythonExecPrimitives matches Python constructs that shell out to the OS or
+// execute arbitrary/native/dynamic code. A per-shell-command whitelist is
+// meaningless for Python, so the deny-by-default control is to reject these
+// primitives outright (AG-H script).
+var pythonExecPrimitives = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\bos\.system\b`),
+	regexp.MustCompile(`(?i)\bos\.popen\b`),
+	regexp.MustCompile(`(?i)\bos\.exec[lv]`),
+	regexp.MustCompile(`(?i)\bos\.spawn`),
+	regexp.MustCompile(`(?i)\bsubprocess\b`),
+	regexp.MustCompile(`(?i)\bpty\.spawn\b`),
+	regexp.MustCompile(`(?i)\bcommands\.getoutput\b`),
+	regexp.MustCompile(`(?i)\bexec\s*\(`),
+	regexp.MustCompile(`(?i)\beval\s*\(`),
+	regexp.MustCompile(`(?i)\bcompile\s*\(`),
+	regexp.MustCompile(`(?i)\b__import__\s*\(`),
+	regexp.MustCompile(`(?i)\bimportlib\b`),
+	regexp.MustCompile(`(?i)\bctypes\b`),
+}
+
+// scriptKeywords are language control-flow / declaration tokens that never
+// denote an external command invocation and must be skipped by the per-line
+// command allow-list. Lower-cased for comparison.
+var scriptKeywords = map[string]bool{
+	// PowerShell / shell shared
+	"if": true, "else": true, "elseif": true, "elif": true, "then": true,
+	"fi": true, "for": true, "foreach": true, "while": true, "do": true,
+	"done": true, "switch": true, "case": true, "esac": true, "in": true,
+	"try": true, "catch": true, "finally": true, "function": true,
+	"param": true, "return": true, "break": true, "continue": true,
+	"begin": true, "process": true, "end": true, "throw": true, "exit": true,
+	"data": true, "filter": true, "workflow": true, "class": true, "enum": true,
+	// Batch
+	"rem": true, "goto": true, "call": true, "setlocal": true, "endlocal": true,
+	"pause": true, "title": true, "color": true, "cls": true,
+}
+
+// scriptAssignmentPattern matches a leading variable assignment so the
+// right-hand side (which may itself invoke a command) is what gets validated.
+// Examples: "$result = Get-Process", "VAR=value".
+var scriptAssignmentPattern = regexp.MustCompile(`^\s*\$?[A-Za-z_][A-Za-z0-9_]*\s*=\s*(.*)$`)
+
+// validateScriptCommands enforces the deny-by-default command policy per script
+// language (AG-H script).
+func validateScriptCommands(script, language string) error {
+	switch strings.ToLower(language) {
+	case "python", "python3", "py":
+		for _, re := range pythonExecPrimitives {
+			if re.MatchString(script) {
+				return fmt.Errorf("python script uses a prohibited execution primitive: %s", re.String())
+			}
+		}
+		return nil
+	default:
+		// Shell-family: powershell, ps1, batch, bat, cmd, bash, sh.
+		cmdType := "bash"
+		if l := strings.ToLower(language); l == "powershell" || l == "ps1" {
+			cmdType = "powershell"
+		}
+		validator := NewCommandValidator()
+		for _, line := range strings.FieldsFunc(script, func(r rune) bool { return r == '\n' || r == '\r' }) {
+			for _, cmd := range scriptCommandCandidates(line, cmdType) {
+				if !validator.whitelistedCommands[strings.ToLower(cmd)] {
+					return fmt.Errorf("script invokes non-whitelisted command %q", cmd)
+				}
+			}
+		}
+		return nil
+	}
+}
+
+// scriptCommandCandidates extracts the command invocations from a single script
+// line, skipping comments, language keywords, labels, literals, and variable
+// references. Only tokens that plausibly invoke an external command or cmdlet
+// are returned for whitelist checking.
+func scriptCommandCandidates(line, cmdType string) []string {
+	line = stripScriptComment(line, cmdType)
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil
+	}
+
+	var candidates []string
+	for _, seg := range shellSeparatorPattern.Split(line, -1) {
+		seg = strings.TrimSpace(seg)
+		if seg == "" {
+			continue
+		}
+		// Batch "@echo off" / "@command" — strip the silent-exec prefix.
+		seg = strings.TrimSpace(strings.TrimPrefix(seg, "@"))
+		// sudo prefix (POSIX) — the real command follows.
+		seg = strings.TrimPrefix(seg, "sudo ")
+		seg = strings.TrimSpace(seg)
+		// Assignment — validate the right-hand side, which is where a command
+		// invocation would live (e.g. "$x = Invoke-Foo").
+		if m := scriptAssignmentPattern.FindStringSubmatch(seg); m != nil {
+			seg = strings.TrimSpace(m[1])
+		}
+		if seg == "" {
+			continue
+		}
+
+		fields := strings.Fields(seg)
+		if len(fields) == 0 {
+			continue
+		}
+		tok := fields[0]
+
+		if isNonCommandToken(tok) {
+			continue
+		}
+
+		base := scriptBaseName(tok)
+		if base == "" || isNonCommandToken(base) {
+			continue
+		}
+		candidates = append(candidates, base)
+	}
+	return candidates
+}
+
+// isNonCommandToken reports whether a token is a literal, variable reference,
+// operator, label, or language keyword rather than a command name.
+func isNonCommandToken(tok string) bool {
+	if tok == "" {
+		return true
+	}
+	switch tok[0] {
+	case '$', '"', '\'', '(', ')', '{', '}', '[', ']', '#', ':', '-', '.', '@', '&', '<', '>', '=', '+', '*', '!', '%', '`', ';', '|', ',':
+		return true
+	}
+	// Pure numeric literal.
+	if isNumericLiteral(tok) {
+		return true
+	}
+	// Leftover assignment fragment or comparison.
+	if strings.Contains(tok, "=") {
+		return true
+	}
+	if scriptKeywords[strings.ToLower(tok)] {
+		return true
+	}
+	return false
+}
+
+func isNumericLiteral(tok string) bool {
+	for _, r := range tok {
+		if (r < '0' || r > '9') && r != '.' {
+			return false
+		}
+	}
+	return true
+}
+
+// scriptBaseName reduces a possibly path-qualified command token to its base
+// command name, rejecting traversal, mirroring extractBaseCommandSingle.
+func scriptBaseName(tok string) string {
+	if strings.Contains(tok, "/") || strings.Contains(tok, "\\") {
+		cleaned := filepath.Clean(tok)
+		if strings.Contains(cleaned, "..") {
+			// Unresolvable/traversal path — return the raw token so the
+			// whitelist check rejects it rather than silently skipping.
+			return tok
+		}
+		tok = filepath.Base(cleaned)
+	}
+	if idx := strings.LastIndex(tok, "."); idx > 0 {
+		tok = tok[:idx]
+	}
+	return tok
+}
+
+// stripScriptComment removes a trailing/leading comment from a script line.
+func stripScriptComment(line, cmdType string) string {
+	// Batch line comments.
+	trimmed := strings.TrimSpace(line)
+	if strings.HasPrefix(trimmed, "::") {
+		return ""
+	}
+	// '#' comments for PowerShell, bash, and shebangs. Not applied to cmd/batch
+	// where '#' is a legal character, but harmless for our whitelist purposes.
+	if idx := strings.Index(line, "#"); idx >= 0 {
+		// Only treat as a comment when not inside an obvious quoted string on
+		// the same line; a conservative check keeps false-strips rare.
+		if !strings.ContainsAny(line[:idx], "\"'") {
+			line = line[:idx]
+		}
+	}
+	return line
 }
