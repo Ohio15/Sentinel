@@ -1808,8 +1808,11 @@ Write-Log "CRITICAL: Both services failed to start - attempting fresh download"
 # Layer 4 Nuclear Option: Download fresh agent from server
 $serverUrl = "%s"
 $downloadUrl = "$serverUrl/api/agent/update/download?platform=windows&arch=amd64"
+$manifestUrl = "$serverUrl/api/agent/update/download?platform=windows&arch=amd64&manifest=1"
 $tempPath = "$env:TEMP\sentinel-bootstrap-recovery.exe"
+$manifestPath = "$env:TEMP\sentinel-bootstrap-recovery.manifest.json"
 $installPath = "C:\Program Files\Sentinel"
+$verifier = "$installPath\sentinel-verify.exe"
 
 Write-Log "Downloading fresh agent from $downloadUrl"
 
@@ -1842,12 +1845,25 @@ public class CertValidator {
     # If no CA cert, system trust store handles validation (Let's Encrypt)
     $webClient = New-Object System.Net.WebClient
     $webClient.DownloadFile($downloadUrl, $tempPath)
+    $webClient.DownloadFile($manifestUrl, $manifestPath)
 
     if (Test-Path $tempPath) {
         $fileSize = (Get-Item $tempPath).Length
         Write-Log "Downloaded $fileSize bytes"
 
-        if ($fileSize -gt 1000000) {  # At least 1MB
+        # H1: authenticity gate. NEVER execute a downloaded binary as SYSTEM on a
+        # size check alone. The signed manifest binds version+sha256+downgrade to
+        # the Ed25519 key embedded in sentinel-verify at build time. Fail CLOSED:
+        # if the verifier is missing or returns non-zero, abort without swapping.
+        $verified = $false
+        if (Test-Path $verifier) {
+            & $verifier -binary $tempPath -manifest $manifestPath 2>&1 | ForEach-Object { Write-Log "verify: $_" }
+            if ($LASTEXITCODE -eq 0) { $verified = $true }
+        } else {
+            Write-Log "ABORT: verifier not found at $verifier - refusing to install unverified binary"
+        }
+
+        if ($verified) {
             # Stop any running services
             Stop-Service -Name "SentinelAgent" -Force -ErrorAction SilentlyContinue
             Stop-Service -Name "SentinelWatchdog" -Force -ErrorAction SilentlyContinue
@@ -1867,10 +1883,11 @@ public class CertValidator {
 
             Write-Log "Bootstrap recovery completed - services restarted"
         } else {
-            Write-Log "Downloaded file too small, aborting"
+            Write-Log "ABORT: signature verification failed - not installing downloaded binary"
         }
 
         Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
+        Remove-Item $manifestPath -Force -ErrorAction SilentlyContinue
     }
 } catch {
     Write-Log "Bootstrap recovery failed: $_"
@@ -1961,8 +1978,11 @@ log "CRITICAL: Service failed to start - attempting fresh download"
 
 # Download fresh agent
 DOWNLOAD_URL="${SERVER_URL}/api/agent/update/download?platform=linux&arch=amd64"
+MANIFEST_URL="${SERVER_URL}/api/agent/update/download?platform=linux&arch=amd64&manifest=1"
 TEMP_PATH="/tmp/sentinel-bootstrap-recovery"
+MANIFEST_PATH="/tmp/sentinel-bootstrap-recovery.manifest.json"
 INSTALL_PATH="/usr/local/bin/sentinel-agent"
+VERIFIER="/usr/local/bin/sentinel-verify"
 
 log "Downloading fresh agent from $DOWNLOAD_URL"
 
@@ -1973,10 +1993,24 @@ else
     CURL_OPTS=""
 fi
 if curl -s $CURL_OPTS -o "$TEMP_PATH" "$DOWNLOAD_URL"; then
+    curl -s $CURL_OPTS -o "$MANIFEST_PATH" "$MANIFEST_URL"
     FILE_SIZE=$(stat -c%%s "$TEMP_PATH" 2>/dev/null || stat -f%%z "$TEMP_PATH" 2>/dev/null)
     log "Downloaded $FILE_SIZE bytes"
 
-    if [ "$FILE_SIZE" -gt 1000000 ]; then
+    # H1: authenticity gate. NEVER execute a downloaded binary as root on a size
+    # check alone. The signed manifest binds version+sha256+downgrade to the
+    # Ed25519 key embedded in sentinel-verify at build time. Fail CLOSED: if the
+    # verifier is missing or returns non-zero, abort without swapping.
+    VERIFIED=0
+    if [ -x "$VERIFIER" ]; then
+        if "$VERIFIER" -binary "$TEMP_PATH" -manifest "$MANIFEST_PATH" >> "$LOG_FILE" 2>&1; then
+            VERIFIED=1
+        fi
+    else
+        log "ABORT: verifier not found at $VERIFIER - refusing to install unverified binary"
+    fi
+
+    if [ "$VERIFIED" -eq 1 ]; then
         # Stop service
         systemctl stop SentinelAgent 2>/dev/null
         systemctl stop sentinel-agent 2>/dev/null
@@ -1992,8 +2026,9 @@ if curl -s $CURL_OPTS -o "$TEMP_PATH" "$DOWNLOAD_URL"; then
 
         log "Bootstrap recovery completed - service restarted"
     else
-        log "Downloaded file too small, aborting"
+        log "ABORT: signature verification failed - not installing downloaded binary"
     fi
+    rm -f "$MANIFEST_PATH"
 
     rm -f "$TEMP_PATH"
 else

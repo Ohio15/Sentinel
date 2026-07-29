@@ -506,25 +506,33 @@ func (r *Router) downloadAgentUpdate(c *gin.Context) {
 	platform := c.Query("platform")
 	arch := c.Query("arch")
 
+	// Bootstrap recovery (H1) fetches the signed manifest sidecar to verify the
+	// binary offline before executing it as SYSTEM/root. Manifest fetches are
+	// exempt from the binary cooldown so a recovery can pull manifest + binary
+	// back-to-back without the second request getting a 429.
+	manifestOnly := c.Query("manifest") == "1"
+
 	// Per-agent download cooldown: one download per agent per platform per 5 minutes.
 	// Use X-Agent-ID header (set by agent) with IP fallback for old agents.
-	cooldownID := c.GetHeader("X-Agent-ID")
-	if cooldownID == "" {
-		cooldownID = c.ClientIP()
-	}
-	cooldownKey := fmt.Sprintf("%s-%s-%s", cooldownID, platform, arch)
-	if lastDownload, ok := downloadCooldown.Load(cooldownKey); ok {
-		if time.Since(lastDownload.(time.Time)) < 5*time.Minute {
-			remaining := 5*time.Minute - time.Since(lastDownload.(time.Time))
-			c.Header("Retry-After", fmt.Sprintf("%d", int(remaining.Seconds())))
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error":      "Download cooldown active, binary was recently served",
-				"retryAfter": int(remaining.Seconds()),
-			})
-			return
+	if !manifestOnly {
+		cooldownID := c.GetHeader("X-Agent-ID")
+		if cooldownID == "" {
+			cooldownID = c.ClientIP()
 		}
+		cooldownKey := fmt.Sprintf("%s-%s-%s", cooldownID, platform, arch)
+		if lastDownload, ok := downloadCooldown.Load(cooldownKey); ok {
+			if time.Since(lastDownload.(time.Time)) < 5*time.Minute {
+				remaining := 5*time.Minute - time.Since(lastDownload.(time.Time))
+				c.Header("Retry-After", fmt.Sprintf("%d", int(remaining.Seconds())))
+				c.JSON(http.StatusTooManyRequests, gin.H{
+					"error":      "Download cooldown active, binary was recently served",
+					"retryAfter": int(remaining.Seconds()),
+				})
+				return
+			}
+		}
+		downloadCooldown.Store(cooldownKey, time.Now())
 	}
-	downloadCooldown.Store(cooldownKey, time.Now())
 
 	// Normalize
 	switch arch {
@@ -543,6 +551,18 @@ func (r *Router) downloadAgentUpdate(c *gin.Context) {
 
 	if _, err := os.Stat(binaryPath); os.IsNotExist(err) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Binary file not found"})
+		return
+	}
+
+	// Serve the signed manifest sidecar for offline verification (H1 bootstrap).
+	if manifestOnly {
+		manifestPath := binaryPath + ".manifest.json"
+		if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Manifest not found for platform"})
+			return
+		}
+		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filepath.Base(manifestPath)))
+		c.File(manifestPath)
 		return
 	}
 
