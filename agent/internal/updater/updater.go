@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +23,7 @@ import (
 	"github.com/sentinel/agent/internal/ipc"
 	"github.com/sentinel/agent/internal/mtls"
 	"github.com/sentinel/agent/internal/protection"
+	"github.com/sentinel/agent/internal/updatesig"
 )
 
 // ErrRateLimited is returned when the server responds with 429 Too Many Requests.
@@ -80,6 +82,14 @@ type VersionInfo struct {
 	ReleaseDate string `json:"releaseDate"`
 	Changelog   string `json:"changelog"`
 	Required    bool   `json:"required"`
+	// Signature is the base64 Ed25519 detached signature over the raw binary
+	// bytes, produced by the release pipeline and served by the update server.
+	// Verified against the embedded public key immediately after download and
+	// before staging/swap (RW-1). Empty is rejected.
+	Signature string `json:"signature"`
+	// SignedDowngrade authorizes applying a non-upgrade target (anti-rollback,
+	// AG-H4). Only honored because it is covered by the artifact signature.
+	SignedDowngrade bool `json:"signedDowngrade,omitempty"`
 }
 
 // WatchdogVersionInfo contains version information for watchdog updates
@@ -90,6 +100,11 @@ type WatchdogVersionInfo struct {
 	DownloadURL string `json:"downloadUrl"`
 	Checksum    string `json:"checksum"`
 	Size        int64  `json:"size"`
+	// Signature is the base64 Ed25519 detached signature over the raw watchdog
+	// binary bytes. Verified before the watchdog self-update swap (RW-1 / WD-H2).
+	Signature string `json:"signature"`
+	// SignedDowngrade authorizes a non-upgrade watchdog target (anti-rollback).
+	SignedDowngrade bool `json:"signedDowngrade,omitempty"`
 }
 
 // WatchdogUpdateResult contains the result of checking for watchdog updates
@@ -342,6 +357,43 @@ func (u *Updater) CheckForUpdate(ctx context.Context) (*UpdateResult, error) {
 	return &result, nil
 }
 
+// validateDownloadOrigin enforces that a download URL is https and points at
+// the same host as the configured server (or one of the configured fallback
+// URLs). Returns an error otherwise. If the agent has no configured server URL,
+// only the https requirement is enforced.
+func (u *Updater) validateDownloadOrigin(downloadURL string) error {
+	parsed, err := url.Parse(downloadURL)
+	if err != nil {
+		return fmt.Errorf("invalid download URL: %w", err)
+	}
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("refusing non-https download URL (scheme %q)", parsed.Scheme)
+	}
+
+	allowedHosts := make(map[string]struct{})
+	addHost := func(raw string) {
+		if raw == "" {
+			return
+		}
+		if p, perr := url.Parse(raw); perr == nil && p.Host != "" {
+			allowedHosts[p.Host] = struct{}{}
+		}
+	}
+	addHost(u.serverURL)
+	for _, fb := range u.fallbackURLs {
+		addHost(fb)
+	}
+
+	// No origin configured — enforce https only (already checked above).
+	if len(allowedHosts) == 0 {
+		return nil
+	}
+	if _, ok := allowedHosts[parsed.Host]; !ok {
+		return fmt.Errorf("download host %q is not the configured server origin", parsed.Host)
+	}
+	return nil
+}
+
 func (u *Updater) DownloadUpdate(ctx context.Context, info *VersionInfo) (string, error) {
 	log.Printf("Downloading update v%s from %s", info.Version, info.DownloadURL)
 	u.updateStatus(StateDownloading, "Downloading update...", 0)
@@ -423,6 +475,15 @@ func (u *Updater) downloadOnce(ctx context.Context, info *VersionInfo, tempFile 
 }
 
 func (u *Updater) downloadFromURL(ctx context.Context, downloadURL, tempFile string, info *VersionInfo) (string, error) {
+	// WD-H3 / AG-H: constrain the download to the configured server origin over
+	// https. A compromised version-check response cannot redirect the agent to
+	// pull bytes from an attacker-controlled host. Signature verification is the
+	// primary control, but pinning the origin removes the fetch itself as an
+	// SSRF/exfil vector.
+	if err := u.validateDownloadOrigin(downloadURL); err != nil {
+		return "", err
+	}
+
 	req, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create download request: %w", err)
@@ -492,7 +553,7 @@ func (u *Updater) downloadFromURL(ctx context.Context, downloadURL, tempFile str
 		}
 	}
 
-	u.updateStatus(StateVerifying, "Verifying checksum...", 100)
+	u.updateStatus(StateVerifying, "Verifying signature...", 100)
 
 	// Close the file before renaming (required on Windows)
 	out.Close()
@@ -508,6 +569,27 @@ func (u *Updater) downloadFromURL(ctx context.Context, downloadURL, tempFile str
 		return "", fmt.Errorf("checksum mismatch: expected %s, got %s", info.Checksum, checksum)
 	}
 
+	// RW-1: authenticity gate — verify the Ed25519 detached signature over the
+	// EXACT bytes we downloaded, against the public key embedded in THIS binary
+	// at build time. This is the real trust anchor; the checksum above is only a
+	// transport-integrity check (the server that supplies the checksum also
+	// supplies the bytes, so a compromised/MITM'd channel can make them agree).
+	// Reject empty/invalid signatures — fail closed (AG-C1, AG-C2, AG-H1).
+	downloadedBytes, readErr := os.ReadFile(tempFile)
+	if readErr != nil {
+		os.Remove(tempFile)
+		return "", fmt.Errorf("failed to read staged file for signature verification: %w", readErr)
+	}
+	if sigErr := updatesig.Verify(downloadedBytes, info.Signature); sigErr != nil {
+		os.Remove(tempFile)
+		ipc.WriteAlert(&ipc.AlertRelayPayload{
+			Severity: "critical",
+			Title:    "Agent Update Signature Verification Failed",
+			Message:  fmt.Sprintf("Update v%s rejected: %v", info.Version, sigErr),
+		})
+		return "", fmt.Errorf("signature verification failed for update v%s: %w", info.Version, sigErr)
+	}
+
 	// Rename from .tmp to final staging path
 	finalPath := ipc.StagingPath(info.Version, info.Platform, info.Arch)
 	if tempFile != finalPath {
@@ -518,7 +600,7 @@ func (u *Updater) downloadFromURL(ctx context.Context, downloadURL, tempFile str
 		}
 	}
 
-	log.Printf("Download complete, checksum verified: %s", checksum)
+	log.Printf("Download complete, checksum + signature verified: %s", checksum)
 	return finalPath, nil
 }
 
@@ -539,27 +621,29 @@ func (u *Updater) ApplyUpdate(ctx context.Context, downloadPath string, info *Ve
 	u.reportStatus(ctx)
 
 	if runtime.GOOS == "windows" {
-		return u.applyUpdateWindows(currentExe, downloadPath, info.Version, info.Checksum)
+		return u.applyUpdateWindows(currentExe, downloadPath, info)
 	}
 	return u.applyUpdateUnix(currentExe, downloadPath)
 }
 
-func (u *Updater) applyUpdateWindows(currentExe, downloadPath, newVersion, checksum string) error {
+func (u *Updater) applyUpdateWindows(currentExe, downloadPath string, info *VersionInfo) error {
 	u.updateStatus(StateRestarting, "Signaling watchdog for update...", 50)
 
 	// Check if watchdog pipe is available (new watchdog with update orchestration)
 	if ipc.IsPipeAvailable() {
 		log.Println("Watchdog pipe available, using watchdog-orchestrated update")
-		return u.applyUpdateViaWatchdog(currentExe, downloadPath, newVersion, checksum)
+		return u.applyUpdateViaWatchdog(currentExe, downloadPath, info)
 	}
 
 	// Fallback: old watchdog without pipe support - use legacy batch approach
 	log.Println("Watchdog pipe not available, using legacy update method")
-	return u.applyUpdateLegacyWindows(currentExe, downloadPath, newVersion)
+	return u.applyUpdateLegacyWindows(currentExe, downloadPath, info.Version)
 }
 
 // applyUpdateViaWatchdog uses the new watchdog-orchestrated update mechanism
-func (u *Updater) applyUpdateViaWatchdog(currentExe, downloadPath, newVersion, checksum string) error {
+func (u *Updater) applyUpdateViaWatchdog(currentExe, downloadPath string, info *VersionInfo) error {
+	newVersion := info.Version
+	checksum := info.Checksum
 	log.Printf("[Handoff] === BEGIN WATCHDOG HANDOFF === version=%s", newVersion)
 	log.Printf("[Handoff] currentExe=%q downloadPath=%q", currentExe, downloadPath)
 
@@ -597,31 +681,26 @@ func (u *Updater) applyUpdateViaWatchdog(currentExe, downloadPath, newVersion, c
 		log.Printf("[Handoff] No watchdog-update-request.json (good — no self-update gate)")
 	}
 
-	// Ensure checksum is populated — compute from staged file if server didn't provide one
-	if checksum == "" {
-		log.Printf("[Handoff] Checksum not provided by server — computing from staged file")
-		f, hashErr := os.Open(downloadPath)
-		if hashErr != nil {
-			return fmt.Errorf("failed to open staged file for checksum: %w", hashErr)
-		}
-		h := sha256.New()
-		if _, hashErr = io.Copy(h, f); hashErr != nil {
-			f.Close()
-			return fmt.Errorf("failed to hash staged file: %w", hashErr)
-		}
-		f.Close()
-		checksum = hex.EncodeToString(h.Sum(nil))
-		log.Printf("[Handoff] Computed checksum: %s", checksum)
+	// RW-1 / AG-C2: do NOT self-compute a checksum. A checksum derived from the
+	// same bytes it is meant to verify is worthless. Authenticity is proven by
+	// the Ed25519 signature (already verified over these bytes at download time
+	// and re-verified by the watchdog before swap). The signature MUST be present.
+	if info.Signature == "" {
+		return fmt.Errorf("refusing handoff for v%s: update has no signature (unsigned artifact)", newVersion)
 	}
 
-	// Create update request for the watchdog
+	// Create update request for the watchdog. Carry the signature and (signed)
+	// downgrade flag through so the watchdog re-verifies against its embedded
+	// public key immediately before the swap.
 	request := &ipc.UpdateRequest{
-		Version:     newVersion,
-		StagedPath:  downloadPath,
-		Checksum:    checksum,
-		RequestedAt: time.Now(),
-		RequestedBy: u.deviceID,
-		TargetPath:  currentExe,
+		Version:         newVersion,
+		StagedPath:      downloadPath,
+		Checksum:        checksum,
+		RequestedAt:     time.Now(),
+		RequestedBy:     u.deviceID,
+		TargetPath:      currentExe,
+		Signature:       info.Signature,
+		SignedDowngrade: info.SignedDowngrade,
 	}
 
 	// Write the update request file (persists across reboots)
@@ -1078,6 +1157,23 @@ func (u *Updater) checkAndUpdateFromURL(ctx context.Context, serverURL string) e
 		return nil
 	}
 
+	// RW-1 / AG-H4: anti-rollback. Refuse a target that is not strictly greater
+	// than the running version unless the artifact carries an explicitly signed
+	// downgrade authorization. Strict-semver parse means an unparseable version
+	// is treated as "not an upgrade" and rejected. This blocks a compromised or
+	// MITM'd server from pinning the fleet to an old, exploitable build.
+	if !updatesig.IsUpgrade(u.currentVersion, result.VersionInfo.Version) && !result.VersionInfo.SignedDowngrade {
+		log.Printf("[Updater] Rejecting non-upgrade v%s -> v%s (no signed downgrade authorization)",
+			u.currentVersion, result.VersionInfo.Version)
+		u.updateStatus(StateIdle, "Rejected non-upgrade target", 0)
+		ipc.WriteAlert(&ipc.AlertRelayPayload{
+			Severity: "warning",
+			Title:    "Agent Update Rollback Blocked",
+			Message:  fmt.Sprintf("Refused non-upgrade target v%s (current v%s) with no signed downgrade flag", result.VersionInfo.Version, u.currentVersion),
+		})
+		return nil
+	}
+
 	// Track this attempt for cooldown logic
 	u.lastAttemptVersion = result.LatestVersion
 	u.lastAttemptTime = time.Now()
@@ -1376,11 +1472,28 @@ func (u *Updater) DownloadWatchdogUpdate(ctx context.Context, info *WatchdogVers
 	// Close the file before renaming (required on Windows)
 	out.Close()
 
-	// Verify checksum if provided
+	// Verify checksum if provided (transport-integrity only)
 	checksum := hex.EncodeToString(hasher.Sum(nil))
 	if info.Checksum != "" && checksum != info.Checksum {
 		os.Remove(tempFile)
 		return "", fmt.Errorf("checksum mismatch: expected %s, got %s", info.Checksum, checksum)
+	}
+
+	// RW-1 / WD-H2: authenticity gate over the exact downloaded bytes against
+	// the embedded public key. Fail closed on empty/invalid signature.
+	downloadedBytes, readErr := os.ReadFile(tempFile)
+	if readErr != nil {
+		os.Remove(tempFile)
+		return "", fmt.Errorf("failed to read staged watchdog file for signature verification: %w", readErr)
+	}
+	if sigErr := updatesig.Verify(downloadedBytes, info.Signature); sigErr != nil {
+		os.Remove(tempFile)
+		ipc.WriteAlert(&ipc.AlertRelayPayload{
+			Severity: "critical",
+			Title:    "Watchdog Update Signature Verification Failed",
+			Message:  fmt.Sprintf("Watchdog update v%s rejected: %v", info.Version, sigErr),
+		})
+		return "", fmt.Errorf("signature verification failed for watchdog update v%s: %w", info.Version, sigErr)
 	}
 
 	// Rename from .tmp to final staging path
@@ -1390,7 +1503,7 @@ func (u *Updater) DownloadWatchdogUpdate(ctx context.Context, info *WatchdogVers
 		return "", fmt.Errorf("failed to rename to staging path: %w", err)
 	}
 
-	log.Printf("[Updater] Watchdog download complete, checksum verified: %s", checksum)
+	log.Printf("[Updater] Watchdog download complete, checksum + signature verified: %s", checksum)
 	return stagingFile, nil
 }
 
@@ -1428,14 +1541,17 @@ func (u *Updater) TriggerWatchdogUpdate(ctx context.Context) error {
 	}
 	watchdogPath := filepath.Join(filepath.Dir(agentExe), "sentinel-watchdog.exe")
 
-	// Create update request for the watchdog
+	// Create update request for the watchdog. Carry the signature through so the
+	// watchdog self-update re-verifies against its embedded public key pre-swap.
 	request := &ipc.WatchdogUpdateRequest{
-		Version:     result.VersionInfo.Version,
-		StagedPath:  stagingPath,
-		Checksum:    result.VersionInfo.Checksum,
-		RequestedAt: time.Now(),
-		RequestedBy: u.deviceID,
-		TargetPath:  watchdogPath,
+		Version:         result.VersionInfo.Version,
+		StagedPath:      stagingPath,
+		Checksum:        result.VersionInfo.Checksum,
+		RequestedAt:     time.Now(),
+		RequestedBy:     u.deviceID,
+		TargetPath:      watchdogPath,
+		Signature:       result.VersionInfo.Signature,
+		SignedDowngrade: result.VersionInfo.SignedDowngrade,
 	}
 
 	// Write the update request file
