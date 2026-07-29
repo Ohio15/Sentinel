@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -417,8 +418,35 @@ func CleanupStagingDir() error {
 	return nil
 }
 
+// safeStagingComponent sanitizes an untrusted version/platform/arch value
+// before it is interpolated into a staging filename. The download path opens
+// (and truncates) the staging temp file BEFORE the signature is verified, so an
+// attacker-controlled version-check response must not be able to steer that
+// write outside StagingDir. We keep only [A-Za-z0-9._-] and neutralize any ".."
+// sequence, guaranteeing filepath.Join cannot escape the staging directory.
+// Content authenticity is still enforced separately by the signature check; this
+// only constrains where the pre-verification bytes may land.
+func safeStagingComponent(s string) string {
+	mapped := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			return r
+		case r == '.' || r == '_' || r == '-':
+			return r
+		default:
+			return '_'
+		}
+	}, s)
+	mapped = strings.ReplaceAll(mapped, "..", "__")
+	if mapped == "" {
+		return "unknown"
+	}
+	return mapped
+}
+
 // StagingPath returns the path where a staged update should be stored
 func StagingPath(version, platform, arch string) string {
+	version, platform, arch = safeStagingComponent(version), safeStagingComponent(platform), safeStagingComponent(arch)
 	var filename string
 	if runtime.GOOS == "windows" {
 		filename = fmt.Sprintf("sentinel-agent-%s-%s-%s.exe", version, platform, arch)
@@ -430,6 +458,7 @@ func StagingPath(version, platform, arch string) string {
 
 // WatchdogStagingPath returns the path where a staged watchdog update should be stored
 func WatchdogStagingPath(version, platform, arch string) string {
+	version, platform, arch = safeStagingComponent(version), safeStagingComponent(platform), safeStagingComponent(arch)
 	var filename string
 	if runtime.GOOS == "windows" {
 		filename = fmt.Sprintf("sentinel-watchdog-%s-%s-%s.exe", version, platform, arch)
