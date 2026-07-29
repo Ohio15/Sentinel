@@ -57,6 +57,19 @@ type Config struct {
 	EnableMTLS          bool   // Enable mTLS certificate issuance
 	CertValidityYears   int    // Certificate validity period in years
 
+	// EnforceAgentCertBinding controls the token→cert binding check on the agent
+	// WebSocket auth path. When false (default), a cert-holding agent that
+	// authenticates with its enrollment token over the tunnel is allowed but
+	// logged + counted (WARN/OBSERVE mode) so we can enumerate which agents would
+	// break under enforcement. When true, such an agent is REJECTED and must use
+	// direct mTLS (port 8443).
+	//
+	// FLIP PRECONDITION: only enable after confirming ALL cert-holding agents can
+	// reach direct mTLS (8443), or after proof-of-possession-over-tunnel (phase 2)
+	// ships. Enabling this prematurely will disconnect any agent that depends on
+	// the Cloudflare tunnel, where agent-side mTLS is impossible (CF terminates TLS).
+	EnforceAgentCertBinding bool
+
 	// Agent mTLS HTTP listener
 	AgentMTLSPort int // Port for mTLS HTTP listener (default 8443, 0 disables)
 
@@ -137,6 +150,10 @@ func Load() (*Config, error) {
 		CAKeyPath:         getEnv("CA_KEY_PATH", "/certs/ca-key.pem"),
 		EnableMTLS:        getEnvBool("ENABLE_MTLS", true),
 		CertValidityYears: getEnvInt("CERT_VALIDITY_YEARS", 2),
+
+		// Token→cert binding enforcement — default OFF (WARN/OBSERVE only).
+		// See EnforceAgentCertBinding field doc for the flip precondition.
+		EnforceAgentCertBinding: getEnvBool("ENFORCE_AGENT_CERT_BINDING", false),
 
 		// Agent mTLS HTTP listener
 		AgentMTLSPort: getEnvInt("AGENT_MTLS_PORT", 8443),
