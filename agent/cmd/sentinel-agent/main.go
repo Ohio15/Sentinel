@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -1898,6 +1900,48 @@ func (a *Agent) handleUpdateCertificate(msg *client.Message) error {
 
 	if certContent == "" {
 		errMsg := "No certificate content provided"
+		a.client.SendCertUpdateAck(certHash, false, errMsg)
+		return errors.New(errMsg)
+	}
+
+	// AG CA-overwrite: validate the payload BEFORE it replaces the trust anchor.
+	// Writing unvalidated content to ca-cert.pem could brick the agent's trust
+	// (garbage) or, if the update channel were ever weakened, plant a rogue CA.
+	// Require: (1) if certHash is provided it must match sha256 of the content
+	// (integrity); (2) the content must be a parseable X.509 CA certificate that
+	// is currently within its validity window.
+	if certHash != "" {
+		sum := sha256.Sum256([]byte(certContent))
+		if !strings.EqualFold(hex.EncodeToString(sum[:]), certHash) {
+			errMsg := "Certificate hash mismatch — refusing to install"
+			log.Printf("[Certs] %s", errMsg)
+			a.client.SendCertUpdateAck(certHash, false, errMsg)
+			return errors.New(errMsg)
+		}
+	}
+	block, _ := pem.Decode([]byte(certContent))
+	if block == nil || block.Type != "CERTIFICATE" {
+		errMsg := "Certificate content is not a valid PEM certificate"
+		log.Printf("[Certs] %s", errMsg)
+		a.client.SendCertUpdateAck(certHash, false, errMsg)
+		return errors.New(errMsg)
+	}
+	parsedCert, perr := x509.ParseCertificate(block.Bytes)
+	if perr != nil {
+		errMsg := fmt.Sprintf("Certificate does not parse as X.509: %v", perr)
+		log.Printf("[Certs] %s", errMsg)
+		a.client.SendCertUpdateAck(certHash, false, errMsg)
+		return errors.New(errMsg)
+	}
+	if !parsedCert.IsCA {
+		errMsg := "Refusing CA update: certificate is not a CA certificate"
+		log.Printf("[Certs] %s", errMsg)
+		a.client.SendCertUpdateAck(certHash, false, errMsg)
+		return errors.New(errMsg)
+	}
+	if now := time.Now(); now.Before(parsedCert.NotBefore) || now.After(parsedCert.NotAfter) {
+		errMsg := fmt.Sprintf("Refusing CA update: certificate not currently valid (NotBefore=%s NotAfter=%s)", parsedCert.NotBefore, parsedCert.NotAfter)
+		log.Printf("[Certs] %s", errMsg)
 		a.client.SendCertUpdateAck(certHash, false, errMsg)
 		return errors.New(errMsg)
 	}
