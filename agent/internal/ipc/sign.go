@@ -38,7 +38,15 @@ func loadOrGenerateHMACKey() ([]byte, error) {
 
 	data, err := os.ReadFile(keyPath)
 	if err == nil && len(data) == hmacKeySize {
-		return data, nil
+		// Verify the key file's owner/DACL BEFORE trusting it (WD-M9 / AG L3).
+		// Previously any 32-byte ipc-key.dat was trusted, so a pre-planted key
+		// let an attacker forge valid signatures on the IPC coordination files.
+		// If verification fails the key is treated as planted and regenerated.
+		if verr := VerifyFileSecurity(keyPath); verr != nil {
+			log.Printf("CRITICAL SECURITY ALERT: IPC HMAC key %s failed security verification (possible planted key), regenerating: %v", keyPath, verr)
+		} else {
+			return data, nil
+		}
 	}
 
 	// Generate a new random 32-byte key
@@ -47,17 +55,16 @@ func loadOrGenerateHMACKey() ([]byte, error) {
 		return nil, fmt.Errorf("failed to generate HMAC key: %w", err)
 	}
 
-	// Ensure base directory exists before writing key
-	if err := os.MkdirAll(BaseDir, 0700); err != nil {
+	// Ensure base directory exists with a protected DACL before writing the key.
+	if err := EnsureSecureDir(BaseDir, 0700); err != nil {
 		return nil, fmt.Errorf("failed to create base directory for HMAC key: %w", err)
 	}
 
-	// Write the key file with restrictive permissions
-	if err := secureWriteFile(keyPath, key, 0600); err != nil {
+	// Write the key file with a SYSTEM+Administrators-only DACL, failing hard if
+	// the DACL cannot be applied (no world-readable fallback).
+	if err := SecureWriteFileStrict(keyPath, key, 0600); err != nil {
 		return nil, fmt.Errorf("failed to write HMAC key: %w", err)
 	}
-	// Apply directory ACL on Windows
-	secureDirectory(BaseDir)
 
 	log.Println("Generated new IPC HMAC key")
 	return key, nil

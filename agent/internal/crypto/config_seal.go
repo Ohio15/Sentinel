@@ -3,6 +3,7 @@ package crypto
 import (
 	"crypto/rand"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -51,13 +52,20 @@ func loadOrCreateMachineSecret() ([]byte, error) {
 	path := machineSecretPath()
 
 	if raw, err := os.ReadFile(path); err == nil {
-		secret, uerr := UnsealMachineData(raw)
-		if uerr == nil && len(secret) == machineSecretSize {
+		// Verify the file's owner/DACL BEFORE trusting its contents. A local
+		// user could otherwise pre-plant a config-secret.dat under a known key
+		// to force the config to be sealed with an attacker-known key (C-2).
+		// A verification failure means the file is not the SYSTEM-owned,
+		// SYSTEM+Administrators-only file we wrote — treat it as planted and
+		// regenerate rather than trust it.
+		if verr := ipc.VerifyFileSecurity(path); verr != nil {
+			log.Printf("[crypto] machine secret failed security verification, regenerating: %v", verr)
+		} else if secret, uerr := UnsealMachineData(raw); uerr == nil && len(secret) == machineSecretSize {
 			return secret, nil
 		}
-		// Corrupt or truncated secret — fall through and regenerate. Any
-		// config encrypted under the old (unrecoverable) secret is handled by
-		// the legacy-key migration path in DecryptConfig.
+		// Corrupt, truncated, or planted secret — fall through and regenerate.
+		// Any config encrypted under the old (unrecoverable) secret is handled
+		// by the legacy-key migration path in DecryptConfig.
 	}
 
 	secret := make([]byte, machineSecretSize)
