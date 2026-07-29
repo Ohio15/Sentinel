@@ -205,7 +205,21 @@ func WriteFileWithLimits(path string, data string, appendMode bool) error {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	// Step 6: Open file with appropriate flags
+	// Step 5b: Pre-open symlink/reparse-point rejection (AG-H write). Refuse to
+	// write when the target is already a symlink or junction so we never
+	// truncate or overwrite through one. On POSIX the no-follow open below is
+	// the hard enforcement; this check also protects Windows where O_NOFOLLOW
+	// is unavailable, and short-circuits before O_TRUNC touches any target.
+	if li, lerr := os.Lstat(path); lerr == nil {
+		if li.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to write through symlink/reparse point: %s", path)
+		}
+	} else if !os.IsNotExist(lerr) {
+		return fmt.Errorf("failed to stat target: %w", lerr)
+	}
+
+	// Step 6: Open file with appropriate flags, refusing to follow a symlink at
+	// the final path component (openFileNoFollow adds O_NOFOLLOW on POSIX).
 	flags := os.O_WRONLY | os.O_CREATE
 	if appendMode {
 		flags |= os.O_APPEND
@@ -213,11 +227,21 @@ func WriteFileWithLimits(path string, data string, appendMode bool) error {
 		flags |= os.O_TRUNC
 	}
 
-	file, err := os.OpenFile(path, flags, 0644)
+	file, err := openFileNoFollow(path, flags, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to open file: %w", err)
 	}
 	defer file.Close()
+
+	// Step 6b: Verify the opened handle's identity to close the TOCTOU window
+	// between validation and open — the fd must be a regular file that is the
+	// same object Lstat resolves (i.e. not a symlink swapped in after checks).
+	if err := verifyOpenedRegularFile(file, path); err != nil {
+		if !appendMode {
+			os.Remove(path)
+		}
+		return err
+	}
 
 	// Step 7: Stream decode and write
 	written, err := decoder.WriteTo(file)
@@ -230,5 +254,32 @@ func WriteFileWithLimits(path string, data string, appendMode bool) error {
 	}
 
 	log.Printf("[FILE TRANSFER] Successfully wrote %d bytes to %s", written, path)
+	return nil
+}
+
+// verifyOpenedRegularFile confirms the opened file descriptor refers to a
+// regular file that is the same filesystem object as the path resolves via
+// Lstat. This closes the symlink/junction TOCTOU window (AG-H write): if an
+// attacker swapped in a symlink after path validation, the Lstat mode or the
+// SameFile identity comparison will detect it.
+func verifyOpenedRegularFile(f *os.File, path string) error {
+	fi, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to stat opened file: %w", err)
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("refusing to write non-regular file: %s", path)
+	}
+
+	li, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("failed to lstat target after open: %w", err)
+	}
+	if li.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("target became a symlink/reparse point after open: %s", path)
+	}
+	if !os.SameFile(fi, li) {
+		return fmt.Errorf("target identity changed between validation and open (possible TOCTOU): %s", path)
+	}
 	return nil
 }

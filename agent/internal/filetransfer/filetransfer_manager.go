@@ -722,29 +722,33 @@ func (m *FileTransferManager) Release() {
 	log.Printf("[FileTransfer] Released")
 }
 
-// validatePath checks if the path is allowed
+// validatePath checks if the path is allowed.
+//
+// AG-M path: the previous implementation only rejected a literal ".." substring
+// and used strings.HasPrefix for allowed-path matching, which both misses
+// traversal via symlinks/8.3-names/Unicode and lets "C:\allowed-evil" match
+// base "C:\allowed". Route through the same sound validation used by
+// FileTransfer: SecurePathValidation (Unicode/short-name/reserved-name/abs
+// normalization) plus isSubPath for directory-boundary-aware containment.
 func (m *FileTransferManager) validatePath(path string) error {
 	if path == "" {
 		return ErrInvalidPath
 	}
 
-	// Check for path traversal
-	cleaned := filepath.Clean(path)
-	if strings.Contains(cleaned, "..") {
+	securePath, err := SecurePathValidation(path)
+	if err != nil {
 		return ErrInvalidPath
 	}
 
 	// Check allowed paths if configured
 	if len(m.config.AllowedPaths) > 0 {
-		absPath, err := filepath.Abs(cleaned)
-		if err != nil {
-			return ErrInvalidPath
-		}
-
 		allowed := false
 		for _, allowedPath := range m.config.AllowedPaths {
-			allowedAbs, _ := filepath.Abs(allowedPath)
-			if strings.HasPrefix(absPath, allowedAbs) {
+			allowedAbs, absErr := filepath.Abs(allowedPath)
+			if absErr != nil {
+				continue
+			}
+			if isSubPath(securePath, filepath.Clean(allowedAbs)) {
 				allowed = true
 				break
 			}
