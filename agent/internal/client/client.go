@@ -405,28 +405,22 @@ func (c *Client) Connect(ctx context.Context) error {
 	if useMTLS {
 		tlsConfig, err := mtls.GetTLSConfig()
 		if err != nil {
-			log.Printf("[mTLS] Warning: Failed to load TLS config, falling back to token auth: %v", err)
-			useMTLS = false
-			// Revert to standard URL
-			wsURL = c.config.ServerURL
-			if len(wsURL) > 8 && wsURL[:8] == "https://" {
-				wsURL = "wss://" + wsURL[8:]
-			}
-			if !strings.HasSuffix(wsURL, "/ws/agent") {
-				wsURL = wsURL + "/ws/agent"
-			}
-		} else {
-			dialer.TLSClientConfig = tlsConfig
+			// Fail closed (AG silent-downgrade): a client certificate is present,
+			// so we must not silently revert to long-lived enrollment-token auth.
+			return fmt.Errorf("mTLS is configured but the TLS config could not be loaded; refusing token fallback: %w", err)
 		}
+		dialer.TLSClientConfig = tlsConfig
 	}
 
 	headers := http.Header{}
 	conn, _, err := dialer.DialContext(ctx, wsURL, headers)
 	if err != nil {
-		// If mTLS failed, try falling back to token auth
+		// Fail closed (AG silent-downgrade): when a client certificate exists we
+		// refuse to fall back to token auth. Otherwise an on-path attacker could
+		// block the mTLS port (8443) to force the weaker, long-lived
+		// enrollment-token authentication.
 		if useMTLS {
-			log.Printf("[mTLS] Connection failed, falling back to token auth: %v", err)
-			return c.connectWithToken(ctx)
+			return fmt.Errorf("mTLS connection failed and token fallback is refused because a client certificate is present: %w", err)
 		}
 		return fmt.Errorf("failed to connect: %w", err)
 	}
@@ -500,81 +494,11 @@ func (c *Client) Connect(ctx context.Context) error {
 	return nil
 }
 
-// connectWithToken establishes a connection using token authentication (fallback).
-func (c *Client) connectWithToken(ctx context.Context) error {
-	wsURL := c.config.ServerURL
-	if len(wsURL) > 7 && wsURL[:7] == "http://" {
-		wsURL = "ws://" + wsURL[7:]
-	} else if len(wsURL) > 8 && wsURL[:8] == "https://" {
-		wsURL = "wss://" + wsURL[8:]
-	}
-	if !strings.HasSuffix(wsURL, "/ws/agent") {
-		wsURL = wsURL + "/ws/agent"
-	}
-
-	log.Printf("[Token Auth] Connecting to %s", wsURL)
-
-	// Get TLS config for server verification (but not client auth)
-	tlsConfig, _ := mtls.GetTLSConfig()
-
-	dialer := websocket.Dialer{
-		HandshakeTimeout: 5 * time.Second,
-		TLSClientConfig:  tlsConfig,
-	}
-
-	conn, _, err := dialer.DialContext(ctx, wsURL, nil)
-	if err != nil {
-		return fmt.Errorf("failed to connect: %w", err)
-	}
-
-	c.mu.Lock()
-	c.conn = conn
-	c.connected = true
-	c.connectedSince = time.Now()
-	c.lastPong = time.Now()
-	c.mu.Unlock()
-
-	conn.SetPongHandler(func(appData string) error {
-		c.mu.Lock()
-		c.lastPong = time.Now()
-		c.mu.Unlock()
-		return nil
-	})
-
-	c.mu.RLock()
-	deviceInfo := c.deviceInfo
-	c.mu.RUnlock()
-
-	authPayload := map[string]interface{}{
-		"agentId":       c.config.AgentID,
-		"token":         c.config.EnrollmentToken,
-		"caCertHash":    paths.GetCACertHash(),
-		"hasClientCert": mtls.HasMTLS(),
-	}
-	if deviceInfo != nil {
-		authPayload["deviceInfo"] = deviceInfo
-	}
-
-	authMsg := map[string]interface{}{
-		"type":    MsgTypeAuth,
-		"payload": authPayload,
-	}
-	authData, _ := json.Marshal(authMsg)
-	if err := conn.WriteMessage(websocket.TextMessage, authData); err != nil {
-		conn.Close()
-		return fmt.Errorf("failed to send auth: %w", err)
-	}
-
-	go c.readLoop(ctx)
-	go c.writeLoop(ctx)
-	go c.pingLoop(ctx)
-
-	if c.onConnect != nil {
-		c.onConnect()
-	}
-
-	return nil
-}
+// NOTE: The former connectWithToken() mTLS→token downgrade fallback was removed
+// (AG silent-downgrade). Token authentication for the no-certificate enrollment
+// case is handled inline by Connect() when useMTLS is false; once a client
+// certificate exists, direct-mode connection failures fail closed rather than
+// silently reverting to long-lived token auth.
 
 // connectViaTunnel connects through the Cloudflare tunnel on port 443 using token auth.
 // This uses standard HTTPS with system root CAs (CF provides a publicly-signed cert).
