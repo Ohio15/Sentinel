@@ -313,9 +313,15 @@ func loadIdentity(serverURLOverride string) (*identity, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: cannot read client cert: %v", ErrMissingIdentity, err)
 	}
-	ident.ClientKey, err = os.ReadFile(paths.ClientKeyPath())
+	sealedKey, err := os.ReadFile(paths.ClientKeyPath())
 	if err != nil {
 		return nil, fmt.Errorf("%w: cannot read client key: %v", ErrMissingIdentity, err)
+	}
+	// Unseal the key if it was DPAPI-sealed at rest (Windows). A legacy
+	// plaintext key is returned unchanged so pre-sealing installs still rotate.
+	ident.ClientKey, err = crypto.UnsealMachineData(sealedKey)
+	if err != nil {
+		return nil, fmt.Errorf("%w: cannot unseal client key: %v", ErrMissingIdentity, err)
 	}
 	ident.CACert, err = os.ReadFile(paths.CACertPath())
 	if err != nil {
@@ -516,21 +522,38 @@ func installNewCerts(resp *Response, now time.Time) error {
 		return fmt.Errorf("ensure certs dir: %w", err)
 	}
 
+	// Seal the private key at rest (DPAPI machine scope on Windows). The bytes
+	// written to client.key are the sealed blob; loadIdentity unseals on read.
+	sealedKey, err := crypto.SealMachineData([]byte(resp.Key))
+	if err != nil {
+		return fmt.Errorf("seal client key: %w", err)
+	}
+
+	// All three identity files are written 0600 and, before being renamed into
+	// place, receive a SYSTEM+Administrators-only DACL so the rotated key never
+	// exists on disk with the inherited world-readable ACL (AG-CRIT1/AG-H2).
 	entries := []certEntry{
-		{live: paths.ClientCertPath(), perm: 0644, data: []byte(resp.Cert)},
-		{live: paths.ClientKeyPath(), perm: 0600, data: []byte(resp.Key)},
-		{live: paths.CACertPath(), perm: 0644, data: []byte(resp.CACert)},
+		{live: paths.ClientCertPath(), perm: 0600, data: []byte(resp.Cert)},
+		{live: paths.ClientKeyPath(), perm: 0600, data: sealedKey},
+		{live: paths.CACertPath(), perm: 0600, data: []byte(resp.CACert)},
 	}
 
 	ts := now.UTC().Format("20060102T150405Z")
 
-	// Phase 1: write .new files with fsync.
+	// Phase 1: write .new files with fsync, then seal each with a protected
+	// DACL before it is renamed into place (an explicit file DACL survives the
+	// rename). If the DACL cannot be applied we refuse to proceed rather than
+	// leaving a world-readable key.
 	for _, e := range entries {
 		newPath := e.live + ".new"
 		if err := writeAndSync(newPath, e.data, e.perm); err != nil {
 			// Clean up any partial .new files before bailing.
 			cleanupPartial(entries)
 			return fmt.Errorf("write %s: %w", newPath, err)
+		}
+		if err := ipc.SecureFileStrict(newPath); err != nil {
+			cleanupPartial(entries)
+			return fmt.Errorf("secure %s: %w", newPath, err)
 		}
 	}
 
@@ -553,6 +576,14 @@ func installNewCerts(resp *Response, now time.Time) error {
 			cleanupPartial(entries)
 			rollbackBackups(backups)
 			return fmt.Errorf("backup %s -> %s: %w", e.live, bakPath, err)
+		}
+		// Seal the backup with a protected DACL (H-2). On the first rotation
+		// after upgrade the live file is a legacy, world-readable plaintext key
+		// (0600 with no DACL); the backup copy must not preserve that exposure.
+		if err := ipc.SecureFileStrict(bakPath); err != nil {
+			cleanupPartial(entries)
+			rollbackBackups(backups)
+			return fmt.Errorf("secure backup %s: %w", bakPath, err)
 		}
 		backups = append(backups, backupPair{live: e.live, backup: bakPath})
 	}
@@ -586,13 +617,17 @@ func installNewCerts(resp *Response, now time.Time) error {
 }
 
 // writeAndSync writes data to path with the given permissions and
-// fsyncs to force the bytes to stable storage before returning. We use
-// O_TRUNC on the off chance a .new file is lingering from a previous
-// failed run.
+// fsyncs to force the bytes to stable storage before returning. It creates the
+// file EXCLUSIVELY: a private key must never be written into a pre-existing
+// file (an attacker who pre-created the .new path keeps a handle and reads the
+// key before its DACL is applied). Any file we legitimately own — e.g. a .new
+// lingering from a failed run — is removed first; a racing re-creation then
+// fails closed via O_EXCL rather than leaking into the other file.
 func writeAndSync(path string, data []byte, perm os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	_ = os.Remove(path)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
 	if err != nil {
-		return err
+		return fmt.Errorf("refusing to write %s: exclusive create failed: %w", path, err)
 	}
 	if _, err := f.Write(data); err != nil {
 		f.Close()

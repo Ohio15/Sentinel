@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sentinel/agent/internal/crypto"
+	"github.com/sentinel/agent/internal/ipc"
 	"github.com/sentinel/agent/internal/paths"
 )
 
@@ -93,7 +95,15 @@ func loadTLSConfig() (*tls.Config, error) {
 	keyPath := paths.ClientKeyPath()
 
 	if paths.HasClientCertificate() {
-		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		certPEM, err := os.ReadFile(certPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read client certificate: %w", err)
+		}
+		keyPEM, err := loadClientKeyPEM(keyPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load client key: %w", err)
+		}
+		cert, err := tls.X509KeyPair(certPEM, keyPEM)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load client certificate: %w", err)
 		}
@@ -120,28 +130,36 @@ func InstallCertificates(clientCert, clientKey, caCert []byte) error {
 		return fmt.Errorf("failed to create certs directory: %w", err)
 	}
 
-	// Save CA certificate
+	// Save CA certificate. Routed through the strict secure-write helper so it
+	// lands with a SYSTEM+Administrators-only DACL rather than the inherited
+	// world-readable ProgramData ACL (AG-CRIT1).
 	if len(caCert) > 0 {
-		if err := os.WriteFile(paths.CACertPath(), caCert, 0644); err != nil {
+		if err := ipc.SecureWriteFileStrict(paths.CACertPath(), caCert, 0600); err != nil {
 			return fmt.Errorf("failed to write CA certificate: %w", err)
 		}
 		log.Printf("[mTLS] Installed CA certificate: %s", paths.CACertPath())
 	}
 
-	// Save client certificate
+	// Save client certificate with a protected DACL.
 	if len(clientCert) > 0 {
-		if err := os.WriteFile(paths.ClientCertPath(), clientCert, 0644); err != nil {
+		if err := ipc.SecureWriteFileStrict(paths.ClientCertPath(), clientCert, 0600); err != nil {
 			return fmt.Errorf("failed to write client certificate: %w", err)
 		}
 		log.Printf("[mTLS] Installed client certificate: %s", paths.ClientCertPath())
 	}
 
-	// Save client key with restrictive permissions
+	// Save client key: seal at rest (DPAPI machine scope on Windows) AND write
+	// with a protected DACL. The Go 0600 mode alone set no DACL on Windows, so
+	// the private key inherited Users:Read under ProgramData (AG-CRIT1/AG-H2).
 	if len(clientKey) > 0 {
-		if err := os.WriteFile(paths.ClientKeyPath(), clientKey, 0600); err != nil {
+		sealedKey, err := crypto.SealMachineData(clientKey)
+		if err != nil {
+			return fmt.Errorf("failed to seal client key: %w", err)
+		}
+		if err := ipc.SecureWriteFileStrict(paths.ClientKeyPath(), sealedKey, 0600); err != nil {
 			return fmt.Errorf("failed to write client key: %w", err)
 		}
-		log.Printf("[mTLS] Installed client key: %s", paths.ClientKeyPath())
+		log.Printf("[mTLS] Installed client key (sealed): %s", paths.ClientKeyPath())
 	}
 
 	// Reload TLS config to pick up new certificates
@@ -150,6 +168,23 @@ func InstallCertificates(clientCert, clientKey, caCert []byte) error {
 	}
 
 	return nil
+}
+
+// loadClientKeyPEM reads the client private key from disk and unseals it if it
+// was DPAPI-sealed at rest (Windows). A legacy plaintext PEM (written before
+// sealing was introduced) is detected by UnsealMachineData and returned
+// unchanged, so existing installs keep working until the next re-cert re-seals
+// the key.
+func loadClientKeyPEM(keyPath string) ([]byte, error) {
+	raw, err := os.ReadFile(keyPath)
+	if err != nil {
+		return nil, err
+	}
+	keyPEM, err := crypto.UnsealMachineData(raw)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unseal client key: %w", err)
+	}
+	return keyPEM, nil
 }
 
 // GetMTLSPort returns the mTLS port for agent connections (8443).

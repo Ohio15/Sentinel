@@ -2,8 +2,42 @@ package crypto
 
 import (
 	"bytes"
+	"crypto/rand"
+	"os"
 	"testing"
 )
+
+// TestMain redirects the machine-secret key store to a writable temp directory
+// so encryption/decryption tests (and the external example tests compiled into
+// the same test binary) do not attempt to write into the privileged agent data
+// directory (e.g. /etc/sentinel, C:\ProgramData\Sentinel).
+func TestMain(m *testing.M) {
+	tmp, err := os.MkdirTemp("", "sentinel-crypto-test")
+	if err != nil {
+		panic(err)
+	}
+	originalKeyStoreDir := KeyStoreDir
+	KeyStoreDir = func() string { return tmp }
+
+	// Pre-seed the machine secret so the tests (running as an unprivileged
+	// user) do not exercise the production create-path, which applies a
+	// SYSTEM+Administrators-only DACL that would lock the test user out of the
+	// temp directory. The unseal path accepts a bare 32-byte file (no seal
+	// prefix), matching a pre-existing/legacy secret on disk.
+	seed := make([]byte, machineSecretSize)
+	if _, rerr := rand.Read(seed); rerr != nil {
+		panic(rerr)
+	}
+	if werr := os.WriteFile(machineSecretPath(), seed, 0600); werr != nil {
+		panic(werr)
+	}
+
+	code := m.Run()
+
+	KeyStoreDir = originalKeyStoreDir
+	_ = os.RemoveAll(tmp)
+	os.Exit(code)
+}
 
 func TestEncryptDecrypt(t *testing.T) {
 	testData := []byte(`{"test": "data", "number": 123}`)

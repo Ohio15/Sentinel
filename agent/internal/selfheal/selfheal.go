@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sentinel/agent/internal/ipc"
 )
 
 // DiagnosticResult represents the result of a single diagnostic check
@@ -601,7 +603,10 @@ func (s *SelfHealer) restoreConfigFromBackup() bool {
 		return false
 	}
 
-	if err := os.WriteFile(s.config.ConfigPath, data, 0600); err != nil {
+	// Route through the strict helper so the restored config lands with a
+	// SYSTEM+Administrators-only DACL (exclusive create), not the inherited
+	// world-readable ProgramData ACL — consistent with every other secret write.
+	if err := ipc.SecureWriteFileStrict(s.config.ConfigPath, data, 0600); err != nil {
 		log.Printf("[SelfHeal] Failed to restore config: %v", err)
 		return false
 	}

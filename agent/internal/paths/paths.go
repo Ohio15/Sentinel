@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+
+	"github.com/sentinel/agent/internal/ipc"
 )
 
 // File names (constants - never change these inline elsewhere)
@@ -108,14 +110,19 @@ var WatchdogPath = func() string {
 	return filepath.Join(InstallDir(), WatchdogExecutable)
 }
 
-// EnsureDataDir creates the data directory if it doesn't exist.
+// EnsureDataDir creates the data directory if it doesn't exist and applies a
+// SYSTEM+Administrators-only DACL (AG-CRIT1). The prior MkdirAll(0755) left the
+// directory — which holds config.json and the machine secret — traversable by
+// any local user on Windows.
 func EnsureDataDir() error {
-	return os.MkdirAll(DataDir(), 0755)
+	return ipc.EnsureSecureDir(DataDir(), 0700)
 }
 
-// EnsureCertsDir creates the certificates directory if it doesn't exist.
+// EnsureCertsDir creates the certificates directory if it doesn't exist and
+// applies a SYSTEM+Administrators-only DACL (AG-CRIT1). The prior
+// MkdirAll(0755) left the mTLS client key world-readable via inherited ACLs.
 func EnsureCertsDir() error {
-	return os.MkdirAll(CertsDir(), 0755)
+	return ipc.EnsureSecureDir(CertsDir(), 0700)
 }
 
 // EnsureUpdateDir creates the update directory if it doesn't exist.
