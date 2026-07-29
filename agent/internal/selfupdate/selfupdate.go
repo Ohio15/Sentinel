@@ -198,8 +198,13 @@ timeout /t 5 /nobreak > nul
 :: Verify service is stopped
 sc query %s | find "STOPPED" > nul
 if %%errorlevel%% neq 0 (
-    echo [%%date%% %%time%%] Force stopping service... >> "%%LOG_FILE%%"
-    taskkill /F /IM sentinel-watchdog.exe 2>> "%%LOG_FILE%%"
+    echo [%%date%% %%time%%] Force stopping service by PID... >> "%%LOG_FILE%%"
+    :: WD-M1/M2: resolve the watchdog PID via SCM and kill by PID, never a blind taskkill /IM
+    for /f "tokens=2 delims=: " %%%%p in ('sc queryex %s ^| findstr /i /C:"PID"') do set WDPID=%%%%p
+    if defined WDPID if not "!WDPID!"=="0" (
+        echo [%%date%% %%time%%] Killing %s PID !WDPID!... >> "%%LOG_FILE%%"
+        taskkill /PID !WDPID! /F 2>> "%%LOG_FILE%%"
+    )
     timeout /t 2 /nobreak > nul
 )
 
@@ -295,6 +300,7 @@ echo [%%date%% %%time%%] Script finished >> "%%LOG_FILE%%"
 		request.Version, escapePath(s.executablePath), escapePath(request.StagedPath),
 		s.serviceName, s.serviceName,
 		s.serviceName,
+		s.serviceName, s.serviceName, // sc queryex %s + "Killing %s PID" (WD-M1/M2 force-stop by PID)
 		escapePath(backupPath), escapePath(backupPath),
 		escapePath(s.executablePath), escapePath(backupPath),
 		escapePath(request.StagedPath), escapePath(s.executablePath),
