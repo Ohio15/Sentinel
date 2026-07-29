@@ -79,6 +79,12 @@ if (-not (Test-Path "$ProjectRoot/package.json")) {
     throw "Repo root not found at $ProjectRoot (no package.json). Run this script from a Sentinel checkout."
 }
 
+# The trust-anchor decision and the served-artifact classification live in
+# scripts/lib/release-checks.ps1 and are covered by
+# scripts/test/release-checks.tests.ps1. Both controls shipped defects that a
+# review caught only on a second pass, so they are tested, not re-derived here.
+. (Join-Path $PSScriptRoot 'lib/release-checks.ps1')
+
 # Test-SameDir compares two directories through symlinks (device:inode on
 # Linux; normalized-path fallback elsewhere).
 function Test-SameDir {
@@ -121,6 +127,22 @@ if ($Deploy -and -not (Test-Path $ServeDir)) {
 # AND it must be the same key the previously published release used (the fleet
 # has that key baked in and fails closed on anything else).
 # ------------------------------------------------------------------------------
+if ($DeployOnly) {
+    # A redeploy signs nothing — it needs only the PUBLIC key, to build the
+    # verifier it re-checks artifacts with. Requiring the private key here would
+    # put release key material on the serving host for an operation that never
+    # uses it (and would let a deploy retry be blocked by key availability).
+    $vj = Get-Content "$ProjectRoot/installers/version.json" -Raw | ConvertFrom-Json
+    if ($vj.version -ne $Version) { throw "-DeployOnly: installers/version.json is v$($vj.version), expected v$Version. Nothing to redeploy for this version." }
+    $SigningPubKey = "$($vj.signingPublicKeyHex)".Trim().ToLowerInvariant()
+    if ($SigningPubKey -notmatch '^[0-9a-f]{64}$') {
+        throw "-DeployOnly: installers/version.json records no usable signingPublicKeyHex, so the verifier cannot be built. Run a full release."
+    }
+    Write-Host "Verifier public key (from installers/version.json): $SigningPubKey" -ForegroundColor DarkGray
+    $SigningLdflags = "-X github.com/sentinel/agent/internal/updatesig.SigningPublicKeyHex=$SigningPubKey"
+}
+else {
+
 $SigningKey = $env:SENTINEL_UPDATE_SIGNING_KEY     # PKCS#8 PEM path for cmd/sign
 if ([string]::IsNullOrWhiteSpace($SigningKey)) {
     throw "SENTINEL_UPDATE_SIGNING_KEY is not set. Refusing to build an unsigned release (RW-1)."
@@ -144,7 +166,9 @@ if ($IsLinux) {
 
 # Derive the hex Ed25519 public key from the private key. Ed25519 SPKI DER is
 # exactly 44 bytes: 12-byte header (302a300506032b6570032100) + 32-byte key.
-$pubPem = & openssl pkey -in $SigningKeyReal -pubout
+# -passin pass: makes an encrypted key fail immediately instead of blocking the
+# release on an interactive prompt (cmd/sign accepts only unencrypted PKCS#8).
+$pubPem = & openssl pkey -in $SigningKeyReal -passin pass: -pubout
 $pubB64 = ($pubPem | Where-Object { $_ -notmatch '^-----' }) -join ''
 $pubDer = [Convert]::FromBase64String($pubB64)
 $derHex = [BitConverter]::ToString($pubDer).Replace('-', '').ToLowerInvariant()
@@ -153,40 +177,47 @@ if ($pubDer.Length -ne 44 -or -not $derHex.StartsWith('302a300506032b6570032100'
 }
 $SigningPubKey = $derHex.Substring(24)
 
-# Pin 1 (optional operator cross-check): env var, if set, must agree.
-$envPub = "$($env:SENTINEL_UPDATE_SIGNING_PUBKEY)".Trim().ToLowerInvariant()
-if ($envPub -ne '' -and $envPub -ne $SigningPubKey) {
-    throw "SENTINEL_UPDATE_SIGNING_PUBKEY ($envPub) does not match the key derived from the signing private key ($SigningPubKey). Environment is stale or tampered — refusing."
-}
-# Pin 2 (MANDATORY): the key the last release published, read from git HEAD.
-# This is the anchor the deployed fleet actually trusts. Unsetting an env var
-# must not be able to silently re-root the fleet's trust.
+# Pin 1 (optional operator cross-check via SENTINEL_UPDATE_SIGNING_PUBKEY) and
+# Pin 2 (the mandatory anchor) are both evaluated by Resolve-SigningKeyDecision
+# below, so neither can be satisfied by the other's absence.
+# Pin 2 (MANDATORY): the key the last release published — the anchor the
+# deployed fleet actually trusts. Read from the newest release TAG (immutable
+# and repo-wide) rather than HEAD, so checking out an older commit cannot make
+# the anchor vanish. UNKNOWN IS NEVER TREATED AS CLEAN: any failure to read the
+# anchor ABORTS. Only a successful read of a file that genuinely lacks the
+# field is a trust-establishing (TOFU) release.
+$anchorRef = (git -C $ProjectRoot tag -l "v*" --sort=-v:refname | Select-Object -First 1)
+if ([string]::IsNullOrWhiteSpace($anchorRef)) { $anchorRef = 'HEAD' }
+$anchorPath = "${anchorRef}:installers/version.json"
+# $anchorRead stays $false unless the read demonstrably succeeded — the decision
+# function treats "unknown" as abort-worthy, never as a fresh fleet.
+$anchorRead = $false
 $prevPub = ''
 try {
-    $headJson = git -C $ProjectRoot show HEAD:installers/version.json 2>$null | ConvertFrom-Json
-    if ($headJson.PSObject.Properties.Name -contains 'signingPublicKeyHex') {
-        $prevPub = "$($headJson.signingPublicKeyHex)".Trim().ToLowerInvariant()
+    $anchorRaw = (git -C $ProjectRoot show $anchorPath | Out-String)
+    if (-not [string]::IsNullOrWhiteSpace($anchorRaw)) {
+        $anchorJson = $anchorRaw | ConvertFrom-Json
+        $anchorRead = $true
+        if ($anchorJson.PSObject.Properties.Name -contains 'signingPublicKeyHex') {
+            $prevPub = "$($anchorJson.signingPublicKeyHex)"
+        }
     }
-} catch { $prevPub = '' }
-if ($prevPub -ne '' -and $prevPub -ne $SigningPubKey) {
-    if (-not $RotateSigningKey) {
-        throw @"
-SIGNING KEY CHANGED — refusing to publish.
-  previously published: $prevPub
-  this key derives to:  $SigningPubKey
-Every deployed agent has the previous key embedded and fails closed on
-artifacts signed by any other key. Publishing this would permanently break
-fleet self-update. If this rotation is intended and you have a manual
-re-install path for every device, re-run with -RotateSigningKey.
-"@
-    }
-    Write-Host "WARNING: publishing under a ROTATED signing key ($prevPub -> $SigningPubKey). Existing agents will fail closed until manually reinstalled." -ForegroundColor Red
 }
-if ($prevPub -eq '') {
-    Write-Host "NOTE: no previously published signing key found in git HEAD — this is a trust-establishing (TOFU) release." -ForegroundColor Yellow
+catch { $anchorRead = $false }
+
+$keyDecision = Resolve-SigningKeyDecision -AnchorRead $anchorRead -PreviousKey $prevPub `
+                   -DerivedKey $SigningPubKey -EnvKey "$($env:SENTINEL_UPDATE_SIGNING_PUBKEY)" `
+                   -Rotate ([bool]$RotateSigningKey)
+Write-Host "Trust anchor: $anchorPath — $($keyDecision.Reason)" -ForegroundColor DarkGray
+if ($keyDecision.Action -eq 'abort') {
+    throw "REFUSING TO PUBLISH ($($keyDecision.Reason)): $($keyDecision.Message)"
 }
+if ($keyDecision.Reason -eq 'rotation-authorized') { Write-Host "WARNING: $($keyDecision.Message)" -ForegroundColor Red }
+elseif ($keyDecision.Reason -eq 'tofu') { Write-Host "NOTE: $($keyDecision.Message)" -ForegroundColor Yellow }
 Write-Host "Signing public key (derived from private key): $SigningPubKey" -ForegroundColor DarkGray
 $SigningLdflags = "-X github.com/sentinel/agent/internal/updatesig.SigningPublicKeyHex=$SigningPubKey"
+
+} # end of full-release signing gate (skipped for -DeployOnly)
 
 # ------------------------------------------------------------------------------
 # Target matrix. Every (platform, arch) the update server ADVERTISES must get a
@@ -224,7 +255,16 @@ foreach ($t in $Targets) {
 }
 
 $HostToolDir = $null
+$lock = $null
 try {
+
+# Single-writer lock for the WHOLE run: two concurrent releases in one checkout
+# would otherwise race over the working tree, the version files and the git
+# index long before either reached the deploy stage.
+$LockFile = Join-Path ([Environment]::GetFolderPath('UserProfile')) ".sentinel-release.lock"
+try { $lock = [IO.File]::Open($LockFile, 'OpenOrCreate', 'Write', 'None') }
+catch [System.IO.IOException] { throw "Another release is in progress (lock held: $LockFile). Refusing to interleave." }
+catch { throw "Cannot acquire the release lock $LockFile : $($_.Exception.Message)" }
 
 if (-not $DeployOnly) {
 
@@ -240,9 +280,13 @@ if (-not $DeployOnly) {
     # after the release commit exists is a manual-intervention state.
     git -C $ProjectRoot fetch origin --quiet
     $branch = (git -C $ProjectRoot rev-parse --abbrev-ref HEAD).Trim()
-    $behind = (git -C $ProjectRoot rev-list --count "HEAD..origin/$branch" 2>$null)
-    if ($LASTEXITCODE -eq 0 -and "$behind".Trim() -ne '0') {
-        throw "Branch $branch is $behind commit(s) behind origin/$branch. Pull before releasing."
+    if ($branch -eq 'HEAD') { throw "Detached HEAD — check out the release branch before releasing." }
+    # No upstream is fine (a fresh branch); a MOVED upstream is not. The old
+    # $LASTEXITCODE guard was dead code under terminating native errors.
+    $behind = $null
+    try { $behind = (git -C $ProjectRoot rev-list --count "HEAD..origin/$branch") } catch { $behind = $null }
+    if ($null -ne $behind -and "$behind".Trim() -ne '0') {
+        throw "Branch $branch is $("$behind".Trim()) commit(s) behind origin/$branch. Pull before releasing."
     }
 
     # --------------------------------------------------------------------------
@@ -414,7 +458,13 @@ else {
     foreach ($a in $Artifacts) {
         if (-not (Test-Path $a.Path)) { throw "-DeployOnly: missing artifact $($a.Path). Run a full release." }
         $m = Get-Content "$($a.Path).manifest.json" -Raw | ConvertFrom-Json
-        if ($m.version -ne $Version) { throw "-DeployOnly: $($a.Path) sidecar is v$($m.version), expected v$Version." }
+        # cmd/verify only proves the sidecar is self-consistent against the
+        # embedded key — it takes version/platform/arch FROM the sidecar. The
+        # expected-value binding has to happen here or a validly-signed sidecar
+        # for the wrong target (or one authorizing a downgrade) would pass.
+        if ($m.version -ne $Version)   { throw "-DeployOnly: $($a.Path) sidecar is v$($m.version), expected v$Version." }
+        if ($m.platform -ne $a.Platform -or $m.arch -ne $a.Arch) { throw "-DeployOnly: $($a.Path) sidecar claims $($m.platform)/$($m.arch), expected $($a.Platform)/$($a.Arch)." }
+        if ($m.signedDowngrade)        { throw "-DeployOnly: $($a.Path) sidecar authorizes a signed downgrade — refusing (anti-rollback)." }
         & $VerifyTool -binary $a.Path -manifest "$($a.Path).manifest.json"
         Write-Host "  Verified: $($a.Path)" -ForegroundColor Green
     }
@@ -433,15 +483,22 @@ if ($Deploy) {
     Write-Host ""
     Write-Host "Deploying to $ServeDir (staged copy)..." -ForegroundColor Yellow
 
-    # Single-writer lock: staging names and the served tree are shared state.
-    $LockFile = Join-Path ([Environment]::GetFolderPath('UserProfile')) ".sentinel-release.lock"
-    $lock = $null
-    try { $lock = [IO.File]::Open($LockFile, 'OpenOrCreate', 'Write', 'None') }
-    catch { throw "Another release is deploying (lock held: $LockFile). Refusing to interleave." }
-
     $Stamp     = Get-Date -Format "yyyyMMdd-HHmmss"
-    $BackupDir = Join-Path (Join-Path ([Environment]::GetFolderPath('UserProfile')) ".sentinel-release-backups") "v$Version-$Stamp"
+    $BackupRoot = Join-Path ([Environment]::GetFolderPath('UserProfile')) ".sentinel-release-backups"
+    $BackupDir = Join-Path $BackupRoot "v$Version-$Stamp"
     New-Item -ItemType Directory -Force $BackupDir | Out-Null
+    # These hold every superseded signed binary — keep them owner-only.
+    if ($IsLinux) { chmod 700 $BackupRoot; chmod 700 $BackupDir }
+
+    # Sweep staging copies orphaned by a previous kill/reboot. They are full
+    # binaries sitting in a directory published unauthenticated at /installers/,
+    # and the staleness gate deliberately ignores them, so nothing else reports
+    # them. Only this script ever creates these names.
+    $orphans = @(Get-ChildItem $ServeDir -Filter '*.staging-*' -File -ErrorAction SilentlyContinue)
+    if ($orphans.Count -gt 0) {
+        Write-Host "Removing $($orphans.Count) orphaned staging file(s) from the served directory: $($orphans.Name -join ', ')" -ForegroundColor Yellow
+        $orphans | Remove-Item -Force
+    }
 
     $DeployFiles = [System.Collections.Generic.List[string]]::new()
     foreach ($a in $Artifacts) {
@@ -472,7 +529,10 @@ if ($Deploy) {
             Move-IntoPlace $tmp $dst
         }
         # version.json flips last — this is the moment the release goes live.
+        # It needs the same created-file tracking as the artifacts, or a rollback
+        # leaves it advertising this version with nothing behind it.
         if (Test-Path "$ServeDir/version.json") { Copy-Item "$ServeDir/version.json" $BackupDir -Force }
+        else { $CreatedFiles.Add("$ServeDir/version.json") }
         Copy-Item "$ProjectRoot/installers/version.json" "$ServeDir/version.json$StagingSuffix" -Force
         Move-IntoPlace "$ServeDir/version.json$StagingSuffix" "$ServeDir/version.json"
 
@@ -483,6 +543,8 @@ if ($Deploy) {
             $bin = Join-Path $ServeDir (Split-Path -Leaf $a.Path)
             $m = Get-Content "$bin.manifest.json" -Raw | ConvertFrom-Json
             if ($m.version -ne $Version) { throw "Deploy verification FAILED: sidecar for $bin is v$($m.version), expected v$Version." }
+            if ($m.platform -ne $a.Platform -or $m.arch -ne $a.Arch) { throw "Deploy verification FAILED: sidecar for $bin claims $($m.platform)/$($m.arch), expected $($a.Platform)/$($a.Arch)." }
+            if ($m.signedDowngrade) { throw "Deploy verification FAILED: sidecar for $bin authorizes a signed downgrade." }
             $actual = (Get-FileHash -Algorithm SHA256 $bin).Hash.ToLowerInvariant()
             if ($actual -ne $m.sha256) { throw "Deploy verification FAILED: served $bin sha256 $actual does not match its sidecar ($($m.sha256))." }
             # Re-verify the SIGNATURE at the boundary that actually serves it,
@@ -496,21 +558,19 @@ if ($Deploy) {
         # left here is announced as $Version and served unsigned, sending those
         # agents into a permanent fail-closed retry loop. This is the check
         # that makes the invariant real instead of a comment.
-        $stale = [System.Collections.Generic.List[string]]::new()
-        $candidates = @()
-        $candidates += Get-ChildItem $ServeDir -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match '^sentinel-(agent|watchdog|bootstrap|verify)(-|\.exe$)' -and
-                           $_.Name -notmatch '\.(manifest\.json|sig|staging.*)$' -and $_.Name -notmatch '\.bak' }
-        if (Test-Path "$DeployTree/release/agent") {
-            $candidates += Get-ChildItem "$DeployTree/release/agent" -File -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -match '^sentinel-(agent|watchdog)(\.exe)?$' }
-        }
-        foreach ($f in $candidates) {
-            $side = "$($f.FullName).manifest.json"
-            if (-not (Test-Path $side)) { $stale.Add("$($f.FullName) (no signed sidecar)"); continue }
-            $sm = Get-Content $side -Raw | ConvertFrom-Json
-            if ($sm.version -ne $Version) { $stale.Add("$($f.FullName) (sidecar v$($sm.version))") }
-        }
+        # Classification lives in scripts/lib/release-checks.ps1 (tested by
+        # scripts/test/release-checks.tests.ps1). Both serving roots are
+        # scanned: installers/ (the server's first search root) and
+        # release/agent (also bind-mounted, and the source of the unsuffixed
+        # fallback the server uses for linux-arm64 and darwin-*).
+        $stale = @(Get-ServedArtifactProblems -Roots @($ServeDir, "$DeployTree/release/agent") `
+                       -ExpectedVersion $Version `
+                       -HashProvider { param($p) (Get-FileHash -Algorithm SHA256 $p).Hash.ToLowerInvariant() } `
+                       -Verifier {
+                           param($b, $s)
+                           try { & $VerifyTool -binary $b -manifest $s | Out-Null; return $true }
+                           catch { return $false }
+                       })
         if ($stale.Count -gt 0) {
             throw @"
 Deploy verification FAILED: served artifacts that are NOT from this signed release:
@@ -532,19 +592,27 @@ rebuild them, then re-run with -DeployOnly.
             Move-IntoPlace $tmp $dst
         }
         foreach ($f in $CreatedFiles) { if (Test-Path $f) { Remove-Item $f -Force } }
-        # Positive confirmation that the restore actually landed.
+        # Positive confirmation that the restore actually landed. A "verified"
+        # verdict must mean the check RAN and found nothing — an empty backup
+        # set is not proof of a good restore, so it is reported separately.
         $bad = @()
-        foreach ($f in Get-ChildItem $BackupDir -File) {
+        $restored = @(Get-ChildItem $BackupDir -File)
+        foreach ($f in $restored) {
             $dst = Join-Path $ServeDir $f.Name
             if (-not (Test-Path $dst) -or
                 (Get-FileHash -Algorithm SHA256 $dst).Hash -ne (Get-FileHash -Algorithm SHA256 $f.FullName).Hash) { $bad += $dst }
         }
-        if ($bad.Count -gt 0) { Write-Host "RESTORE INCOMPLETE — these files do not match the backup: $($bad -join ', '). Serving state is INCONSISTENT; fix by hand." -ForegroundColor Red }
-        else { Write-Host "Restore verified: serving directory matches the pre-deploy backup." -ForegroundColor Yellow }
+        $leftover = @($CreatedFiles | Where-Object { Test-Path $_ })
+        if ($bad.Count -gt 0 -or $leftover.Count -gt 0) {
+            Write-Host "RESTORE INCOMPLETE — mismatched: $($bad -join ', '); undeleted new files: $($leftover -join ', '). Serving state is INCONSISTENT; fix by hand." -ForegroundColor Red
+        }
+        elseif ($restored.Count -eq 0) {
+            Write-Host "Nothing to restore (the serving directory held no previous copies of these files). Every file this deploy created was removed; the serving directory is back to empty for these artifacts — confirm it is serving what you expect." -ForegroundColor Yellow
+        }
+        else {
+            Write-Host "Restore verified: $($restored.Count) file(s) match the pre-deploy backup and all newly created files were removed." -ForegroundColor Yellow
+        }
         throw
-    }
-    finally {
-        if ($lock) { $lock.Dispose() }
     }
 
     Write-Host "Deployment verified at the serving directory: v$Version, signatures re-checked, no stale served artifacts." -ForegroundColor Green
@@ -555,7 +623,10 @@ rebuild them, then re-run with -DeployOnly.
     # a future `git pull`/`checkout .`/`stash` there would silently revert the
     # served release. Report it — rule 11 (a branch move in a deploy tree IS a
     # deployment) applies in reverse here.
-    $dirty = git -C $DeployTree status --porcelain -- installers 2>$null
+    # Guarded: a git failure here (not a work tree, dubious-ownership refusal)
+    # must not turn a fully verified deploy into a non-zero exit.
+    $dirty = $null
+    try { $dirty = git -C $DeployTree status --porcelain -- installers } catch { $dirty = $null }
     if ($dirty) {
         Write-Host ""
         Write-Host "NOTE: $DeployTree has local changes under installers/ (expected — the deploy wrote them)." -ForegroundColor Yellow
@@ -566,22 +637,38 @@ rebuild them, then re-run with -DeployOnly.
     # 60s, so poll rather than firing once (a single immediate probe reports a
     # false MISMATCH on a perfectly good deploy). TLS verification stays ON —
     # a "VERIFIED" derived from an unauthenticated channel is not verification.
-    $probeUrl = if ($env:SENTINEL_UPDATE_CHECK_URL) { $env:SENTINEL_UPDATE_CHECK_URL } else { "https://sentinel.nexus/api/agent/version?platform=windows&arch=amd64" }
-    $deadline = (Get-Date).AddSeconds(100)
-    $probeState = 'UNVERIFIED'; $probeDetail = ''
-    while ((Get-Date) -lt $deadline) {
-        try {
-            $resp = Invoke-RestMethod -Uri $probeUrl -TimeoutSec 10
-            if ("$($resp.latestVersion)" -eq $Version) { $probeState = 'VERIFIED'; break }
-            $probeState = 'MISMATCH'; $probeDetail = "reports '$($resp.latestVersion)'"
-        }
-        catch { $probeState = 'UNVERIFIED'; $probeDetail = $_.Exception.Message }
-        Start-Sleep -Seconds 10
+    $probeUrl = "$($env:SENTINEL_UPDATE_CHECK_URL)".Trim()
+    if ($probeUrl -eq '') {
+        # There is deliberately no default: the internal hostname uses a private
+        # TLD no public CA can certify, so a default probe with TLS verification
+        # on could only ever fail — 100 seconds of guaranteed "UNVERIFIED" reads
+        # as noise and trains operators to ignore the one real check.
+        Write-Host "HTTP boundary NOT PROBED: set SENTINEL_UPDATE_CHECK_URL to an https URL this host can verify. Filesystem checks passed; the served endpoint is UNCONFIRMED." -ForegroundColor Yellow
     }
-    switch ($probeState) {
-        'VERIFIED'  { Write-Host "HTTP boundary VERIFIED: $probeUrl reports latestVersion=$Version" -ForegroundColor Green }
-        'MISMATCH'  { Write-Host "HTTP boundary MISMATCH after cache TTL: $probeUrl $probeDetail, expected '$Version'. Investigate before rollout." -ForegroundColor Red }
-        default     { Write-Host "HTTP boundary UNVERIFIED: probe of $probeUrl failed ($probeDetail). Filesystem checks passed; confirm the served endpoint manually (set SENTINEL_UPDATE_CHECK_URL to a host-reachable URL)." -ForegroundColor Yellow }
+    elseif ($probeUrl -notmatch '^https://') {
+        throw "SENTINEL_UPDATE_CHECK_URL must be https (got '$probeUrl') — a verdict from an unauthenticated channel is not verification."
+    }
+    else {
+        $deadline = (Get-Date).AddSeconds(100)
+        $probeState = 'UNVERIFIED'; $probeDetail = ''
+        while ((Get-Date) -lt $deadline) {
+            try {
+                $resp = Invoke-RestMethod -Uri $probeUrl -TimeoutSec 10
+                if ("$($resp.latestVersion)" -eq $Version) { $probeState = 'VERIFIED'; break }
+                # Could still be the server's 60s version cache — keep polling.
+                $probeState = 'MISMATCH'; $probeDetail = "reports '$($resp.latestVersion)'"
+            }
+            catch { $probeState = 'UNVERIFIED'; $probeDetail = $_.Exception.Message }
+            Start-Sleep -Seconds 10
+        }
+        switch ($probeState) {
+            'VERIFIED'  { Write-Host "HTTP boundary VERIFIED: $probeUrl reports latestVersion=$Version" -ForegroundColor Green }
+            # A positive read of the WRONG version outlasting the cache TTL is a
+            # real disagreement between the serving dir and what is served —
+            # that is a failure, not a warning.
+            'MISMATCH'  { throw "HTTP boundary MISMATCH after the cache TTL: $probeUrl $probeDetail, expected '$Version'. The deployed files and the served response disagree — do NOT open the rollout gate." }
+            default     { Write-Host "HTTP boundary UNVERIFIED: probe of $probeUrl failed ($probeDetail). Filesystem checks passed; the served endpoint is UNCONFIRMED — confirm manually." -ForegroundColor Yellow }
+        }
     }
 
     Write-Host ""
@@ -600,4 +687,5 @@ if (-not $Deploy) {
 }
 finally {
     if ($HostToolDir -and (Test-Path $HostToolDir)) { Remove-Item -Recurse -Force $HostToolDir }
+    if ($lock) { $lock.Dispose() }
 }
