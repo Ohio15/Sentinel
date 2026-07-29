@@ -23,10 +23,24 @@ func secureDirectory(path string) {
 // best-effort parity with the Windows DACL path: the caller MUST still pass a
 // mode with no group/other bits for secret files.
 func SecureWriteFileStrict(path string, data []byte, perm os.FileMode) error {
-	if err := os.WriteFile(path, data, perm); err != nil {
-		return err
+	// Exclusive create so a secret is never written into a pre-existing (possibly
+	// attacker-pre-created) file. Remove any file we own, then O_EXCL-create; a
+	// racing re-creation fails closed rather than leaking into the other file.
+	_ = os.Remove(path)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return fmt.Errorf("refusing to write secret %s: exclusive create failed: %w", path, err)
 	}
-	// Enforce the mode explicitly in case a pre-existing file had looser bits.
+	if _, werr := f.Write(data); werr != nil {
+		f.Close()
+		_ = os.Remove(path)
+		return werr
+	}
+	if cerr := f.Close(); cerr != nil {
+		_ = os.Remove(path)
+		return cerr
+	}
+	// Enforce the mode explicitly in case umask narrowed the create perm.
 	if err := os.Chmod(path, perm); err != nil {
 		_ = os.Remove(path)
 		return fmt.Errorf("failed to enforce permissions on %s: %w", path, err)

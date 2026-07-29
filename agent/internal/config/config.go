@@ -135,10 +135,12 @@ func Load() (*Config, error) {
 
 	configPath := GetConfigPath()
 
-	// Ensure directory exists
+	// Ensure directory exists, SEALED (SYSTEM+Administrators-only DACL) before
+	// any secret is written into it. Creating it world-traversable first is the
+	// surface that lets an unprivileged user pre-create secret files inside it.
 	dir := filepath.Dir(configPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create config directory: %w", err)
+	if err := ipc.EnsureSecureDir(dir, 0700); err != nil {
+		return nil, fmt.Errorf("failed to create secure config directory: %w", err)
 	}
 
 	// Check if config file exists
@@ -252,10 +254,10 @@ func (c *Config) Save() error {
 func (c *Config) saveUnlocked() error {
 	configPath := GetConfigPath()
 
-	// Ensure directory exists
+	// Ensure directory exists, sealed before the encrypted config lands in it.
 	dir := filepath.Dir(configPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create config directory: %w", err)
+	if err := ipc.EnsureSecureDir(dir, 0700); err != nil {
+		return fmt.Errorf("failed to create secure config directory: %w", err)
 	}
 
 	// Serialize config to JSON

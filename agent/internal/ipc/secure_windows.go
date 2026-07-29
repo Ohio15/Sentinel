@@ -118,8 +118,25 @@ func secureDirectory(path string) {
 // removed and an error is returned. Use this for all identity/secret files
 // (mTLS client key, client cert, config, kill-token, machine key material).
 func SecureWriteFileStrict(path string, data []byte, perm os.FileMode) error {
-	if err := os.WriteFile(path, data, perm); err != nil {
-		return err
+	// Exclusive create. Never write a secret INTO a pre-existing file: an
+	// attacker who pre-created it (the threat model allows this before install)
+	// keeps an open handle and reads the plaintext we write, before the DACL is
+	// applied — Windows checks the DACL only at open time. Remove any file we
+	// legitimately own, then O_EXCL-create so a racing re-creation FAILS CLOSED
+	// (refuse to write) rather than leaking into the attacker's file.
+	_ = os.Remove(path)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return fmt.Errorf("refusing to write secret %s: exclusive create failed (possible pre-created file): %w", path, err)
+	}
+	if _, werr := f.Write(data); werr != nil {
+		f.Close()
+		_ = os.Remove(path)
+		return werr
+	}
+	if cerr := f.Close(); cerr != nil {
+		_ = os.Remove(path)
+		return cerr
 	}
 	if err := setFileACL(path); err != nil {
 		// Do not leave a secret behind with an inherited (world-readable) ACL.

@@ -617,13 +617,17 @@ func installNewCerts(resp *Response, now time.Time) error {
 }
 
 // writeAndSync writes data to path with the given permissions and
-// fsyncs to force the bytes to stable storage before returning. We use
-// O_TRUNC on the off chance a .new file is lingering from a previous
-// failed run.
+// fsyncs to force the bytes to stable storage before returning. It creates the
+// file EXCLUSIVELY: a private key must never be written into a pre-existing
+// file (an attacker who pre-created the .new path keeps a handle and reads the
+// key before its DACL is applied). Any file we legitimately own — e.g. a .new
+// lingering from a failed run — is removed first; a racing re-creation then
+// fails closed via O_EXCL rather than leaking into the other file.
 func writeAndSync(path string, data []byte, perm os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	_ = os.Remove(path)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
 	if err != nil {
-		return err
+		return fmt.Errorf("refusing to write %s: exclusive create failed: %w", path, err)
 	}
 	if _, err := f.Write(data); err != nil {
 		f.Close()
