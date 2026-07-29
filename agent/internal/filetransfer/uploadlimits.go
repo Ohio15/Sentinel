@@ -177,9 +177,19 @@ func (d *StreamingBase64Decoder) BytesWritten() int64 {
 	return d.bytesWritten
 }
 
-// WriteFileWithLimits writes base64-encoded data to a file with size limits and streaming
-// CW-007: Replacement for WriteFile that implements all security measures
+// WriteFileWithLimits writes base64-encoded data to a file with size limits and
+// streaming. CW-007. No base containment is enforced by this entry point.
 func WriteFileWithLimits(path string, data string, appendMode bool) error {
+	return WriteFileWithLimitsBounded(path, data, appendMode, nil, nil)
+}
+
+// WriteFileWithLimitsBounded is WriteFileWithLimits with real-path containment:
+// after the handle is opened, the resolved real path of the open file must be
+// inside one of allowedBases (when non-empty) and outside every deniedBases
+// entry. This closes the Windows intermediate-junction TOCTOU (AG-H write) where
+// an attacker-planted junction on a parent directory redirects the write even
+// though the final component check passes.
+func WriteFileWithLimitsBounded(path string, data string, appendMode bool, allowedBases, deniedBases []string) error {
 	// Step 1: Validate estimated size before any processing
 	if err := ValidateBase64UploadSize(len(data)); err != nil {
 		return fmt.Errorf("upload size validation failed: %w", err)
@@ -205,17 +215,10 @@ func WriteFileWithLimits(path string, data string, appendMode bool) error {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	// Step 6: Open file with appropriate flags
-	flags := os.O_WRONLY | os.O_CREATE
-	if appendMode {
-		flags |= os.O_APPEND
-	} else {
-		flags |= os.O_TRUNC
-	}
-
-	file, err := os.OpenFile(path, flags, 0644)
+	// Step 6: Open the target with the full symlink/junction TOCTOU guard.
+	file, err := OpenFileHardened(path, appendMode, allowedBases, deniedBases)
 	if err != nil {
-		return fmt.Errorf("failed to open file: %w", err)
+		return err
 	}
 	defer file.Close()
 
@@ -230,5 +233,138 @@ func WriteFileWithLimits(path string, data string, appendMode bool) error {
 	}
 
 	log.Printf("[FILE TRANSFER] Successfully wrote %d bytes to %s", written, path)
+	return nil
+}
+
+// OpenFileHardened opens path for writing with the complete symlink/junction
+// TOCTOU guard (AG-H write, AG-M path):
+//   - pre-open rejection of an existing symlink/reparse target;
+//   - no-follow open (O_NOFOLLOW on POSIX);
+//   - post-open handle-identity verification (regular file, SameFile);
+//   - real-path containment: the resolved real path of the open handle must be
+//     inside allowedBases (when provided) and outside every deniedBases entry,
+//     defeating an attacker-planted junction on an intermediate directory.
+//
+// The returned file is positioned per appendMode (append vs truncate) and the
+// caller owns closing it.
+func OpenFileHardened(path string, appendMode bool, allowedBases, deniedBases []string) (*os.File, error) {
+	// Pre-open symlink/reparse-point rejection. Refuse to write when the target
+	// is already a symlink/junction so we never truncate or overwrite through
+	// one; short-circuits before O_TRUNC touches any target.
+	if li, lerr := os.Lstat(path); lerr == nil {
+		if li.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("refusing to write through symlink/reparse point: %s", path)
+		}
+	} else if !os.IsNotExist(lerr) {
+		return nil, fmt.Errorf("failed to stat target: %w", lerr)
+	}
+
+	flags := os.O_WRONLY | os.O_CREATE
+	if appendMode {
+		flags |= os.O_APPEND
+	} else {
+		flags |= os.O_TRUNC
+	}
+
+	file, err := openFileNoFollow(path, flags, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file: %w", err)
+	}
+
+	if err := verifyOpenedRegularFile(file, path); err != nil {
+		file.Close()
+		if !appendMode {
+			os.Remove(path)
+		}
+		return nil, err
+	}
+
+	// Real-path containment via the open handle (GetFinalPathNameByHandle on
+	// Windows) — catches intermediate-junction redirection that the final
+	// component check cannot see.
+	realPath, rerr := realPathFromHandle(file)
+	if rerr != nil || realPath == "" {
+		// Fail CLOSED: if we cannot resolve the open handle's real path we cannot
+		// prove containment, so we must not hand back a possibly-escaped handle.
+		file.Close()
+		if !appendMode {
+			os.Remove(path)
+		}
+		if rerr == nil {
+			rerr = fmt.Errorf("empty real path")
+		}
+		return nil, fmt.Errorf("refusing write to %s: could not resolve real path for containment check: %w", path, rerr)
+	}
+	if cerr := verifyRealPathContainment(realPath, allowedBases, deniedBases); cerr != nil {
+		file.Close()
+		if !appendMode {
+			os.Remove(path)
+		}
+		return nil, cerr
+	}
+
+	return file, nil
+}
+
+// verifyRealPathContainment enforces that realPath is inside an allowed base
+// (when allowedBases is non-empty) and outside every denied base.
+func verifyRealPathContainment(realPath string, allowedBases, deniedBases []string) error {
+	// Canonicalize the candidate AND every base the same way (resolve symlinks
+	// and 8.3 short names) so comparisons are consistent regardless of how each
+	// side is spelled — otherwise denied bases silently miss and legitimate
+	// allowed paths falsely "escape".
+	clean := resolveForCompare(realPath)
+
+	for _, denied := range deniedBases {
+		if denied == "" {
+			continue
+		}
+		if isSubPath(clean, resolveForCompare(denied)) {
+			return fmt.Errorf("resolved real path is within a protected directory: %s", clean)
+		}
+	}
+
+	if len(allowedBases) > 0 {
+		allowed := false
+		for _, base := range allowedBases {
+			if base == "" {
+				continue
+			}
+			if isSubPath(clean, resolveForCompare(base)) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return fmt.Errorf("resolved real path escaped allowed directories: %s", clean)
+		}
+	}
+	return nil
+}
+
+// verifyOpenedRegularFile confirms the opened file descriptor refers to a
+// regular file that is the same filesystem object as the path resolves via
+// Lstat. This closes the symlink/junction TOCTOU window (AG-H write): if an
+// attacker swapped in a symlink after path validation, the Lstat mode or the
+// SameFile identity comparison will detect it.
+func verifyOpenedRegularFile(f *os.File, path string) error {
+	fi, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("failed to stat opened file: %w", err)
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("refusing to write non-regular file: %s", path)
+	}
+
+	li, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("failed to lstat target after open: %w", err)
+	}
+	if li.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("target became a symlink/reparse point after open: %s", path)
+	}
+	if !os.SameFile(fi, li) {
+		return fmt.Errorf("target identity changed between validation and open (possible TOCTOU): %s", path)
+	}
 	return nil
 }

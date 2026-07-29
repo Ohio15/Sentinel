@@ -85,8 +85,9 @@ func TestIPCServerClientCommunication(t *testing.T) {
 	// Create mock handler
 	handler := &mockIPCHandler{}
 
-	// Create server
-	server, err := NewIPCServer(sessionID, handler)
+	// Create server (empty ownerSID -> DACL falls back to SYSTEM + Administrators
+	// + current process user, which lets the same-process test client connect)
+	server, err := NewIPCServer(sessionID, "", handler)
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}

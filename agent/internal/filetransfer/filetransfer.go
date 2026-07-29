@@ -45,6 +45,7 @@ type TransferProgress struct {
 type FileTransfer struct {
 	onProgress   func(progress TransferProgress)
 	allowedBases []string // Allowed base directories for file operations
+	deniedBases  []string // Protected directories that mutating ops may never touch
 }
 
 // New creates a new FileTransfer instance
@@ -55,6 +56,52 @@ func New(onProgress func(TransferProgress)) *FileTransfer {
 	return &FileTransfer{
 		onProgress:   onProgress,
 		allowedBases: allowedBases,
+		deniedBases:  getDefaultDeniedBases(),
+	}
+}
+
+// getDefaultDeniedBases returns directories that mutating file operations
+// (write/create/delete/move-dest) must never target, regardless of the broad
+// allowed-base set (AG-H write). This protects the agent's own binaries and
+// identity material and core OS directories from a compromised or malicious
+// server driving arbitrary SYSTEM writes.
+func getDefaultDeniedBases() []string {
+	bases := make([]string, 0)
+	add := func(p string) {
+		if p != "" {
+			bases = append(bases, filepath.Clean(p))
+		}
+	}
+	if runtime.GOOS == "windows" {
+		add(os.Getenv("SystemRoot"))                                          // C:\Windows (incl. System32)
+		add(filepath.Join(os.Getenv("ProgramFiles"), "Sentinel Agent"))       // agent install dir
+		add(filepath.Join(os.Getenv("ProgramFiles(x86)"), "Sentinel Agent")) // 32-bit install dir
+		add(filepath.Join(os.Getenv("ProgramData"), "Sentinel"))              // config, certs, secrets
+	} else {
+		add("/etc/sentinel") // agent config/certs
+		add("/usr/local/bin/sentinel-agent")
+		add("/usr/local/bin/sentinel-watchdog")
+		add("/boot")
+		add("/proc")
+		add("/sys")
+		add("/dev")
+	}
+	return bases
+}
+
+// isMutatingOperation reports whether the operation writes to, creates, deletes,
+// or moves a destination path (as opposed to a read-only inspection). Only
+// mutating operations are subject to the denied-base protection.
+func isMutatingOperation(operation string) bool {
+	switch operation {
+	case "write_file", "write_file_parent",
+		"delete_file",
+		"create_directory",
+		"move_file_dst", "move_file_dst_parent",
+		"copy_file_dst", "copy_file_dst_parent":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -82,6 +129,28 @@ func getDefaultAllowedBases() []string {
 
 // isSubPath checks if child path is within parent directory (directory-boundary aware)
 // SECURITY FIX: This fixes the prefix-matching vulnerability where "admin-attacker" matched "admin"
+// resolveForCompare canonicalizes p to the same form used for base comparison:
+// it resolves symlinks and Windows 8.3 short names (e.g. C:\Users\RUNNER~1) to
+// their long canonical form. Without this, a candidate spelled one way and a
+// base spelled another never match, which both breaks legitimate transfers and
+// (worse) causes denied-base checks to silently miss. For a not-yet-existing
+// target it resolves the deepest existing ancestor and re-appends the remainder.
+func resolveForCompare(p string) string {
+	p = filepath.Clean(p)
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return filepath.Clean(r)
+	}
+	dir, rest := filepath.Dir(p), filepath.Base(p)
+	for dir != filepath.Dir(dir) { // walk up until filesystem root
+		if r, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Clean(filepath.Join(r, rest))
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
+		dir = filepath.Dir(dir)
+	}
+	return p
+}
+
 func isSubPath(child, parent string) bool {
 	// Clean both paths
 	child = filepath.Clean(child)
@@ -199,6 +268,18 @@ func (ft *FileTransfer) validatePath(requestedPath string, operation string) (st
 	if !allowed {
 		log.Printf("[SECURITY] Path not within allowed bases: %s, operation: %s", cleanPath, operation)
 		return "", fmt.Errorf("access denied: path is outside allowed directories")
+	}
+
+	// AG-H write: mutating operations must never touch protected directories
+	// (agent install dir, agent data/certs, or core OS dirs), even though those
+	// live under an allowed drive base.
+	if isMutatingOperation(operation) {
+		for _, denied := range ft.deniedBases {
+			if isSubPath(cleanPath, resolveForCompare(denied)) {
+				log.Printf("[SECURITY] Rejected mutating operation on protected path: %s, operation: %s", cleanPath, operation)
+				return "", fmt.Errorf("access denied: path is within a protected directory")
+			}
+		}
 	}
 
 	// Log successful validation
@@ -353,38 +434,19 @@ func (ft *FileTransfer) WriteFile(ctx context.Context, path string, data string,
 		return fmt.Errorf("path validation failed: %w", err)
 	}
 
-	// Validate parent directory
+	// Validate parent directory (also enforces denied-base protection)
 	dir := filepath.Dir(validatedPath)
 	_, err = ft.validatePath(dir, "write_file_parent")
 	if err != nil {
 		return fmt.Errorf("parent directory validation failed: %w", err)
 	}
 
-	// Ensure parent directory exists
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
-	}
-
-	// Decode base64 data
-	decoded, err := base64.StdEncoding.DecodeString(data)
-	if err != nil {
-		return fmt.Errorf("failed to decode data: %w", err)
-	}
-
-	flags := os.O_WRONLY | os.O_CREATE
-	if append {
-		flags |= os.O_APPEND
-	} else {
-		flags |= os.O_TRUNC
-	}
-
-	file, err := os.OpenFile(validatedPath, flags, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open file: %w", err)
-	}
-	defer file.Close()
-
-	if _, err := file.Write(decoded); err != nil {
+	// AG-H write: route through the bounded writer so uploads are subject to
+	// size limits, disk-quota checks, streaming decode (no full-buffer memory
+	// blowup), no-follow / handle-identity verification, AND real-path
+	// containment (the resolved handle must stay inside an allowed base and out
+	// of every denied base, defeating intermediate-junction redirection).
+	if err := WriteFileWithLimitsBounded(validatedPath, data, append, ft.allowedBases, ft.deniedBases); err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
 

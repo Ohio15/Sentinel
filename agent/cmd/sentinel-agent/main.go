@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -1902,6 +1904,48 @@ func (a *Agent) handleUpdateCertificate(msg *client.Message) error {
 		return errors.New(errMsg)
 	}
 
+	// AG CA-overwrite: validate the payload BEFORE it replaces the trust anchor.
+	// Writing unvalidated content to ca-cert.pem could brick the agent's trust
+	// (garbage) or, if the update channel were ever weakened, plant a rogue CA.
+	// Require: (1) if certHash is provided it must match sha256 of the content
+	// (integrity); (2) the content must be a parseable X.509 CA certificate that
+	// is currently within its validity window.
+	if certHash != "" {
+		sum := sha256.Sum256([]byte(certContent))
+		if !strings.EqualFold(hex.EncodeToString(sum[:]), certHash) {
+			errMsg := "Certificate hash mismatch — refusing to install"
+			log.Printf("[Certs] %s", errMsg)
+			a.client.SendCertUpdateAck(certHash, false, errMsg)
+			return errors.New(errMsg)
+		}
+	}
+	block, _ := pem.Decode([]byte(certContent))
+	if block == nil || block.Type != "CERTIFICATE" {
+		errMsg := "Certificate content is not a valid PEM certificate"
+		log.Printf("[Certs] %s", errMsg)
+		a.client.SendCertUpdateAck(certHash, false, errMsg)
+		return errors.New(errMsg)
+	}
+	parsedCert, perr := x509.ParseCertificate(block.Bytes)
+	if perr != nil {
+		errMsg := fmt.Sprintf("Certificate does not parse as X.509: %v", perr)
+		log.Printf("[Certs] %s", errMsg)
+		a.client.SendCertUpdateAck(certHash, false, errMsg)
+		return errors.New(errMsg)
+	}
+	if !parsedCert.IsCA {
+		errMsg := "Refusing CA update: certificate is not a CA certificate"
+		log.Printf("[Certs] %s", errMsg)
+		a.client.SendCertUpdateAck(certHash, false, errMsg)
+		return errors.New(errMsg)
+	}
+	if now := time.Now(); now.Before(parsedCert.NotBefore) || now.After(parsedCert.NotAfter) {
+		errMsg := fmt.Sprintf("Refusing CA update: certificate not currently valid (NotBefore=%s NotAfter=%s)", parsedCert.NotBefore, parsedCert.NotAfter)
+		log.Printf("[Certs] %s", errMsg)
+		a.client.SendCertUpdateAck(certHash, false, errMsg)
+		return errors.New(errMsg)
+	}
+
 	hashPrefix := certHash
 	if len(hashPrefix) > 8 {
 		hashPrefix = hashPrefix[:8]
@@ -1916,6 +1960,45 @@ func (a *Agent) handleUpdateCertificate(msg *client.Message) error {
 		certPath = filepath.Join("/etc/sentinel/certs", "ca-cert.pem")
 	}
 
+	// AG CA-overwrite (trust-anchor authorization): a passing parse/IsCA/validity
+	// check still accepts ANY self-signed CA. Before overwriting the trust
+	// anchor, require the new CA to be authorized by the CURRENT anchor — either
+	// byte-identical to it (idempotent re-push) or signed by / chaining to it.
+	// This stops a malicious server from installing an unrelated self-signed CA
+	// and seizing the trust root; a genuine independent root rotation must go
+	// through a signed update / out-of-band, not this network handler.
+	if currentPEM, curErr := os.ReadFile(certPath); curErr == nil && len(currentPEM) > 0 {
+		curBlock, _ := pem.Decode(currentPEM)
+		if curBlock == nil || curBlock.Type != "CERTIFICATE" {
+			errMsg := "Refusing CA update: current trust anchor is unreadable; manual intervention required"
+			log.Printf("[Certs] %s", errMsg)
+			a.client.SendCertUpdateAck(certHash, false, errMsg)
+			return errors.New(errMsg)
+		}
+		currentCA, cerr := x509.ParseCertificate(curBlock.Bytes)
+		if cerr != nil {
+			errMsg := fmt.Sprintf("Refusing CA update: current trust anchor does not parse: %v", cerr)
+			log.Printf("[Certs] %s", errMsg)
+			a.client.SendCertUpdateAck(certHash, false, errMsg)
+			return errors.New(errMsg)
+		}
+		if !bytes.Equal(parsedCert.Raw, currentCA.Raw) {
+			if sigErr := parsedCert.CheckSignatureFrom(currentCA); sigErr != nil {
+				errMsg := "Refusing CA update: new CA neither matches nor chains to the current trust anchor"
+				log.Printf("[Certs] %s (%v)", errMsg, sigErr)
+				a.client.SendCertUpdateAck(certHash, false, errMsg)
+				return errors.New(errMsg)
+			}
+			log.Printf("[Certs] New CA verified as signed by the current trust anchor")
+		} else {
+			log.Printf("[Certs] New CA is byte-identical to the current trust anchor (idempotent)")
+		}
+	} else {
+		// No current CA on disk (first install): there is no anchor to protect
+		// yet; the initial trust is established out-of-band at enrollment.
+		log.Printf("[Certs] No existing CA at %s; installing initial trust anchor", certPath)
+	}
+
 	// Ensure directory exists
 	certDir := filepath.Dir(certPath)
 	if err := os.MkdirAll(certDir, 0755); err != nil {
@@ -1923,6 +2006,17 @@ func (a *Agent) handleUpdateCertificate(msg *client.Message) error {
 		log.Printf("[Certs] %s", errMsg)
 		a.client.SendCertUpdateAck(certHash, false, errMsg)
 		return errors.New(errMsg)
+	}
+
+	// Preserve a timestamped backup of the current trust anchor before replacing
+	// it, so a bad (but authorized) rotation can be recovered.
+	if existing, rerr := os.ReadFile(certPath); rerr == nil && len(existing) > 0 {
+		backupPath := certPath + ".bak-" + time.Now().UTC().Format("20060102T150405Z")
+		if werr := os.WriteFile(backupPath, existing, 0644); werr != nil {
+			log.Printf("[Certs] Warning: failed to back up current CA to %s: %v", backupPath, werr)
+		} else {
+			log.Printf("[Certs] Backed up current CA to %s", backupPath)
+		}
 	}
 
 	// Write the certificate file

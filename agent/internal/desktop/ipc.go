@@ -41,17 +41,21 @@ type IPCHandler interface {
 	OnDisconnect()
 }
 
-// NewIPCServer creates a new IPC server for the given session
-func NewIPCServer(sessionID uint32, handler IPCHandler) (*IPCServer, error) {
+// NewIPCServer creates a new IPC server for the given session.
+//
+// ownerSID is the SDDL string SID of the target session's interactive user. The
+// pipe DACL is scoped to SYSTEM + that user (AG-H desktop). The previous
+// "Authenticated Users" (AU) grant let ANY logged-on account connect to the
+// helper control channel and drive remote input/capture; scoping to the session
+// owner removes that cross-user exposure.
+func NewIPCServer(sessionID uint32, ownerSID string, handler IPCHandler) (*IPCServer, error) {
 	pipeName := fmt.Sprintf("%s%d", PipeNamePrefix, sessionID)
 
-	// Create named pipe with security descriptor allowing SYSTEM and Authenticated Users
-	// SDDL: D:(A;;GA;;;SY)(A;;GA;;;AU)
-	// - D: = DACL
-	// - A;;GA;;;SY = Allow SYSTEM full access (Generic All)
-	// - A;;GA;;;AU = Allow Authenticated Users full access
+	sddl := buildPipeSDDL(ownerSID)
+	log.Printf("[IPC] Creating pipe %s with DACL %s", pipeName, sddl)
+
 	config := &winio.PipeConfig{
-		SecurityDescriptor: "D:(A;;GA;;;SY)(A;;GA;;;AU)",
+		SecurityDescriptor: sddl,
 		MessageMode:        false,
 		InputBufferSize:    65536,
 		OutputBufferSize:   65536,
@@ -71,6 +75,21 @@ func NewIPCServer(sessionID uint32, handler IPCHandler) (*IPCServer, error) {
 		handler:   handler,
 		stopChan:  make(chan struct{}),
 	}, nil
+}
+
+// buildPipeSDDL constructs the named-pipe DACL. SYSTEM (the account the manager
+// runs as in production) and Administrators always get full control; the target
+// session user is added when their SID is known. When the SID cannot be
+// resolved, the account the current process runs as is granted so the pipe
+// stays usable — still far narrower than the former Authenticated-Users grant.
+func buildPipeSDDL(ownerSID string) string {
+	sddl := "D:(A;;GA;;;SY)(A;;GA;;;BA)"
+	if ownerSID != "" {
+		sddl += fmt.Sprintf("(A;;GA;;;%s)", ownerSID)
+	} else if cur, err := currentUserSID(); err == nil && cur != "" {
+		sddl += fmt.Sprintf("(A;;GA;;;%s)", cur)
+	}
+	return sddl
 }
 
 // Start begins accepting connections and processing messages
