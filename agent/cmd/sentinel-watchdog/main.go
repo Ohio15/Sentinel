@@ -1470,29 +1470,49 @@ func (ws *watchdogService) verifyStagedFile(request *ipc.UpdateRequest) error {
 		return fmt.Errorf("staged file is empty")
 	}
 
-	// Read the staged bytes once for both the (optional) checksum and the
-	// (mandatory) signature verification.
+	// Read the staged bytes once and compute their sha256 — this is the value the
+	// manifest signature must cover (never a caller-supplied hash).
+	// TODO(wave-c): re-verify under SYSTEM-only staging ACL to close the
+	// verify-then-reread TOCTOU (L1) once secret/dir sealing lands.
 	stagedBytes, err := os.ReadFile(stagedClean)
 	if err != nil {
 		return fmt.Errorf("failed to read staged file: %w", err)
 	}
+	h := sha256.Sum256(stagedBytes)
+	actualChecksum := hex.EncodeToString(h[:])
 
 	// Transport-integrity checksum, when present (defense in depth only).
-	if request.Checksum != "" {
-		h := sha256.Sum256(stagedBytes)
-		actualChecksum := hex.EncodeToString(h[:])
-		if actualChecksum != request.Checksum {
-			return fmt.Errorf("checksum mismatch: expected %s, got %s", request.Checksum, actualChecksum)
+	if request.Checksum != "" && actualChecksum != request.Checksum {
+		return fmt.Errorf("checksum mismatch: expected %s, got %s", request.Checksum, actualChecksum)
+	}
+
+	// C1: mandatory manifest signature verification over the LOCALLY computed
+	// sha256 and the embedded public key. Empty/invalid signature is rejected
+	// (fail closed) — no self-computed-checksum fallback.
+	if err := updatesig.VerifyManifest(request.Version, request.Platform, request.Arch, actualChecksum, request.SignedDowngrade, request.Signature); err != nil {
+		return fmt.Errorf("manifest signature verification failed for staged agent v%s: %w", request.Version, err)
+	}
+
+	// C2 anti-rollback: manifest verified, so version/downgrade are trusted.
+	// Refuse a non-upgrade over the currently installed agent unless a signed
+	// downgrade is authorized. Current version comes from agent-info.json; if it
+	// is unknown, allow (first install / recovery) since the manifest is valid.
+	if cur := currentAgentVersion(); cur != "" {
+		if !updatesig.IsUpgrade(cur, request.Version) && !request.SignedDowngrade {
+			return fmt.Errorf("refusing non-upgrade agent v%s -> v%s (no signed downgrade authorization)", cur, request.Version)
 		}
 	}
 
-	// RW-1: mandatory signature verification. Empty/invalid signature is rejected
-	// (fail closed) — there is no self-computed-checksum fallback.
-	if err := updatesig.Verify(stagedBytes, request.Signature); err != nil {
-		return fmt.Errorf("signature verification failed for staged agent v%s: %w", request.Version, err)
-	}
-
 	return nil
+}
+
+// currentAgentVersion returns the installed agent version from agent-info.json,
+// or "" if it cannot be determined.
+func currentAgentVersion() string {
+	if agentInfo, _ := ipc.ReadAgentInfo(); agentInfo != nil {
+		return agentInfo.Version
+	}
+	return ""
 }
 
 // createBackup creates a backup of the current binary with integrity verification.
@@ -2602,35 +2622,46 @@ func (ws *watchdogService) downloadAndStageUpdate(info *ServerVersionInfo, serve
 		return fmt.Errorf("size mismatch: expected %d, got %d", info.Size, written)
 	}
 
-	// Verify checksum if provided (transport-integrity only)
+	// Transport-integrity checksum (must be present).
 	actualChecksum := hex.EncodeToString(hasher.Sum(nil))
-	if info.Checksum != "" && actualChecksum != info.Checksum {
+	if info.Checksum == "" {
+		os.Remove(stagedPath)
+		return fmt.Errorf("refusing update v%s: server supplied no sha256", info.Version)
+	}
+	if actualChecksum != info.Checksum {
 		os.Remove(stagedPath)
 		return fmt.Errorf("checksum mismatch: expected %s, got %s", info.Checksum, actualChecksum)
 	}
 
-	// RW-1 / WD-H2: authenticity gate over the exact downloaded bytes against the
-	// embedded public key. Do NOT self-compute a signature or trust the checksum
-	// alone — the same channel supplies both bytes and checksum. Fail closed on
-	// empty/invalid signature.
-	stagedBytes, readErr := os.ReadFile(stagedPath)
-	if readErr != nil {
+	// C1 / WD-H2: manifest authenticity gate over the LOCALLY computed sha256 and
+	// the embedded public key. The version/downgrade flag are NOT trusted until
+	// this passes. Fail closed on empty/invalid signature.
+	if sigErr := updatesig.VerifyManifest(info.Version, "windows", "amd64", actualChecksum, info.SignedDowngrade, info.Signature); sigErr != nil {
 		os.Remove(stagedPath)
-		return fmt.Errorf("failed to read staged file for signature verification: %w", readErr)
-	}
-	if sigErr := updatesig.Verify(stagedBytes, info.Signature); sigErr != nil {
-		os.Remove(stagedPath)
-		return fmt.Errorf("signature verification failed for update v%s: %w", info.Version, sigErr)
+		return fmt.Errorf("manifest signature verification failed for update v%s: %w", info.Version, sigErr)
 	}
 
-	logMessage(fmt.Sprintf("[IndependentPoll] Downloaded %d bytes, checksum + signature verified: %s", written, actualChecksum))
+	// C2 anti-rollback: manifest verified, so version/downgrade are trusted.
+	// Refuse a non-upgrade over the installed agent unless a signed downgrade is
+	// authorized. This gate previously did not exist on the independent poller —
+	// the watchdog could be silently downgraded.
+	if cur := currentAgentVersion(); cur != "" {
+		if !updatesig.IsUpgrade(cur, info.Version) && !info.SignedDowngrade {
+			os.Remove(stagedPath)
+			return fmt.Errorf("refusing non-upgrade agent v%s -> v%s (no signed downgrade authorization)", cur, info.Version)
+		}
+	}
 
-	// Create update request for the existing update machinery. Carry the
-	// signature through so applyUpdate re-verifies against the embedded key
+	logMessage(fmt.Sprintf("[IndependentPoll] Downloaded %d bytes, manifest + signature verified: %s", written, actualChecksum))
+
+	// Create update request for the existing update machinery. Carry the full
+	// manifest tuple so applyUpdate re-verifies against the embedded key
 	// immediately before the swap.
 	targetPath := filepath.Join(ws.installPath, "sentinel-agent.exe")
 	request := &ipc.UpdateRequest{
 		Version:         info.Version,
+		Platform:        "windows",
+		Arch:            "amd64",
 		StagedPath:      stagedPath,
 		Checksum:        actualChecksum,
 		RequestedAt:     time.Now(),

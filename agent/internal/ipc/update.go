@@ -56,22 +56,25 @@ const (
 // The watchdog reads this file to know when to perform an update.
 type UpdateRequest struct {
 	Version     string    `json:"version"`
+	Platform    string    `json:"platform"` // required to rebuild the signed manifest
+	Arch        string    `json:"arch"`     // required to rebuild the signed manifest
 	StagedPath  string    `json:"staged_path"`
-	Checksum    string    `json:"checksum"`
+	Checksum    string    `json:"checksum"` // lowercase hex sha256 of the staged bytes
 	RequestedAt time.Time `json:"requested_at"`
 	RequestedBy string    `json:"requested_by"` // agent ID
 	TargetPath  string    `json:"target_path"`  // path to executable being updated
 
-	// Signature is the base64-encoded Ed25519 detached signature over the raw
-	// bytes of the staged binary, produced by the release pipeline and carried
-	// through from the server. The watchdog verifies it against the embedded
-	// public key immediately before swapping the binary (RW-1). An empty
-	// signature is rejected — updates without authenticity proof are refused.
+	// Signature is the base64-encoded Ed25519 signature over the CANONICAL
+	// MANIFEST (version+platform+arch+sha256+signedDowngrade), not the bare
+	// bytes. The watchdog rebuilds the manifest from these fields and the sha256
+	// of the staged bytes, then verifies it against the embedded public key
+	// immediately before swapping (C1). Empty signature is rejected.
 	Signature string `json:"signature"`
 
 	// SignedDowngrade, when true, authorizes applying a target version that is
-	// not strictly greater than the current version. It is only honored because
-	// it is covered by the same signature as the artifact (anti-rollback, AG-H4).
+	// not strictly greater than the current version. It is trustworthy ONLY
+	// because it is one of the fields covered by the manifest signature — the
+	// watchdog must read it back only after VerifyManifest succeeds (C2/AG-H4).
 	SignedDowngrade bool `json:"signed_downgrade,omitempty"`
 }
 
@@ -174,19 +177,22 @@ func ReadAndDeleteAlert() (*AlertRelayPayload, error) {
 // The watchdog reads this file and uses Task Scheduler to update itself.
 type WatchdogUpdateRequest struct {
 	Version     string    `json:"version"`
+	Platform    string    `json:"platform"` // required to rebuild the signed manifest
+	Arch        string    `json:"arch"`     // required to rebuild the signed manifest
 	StagedPath  string    `json:"staged_path"`
-	Checksum    string    `json:"checksum"`
+	Checksum    string    `json:"checksum"` // lowercase hex sha256 of the staged bytes
 	RequestedAt time.Time `json:"requested_at"`
 	RequestedBy string    `json:"requested_by"` // agent ID or "server"
 	TargetPath  string    `json:"target_path"`  // path to watchdog executable
 
-	// Signature is the base64-encoded Ed25519 detached signature over the raw
-	// bytes of the staged watchdog binary. Verified against the embedded public
-	// key before the self-update swap (RW-1 / WD-H2). Empty is rejected.
+	// Signature is the base64-encoded Ed25519 signature over the CANONICAL
+	// MANIFEST (version+platform+arch+sha256+signedDowngrade), not the bare
+	// bytes. Rebuilt and verified against the embedded public key before the
+	// self-update swap (C1 / WD-H2). Empty is rejected.
 	Signature string `json:"signature"`
 
-	// SignedDowngrade authorizes a non-upgrade target when set (anti-rollback,
-	// AG-H4). Only meaningful because it is covered by the artifact signature.
+	// SignedDowngrade authorizes a non-upgrade target when set. Trustworthy only
+	// because it is covered by the manifest signature (C2/AG-H4).
 	SignedDowngrade bool `json:"signed_downgrade,omitempty"`
 }
 

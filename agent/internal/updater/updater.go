@@ -569,25 +569,35 @@ func (u *Updater) downloadFromURL(ctx context.Context, downloadURL, tempFile str
 		return "", fmt.Errorf("checksum mismatch: expected %s, got %s", info.Checksum, checksum)
 	}
 
-	// RW-1: authenticity gate — verify the Ed25519 detached signature over the
-	// EXACT bytes we downloaded, against the public key embedded in THIS binary
-	// at build time. This is the real trust anchor; the checksum above is only a
-	// transport-integrity check (the server that supplies the checksum also
-	// supplies the bytes, so a compromised/MITM'd channel can make them agree).
-	// Reject empty/invalid signatures — fail closed (AG-C1, AG-C2, AG-H1).
-	downloadedBytes, readErr := os.ReadFile(tempFile)
-	if readErr != nil {
+	// C1: authenticity gate — verify the Ed25519 signature over the SIGNED
+	// MANIFEST (version+platform+arch+sha256+signedDowngrade), against the public
+	// key embedded in THIS binary at build time. The manifest binds the version
+	// and downgrade flag to the signature, so those fields can no longer be
+	// tampered independently of the bytes. We verify against the LOCALLY computed
+	// sha256 of the downloaded bytes — not the server-claimed value — so a
+	// compromised channel cannot swap the binary. Reject empty/invalid signatures
+	// (fail closed, AG-C1, AG-C2, AG-H1). info.Version/SignedDowngrade are only
+	// trustworthy AFTER this passes, which is why anti-rollback runs post-verify.
+	if info.Checksum == "" {
 		os.Remove(tempFile)
-		return "", fmt.Errorf("failed to read staged file for signature verification: %w", readErr)
+		return "", fmt.Errorf("refusing update v%s: server supplied no sha256", info.Version)
 	}
-	if sigErr := updatesig.Verify(downloadedBytes, info.Signature); sigErr != nil {
+	if sigErr := updatesig.VerifyManifest(info.Version, info.Platform, info.Arch, checksum, info.SignedDowngrade, info.Signature); sigErr != nil {
 		os.Remove(tempFile)
 		ipc.WriteAlert(&ipc.AlertRelayPayload{
 			Severity: "critical",
 			Title:    "Agent Update Signature Verification Failed",
 			Message:  fmt.Sprintf("Update v%s rejected: %v", info.Version, sigErr),
 		})
-		return "", fmt.Errorf("signature verification failed for update v%s: %w", info.Version, sigErr)
+		return "", fmt.Errorf("manifest signature verification failed for update v%s: %w", info.Version, sigErr)
+	}
+
+	// C2 anti-rollback: now that the manifest is verified, the version and
+	// downgrade flag are trusted. Refuse a non-upgrade unless the (signed)
+	// downgrade authorization is present.
+	if !updatesig.IsUpgrade(u.currentVersion, info.Version) && !info.SignedDowngrade {
+		os.Remove(tempFile)
+		return "", fmt.Errorf("refusing non-upgrade v%s -> v%s (no signed downgrade authorization)", u.currentVersion, info.Version)
 	}
 
 	// Rename from .tmp to final staging path
@@ -689,11 +699,14 @@ func (u *Updater) applyUpdateViaWatchdog(currentExe, downloadPath string, info *
 		return fmt.Errorf("refusing handoff for v%s: update has no signature (unsigned artifact)", newVersion)
 	}
 
-	// Create update request for the watchdog. Carry the signature and (signed)
-	// downgrade flag through so the watchdog re-verifies against its embedded
-	// public key immediately before the swap.
+	// Create update request for the watchdog. Carry the full manifest tuple
+	// (version, platform, arch, sha256, signedDowngrade, signature) so the
+	// watchdog rebuilds and re-verifies the manifest against its embedded public
+	// key immediately before the swap (C1/C2).
 	request := &ipc.UpdateRequest{
 		Version:         newVersion,
+		Platform:        info.Platform,
+		Arch:            info.Arch,
 		StagedPath:      downloadPath,
 		Checksum:        checksum,
 		RequestedAt:     time.Now(),
@@ -1157,11 +1170,12 @@ func (u *Updater) checkAndUpdateFromURL(ctx context.Context, serverURL string) e
 		return nil
 	}
 
-	// RW-1 / AG-H4: anti-rollback. Refuse a target that is not strictly greater
-	// than the running version unless the artifact carries an explicitly signed
-	// downgrade authorization. Strict-semver parse means an unparseable version
-	// is treated as "not an upgrade" and rejected. This blocks a compromised or
-	// MITM'd server from pinning the fleet to an old, exploitable build.
+	// AG-H4: ADVISORY early-out only. These fields are UNSIGNED here — a
+	// compromised server could set SignedDowngrade=true to pass this check. That
+	// is acceptable because the AUTHORITATIVE anti-rollback gate runs in
+	// downloadFromURL AFTER VerifyManifest proves the version/downgrade tuple was
+	// signed. This block only lets us skip a pointless download of an obvious
+	// non-upgrade; it can never authorize an install on its own.
 	if !updatesig.IsUpgrade(u.currentVersion, result.VersionInfo.Version) && !result.VersionInfo.SignedDowngrade {
 		log.Printf("[Updater] Rejecting non-upgrade v%s -> v%s (no signed downgrade authorization)",
 			u.currentVersion, result.VersionInfo.Version)
@@ -1427,9 +1441,16 @@ func (u *Updater) CheckForWatchdogUpdate(ctx context.Context) (*WatchdogUpdateRe
 	return &result, nil
 }
 
-// DownloadWatchdogUpdate downloads the watchdog update and returns the staging path
-func (u *Updater) DownloadWatchdogUpdate(ctx context.Context, info *WatchdogVersionInfo) (string, error) {
+// DownloadWatchdogUpdate downloads the watchdog update and returns the staging path.
+// currentVersion is the running watchdog version, used for the anti-rollback gate.
+func (u *Updater) DownloadWatchdogUpdate(ctx context.Context, info *WatchdogVersionInfo, currentVersion string) (string, error) {
 	log.Printf("[Updater] Downloading watchdog update v%s from %s", info.Version, info.DownloadURL)
+
+	// M1: constrain the watchdog download to the configured server origin over
+	// https, matching the agent updater and watchdog-poller paths.
+	if err := u.validateDownloadOrigin(info.DownloadURL); err != nil {
+		return "", err
+	}
 
 	// Ensure staging directory exists
 	if err := ipc.EnsureDirectories(); err != nil {
@@ -1472,28 +1493,35 @@ func (u *Updater) DownloadWatchdogUpdate(ctx context.Context, info *WatchdogVers
 	// Close the file before renaming (required on Windows)
 	out.Close()
 
-	// Verify checksum if provided (transport-integrity only)
+	// Transport-integrity checksum (must be present).
 	checksum := hex.EncodeToString(hasher.Sum(nil))
-	if info.Checksum != "" && checksum != info.Checksum {
+	if info.Checksum == "" {
+		os.Remove(tempFile)
+		return "", fmt.Errorf("refusing watchdog update v%s: server supplied no sha256", info.Version)
+	}
+	if checksum != info.Checksum {
 		os.Remove(tempFile)
 		return "", fmt.Errorf("checksum mismatch: expected %s, got %s", info.Checksum, checksum)
 	}
 
-	// RW-1 / WD-H2: authenticity gate over the exact downloaded bytes against
-	// the embedded public key. Fail closed on empty/invalid signature.
-	downloadedBytes, readErr := os.ReadFile(tempFile)
-	if readErr != nil {
-		os.Remove(tempFile)
-		return "", fmt.Errorf("failed to read staged watchdog file for signature verification: %w", readErr)
-	}
-	if sigErr := updatesig.Verify(downloadedBytes, info.Signature); sigErr != nil {
+	// C1 / WD-H2: manifest authenticity gate against the LOCALLY computed sha256
+	// of the downloaded bytes and the embedded public key. Fail closed on
+	// empty/invalid signature.
+	if sigErr := updatesig.VerifyManifest(info.Version, info.Platform, info.Arch, checksum, info.SignedDowngrade, info.Signature); sigErr != nil {
 		os.Remove(tempFile)
 		ipc.WriteAlert(&ipc.AlertRelayPayload{
 			Severity: "critical",
 			Title:    "Watchdog Update Signature Verification Failed",
 			Message:  fmt.Sprintf("Watchdog update v%s rejected: %v", info.Version, sigErr),
 		})
-		return "", fmt.Errorf("signature verification failed for watchdog update v%s: %w", info.Version, sigErr)
+		return "", fmt.Errorf("manifest signature verification failed for watchdog update v%s: %w", info.Version, sigErr)
+	}
+
+	// C2 anti-rollback: version/downgrade now trusted (manifest verified). Refuse
+	// a non-upgrade watchdog target unless a signed downgrade is authorized.
+	if !updatesig.IsUpgrade(currentVersion, info.Version) && !info.SignedDowngrade {
+		os.Remove(tempFile)
+		return "", fmt.Errorf("refusing non-upgrade watchdog v%s -> v%s (no signed downgrade authorization)", currentVersion, info.Version)
 	}
 
 	// Rename from .tmp to final staging path
@@ -1528,8 +1556,8 @@ func (u *Updater) TriggerWatchdogUpdate(ctx context.Context) error {
 	log.Printf("[Updater] Watchdog update available: v%s -> v%s",
 		result.CurrentVersion, result.LatestVersion)
 
-	// Download the update
-	stagingPath, err := u.DownloadWatchdogUpdate(ctx, result.VersionInfo)
+	// Download the update (anti-rollback gated against the current watchdog version)
+	stagingPath, err := u.DownloadWatchdogUpdate(ctx, result.VersionInfo, result.CurrentVersion)
 	if err != nil {
 		return fmt.Errorf("failed to download watchdog update: %w", err)
 	}
@@ -1541,10 +1569,13 @@ func (u *Updater) TriggerWatchdogUpdate(ctx context.Context) error {
 	}
 	watchdogPath := filepath.Join(filepath.Dir(agentExe), "sentinel-watchdog.exe")
 
-	// Create update request for the watchdog. Carry the signature through so the
-	// watchdog self-update re-verifies against its embedded public key pre-swap.
+	// Create update request for the watchdog. Carry the full manifest tuple so
+	// the self-update re-verifies the manifest against its embedded pubkey and
+	// re-checks anti-rollback pre-swap (C1/C2).
 	request := &ipc.WatchdogUpdateRequest{
 		Version:         result.VersionInfo.Version,
+		Platform:        result.VersionInfo.Platform,
+		Arch:            result.VersionInfo.Arch,
 		StagedPath:      stagingPath,
 		Checksum:        result.VersionInfo.Checksum,
 		RequestedAt:     time.Now(),

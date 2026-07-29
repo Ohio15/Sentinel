@@ -142,24 +142,34 @@ func (s *SelfUpdater) verifyStagedFile(request *ipc.WatchdogUpdateRequest) error
 		return fmt.Errorf("staged file is empty")
 	}
 
-	// Read once for both checksum (optional) and signature (mandatory).
+	// Read once and compute the sha256 the manifest signature must cover.
+	// TODO(wave-c): re-verify under SYSTEM-only staging ACL to close the
+	// verify-then-reread TOCTOU (L1) once secret/dir sealing lands.
 	stagedBytes, err := os.ReadFile(stagedClean)
 	if err != nil {
 		return fmt.Errorf("failed to read staged file: %w", err)
 	}
+	h := sha256.Sum256(stagedBytes)
+	actualChecksum := hex.EncodeToString(h[:])
 
 	// Transport-integrity checksum, when present (defense in depth only).
-	if request.Checksum != "" {
-		h := sha256.Sum256(stagedBytes)
-		actualChecksum := hex.EncodeToString(h[:])
-		if actualChecksum != request.Checksum {
-			return fmt.Errorf("checksum mismatch: expected %s, got %s", request.Checksum, actualChecksum)
-		}
+	if request.Checksum != "" && actualChecksum != request.Checksum {
+		return fmt.Errorf("checksum mismatch: expected %s, got %s", request.Checksum, actualChecksum)
 	}
 
-	// RW-1: mandatory signature verification against the embedded public key.
-	if err := updatesig.Verify(stagedBytes, request.Signature); err != nil {
-		return fmt.Errorf("signature verification failed for staged watchdog v%s: %w", request.Version, err)
+	// C1: mandatory manifest signature verification over the LOCALLY computed
+	// sha256 and the embedded public key.
+	if err := updatesig.VerifyManifest(request.Version, request.Platform, request.Arch, actualChecksum, request.SignedDowngrade, request.Signature); err != nil {
+		return fmt.Errorf("manifest signature verification failed for staged watchdog v%s: %w", request.Version, err)
+	}
+
+	// C2 anti-rollback: manifest verified, so version/downgrade are trusted.
+	// Refuse a non-upgrade over the running watchdog unless a signed downgrade is
+	// authorized. s.currentVersion is the running watchdog version.
+	if s.currentVersion != "" {
+		if !updatesig.IsUpgrade(s.currentVersion, request.Version) && !request.SignedDowngrade {
+			return fmt.Errorf("refusing non-upgrade watchdog v%s -> v%s (no signed downgrade authorization)", s.currentVersion, request.Version)
+		}
 	}
 
 	return nil

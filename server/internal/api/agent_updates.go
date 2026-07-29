@@ -28,26 +28,47 @@ type AgentVersionFile struct {
 	Changelog     string   `json:"changelog"`
 	Platforms     []string `json:"platforms"`
 	MinAppVersion string   `json:"minAppVersion"`
-	// Signature carries the primary-platform (windows-amd64) Ed25519 signature
+	// Signature carries the primary-platform (windows-amd64) manifest signature
 	// for record/audit. The authoritative per-binary signature the server serves
-	// is the sidecar <binary>.sig read by getBinarySignature — each platform's
-	// bytes have their own signature.
+	// is the sidecar <binary>.manifest.json read by getBinaryManifest — each
+	// platform's bytes have their own signed manifest.
 	Signature       string `json:"signature"`
 	SignedDowngrade bool   `json:"signedDowngrade,omitempty"`
 }
 
-// getBinarySignature reads the base64 Ed25519 detached signature for a binary
-// from its sidecar "<binaryPath>.sig" file, produced by the release pipeline
-// (cmd/sign). Returns "" if the sidecar is absent — in which case self-updating
-// clients will fail closed and refuse the unsigned artifact (RW-1). The file is
-// tiny (~88 bytes); it is read per request so a re-signed artifact is picked up
-// without a cache-invalidation dance.
-func getBinarySignature(binaryPath string) string {
-	data, err := os.ReadFile(binaryPath + ".sig")
+// BinaryManifest is the signed sidecar produced by cmd/sign (manifest mode) and
+// written next to each release binary as "<binary>.manifest.json". The Signature
+// covers the canonical manifest (version+platform+arch+sha256+signedDowngrade),
+// so the server MUST serve these fields verbatim from the sidecar — it cannot
+// substitute its own values without invalidating the client-side verification.
+type BinaryManifest struct {
+	Version         string `json:"version"`
+	Platform        string `json:"platform"`
+	Arch            string `json:"arch"`
+	SHA256          string `json:"sha256"`
+	SignedDowngrade bool   `json:"signedDowngrade"`
+	Signature       string `json:"signature"`
+}
+
+// getBinaryManifest reads the signed manifest sidecar "<binaryPath>.manifest.json"
+// produced by the release pipeline (cmd/sign). Returns nil if the sidecar is
+// absent or malformed — in which case self-updating clients fail closed and
+// refuse the unsigned artifact (RW-1). Read per request so a re-signed artifact
+// is picked up without a cache-invalidation dance.
+func getBinaryManifest(binaryPath string) *BinaryManifest {
+	data, err := os.ReadFile(binaryPath + ".manifest.json")
 	if err != nil {
-		return ""
+		return nil
 	}
-	return strings.TrimSpace(string(data))
+	var m BinaryManifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil
+	}
+	if strings.TrimSpace(m.Signature) == "" {
+		return nil
+	}
+	m.Signature = strings.TrimSpace(m.Signature)
+	return &m
 }
 
 // Cached agent version info
@@ -350,6 +371,18 @@ func (r *Router) getAgentVersion(c *gin.Context) {
 	// TTL is invisible to them.
 	downloadURL := signAgentUpdateURL(rawURL, platform, arch, agentVersion.Version)
 
+	// Serve the signed-manifest fields verbatim from the sidecar. The client
+	// rebuilds the canonical manifest from (version, platform, arch, sha256,
+	// signedDowngrade) and verifies the signature, so these MUST come from the
+	// signed sidecar, not from server-derived values. Absent sidecar -> empty
+	// signature -> client fails closed.
+	manifest := getBinaryManifest(binaryPath)
+	sig, signedDowngrade := "", false
+	if manifest != nil {
+		sig = manifest.Signature
+		signedDowngrade = manifest.SignedDowngrade
+	}
+
 	response.Available = true
 	response.VersionInfo = &AgentVersionInfo{
 		Version:         agentVersion.Version,
@@ -361,8 +394,8 @@ func (r *Router) getAgentVersion(c *gin.Context) {
 		ReleaseDate:     agentVersion.ReleaseDate,
 		Changelog:       agentVersion.Changelog,
 		Required:        false,
-		Signature:       getBinarySignature(binaryPath),
-		SignedDowngrade: agentVersion.SignedDowngrade,
+		Signature:       sig,
+		SignedDowngrade: signedDowngrade,
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -432,6 +465,15 @@ func (r *Router) getWatchdogVersion(c *gin.Context) {
 	rawURL := fmt.Sprintf("%s/api/bootstrap/watchdog?platform=%s&arch=%s", serverURL, platform, arch)
 	downloadURL := signAgentUpdateURL(rawURL, platform, arch, agentVersion.Version)
 
+	// Serve the signed-manifest fields verbatim from the sidecar (see
+	// getAgentVersion). Absent sidecar -> empty signature -> client fails closed.
+	manifest := getBinaryManifest(binaryPath)
+	sig, signedDowngrade := "", false
+	if manifest != nil {
+		sig = manifest.Signature
+		signedDowngrade = manifest.SignedDowngrade
+	}
+
 	response.Available = true
 	response.VersionInfo = &AgentVersionInfo{
 		Version:         agentVersion.Version,
@@ -442,8 +484,8 @@ func (r *Router) getWatchdogVersion(c *gin.Context) {
 		Size:            info.Size(),
 		ReleaseDate:     agentVersion.ReleaseDate,
 		Required:        false,
-		Signature:       getBinarySignature(binaryPath),
-		SignedDowngrade: agentVersion.SignedDowngrade,
+		Signature:       sig,
+		SignedDowngrade: signedDowngrade,
 	}
 	c.JSON(http.StatusOK, response)
 }
