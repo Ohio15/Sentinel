@@ -189,6 +189,76 @@ func TestIsUpgrade(t *testing.T) {
 	}
 }
 
+func signManifest(t *testing.T, priv ed25519.PrivateKey, version, platform, arch, sha256hex string, downgrade bool) string {
+	t.Helper()
+	m := CanonicalManifest(version, platform, arch, sha256hex, downgrade)
+	return base64.StdEncoding.EncodeToString(ed25519.Sign(priv, []byte(m)))
+}
+
+func TestVerifyManifest_ValidPasses(t *testing.T) {
+	pubHex, priv := genKeypair(t)
+	withEmbeddedKey(t, pubHex)
+
+	sha := "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
+	sig := signManifest(t, priv, "1.2.3", "windows", "amd64", sha, false)
+
+	if err := VerifyManifest("1.2.3", "windows", "amd64", sha, false, sig); err != nil {
+		t.Fatalf("expected valid manifest to pass, got: %v", err)
+	}
+}
+
+func TestVerifyManifest_TamperedFieldsFail(t *testing.T) {
+	pubHex, priv := genKeypair(t)
+	withEmbeddedKey(t, pubHex)
+
+	sha := "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
+	otherSha := "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	sig := signManifest(t, priv, "1.2.3", "windows", "amd64", sha, false)
+
+	cases := []struct {
+		name                            string
+		version, platform, arch, sha256 string
+		downgrade                       bool
+	}{
+		{"version flipped", "1.2.4", "windows", "amd64", sha, false},
+		{"sha256 flipped", "1.2.3", "windows", "amd64", otherSha, false},
+		{"downgrade flipped", "1.2.3", "windows", "amd64", sha, true},
+		{"platform flipped", "1.2.3", "linux", "amd64", sha, false},
+		{"arch flipped", "1.2.3", "windows", "arm64", sha, false},
+	}
+	for _, c := range cases {
+		if err := VerifyManifest(c.version, c.platform, c.arch, c.sha256, c.downgrade, sig); err == nil {
+			t.Errorf("%s: expected verification failure, got nil", c.name)
+		}
+	}
+}
+
+func TestVerifyManifest_EmptySigAndPubkeyFail(t *testing.T) {
+	pubHex, priv := genKeypair(t)
+	sha := "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90"
+
+	// Empty signature.
+	withEmbeddedKey(t, pubHex)
+	if err := VerifyManifest("1.2.3", "windows", "amd64", sha, false, ""); err == nil {
+		t.Fatal("expected empty signature to fail")
+	}
+
+	// Empty embedded pubkey (fail closed) even with a valid signature.
+	sig := signManifest(t, priv, "1.2.3", "windows", "amd64", sha, false)
+	withEmbeddedKey(t, "")
+	if err := VerifyManifest("1.2.3", "windows", "amd64", sha, false, sig); err != ErrNoEmbeddedKey {
+		t.Fatalf("expected ErrNoEmbeddedKey, got: %v", err)
+	}
+}
+
+func TestCanonicalManifest_ShaCaseInsensitive(t *testing.T) {
+	upper := CanonicalManifest("1.2.3", "windows", "amd64", "ABCDEF", false)
+	lower := CanonicalManifest("1.2.3", "windows", "amd64", "abcdef", false)
+	if upper != lower {
+		t.Fatal("expected sha256 hex to be normalized to lowercase in canonical form")
+	}
+}
+
 func TestCompareVersions(t *testing.T) {
 	cmp, err := CompareVersions("1.2.3", "1.2.4")
 	if err != nil || cmp != -1 {

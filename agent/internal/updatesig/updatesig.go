@@ -96,6 +96,44 @@ func Verify(data []byte, sigB64 string) error {
 	return nil
 }
 
+// ManifestDomain is the domain-separation prefix for the canonical update
+// manifest. Changing it is a breaking change to the signature format and MUST be
+// versioned (v1 -> v2) so an attacker cannot cross-protocol replay a signature.
+const ManifestDomain = "sentinel-update-v1"
+
+// CanonicalManifest returns the exact byte string that is signed/verified for an
+// update. It binds the metadata that drives version/downgrade decisions to the
+// signature so those fields can no longer be tampered with independently of the
+// binary. The serialization is fixed and domain-separated:
+//
+//	"sentinel-update-v1\n" + version + "\n" + platform + "\n" + arch + "\n" +
+//	sha256hex + "\n" + strconv.FormatBool(signedDowngrade)
+//
+// sha256hex is the lowercase hex SHA-256 of the raw binary bytes.
+func CanonicalManifest(version, platform, arch, sha256hex string, signedDowngrade bool) string {
+	return ManifestDomain + "\n" +
+		version + "\n" +
+		platform + "\n" +
+		arch + "\n" +
+		strings.ToLower(sha256hex) + "\n" +
+		strconv.FormatBool(signedDowngrade)
+}
+
+// VerifyManifest rebuilds the canonical manifest string from the supplied fields
+// and verifies the Ed25519 signature over it against the embedded public key.
+// It fails closed under exactly the same rules as Verify (no embedded key, empty
+// or malformed signature, and cryptographic mismatch all error). Because the
+// signature covers version, platform, arch, the binary hash, and the downgrade
+// flag together, flipping ANY of those fields invalidates the signature — this
+// is what makes anti-rollback and downgrade-authorization tamper-proof.
+//
+// Callers MUST separately confirm that sha256(downloadedBytes) == sha256hex
+// before trusting the binary; VerifyManifest only proves the tuple was signed.
+func VerifyManifest(version, platform, arch, sha256hex string, signedDowngrade bool, sigB64 string) error {
+	manifest := CanonicalManifest(version, platform, arch, sha256hex, signedDowngrade)
+	return Verify([]byte(manifest), sigB64)
+}
+
 // ParseVersion parses a strict "MAJOR.MINOR.PATCH" semver into a [3]int. An
 // optional single leading 'v' is tolerated. Any other form (missing component,
 // extra component, non-numeric, empty, pre-release/build metadata) is rejected
