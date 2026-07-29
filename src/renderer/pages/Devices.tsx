@@ -4,6 +4,7 @@ import { useDeviceStore, Device } from '../stores/deviceStore';
 import { useClientStore } from '../stores/clientStore';
 import { api } from '../services/api';
 import { server as serverService, agent as agentService } from '../services';
+import { getDeviceState, IDLE_TOOLTIP, type DeviceDisplayState } from '../utils/deviceState';
 import { format } from 'date-fns';
 
 interface DevicesProps {
@@ -393,7 +394,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
       device.displayName?.toLowerCase().includes(search.toLowerCase()) ||
       device.ipAddress.includes(search);
 
-    const matchesStatus = statusFilter === 'all' || device.status === statusFilter;
+    const matchesStatus = statusFilter === 'all' || getDeviceState(device) === statusFilter;
     const matchesType = typeFilter === 'all' || (device.deviceType || 'desktop') === typeFilter;
     const matchesOs = osFilter === 'all' || device.osType === osFilter;
 
@@ -553,6 +554,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
             >
               <option value="all">All Status</option>
               <option value="online">Online</option>
+              <option value="idle">Idle</option>
               <option value="offline">Offline</option>
               <option value="warning">Warning</option>
               <option value="critical">Critical</option>
@@ -641,7 +643,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                   {filteredDevices.map(device => (
                     <tr key={device.id} className="cursor-pointer" onClick={() => onDeviceSelect(device.id)}>
                       <td>
-                        <StatusBadge status={device.status} />
+                        <StatusBadge device={device} />
                       </td>
                       <td>
                         <span className="text-sm text-text-primary">
@@ -1211,19 +1213,22 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
   );
 }
 
-function StatusBadge({ status }: { status: Device['status'] }) {
-  const styles: Record<string, string> = {
+function StatusBadge({ device }: { device: Pick<Device, 'status' | 'lastSeen'> }) {
+  const state = getDeviceState(device);
+  const styles: Record<DeviceDisplayState, string> = {
     online: 'badge-success',
+    idle: 'bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300',
     offline: 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300',
     warning: 'badge-warning',
     critical: 'badge-danger',
     disabled: 'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-400',
     uninstalling: 'bg-orange-100 dark:bg-orange-900 text-orange-600 dark:text-orange-300',
   };
+  const title = state === 'idle' ? IDLE_TOOLTIP : undefined;
 
   return (
-    <span className={`badge ${styles[status] || styles.offline}`}>
-      {status.charAt(0).toUpperCase() + status.slice(1)}
+    <span className={`badge ${styles[state]}`} title={title}>
+      {state.charAt(0).toUpperCase() + state.slice(1)}
     </span>
   );
 }

@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { useDeviceStore } from '../stores/deviceStore';
 import { useAlertStore } from '../stores/alertStore';
 import { useClientStore } from '../stores/clientStore';
+import { getDeviceState, IDLE_THRESHOLD_MIN } from '../utils/deviceState';
 
 interface DashboardProps {
   onDeviceSelect: (deviceId: string) => void;
@@ -31,14 +32,15 @@ export function Dashboard({ onDeviceSelect }: DashboardProps) {
     : allAlerts;
 
   const stats = useMemo(() => {
-    const online = deviceList.filter(d => d.status === 'online').length;
-    const offline = deviceList.filter(d => d.status === 'offline').length;
+    const online = deviceList.filter(d => getDeviceState(d) === 'online').length;
+    const idle = deviceList.filter(d => getDeviceState(d) === 'idle').length;
+    const offline = deviceList.filter(d => getDeviceState(d) === 'offline').length;
     const warning = deviceList.filter(d => d.status === 'warning').length;
     const critical = deviceList.filter(d => d.status === 'critical').length;
     const openAlerts = alertList.filter(a => a.status === 'open').length;
     const criticalAlerts = alertList.filter(a => a.status === 'open' && a.severity === 'critical').length;
 
-    return { online, offline, warning, critical, total: deviceList.length, openAlerts, criticalAlerts };
+    return { online, idle, offline, warning, critical, total: deviceList.length, openAlerts, criticalAlerts };
   }, [deviceList, alertList]);
 
   const recentAlerts = useMemo(() => {
@@ -66,6 +68,7 @@ export function Dashboard({ onDeviceSelect }: DashboardProps) {
         <StatCard
           title="Offline"
           value={stats.offline}
+          subtitle={stats.idle > 0 ? `${stats.idle} idle (seen in last ${IDLE_THRESHOLD_MIN}m)` : undefined}
           icon={<OfflineIcon />}
           color="gray"
         />
@@ -134,11 +137,12 @@ export function Dashboard({ onDeviceSelect }: DashboardProps) {
                     onClick={() => onDeviceSelect(device.id)}
                     className="w-full flex items-center gap-3 p-3 hover:bg-gray-50 dark:hover:bg-slate-700 rounded-lg transition-colors text-left"
                   >
-                    <div className={`status-indicator ${
-                      device.status === 'online' ? 'status-online' :
-                      device.status === 'warning' ? 'status-warning' :
-                      device.status === 'critical' ? 'status-critical' : 'status-offline'
-                    }`} />
+                    <div className={`status-indicator ${(() => {
+                      const state = getDeviceState(device);
+                      return state === 'online' ? 'status-online' :
+                        state === 'warning' || state === 'idle' ? 'status-warning' :
+                        state === 'critical' ? 'status-critical' : 'status-offline';
+                    })()}`} />
                     <div className="flex-1 min-w-0">
                       <p className="font-medium text-text-primary truncate">
                         {device.displayName || device.hostname}

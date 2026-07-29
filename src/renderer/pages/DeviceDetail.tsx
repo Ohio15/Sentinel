@@ -9,6 +9,7 @@ import { PerformanceView } from '../components/PerformanceView';
 import { WindowsUpdateStatus } from '../components/WindowsUpdateStatus';
 import { OverviewMetrics } from '../components/OverviewMetrics';
 import { ErrorBoundary } from '../components/ErrorBoundary';
+import { getDeviceState, IDLE_TOOLTIP } from '../utils/deviceState';
 import { usePopOut } from '../hooks/usePopOut';
 import { clients as clientsService, devices as devicesService, commands as commandsService } from '../services';
 
@@ -453,18 +454,31 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
             {selectedDevice.osType} {selectedDevice.osVersion} - {selectedDevice.ipAddress}
           </p>
         </div>
-        <div className={`status-indicator ${
-          selectedDevice.status === 'online' ? 'status-online' :
-          selectedDevice.status === 'warning' ? 'status-warning' :
-          selectedDevice.status === 'critical' ? 'status-critical' : 'status-offline'
-        }`} />
-        <span className={`badge ${
-          selectedDevice.status === 'online' ? 'badge-success' :
-          selectedDevice.status === 'warning' ? 'badge-warning' :
-          selectedDevice.status === 'critical' ? 'badge-danger' : 'bg-gray-100 text-gray-600'
-        }`}>
-          {selectedDevice.status.charAt(0).toUpperCase() + selectedDevice.status.slice(1)}
-        </span>
+        {(() => {
+          const state = getDeviceState(selectedDevice);
+          const dot =
+            state === 'online' ? 'status-online' :
+            state === 'warning' ? 'status-warning' :
+            state === 'critical' ? 'status-critical' :
+            state === 'idle' ? 'status-warning' : 'status-offline';
+          const badge =
+            state === 'online' ? 'badge-success' :
+            state === 'warning' ? 'badge-warning' :
+            state === 'critical' ? 'badge-danger' :
+            state === 'idle' ? 'bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300' :
+            'bg-gray-100 text-gray-600';
+          return (
+            <>
+              <div className={`status-indicator ${dot}`} />
+              <span
+                className={`badge ${badge}`}
+                title={state === 'idle' ? IDLE_TOOLTIP : undefined}
+              >
+                {state.charAt(0).toUpperCase() + state.slice(1)}
+              </span>
+            </>
+          );
+        })()}
       </div>
 
       {/* Tabs */}
