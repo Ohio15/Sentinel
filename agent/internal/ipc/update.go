@@ -61,6 +61,18 @@ type UpdateRequest struct {
 	RequestedAt time.Time `json:"requested_at"`
 	RequestedBy string    `json:"requested_by"` // agent ID
 	TargetPath  string    `json:"target_path"`  // path to executable being updated
+
+	// Signature is the base64-encoded Ed25519 detached signature over the raw
+	// bytes of the staged binary, produced by the release pipeline and carried
+	// through from the server. The watchdog verifies it against the embedded
+	// public key immediately before swapping the binary (RW-1). An empty
+	// signature is rejected — updates without authenticity proof are refused.
+	Signature string `json:"signature"`
+
+	// SignedDowngrade, when true, authorizes applying a target version that is
+	// not strictly greater than the current version. It is only honored because
+	// it is covered by the same signature as the artifact (anti-rollback, AG-H4).
+	SignedDowngrade bool `json:"signed_downgrade,omitempty"`
 }
 
 // UpdateStatus is written by the watchdog to report update progress and outcome.
@@ -167,6 +179,15 @@ type WatchdogUpdateRequest struct {
 	RequestedAt time.Time `json:"requested_at"`
 	RequestedBy string    `json:"requested_by"` // agent ID or "server"
 	TargetPath  string    `json:"target_path"`  // path to watchdog executable
+
+	// Signature is the base64-encoded Ed25519 detached signature over the raw
+	// bytes of the staged watchdog binary. Verified against the embedded public
+	// key before the self-update swap (RW-1 / WD-H2). Empty is rejected.
+	Signature string `json:"signature"`
+
+	// SignedDowngrade authorizes a non-upgrade target when set (anti-rollback,
+	// AG-H4). Only meaningful because it is covered by the artifact signature.
+	SignedDowngrade bool `json:"signed_downgrade,omitempty"`
 }
 
 // WatchdogUpdateStatus tracks the state of a watchdog self-update operation

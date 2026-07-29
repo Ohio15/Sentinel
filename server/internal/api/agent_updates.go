@@ -28,6 +28,26 @@ type AgentVersionFile struct {
 	Changelog     string   `json:"changelog"`
 	Platforms     []string `json:"platforms"`
 	MinAppVersion string   `json:"minAppVersion"`
+	// Signature carries the primary-platform (windows-amd64) Ed25519 signature
+	// for record/audit. The authoritative per-binary signature the server serves
+	// is the sidecar <binary>.sig read by getBinarySignature — each platform's
+	// bytes have their own signature.
+	Signature       string `json:"signature"`
+	SignedDowngrade bool   `json:"signedDowngrade,omitempty"`
+}
+
+// getBinarySignature reads the base64 Ed25519 detached signature for a binary
+// from its sidecar "<binaryPath>.sig" file, produced by the release pipeline
+// (cmd/sign). Returns "" if the sidecar is absent — in which case self-updating
+// clients will fail closed and refuse the unsigned artifact (RW-1). The file is
+// tiny (~88 bytes); it is read per request so a re-signed artifact is picked up
+// without a cache-invalidation dance.
+func getBinarySignature(binaryPath string) string {
+	data, err := os.ReadFile(binaryPath + ".sig")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // Cached agent version info
@@ -164,6 +184,14 @@ type AgentVersionInfo struct {
 	ReleaseDate string `json:"releaseDate"`
 	Changelog   string `json:"changelog"`
 	Required    bool   `json:"required"`
+	// Signature is the base64 Ed25519 detached signature over the raw bytes of
+	// the served binary. Produced by the release pipeline (cmd/sign) and stored
+	// as a sidecar <binary>.sig next to the artifact. The agent/watchdog verify
+	// it against their embedded public key before swapping (RW-1). Empty means
+	// this build was not signed and self-updating clients will refuse it.
+	Signature string `json:"signature"`
+	// SignedDowngrade authorizes a non-upgrade target for anti-rollback (AG-H4).
+	SignedDowngrade bool `json:"signedDowngrade,omitempty"`
 }
 
 // AgentUpdateResponse is returned by the version check endpoint
@@ -324,15 +352,17 @@ func (r *Router) getAgentVersion(c *gin.Context) {
 
 	response.Available = true
 	response.VersionInfo = &AgentVersionInfo{
-		Version:     agentVersion.Version,
-		Platform:    platform,
-		Arch:        arch,
-		DownloadURL: downloadURL,
-		Checksum:    checksum,
-		Size:        info.Size(),
-		ReleaseDate: agentVersion.ReleaseDate,
-		Changelog:   agentVersion.Changelog,
-		Required:    false,
+		Version:         agentVersion.Version,
+		Platform:        platform,
+		Arch:            arch,
+		DownloadURL:     downloadURL,
+		Checksum:        checksum,
+		Size:            info.Size(),
+		ReleaseDate:     agentVersion.ReleaseDate,
+		Changelog:       agentVersion.Changelog,
+		Required:        false,
+		Signature:       getBinarySignature(binaryPath),
+		SignedDowngrade: agentVersion.SignedDowngrade,
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -404,14 +434,16 @@ func (r *Router) getWatchdogVersion(c *gin.Context) {
 
 	response.Available = true
 	response.VersionInfo = &AgentVersionInfo{
-		Version:     agentVersion.Version,
-		Platform:    platform,
-		Arch:        arch,
-		DownloadURL: downloadURL,
-		Checksum:    checksum,
-		Size:        info.Size(),
-		ReleaseDate: agentVersion.ReleaseDate,
-		Required:    false,
+		Version:         agentVersion.Version,
+		Platform:        platform,
+		Arch:            arch,
+		DownloadURL:     downloadURL,
+		Checksum:        checksum,
+		Size:            info.Size(),
+		ReleaseDate:     agentVersion.ReleaseDate,
+		Required:        false,
+		Signature:       getBinarySignature(binaryPath),
+		SignedDowngrade: agentVersion.SignedDowngrade,
 	}
 	c.JSON(http.StatusOK, response)
 }
