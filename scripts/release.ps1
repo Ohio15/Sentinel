@@ -47,6 +47,25 @@ if ($existingLocal -or $existingRemote) {
     throw "Tag v$Version already exists (local: '$existingLocal', remote: '$existingRemote'). Pick the next free version."
 }
 
+# RW-1 signing gate: every release MUST be signed. Refuse to produce an unsigned
+# release (which would ship binaries that self-updating agents fail-closed on,
+# AND leave a build with no embedded verification key). Both the private key
+# (for cmd/sign) and the public key (baked into the binaries via -ldflags) are
+# required. No key material lives in the repo — these come from the NEXUS build
+# host's protected store.
+$SigningKey    = $env:SENTINEL_UPDATE_SIGNING_KEY     # PEM path for cmd/sign
+$SigningPubKey = $env:SENTINEL_UPDATE_SIGNING_PUBKEY   # hex-encoded Ed25519 public key
+if ([string]::IsNullOrWhiteSpace($SigningKey)) {
+    throw "SENTINEL_UPDATE_SIGNING_KEY is not set. Refusing to build an unsigned release (RW-1)."
+}
+if (-not (Test-Path $SigningKey)) {
+    throw "SENTINEL_UPDATE_SIGNING_KEY points at a missing file: $SigningKey"
+}
+if ([string]::IsNullOrWhiteSpace($SigningPubKey)) {
+    throw "SENTINEL_UPDATE_SIGNING_PUBKEY is not set. The public key must be embedded in the binaries (RW-1)."
+}
+$SigningLdflags = "-X github.com/sentinel/agent/internal/updatesig.SigningPublicKeyHex=$SigningPubKey"
+
 # Files to update
 $FilesToUpdate = @(
     @{
@@ -109,13 +128,30 @@ Push-Location "$ProjectRoot/agent"
 $env:GOOS = "windows"
 $env:GOARCH = "amd64"
 
-Write-Host "  Building sentinel-agent.exe..."
-go build -o "../release/agent/sentinel-agent.exe" ./cmd/sentinel-agent
+Write-Host "  Building sentinel-agent.exe (embedding signing pubkey)..."
+go build -ldflags $SigningLdflags -o "../release/agent/sentinel-agent.exe" ./cmd/sentinel-agent
 if ($LASTEXITCODE -ne 0) { throw "Agent build failed" }
 
-Write-Host "  Building sentinel-watchdog.exe..."
-go build -o "../release/agent/sentinel-watchdog.exe" ./cmd/sentinel-watchdog
+Write-Host "  Building sentinel-watchdog.exe (embedding signing pubkey)..."
+go build -ldflags $SigningLdflags -o "../release/agent/sentinel-watchdog.exe" ./cmd/sentinel-watchdog
 if ($LASTEXITCODE -ne 0) { throw "Watchdog build failed" }
+
+# H1: build the bootstrap verifier for the TARGET, embedding the same pubkey.
+# It ships to the agent install dir; the Layer-4 recovery scripts run it to
+# verify a freshly downloaded binary before executing it as SYSTEM/root.
+Write-Host "  Building sentinel-verify.exe (embedding signing pubkey)..."
+go build -ldflags $SigningLdflags -o "../release/agent/sentinel-verify.exe" ./cmd/verify
+if ($LASTEXITCODE -ne 0) { throw "Verifier build failed" }
+
+# Build the signing tool for the host so we can sign the artifacts below.
+Write-Host "  Building signing tool (cmd/sign)..."
+$SignTool = "$ProjectRoot/release/agent/sentinel-sign.exe"
+$prevGOOS = $env:GOOS; $prevGOARCH = $env:GOARCH
+Remove-Item Env:GOOS -ErrorAction SilentlyContinue
+Remove-Item Env:GOARCH -ErrorAction SilentlyContinue
+go build -o "$SignTool" ./cmd/sign
+if ($LASTEXITCODE -ne 0) { throw "Signing tool build failed" }
+$env:GOOS = $prevGOOS; $env:GOARCH = $prevGOARCH
 
 Pop-Location
 
@@ -123,7 +159,53 @@ Pop-Location
 Write-Host "Copying binaries to installers directory..." -ForegroundColor Yellow
 Copy-Item "$ProjectRoot/release/agent/sentinel-agent.exe" "$ProjectRoot/installers/sentinel-agent-windows-amd64.exe" -Force
 Copy-Item "$ProjectRoot/release/agent/sentinel-watchdog.exe" "$ProjectRoot/installers/sentinel-watchdog-windows-amd64.exe" -Force
+Copy-Item "$ProjectRoot/release/agent/sentinel-verify.exe" "$ProjectRoot/installers/sentinel-verify-windows-amd64.exe" -Force
 Write-Host "  Copied to installers/" -ForegroundColor Green
+
+# RW-1: sign every artifact. cmd/sign (manifest mode) writes a
+# "<file>.manifest.json" sidecar binding {version,platform,arch,sha256,
+# signedDowngrade} under one Ed25519 signature and prints the base64 signature.
+# The server serves the sidecar next to the binary (getBinaryManifest); the
+# agent/watchdog/verifier rebuild the identical canonical manifest and verify.
+# Sign both the canonical release copies and the installer copies (identical
+# bytes -> identical manifest/sig, but each path needs its own sidecar).
+Write-Host ""
+Write-Host "Signing artifacts (Ed25519 signed manifest)..." -ForegroundColor Yellow
+
+function Sign-Artifact {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { throw "Cannot sign missing artifact: $Path" }
+    # All current release artifacts are windows/amd64. No signed downgrade on a
+    # forward release — SignedDowngrade stays false so anti-rollback holds.
+    $sig = & $SignTool -version $Version -platform "windows" -arch "amd64" $Path
+    if ($LASTEXITCODE -ne 0) { throw "Signing failed for $Path" }
+    Write-Host "  Signed (manifest): $Path" -ForegroundColor Green
+    return $sig.Trim()
+}
+
+$AgentSig    = Sign-Artifact "$ProjectRoot/release/agent/sentinel-agent.exe"
+$WatchdogSig = Sign-Artifact "$ProjectRoot/release/agent/sentinel-watchdog.exe"
+[void](Sign-Artifact "$ProjectRoot/installers/sentinel-agent-windows-amd64.exe")
+[void](Sign-Artifact "$ProjectRoot/installers/sentinel-watchdog-windows-amd64.exe")
+
+# Record the primary-platform (windows-amd64) agent signature in version.json for
+# audit/record. The authoritative per-binary signature the server serves is the
+# sidecar .sig read by getBinarySignature. Agents fail closed if the sidecar is
+# absent, so this JSON field is a convenience record, not the trust source.
+Write-Host "Recording signature in version.json files..." -ForegroundColor Yellow
+foreach ($jsonPath in $JsonFiles) {
+    if (Test-Path $jsonPath) {
+        $json = Get-Content $jsonPath -Raw | ConvertFrom-Json
+        if ($json.PSObject.Properties.Name -contains 'signature') {
+            $json.signature = $AgentSig
+        } else {
+            $json | Add-Member -NotePropertyName 'signature' -NotePropertyValue $AgentSig
+        }
+        $json | ConvertTo-Json -Depth 10 | Set-Content $jsonPath
+        Write-Host "  Signature written: $jsonPath" -ForegroundColor Green
+    }
+}
+Write-Host "  Watchdog signature: $WatchdogSig" -ForegroundColor DarkGray
 
 # Git operations
 Write-Host ""
@@ -137,6 +219,12 @@ git add release/agent/version.json
 git add installers/version.json
 git add installers/sentinel-agent-windows-amd64.exe
 git add installers/sentinel-watchdog-windows-amd64.exe
+git add installers/sentinel-verify-windows-amd64.exe
+# RW-1: signed-manifest sidecars the update server serves next to each binary.
+git add installers/sentinel-agent-windows-amd64.exe.manifest.json
+git add installers/sentinel-watchdog-windows-amd64.exe.manifest.json
+git add release/agent/sentinel-agent.exe.manifest.json
+git add release/agent/sentinel-watchdog.exe.manifest.json
 
 $commitMsg = "Release v$Version"
 if ($Changelog -ne "") {
@@ -167,6 +255,12 @@ if ($Deploy) {
     scp "$ProjectRoot/installers/version.json" "${RemoteHost}:${RemotePath}/version.json"
     scp "$ProjectRoot/installers/sentinel-agent-windows-amd64.exe" "${RemoteHost}:${RemotePath}/sentinel-agent-windows-amd64.exe"
     scp "$ProjectRoot/installers/sentinel-watchdog-windows-amd64.exe" "${RemoteHost}:${RemotePath}/sentinel-watchdog-windows-amd64.exe"
+    scp "$ProjectRoot/installers/sentinel-verify-windows-amd64.exe" "${RemoteHost}:${RemotePath}/sentinel-verify-windows-amd64.exe"
+    # RW-1: the signed-manifest sidecars MUST travel with the binaries — the
+    # update server reads "<binary>.manifest.json" to populate the signature
+    # and manifest fields the agent verifies (and bootstrap fetches via ?manifest=1).
+    scp "$ProjectRoot/installers/sentinel-agent-windows-amd64.exe.manifest.json" "${RemoteHost}:${RemotePath}/sentinel-agent-windows-amd64.exe.manifest.json"
+    scp "$ProjectRoot/installers/sentinel-watchdog-windows-amd64.exe.manifest.json" "${RemoteHost}:${RemotePath}/sentinel-watchdog-windows-amd64.exe.manifest.json"
 
     Write-Host "Deployment complete!" -ForegroundColor Green
     Write-Host ""

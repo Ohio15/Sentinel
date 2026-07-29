@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -56,11 +57,26 @@ const (
 // The watchdog reads this file to know when to perform an update.
 type UpdateRequest struct {
 	Version     string    `json:"version"`
+	Platform    string    `json:"platform"` // required to rebuild the signed manifest
+	Arch        string    `json:"arch"`     // required to rebuild the signed manifest
 	StagedPath  string    `json:"staged_path"`
-	Checksum    string    `json:"checksum"`
+	Checksum    string    `json:"checksum"` // lowercase hex sha256 of the staged bytes
 	RequestedAt time.Time `json:"requested_at"`
 	RequestedBy string    `json:"requested_by"` // agent ID
 	TargetPath  string    `json:"target_path"`  // path to executable being updated
+
+	// Signature is the base64-encoded Ed25519 signature over the CANONICAL
+	// MANIFEST (version+platform+arch+sha256+signedDowngrade), not the bare
+	// bytes. The watchdog rebuilds the manifest from these fields and the sha256
+	// of the staged bytes, then verifies it against the embedded public key
+	// immediately before swapping (C1). Empty signature is rejected.
+	Signature string `json:"signature"`
+
+	// SignedDowngrade, when true, authorizes applying a target version that is
+	// not strictly greater than the current version. It is trustworthy ONLY
+	// because it is one of the fields covered by the manifest signature — the
+	// watchdog must read it back only after VerifyManifest succeeds (C2/AG-H4).
+	SignedDowngrade bool `json:"signed_downgrade,omitempty"`
 }
 
 // UpdateStatus is written by the watchdog to report update progress and outcome.
@@ -162,11 +178,23 @@ func ReadAndDeleteAlert() (*AlertRelayPayload, error) {
 // The watchdog reads this file and uses Task Scheduler to update itself.
 type WatchdogUpdateRequest struct {
 	Version     string    `json:"version"`
+	Platform    string    `json:"platform"` // required to rebuild the signed manifest
+	Arch        string    `json:"arch"`     // required to rebuild the signed manifest
 	StagedPath  string    `json:"staged_path"`
-	Checksum    string    `json:"checksum"`
+	Checksum    string    `json:"checksum"` // lowercase hex sha256 of the staged bytes
 	RequestedAt time.Time `json:"requested_at"`
 	RequestedBy string    `json:"requested_by"` // agent ID or "server"
 	TargetPath  string    `json:"target_path"`  // path to watchdog executable
+
+	// Signature is the base64-encoded Ed25519 signature over the CANONICAL
+	// MANIFEST (version+platform+arch+sha256+signedDowngrade), not the bare
+	// bytes. Rebuilt and verified against the embedded public key before the
+	// self-update swap (C1 / WD-H2). Empty is rejected.
+	Signature string `json:"signature"`
+
+	// SignedDowngrade authorizes a non-upgrade target when set. Trustworthy only
+	// because it is covered by the manifest signature (C2/AG-H4).
+	SignedDowngrade bool `json:"signed_downgrade,omitempty"`
 }
 
 // WatchdogUpdateStatus tracks the state of a watchdog self-update operation
@@ -390,8 +418,35 @@ func CleanupStagingDir() error {
 	return nil
 }
 
+// safeStagingComponent sanitizes an untrusted version/platform/arch value
+// before it is interpolated into a staging filename. The download path opens
+// (and truncates) the staging temp file BEFORE the signature is verified, so an
+// attacker-controlled version-check response must not be able to steer that
+// write outside StagingDir. We keep only [A-Za-z0-9._-] and neutralize any ".."
+// sequence, guaranteeing filepath.Join cannot escape the staging directory.
+// Content authenticity is still enforced separately by the signature check; this
+// only constrains where the pre-verification bytes may land.
+func safeStagingComponent(s string) string {
+	mapped := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			return r
+		case r == '.' || r == '_' || r == '-':
+			return r
+		default:
+			return '_'
+		}
+	}, s)
+	mapped = strings.ReplaceAll(mapped, "..", "__")
+	if mapped == "" {
+		return "unknown"
+	}
+	return mapped
+}
+
 // StagingPath returns the path where a staged update should be stored
 func StagingPath(version, platform, arch string) string {
+	version, platform, arch = safeStagingComponent(version), safeStagingComponent(platform), safeStagingComponent(arch)
 	var filename string
 	if runtime.GOOS == "windows" {
 		filename = fmt.Sprintf("sentinel-agent-%s-%s-%s.exe", version, platform, arch)
@@ -403,6 +458,7 @@ func StagingPath(version, platform, arch string) string {
 
 // WatchdogStagingPath returns the path where a staged watchdog update should be stored
 func WatchdogStagingPath(version, platform, arch string) string {
+	version, platform, arch = safeStagingComponent(version), safeStagingComponent(platform), safeStagingComponent(arch)
 	var filename string
 	if runtime.GOOS == "windows" {
 		filename = fmt.Sprintf("sentinel-watchdog-%s-%s-%s.exe", version, platform, arch)

@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/sentinel/agent/internal/ipc"
+	"github.com/sentinel/agent/internal/updatesig"
 )
 
 const (
@@ -115,34 +115,60 @@ func (s *SelfUpdater) ApplySelfUpdate(request *ipc.WatchdogUpdateRequest) error 
 	return nil
 }
 
-// verifyStagedFile verifies the staged update file exists and checksum matches
+// verifyStagedFile verifies the staged watchdog update file: its paths are
+// constrained, and — the trust anchor — its Ed25519 signature validates over the
+// exact staged bytes against the public key embedded in this binary. This is the
+// last gate before the watchdog self-update swap (RW-1 / WD-H2, WD-H4). Empty or
+// invalid signatures are rejected (fail closed); there is no checksum-only path.
 func (s *SelfUpdater) verifyStagedFile(request *ipc.WatchdogUpdateRequest) error {
+	// WD-H4 / AG-H5: path constraints. Staged file must live inside the staging
+	// directory; target must be exactly this watchdog's executable path.
+	stagedClean := filepath.Clean(request.StagedPath)
+	stagingRoot := filepath.Clean(ipc.StagingDir)
+	if stagedClean != stagingRoot && !strings.HasPrefix(stagedClean, stagingRoot+string(os.PathSeparator)) {
+		return fmt.Errorf("staged path %q is outside the staging directory %q — rejecting", stagedClean, stagingRoot)
+	}
+	expectedTarget := filepath.Clean(s.executablePath)
+	if request.TargetPath != "" && filepath.Clean(request.TargetPath) != expectedTarget {
+		return fmt.Errorf("target path %q does not match the watchdog executable %q — rejecting", filepath.Clean(request.TargetPath), expectedTarget)
+	}
+
 	// Check file exists
-	info, err := os.Stat(request.StagedPath)
+	info, err := os.Stat(stagedClean)
 	if err != nil {
 		return fmt.Errorf("staged file not found: %w", err)
 	}
-
 	if info.Size() == 0 {
 		return fmt.Errorf("staged file is empty")
 	}
 
-	// Verify checksum if provided
-	if request.Checksum != "" {
-		file, err := os.Open(request.StagedPath)
-		if err != nil {
-			return fmt.Errorf("failed to open staged file: %w", err)
-		}
-		defer file.Close()
+	// Read once and compute the sha256 the manifest signature must cover.
+	// TODO(wave-c): re-verify under SYSTEM-only staging ACL to close the
+	// verify-then-reread TOCTOU (L1) once secret/dir sealing lands.
+	stagedBytes, err := os.ReadFile(stagedClean)
+	if err != nil {
+		return fmt.Errorf("failed to read staged file: %w", err)
+	}
+	h := sha256.Sum256(stagedBytes)
+	actualChecksum := hex.EncodeToString(h[:])
 
-		hasher := sha256.New()
-		if _, err := io.Copy(hasher, file); err != nil {
-			return fmt.Errorf("failed to hash staged file: %w", err)
-		}
+	// Transport-integrity checksum, when present (defense in depth only).
+	if request.Checksum != "" && actualChecksum != request.Checksum {
+		return fmt.Errorf("checksum mismatch: expected %s, got %s", request.Checksum, actualChecksum)
+	}
 
-		actualChecksum := hex.EncodeToString(hasher.Sum(nil))
-		if actualChecksum != request.Checksum {
-			return fmt.Errorf("checksum mismatch: expected %s, got %s", request.Checksum, actualChecksum)
+	// C1: mandatory manifest signature verification over the LOCALLY computed
+	// sha256 and the embedded public key.
+	if err := updatesig.VerifyManifest(request.Version, request.Platform, request.Arch, actualChecksum, request.SignedDowngrade, request.Signature); err != nil {
+		return fmt.Errorf("manifest signature verification failed for staged watchdog v%s: %w", request.Version, err)
+	}
+
+	// C2 anti-rollback: manifest verified, so version/downgrade are trusted.
+	// Refuse a non-upgrade over the running watchdog unless a signed downgrade is
+	// authorized. s.currentVersion is the running watchdog version.
+	if s.currentVersion != "" {
+		if !updatesig.IsUpgrade(s.currentVersion, request.Version) && !request.SignedDowngrade {
+			return fmt.Errorf("refusing non-upgrade watchdog v%s -> v%s (no signed downgrade authorization)", s.currentVersion, request.Version)
 		}
 	}
 

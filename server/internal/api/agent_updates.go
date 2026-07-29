@@ -28,6 +28,47 @@ type AgentVersionFile struct {
 	Changelog     string   `json:"changelog"`
 	Platforms     []string `json:"platforms"`
 	MinAppVersion string   `json:"minAppVersion"`
+	// Signature carries the primary-platform (windows-amd64) manifest signature
+	// for record/audit. The authoritative per-binary signature the server serves
+	// is the sidecar <binary>.manifest.json read by getBinaryManifest — each
+	// platform's bytes have their own signed manifest.
+	Signature       string `json:"signature"`
+	SignedDowngrade bool   `json:"signedDowngrade,omitempty"`
+}
+
+// BinaryManifest is the signed sidecar produced by cmd/sign (manifest mode) and
+// written next to each release binary as "<binary>.manifest.json". The Signature
+// covers the canonical manifest (version+platform+arch+sha256+signedDowngrade),
+// so the server MUST serve these fields verbatim from the sidecar — it cannot
+// substitute its own values without invalidating the client-side verification.
+type BinaryManifest struct {
+	Version         string `json:"version"`
+	Platform        string `json:"platform"`
+	Arch            string `json:"arch"`
+	SHA256          string `json:"sha256"`
+	SignedDowngrade bool   `json:"signedDowngrade"`
+	Signature       string `json:"signature"`
+}
+
+// getBinaryManifest reads the signed manifest sidecar "<binaryPath>.manifest.json"
+// produced by the release pipeline (cmd/sign). Returns nil if the sidecar is
+// absent or malformed — in which case self-updating clients fail closed and
+// refuse the unsigned artifact (RW-1). Read per request so a re-signed artifact
+// is picked up without a cache-invalidation dance.
+func getBinaryManifest(binaryPath string) *BinaryManifest {
+	data, err := os.ReadFile(binaryPath + ".manifest.json")
+	if err != nil {
+		return nil
+	}
+	var m BinaryManifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil
+	}
+	if strings.TrimSpace(m.Signature) == "" {
+		return nil
+	}
+	m.Signature = strings.TrimSpace(m.Signature)
+	return &m
 }
 
 // Cached agent version info
@@ -164,6 +205,14 @@ type AgentVersionInfo struct {
 	ReleaseDate string `json:"releaseDate"`
 	Changelog   string `json:"changelog"`
 	Required    bool   `json:"required"`
+	// Signature is the base64 Ed25519 detached signature over the raw bytes of
+	// the served binary. Produced by the release pipeline (cmd/sign) and stored
+	// as a sidecar <binary>.sig next to the artifact. The agent/watchdog verify
+	// it against their embedded public key before swapping (RW-1). Empty means
+	// this build was not signed and self-updating clients will refuse it.
+	Signature string `json:"signature"`
+	// SignedDowngrade authorizes a non-upgrade target for anti-rollback (AG-H4).
+	SignedDowngrade bool `json:"signedDowngrade,omitempty"`
 }
 
 // AgentUpdateResponse is returned by the version check endpoint
@@ -322,17 +371,31 @@ func (r *Router) getAgentVersion(c *gin.Context) {
 	// TTL is invisible to them.
 	downloadURL := signAgentUpdateURL(rawURL, platform, arch, agentVersion.Version)
 
+	// Serve the signed-manifest fields verbatim from the sidecar. The client
+	// rebuilds the canonical manifest from (version, platform, arch, sha256,
+	// signedDowngrade) and verifies the signature, so these MUST come from the
+	// signed sidecar, not from server-derived values. Absent sidecar -> empty
+	// signature -> client fails closed.
+	manifest := getBinaryManifest(binaryPath)
+	sig, signedDowngrade := "", false
+	if manifest != nil {
+		sig = manifest.Signature
+		signedDowngrade = manifest.SignedDowngrade
+	}
+
 	response.Available = true
 	response.VersionInfo = &AgentVersionInfo{
-		Version:     agentVersion.Version,
-		Platform:    platform,
-		Arch:        arch,
-		DownloadURL: downloadURL,
-		Checksum:    checksum,
-		Size:        info.Size(),
-		ReleaseDate: agentVersion.ReleaseDate,
-		Changelog:   agentVersion.Changelog,
-		Required:    false,
+		Version:         agentVersion.Version,
+		Platform:        platform,
+		Arch:            arch,
+		DownloadURL:     downloadURL,
+		Checksum:        checksum,
+		Size:            info.Size(),
+		ReleaseDate:     agentVersion.ReleaseDate,
+		Changelog:       agentVersion.Changelog,
+		Required:        false,
+		Signature:       sig,
+		SignedDowngrade: signedDowngrade,
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -402,16 +465,27 @@ func (r *Router) getWatchdogVersion(c *gin.Context) {
 	rawURL := fmt.Sprintf("%s/api/bootstrap/watchdog?platform=%s&arch=%s", serverURL, platform, arch)
 	downloadURL := signAgentUpdateURL(rawURL, platform, arch, agentVersion.Version)
 
+	// Serve the signed-manifest fields verbatim from the sidecar (see
+	// getAgentVersion). Absent sidecar -> empty signature -> client fails closed.
+	manifest := getBinaryManifest(binaryPath)
+	sig, signedDowngrade := "", false
+	if manifest != nil {
+		sig = manifest.Signature
+		signedDowngrade = manifest.SignedDowngrade
+	}
+
 	response.Available = true
 	response.VersionInfo = &AgentVersionInfo{
-		Version:     agentVersion.Version,
-		Platform:    platform,
-		Arch:        arch,
-		DownloadURL: downloadURL,
-		Checksum:    checksum,
-		Size:        info.Size(),
-		ReleaseDate: agentVersion.ReleaseDate,
-		Required:    false,
+		Version:         agentVersion.Version,
+		Platform:        platform,
+		Arch:            arch,
+		DownloadURL:     downloadURL,
+		Checksum:        checksum,
+		Size:            info.Size(),
+		ReleaseDate:     agentVersion.ReleaseDate,
+		Required:        false,
+		Signature:       sig,
+		SignedDowngrade: signedDowngrade,
 	}
 	c.JSON(http.StatusOK, response)
 }
@@ -432,25 +506,33 @@ func (r *Router) downloadAgentUpdate(c *gin.Context) {
 	platform := c.Query("platform")
 	arch := c.Query("arch")
 
+	// Bootstrap recovery (H1) fetches the signed manifest sidecar to verify the
+	// binary offline before executing it as SYSTEM/root. Manifest fetches are
+	// exempt from the binary cooldown so a recovery can pull manifest + binary
+	// back-to-back without the second request getting a 429.
+	manifestOnly := c.Query("manifest") == "1"
+
 	// Per-agent download cooldown: one download per agent per platform per 5 minutes.
 	// Use X-Agent-ID header (set by agent) with IP fallback for old agents.
-	cooldownID := c.GetHeader("X-Agent-ID")
-	if cooldownID == "" {
-		cooldownID = c.ClientIP()
-	}
-	cooldownKey := fmt.Sprintf("%s-%s-%s", cooldownID, platform, arch)
-	if lastDownload, ok := downloadCooldown.Load(cooldownKey); ok {
-		if time.Since(lastDownload.(time.Time)) < 5*time.Minute {
-			remaining := 5*time.Minute - time.Since(lastDownload.(time.Time))
-			c.Header("Retry-After", fmt.Sprintf("%d", int(remaining.Seconds())))
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error":      "Download cooldown active, binary was recently served",
-				"retryAfter": int(remaining.Seconds()),
-			})
-			return
+	if !manifestOnly {
+		cooldownID := c.GetHeader("X-Agent-ID")
+		if cooldownID == "" {
+			cooldownID = c.ClientIP()
 		}
+		cooldownKey := fmt.Sprintf("%s-%s-%s", cooldownID, platform, arch)
+		if lastDownload, ok := downloadCooldown.Load(cooldownKey); ok {
+			if time.Since(lastDownload.(time.Time)) < 5*time.Minute {
+				remaining := 5*time.Minute - time.Since(lastDownload.(time.Time))
+				c.Header("Retry-After", fmt.Sprintf("%d", int(remaining.Seconds())))
+				c.JSON(http.StatusTooManyRequests, gin.H{
+					"error":      "Download cooldown active, binary was recently served",
+					"retryAfter": int(remaining.Seconds()),
+				})
+				return
+			}
+		}
+		downloadCooldown.Store(cooldownKey, time.Now())
 	}
-	downloadCooldown.Store(cooldownKey, time.Now())
 
 	// Normalize
 	switch arch {
@@ -469,6 +551,18 @@ func (r *Router) downloadAgentUpdate(c *gin.Context) {
 
 	if _, err := os.Stat(binaryPath); os.IsNotExist(err) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Binary file not found"})
+		return
+	}
+
+	// Serve the signed manifest sidecar for offline verification (H1 bootstrap).
+	if manifestOnly {
+		manifestPath := binaryPath + ".manifest.json"
+		if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Manifest not found for platform"})
+			return
+		}
+		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filepath.Base(manifestPath)))
+		c.File(manifestPath)
 		return
 	}
 

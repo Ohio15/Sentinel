@@ -1,11 +1,12 @@
 {
   "version": "1.77.39",
   "releaseDate": "2026-06-19",
-  "changelog": "Aligned to agent/version.json 1.77.39 (lockstep reconciliation, no forward bump). Convention reminder: installers/version.json reflects the published agent binary version; package.json reflects the server/repo version. They may diverge for server-only releases. Actual fleet updates remain gated by agent_releases DB rows — confirm a 1.77.39 row exists before announcing.",
+  "changelog": "Aligned to agent/version.json 1.77.39 (lockstep reconciliation, no forward bump). Convention reminder: installers/version.json reflects the published agent binary version; package.json reflects the server/repo version. They may diverge for server-only releases. Actual fleet updates remain gated by agent_releases DB rows \u00e2\u20ac\u201d confirm a 1.77.39 row exists before announcing.",
   "platforms": [
     "windows",
     "linux",
     "darwin"
   ],
-  "minAppVersion": "1.50.0"
+  "minAppVersion": "1.50.0",
+  "signature": ""
 }
