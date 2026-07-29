@@ -141,13 +141,19 @@ func (m *FileTransferManager) StartUpload(ctx context.Context, req *TransferRequ
 		return nil, ErrAccessDenied
 	}
 
-	// Validate destination path
+	// AG-M path: validate AND normalize the destination through the same sound
+	// validator used everywhere else, then use the RETURNED validated path — not
+	// the raw request path — for every subsequent operation.
 	if err := m.validatePath(req.DestPath); err != nil {
 		return nil, err
 	}
+	absPath, err := SecurePathValidation(req.DestPath)
+	if err != nil {
+		return nil, ErrInvalidPath
+	}
 
 	// Check file extension
-	if err := m.validateExtension(req.DestPath); err != nil {
+	if err := m.validateExtension(absPath); err != nil {
 		return nil, err
 	}
 
@@ -161,10 +167,13 @@ func (m *FileTransferManager) StartUpload(ctx context.Context, req *TransferRequ
 		return nil, ErrTransferInProgress
 	}
 
-	// Check if file exists
-	absPath, err := filepath.Abs(req.DestPath)
-	if err != nil {
-		return nil, fmt.Errorf("invalid path: %w", err)
+	// AG-H write: deny writes into protected directories (agent install/data,
+	// core OS dirs) even if AllowedPaths would otherwise permit them.
+	deniedBases := getDefaultDeniedBases()
+	for _, denied := range deniedBases {
+		if isSubPath(absPath, denied) {
+			return nil, ErrAccessDenied
+		}
 	}
 
 	if _, err := os.Stat(absPath); err == nil && !req.Overwrite {
@@ -177,13 +186,23 @@ func (m *FileTransferManager) StartUpload(ctx context.Context, req *TransferRequ
 		return nil, fmt.Errorf("failed to create directory: %w", err)
 	}
 
+	// AG-H write: open the destination through the SAME hardened open used by
+	// FileTransfer.WriteFile (no-follow, handle-identity verification, real-path
+	// containment) instead of a plain os.Create that follows symlinks/junctions.
+	var allowedBases []string
+	for _, p := range m.config.AllowedPaths {
+		if abs, aerr := filepath.Abs(p); aerr == nil {
+			allowedBases = append(allowedBases, filepath.Clean(abs))
+		}
+	}
+
 	// Open file for writing
 	var file *os.File
 	var resumeOffset int64
 
 	if req.ResumeFrom > 0 && m.config.ResumeEnabled {
-		// Try to resume
-		file, err = os.OpenFile(absPath, os.O_WRONLY, 0644)
+		// Try to resume — append preserves existing bytes for the seek below.
+		file, err = OpenFileHardened(absPath, true, allowedBases, deniedBases)
 		if err == nil {
 			// Verify file size matches resume point
 			info, _ := file.Stat()
@@ -194,11 +213,13 @@ func (m *FileTransferManager) StartUpload(ctx context.Context, req *TransferRequ
 				file.Close()
 				file = nil
 			}
+		} else {
+			file = nil
 		}
 	}
 
 	if file == nil {
-		file, err = os.Create(absPath)
+		file, err = OpenFileHardened(absPath, false, allowedBases, deniedBases)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create file: %w", err)
 		}

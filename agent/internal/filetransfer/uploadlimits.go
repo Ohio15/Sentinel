@@ -177,9 +177,19 @@ func (d *StreamingBase64Decoder) BytesWritten() int64 {
 	return d.bytesWritten
 }
 
-// WriteFileWithLimits writes base64-encoded data to a file with size limits and streaming
-// CW-007: Replacement for WriteFile that implements all security measures
+// WriteFileWithLimits writes base64-encoded data to a file with size limits and
+// streaming. CW-007. No base containment is enforced by this entry point.
 func WriteFileWithLimits(path string, data string, appendMode bool) error {
+	return WriteFileWithLimitsBounded(path, data, appendMode, nil, nil)
+}
+
+// WriteFileWithLimitsBounded is WriteFileWithLimits with real-path containment:
+// after the handle is opened, the resolved real path of the open file must be
+// inside one of allowedBases (when non-empty) and outside every deniedBases
+// entry. This closes the Windows intermediate-junction TOCTOU (AG-H write) where
+// an attacker-planted junction on a parent directory redirects the write even
+// though the final component check passes.
+func WriteFileWithLimitsBounded(path string, data string, appendMode bool, allowedBases, deniedBases []string) error {
 	// Step 1: Validate estimated size before any processing
 	if err := ValidateBase64UploadSize(len(data)); err != nil {
 		return fmt.Errorf("upload size validation failed: %w", err)
@@ -205,43 +215,12 @@ func WriteFileWithLimits(path string, data string, appendMode bool) error {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	// Step 5b: Pre-open symlink/reparse-point rejection (AG-H write). Refuse to
-	// write when the target is already a symlink or junction so we never
-	// truncate or overwrite through one. On POSIX the no-follow open below is
-	// the hard enforcement; this check also protects Windows where O_NOFOLLOW
-	// is unavailable, and short-circuits before O_TRUNC touches any target.
-	if li, lerr := os.Lstat(path); lerr == nil {
-		if li.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("refusing to write through symlink/reparse point: %s", path)
-		}
-	} else if !os.IsNotExist(lerr) {
-		return fmt.Errorf("failed to stat target: %w", lerr)
-	}
-
-	// Step 6: Open file with appropriate flags, refusing to follow a symlink at
-	// the final path component (openFileNoFollow adds O_NOFOLLOW on POSIX).
-	flags := os.O_WRONLY | os.O_CREATE
-	if appendMode {
-		flags |= os.O_APPEND
-	} else {
-		flags |= os.O_TRUNC
-	}
-
-	file, err := openFileNoFollow(path, flags, 0644)
+	// Step 6: Open the target with the full symlink/junction TOCTOU guard.
+	file, err := OpenFileHardened(path, appendMode, allowedBases, deniedBases)
 	if err != nil {
-		return fmt.Errorf("failed to open file: %w", err)
-	}
-	defer file.Close()
-
-	// Step 6b: Verify the opened handle's identity to close the TOCTOU window
-	// between validation and open — the fd must be a regular file that is the
-	// same object Lstat resolves (i.e. not a symlink swapped in after checks).
-	if err := verifyOpenedRegularFile(file, path); err != nil {
-		if !appendMode {
-			os.Remove(path)
-		}
 		return err
 	}
+	defer file.Close()
 
 	// Step 7: Stream decode and write
 	written, err := decoder.WriteTo(file)
@@ -254,6 +233,100 @@ func WriteFileWithLimits(path string, data string, appendMode bool) error {
 	}
 
 	log.Printf("[FILE TRANSFER] Successfully wrote %d bytes to %s", written, path)
+	return nil
+}
+
+// OpenFileHardened opens path for writing with the complete symlink/junction
+// TOCTOU guard (AG-H write, AG-M path):
+//   - pre-open rejection of an existing symlink/reparse target;
+//   - no-follow open (O_NOFOLLOW on POSIX);
+//   - post-open handle-identity verification (regular file, SameFile);
+//   - real-path containment: the resolved real path of the open handle must be
+//     inside allowedBases (when provided) and outside every deniedBases entry,
+//     defeating an attacker-planted junction on an intermediate directory.
+//
+// The returned file is positioned per appendMode (append vs truncate) and the
+// caller owns closing it.
+func OpenFileHardened(path string, appendMode bool, allowedBases, deniedBases []string) (*os.File, error) {
+	// Pre-open symlink/reparse-point rejection. Refuse to write when the target
+	// is already a symlink/junction so we never truncate or overwrite through
+	// one; short-circuits before O_TRUNC touches any target.
+	if li, lerr := os.Lstat(path); lerr == nil {
+		if li.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("refusing to write through symlink/reparse point: %s", path)
+		}
+	} else if !os.IsNotExist(lerr) {
+		return nil, fmt.Errorf("failed to stat target: %w", lerr)
+	}
+
+	flags := os.O_WRONLY | os.O_CREATE
+	if appendMode {
+		flags |= os.O_APPEND
+	} else {
+		flags |= os.O_TRUNC
+	}
+
+	file, err := openFileNoFollow(path, flags, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file: %w", err)
+	}
+
+	if err := verifyOpenedRegularFile(file, path); err != nil {
+		file.Close()
+		if !appendMode {
+			os.Remove(path)
+		}
+		return nil, err
+	}
+
+	// Real-path containment via the open handle (GetFinalPathNameByHandle on
+	// Windows) — catches intermediate-junction redirection that the final
+	// component check cannot see.
+	if realPath, rerr := realPathFromHandle(file); rerr == nil && realPath != "" {
+		if cerr := verifyRealPathContainment(realPath, allowedBases, deniedBases); cerr != nil {
+			file.Close()
+			if !appendMode {
+				os.Remove(path)
+			}
+			return nil, cerr
+		}
+	} else if rerr != nil {
+		log.Printf("[SECURITY] Could not resolve real path of %s for containment check: %v", path, rerr)
+	}
+
+	return file, nil
+}
+
+// verifyRealPathContainment enforces that realPath is inside an allowed base
+// (when allowedBases is non-empty) and outside every denied base.
+func verifyRealPathContainment(realPath string, allowedBases, deniedBases []string) error {
+	clean := filepath.Clean(realPath)
+
+	for _, denied := range deniedBases {
+		if denied == "" {
+			continue
+		}
+		if isSubPath(clean, filepath.Clean(denied)) {
+			return fmt.Errorf("resolved real path is within a protected directory: %s", clean)
+		}
+	}
+
+	if len(allowedBases) > 0 {
+		allowed := false
+		for _, base := range allowedBases {
+			resolvedBase, err := filepath.EvalSymlinks(base)
+			if err != nil {
+				continue
+			}
+			if isSubPath(clean, filepath.Clean(resolvedBase)) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return fmt.Errorf("resolved real path escaped allowed directories: %s", clean)
+		}
+	}
 	return nil
 }
 

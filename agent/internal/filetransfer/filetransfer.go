@@ -419,11 +419,12 @@ func (ft *FileTransfer) WriteFile(ctx context.Context, path string, data string,
 		return fmt.Errorf("parent directory validation failed: %w", err)
 	}
 
-	// AG-H write: route through WriteFileWithLimits so uploads are subject to
+	// AG-H write: route through the bounded writer so uploads are subject to
 	// size limits, disk-quota checks, streaming decode (no full-buffer memory
-	// blowup), and no-follow / handle-identity verification that closes the
-	// symlink/junction TOCTOU between validation and open.
-	if err := WriteFileWithLimits(validatedPath, data, append); err != nil {
+	// blowup), no-follow / handle-identity verification, AND real-path
+	// containment (the resolved handle must stay inside an allowed base and out
+	// of every denied base, defeating intermediate-junction redirection).
+	if err := WriteFileWithLimitsBounded(validatedPath, data, append, ft.allowedBases, ft.deniedBases); err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
 
