@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 	"log"
@@ -297,7 +298,41 @@ func NewAgentAuthMiddleware(pool *pgxpool.Pool, fallbackToken string) gin.Handle
 	}
 }
 
-// ValidateDatabaseToken checks if a token is valid in the database
+// consumeTokenUse atomically records a single use of an enrollment token.
+//
+// SEC-002: use_count must be incremented on every successful authentication so
+// that max_uses (single-use) tokens cannot be replayed. Performing the check and
+// the increment in one conditional UPDATE also closes the TOCTOU window that a
+// separate SELECT-then-UPDATE leaves open: two concurrent requests presenting a
+// max_uses=1 token can both pass a prior SELECT, but only one can win this
+// atomic increment. Zero rows affected means the token was exhausted (or vanished)
+// between selection and consumption and must be treated as an auth failure.
+//
+// Tokens with max_uses IS NULL are unlimited: the WHERE clause always matches, so
+// the counter advances for observability without ever failing.
+func consumeTokenUse(ctx context.Context, pool *pgxpool.Pool, tokenID uuid.UUID) bool {
+	var consumedID uuid.UUID
+	err := pool.QueryRow(ctx, `
+		UPDATE enrollment_tokens
+		SET use_count = use_count + 1
+		WHERE id = $1 AND (max_uses IS NULL OR use_count < max_uses)
+		RETURNING id
+	`, tokenID).Scan(&consumedID)
+	if err != nil {
+		// pgx.ErrNoRows here means the atomic guard rejected the increment
+		// (token exhausted). Any other error is a DB failure — in both cases we
+		// fail closed rather than grant access.
+		if !errors.Is(err, pgx.ErrNoRows) {
+			log.Printf("[AUTH] Failed to consume enrollment token use for %s: %v", tokenID, err)
+		}
+		return false
+	}
+	return true
+}
+
+// ValidateDatabaseToken checks if a token is valid in the database and, on
+// success, atomically consumes one use (SEC-002). A token that is otherwise
+// valid but has already reached max_uses is rejected.
 func ValidateDatabaseToken(ctx context.Context, pool *pgxpool.Pool, token string) (bool, uuid.UUID) {
 	// Fast path: try plaintext exact match for legacy tokens first (O(1) via index)
 	var legacyTokenID uuid.UUID
@@ -310,6 +345,11 @@ func ValidateDatabaseToken(ctx context.Context, pool *pgxpool.Pool, token string
 	`, token).Scan(&legacyTokenID)
 	if err == nil {
 		log.Printf("[PERF] Enrollment token validation checked 1 tokens")
+		// SEC-002: consume a use atomically; the fast (legacy plaintext) path
+		// must participate in single-use enforcement just like the slow path.
+		if !consumeTokenUse(ctx, pool, legacyTokenID) {
+			return false, uuid.Nil
+		}
 		return true, legacyTokenID
 	}
 
@@ -359,6 +399,10 @@ func ValidateDatabaseToken(ctx context.Context, pool *pgxpool.Pool, token string
 
 		if valid {
 			log.Printf("[PERF] Enrollment token validation checked %d tokens", count)
+			// SEC-002: consume a use atomically before granting access.
+			if !consumeTokenUse(ctx, pool, tokenID) {
+				return false, uuid.Nil
+			}
 			return true, tokenID
 		}
 	}

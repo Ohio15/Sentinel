@@ -242,14 +242,13 @@ func downloadBootstrapAgentHandler(services *Services) gin.HandlerFunc {
 		}
 
 		// Token validation (optional but recommended)
+		// SEC-002: validateEnrollmentToken -> ValidateDatabaseToken now atomically
+		// consumes one use on success, so this path must NOT increment again or it
+		// would double-count and exhaust max_uses tokens twice as fast.
 		if token != "" {
-			tokenID, err := validateEnrollmentToken(c, services, token)
-			if err != nil {
+			if _, err := validateEnrollmentToken(c, services, token); err != nil {
 				return // Error already sent
 			}
-
-			// Increment token use count
-			incrementTokenUseCount(c, services, tokenID)
 		}
 
 		// Get agent binary path
@@ -396,17 +395,6 @@ func validateEnrollmentToken(c *gin.Context, services *Services, token string) (
 		return uuid.Nil, fmt.Errorf("invalid enrollment token")
 	}
 	return tokenID, nil
-}
-
-// incrementTokenUseCount increments the use count for a validated enrollment token.
-// I-03: Uses token UUID (from ValidateDatabaseToken) instead of plaintext token match.
-func incrementTokenUseCount(c *gin.Context, services *Services, tokenID uuid.UUID) {
-	_, err := services.DB.Pool().Exec(c.Request.Context(), `
-		UPDATE enrollment_tokens SET use_count = use_count + 1 WHERE id = $1
-	`, tokenID)
-	if err != nil {
-		log.Printf("Error incrementing token use count: %v", err)
-	}
 }
 
 // downloadBootstrapWatchdogHandler serves the watchdog binary

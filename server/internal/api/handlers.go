@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -460,24 +459,11 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 					r.hub.SendToAgent(authPayload.AgentID, ackMsg)
 					log.Printf("Proactive update notification for agent %s: %s -> %s", authPayload.AgentID, agentVersion, latestVersion)
 
-					// Wave 1.2 (incident df7a7ff8): server-pushed force-update path
-					// is disabled. sendForceUpdateCommand emits a chained shell
-					// invocation (curl.exe / bash) that does NOT carry the
-					// X-Enrollment-Token header — qa-butcher CRITICAL C1. Once
-					// agent_releases is populated (Phase 2 Stage 1), this path
-					// fires every connection, hits /api/agent/update/download,
-					// 401s, and trips hasRecentUpdateFailure suppression which
-					// then blocks the agent's own native CheckForUpdate path
-					// from completing the upgrade. Until Wave 4 replaces this
-					// with a WS message that the agent's in-process updater
-					// handles (so the credential never crosses a shell
-					// boundary), let agents discover updates via their own
-					// CheckForUpdate poll cycle — slower but functional.
-					//
-					// if isNewerVersion(latestVersion, agentVersion) && (osType == "windows" || osType == "linux") {
-					//     r.sendForceUpdateCommand(authPayload.AgentID, deviceID, agentVersion, latestVersion, osType)
-					// }
-					_ = osType // silence unused warning while disabled
+					// SEC-007: the former server-pushed force-update path
+					// (sendForceUpdateCommand) has been removed. It emitted a
+					// chained shell invocation (curl.exe / bash) that did NOT
+					// carry the X-Enrollment-Token header. Agents discover
+					// updates via their own CheckForUpdate poll cycle.
 				}
 			}
 		}
@@ -503,130 +489,12 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	r.hub.BroadcastToDashboards(offlineMsg)
 }
 
-// sendForceUpdateCommand sends commands to update agents that can't self-update.
-// Windows agents receive a multi-step sequence: download → rename → copy → restart.
-// Linux agents receive a bash script with nohup for detached execution.
-// Uses execute_command with "data" field for backward compatibility with old agents.
-func (r *Router) sendForceUpdateCommand(agentID string, deviceID uuid.UUID, currentVersion, targetVersion, osType string) {
-	// Throttle: only send once per device per 10 minutes (tracked in DB)
-	var lastForceUpdate *time.Time
-	_ = r.db.Pool().QueryRow(context.Background(),
-		"SELECT last_force_update_at FROM devices WHERE id = $1", deviceID).Scan(&lastForceUpdate)
-	if lastForceUpdate != nil && time.Since(*lastForceUpdate) < 10*time.Minute {
-		return
-	}
-
-	// Build the download URL
-	serverURL := r.config.PublicURL
-	if serverURL == "" {
-		serverURL = r.config.ServerURL
-	}
-	if serverURL == "" {
-		log.Printf("[ForceUpdate] Cannot send force update: no server URL configured")
-		return
-	}
-
-	// Look up architecture from the database (default to amd64)
-	var arch string
-	_ = r.db.Pool().QueryRow(context.Background(),
-		"SELECT COALESCE(architecture, 'amd64') FROM devices WHERE id = $1", deviceID).Scan(&arch)
-	if arch == "" || arch == "x86_64" {
-		arch = "amd64"
-	}
-
-	// Validate arch to prevent command injection via DB-sourced values
-	validArchs := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
-	if !validArchs[arch] {
-		log.Printf("[ForceUpdate] WARNING: Invalid architecture %q for agent %s, rejecting force update", arch, agentID)
-		return
-	}
-
-	// Validate platform/osType to prevent command injection
-	validPlatforms := map[string]bool{"windows": true, "linux": true, "darwin": true}
-	if !validPlatforms[osType] {
-		log.Printf("[ForceUpdate] WARNING: Invalid platform %q for agent %s, rejecting force update", osType, agentID)
-		return
-	}
-
-	switch osType {
-	case "windows":
-		r.sendWindowsForceUpdate(agentID, deviceID, currentVersion, targetVersion, serverURL, arch)
-	case "linux":
-		r.sendLinuxForceUpdate(agentID, deviceID, currentVersion, targetVersion, serverURL, arch)
-	default:
-		log.Printf("[ForceUpdate] Unsupported OS type %q for agent %s", osType, agentID)
-		return
-	}
-}
-
-// sendWindowsForceUpdate sends a single chained command to Windows agents.
-// The entire update runs as one cmd process: download → rename → copy → restart.
-// Using && chaining ensures atomicity — if any step fails, subsequent steps are skipped.
-// Only the first command (curl.exe) is whitelist-checked by the agent validator.
-// The cmd process survives WebSocket disconnect since it runs as a child of the agent process.
-func (r *Router) sendWindowsForceUpdate(agentID string, deviceID uuid.UUID, currentVersion, targetVersion, serverURL, arch string) {
-	downloadURL := fmt.Sprintf("%s/api/agent/update/download?platform=windows&arch=%s", serverURL, url.QueryEscape(arch))
-
-	// Single chained command: download new binary, rename old, copy new, restart service.
-	// All using cmd builtins and environment variables — no PowerShell needed.
-	// move /Y: rename running exe (Windows allows renaming locked files)
-	// copy /Y: copy downloaded binary to original path
-	// net stop: SCM auto-restarts the service with the new binary
-	command := fmt.Sprintf(
-		`curl.exe -s -f -o "%%TEMP%%\sentinel-agent-update.exe" "%s" && move /Y "%%ProgramFiles%%\SentinelRMM\sentinel-agent.exe" "%%ProgramFiles%%\SentinelRMM\sentinel-agent.old" && copy /Y "%%TEMP%%\sentinel-agent-update.exe" "%%ProgramFiles%%\SentinelRMM\sentinel-agent.exe" && net stop SentinelAgent`,
-		downloadURL,
-	)
-
-	cmdMsg, _ := json.Marshal(map[string]interface{}{
-		"type":      ws.MsgTypeCommand,
-		"requestId": uuid.New().String(),
-		"data": map[string]interface{}{
-			"command":     command,
-			"commandType": "cmd",
-		},
-	})
-
-	if err := r.hub.SendToAgent(agentID, cmdMsg); err != nil {
-		log.Printf("[ForceUpdate] Failed to send force update to agent %s: %v", agentID, err)
-		return
-	}
-
-	_, _ = r.db.Pool().Exec(context.Background(),
-		"UPDATE devices SET last_force_update_at = NOW() WHERE id = $1", deviceID)
-	log.Printf("[ForceUpdate] Sent single-command windows force update to agent %s: %s -> %s", agentID, currentVersion, targetVersion)
-}
-
-// sendLinuxForceUpdate sends a bash script that uses nohup for detached execution.
-func (r *Router) sendLinuxForceUpdate(agentID string, deviceID uuid.UUID, currentVersion, targetVersion, serverURL, arch string) {
-	script, cmdType := r.buildLinuxForceUpdateScript(serverURL, arch)
-
-	cmdMsg, _ := json.Marshal(map[string]interface{}{
-		"type":      ws.MsgTypeCommand,
-		"requestId": uuid.New().String(),
-		"data": map[string]interface{}{
-			"command":     script,
-			"commandType": cmdType,
-		},
-	})
-	if err := r.hub.SendToAgent(agentID, cmdMsg); err != nil {
-		log.Printf("[ForceUpdate] Failed to send force update to agent %s: %v", agentID, err)
-		return
-	}
-
-	_, _ = r.db.Pool().Exec(context.Background(),
-		"UPDATE devices SET last_force_update_at = NOW() WHERE id = $1", deviceID)
-	log.Printf("[ForceUpdate] Sent linux force update script to agent %s: %s -> %s", agentID, currentVersion, targetVersion)
-}
-
-// buildLinuxForceUpdateScript returns a simple systemctl restart command.
-// Linux agents at v1.72.0+ have working self-update: they stage the new binary
-// and write update-request.json. The watchdog applies it on the next check cycle.
-// Restarting the agent triggers the watchdog to notice and apply the staged update.
-// Base command: systemctl (whitelisted). 'restart' is NOT in the blacklist
-// (only stop|disable|mask are blocked).
-func (r *Router) buildLinuxForceUpdateScript(serverURL, arch string) (string, string) {
-	return `systemctl restart sentinel-agent`, "bash"
-}
+// SEC-007: sendForceUpdateCommand / sendWindowsForceUpdate / sendLinuxForceUpdate
+// / buildLinuxForceUpdateScript were removed. They built RCE-shaped chained-shell
+// update commands (curl.exe|bash → rename → copy → restart) that never carried the
+// X-Enrollment-Token header, and their only call site was already disabled. The
+// live, admin-gated force-update path is handleForceUpdate in devices.go, which
+// sends a WebSocket "force_update" message the agent's in-process updater handles.
 
 func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message []byte) {
 	var msg ws.Message
