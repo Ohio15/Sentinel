@@ -267,9 +267,15 @@ func TestRotate_HappyPath(t *testing.T) {
 	if err != nil || string(live) != string(newCert) {
 		t.Fatalf("client.crt not replaced: err=%v len=%d", err, len(live))
 	}
+	// The private key is sealed at rest (DPAPI machine scope on Windows), so the
+	// on-disk bytes are a sealed blob, not the raw PEM. Unseal before comparing.
 	live, err = os.ReadFile(paths.ClientKeyPath())
-	if err != nil || string(live) != string(newKey) {
-		t.Fatalf("client.key not replaced: err=%v", err)
+	if err != nil {
+		t.Fatalf("client.key read: %v", err)
+	}
+	unsealedKey, uerr := crypto.UnsealMachineData(live)
+	if uerr != nil || string(unsealedKey) != string(newKey) {
+		t.Fatalf("client.key not replaced (uerr=%v)", uerr)
 	}
 	live, err = os.ReadFile(paths.CACertPath())
 	if err != nil || string(live) != string(caCert) {

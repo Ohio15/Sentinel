@@ -577,6 +577,14 @@ func installNewCerts(resp *Response, now time.Time) error {
 			rollbackBackups(backups)
 			return fmt.Errorf("backup %s -> %s: %w", e.live, bakPath, err)
 		}
+		// Seal the backup with a protected DACL (H-2). On the first rotation
+		// after upgrade the live file is a legacy, world-readable plaintext key
+		// (0600 with no DACL); the backup copy must not preserve that exposure.
+		if err := ipc.SecureFileStrict(bakPath); err != nil {
+			cleanupPartial(entries)
+			rollbackBackups(backups)
+			return fmt.Errorf("secure backup %s: %w", bakPath, err)
+		}
 		backups = append(backups, backupPair{live: e.live, backup: bakPath})
 	}
 
