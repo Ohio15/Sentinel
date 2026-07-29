@@ -44,6 +44,27 @@ The verify loop must be proven on one device before the fleet sees it.
 > agents on those targets into a permanent fail-closed retry loop. Archiving is
 > a Ron-gated action (it changes what the live server can serve).
 >
+> **The blocking case: `release/agent/sentinel-agent`.** This is a *tracked*
+> 29 MB stale unsigned linux ELF, and the server serves it as the unsuffixed
+> fallback for `linux-arm64`, `darwin-amd64` and `darwin-arm64`. It cannot
+> simply be `git rm`'d: `.large-files-allowlist` documents that
+> `installers/macos/build-pkg.sh:79` uses it as the universal-fallback
+> `AGENT_BINARY`. Three options, in preference order:
+>
+> 1. **Recommended — drop the `./release/agent:/app/release/agent:ro` bind mount
+>    from the backend service.** Removes the stale-fallback hazard at the layer
+>    where it actually exists, leaves the macOS build path untouched, and
+>    version resolution is unaffected (`installers/version.json` is search root
+>    #1). Cost: a compose change plus a backend restart.
+> 2. Cut `build-pkg.sh` over to CI-built artifacts, then `git rm` the binary.
+>    This is the TODO the allowlist itself records — correct long-term, larger
+>    scope than this rollout.
+> 3. Archive it out of the deploy tree only. Cheapest, but it dirties a tracked
+>    path and any future `git pull`/`checkout` there restores the hazard.
+>
+> Until one is chosen, the gate blocks Phase 0 by design: absence of those
+> targets is benign (`Available: false`), serving stale unsigned bytes is not.
+>
 > **Trust-anchor pin status:** `installers/version.json` at HEAD has no
 > `signingPublicKeyHex`, so v1.77.41 is genuinely TOFU and the pin cannot apply.
 > Publishing v1.77.41 writes that field, which makes the pin **active** for
@@ -103,15 +124,24 @@ should be scheduled; until then every gate-open is fleet-wide.
 
 ## Preconditions checklist (all must hold before Phase 0)
 
-- [ ] release.ps1 passed independent adversarial re-review. Round 2 returned
-      5 HIGH / 10 MEDIUM / 8 LOW and all substantive findings were fixed
-      (backups moved out of the served volume, mandatory git-HEAD key pin,
-      Linux watchdog stub dropped from the matrix, `-DeployOnly` retry path,
-      served-artifact staleness gate, per-run staging + deploy lock, atomic
-      verified restore, TLS-verified polling probe, all published binaries'
-      version strings bumped, host tools in a mode-700 mktemp dir). Round 3
-      re-review of those fixes is REQUIRED before Phase 0.
-- [ ] Stale served artifacts archived (see Phase 0 hard precondition)
+- [x] release.ps1 reviewed adversarially across three rounds (round 2: 5 HIGH /
+      10 MEDIUM / 8 LOW; round 3: 1 CRITICAL / 4 HIGH, all in round 2's own
+      fixes). Every substantive finding is closed. The round-3 CRITICAL is worth
+      remembering: the "mandatory" trust anchor caught its own read errors and
+      treated them as "no previous key", so any git/JSON failure — or simply an
+      older checkout — published under an arbitrary key as a silent TOFU
+      release. Unknown must never read as clean.
+- [x] Load-bearing checks are now TESTED rather than re-reviewed:
+      `scripts/lib/release-checks.ps1` (pure decisions) +
+      `scripts/test/release-checks.tests.ps1` (50 assertions, all passing,
+      mutation-tested — reintroducing either historical defect turns the suite
+      red). Two review rounds finding the same class twice is the signal to
+      stop reviewing and start testing. Run before any release:
+      `pwsh -File scripts/test/release-checks.tests.ps1`
+- [ ] `release/agent/sentinel-agent` fallback resolved (see the blocking case
+      above) — RON DECISION
+- [ ] Stale served artifacts archived (windows-386, `*-arm64*`, `*.bak-*`) —
+      RON DECISION, changes what the live server can serve
 - [x] pwsh 7.6.4 on NEXUS; clean build checkout `~/repos/Sentinel-build`
 - [x] Signing key present/0600; pubkey derived `aac3c014…347e70`; sign→verify
       →tamper-reject chain proven on NEXUS with the real key
