@@ -282,16 +282,25 @@ func OpenFileHardened(path string, appendMode bool, allowedBases, deniedBases []
 	// Real-path containment via the open handle (GetFinalPathNameByHandle on
 	// Windows) — catches intermediate-junction redirection that the final
 	// component check cannot see.
-	if realPath, rerr := realPathFromHandle(file); rerr == nil && realPath != "" {
-		if cerr := verifyRealPathContainment(realPath, allowedBases, deniedBases); cerr != nil {
-			file.Close()
-			if !appendMode {
-				os.Remove(path)
-			}
-			return nil, cerr
+	realPath, rerr := realPathFromHandle(file)
+	if rerr != nil || realPath == "" {
+		// Fail CLOSED: if we cannot resolve the open handle's real path we cannot
+		// prove containment, so we must not hand back a possibly-escaped handle.
+		file.Close()
+		if !appendMode {
+			os.Remove(path)
 		}
-	} else if rerr != nil {
-		log.Printf("[SECURITY] Could not resolve real path of %s for containment check: %v", path, rerr)
+		if rerr == nil {
+			rerr = fmt.Errorf("empty real path")
+		}
+		return nil, fmt.Errorf("refusing write to %s: could not resolve real path for containment check: %w", path, rerr)
+	}
+	if cerr := verifyRealPathContainment(realPath, allowedBases, deniedBases); cerr != nil {
+		file.Close()
+		if !appendMode {
+			os.Remove(path)
+		}
+		return nil, cerr
 	}
 
 	return file, nil

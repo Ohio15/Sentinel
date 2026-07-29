@@ -1269,6 +1269,26 @@ func TestCommandSubstitution(t *testing.T) {
 	}
 }
 
+// TestQuotedParenNotRejected guards the regression where splitting on a bare
+// ")"/"}" wrongly rejected legitimate whitelisted commands that carry those
+// characters inside quoted arguments.
+func TestQuotedParenNotRejected(t *testing.T) {
+	legit := []string{
+		`grep "foo)" file.txt`,
+		`echo "hello (world)"`,
+		`echo "a } b"`,
+	}
+	for _, cmd := range legit {
+		if err := ValidateCommand(cmd, "bash"); err != nil {
+			t.Errorf("legitimate command with quoted paren/brace must pass, got rejected: %q -> %v", cmd, err)
+		}
+	}
+	// The substitution attack must still be rejected even with the trim in place.
+	if err := ValidateCommand("echo $(start-process calc)", "bash"); err == nil {
+		t.Errorf("SECURITY: substitution attack must still be rejected after quoted-paren fix")
+	}
+}
+
 func TestSanitizeArguments(t *testing.T) {
 	tests := []struct {
 		name    string

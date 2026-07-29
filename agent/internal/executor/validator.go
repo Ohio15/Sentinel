@@ -323,16 +323,22 @@ func (cv *CommandValidator) Validate(command string, cmdType string) error {
 // remainder ran unchecked. Treat them as separators so every line is validated.
 //
 // AG-M cmdsub: command substitution introduces an inner command that must ALSO
-// be whitelist-checked. Split on "$(", "${ " (bash function-substitution — the
-// trailing space distinguishes it from "${VAR}" parameter expansion), backtick,
-// and the closing ")"/"}" so the substituted command becomes its own segment
-// (e.g. "echo $(start-process calc)" yields a "start-process calc" segment).
+// be whitelist-checked. Split on the substitution OPENERS "$(", "${ " (bash
+// function-substitution — the trailing space distinguishes it from "${VAR}"
+// parameter expansion), and backtick, so the substituted command becomes the
+// start of its own segment (e.g. "echo $(start-process calc)" yields a
+// "start-process calc)" segment whose base command "start-process" is then
+// whitelist-checked). We deliberately do NOT split on a bare closing ")"/"}":
+// those appear inside legitimate quoted arguments (findstr "foo)", echo
+// "(world)") and splitting on them wrongly rejected valid whitelisted commands.
+// A trailing ")" left on the inner segment does not affect base-command
+// extraction, so inner-command coverage is preserved without the false rejects.
 //
 // A LEADING bare "&" is the PowerShell call operator, not a background
 // separator, so it is only treated as a separator when preceded by whitespace
 // (i.e. there is a command before it). This leaves "& $var" / "& cmd" intact for
 // invocation resolution while still splitting "cmd & cmd2".
-var shellSeparatorPattern = regexp.MustCompile("\\s*(\\|\\||&&)\\s*|(?:\\s)(&)(?:\\s|$)|\\s*([;|])\\s*|[\\r\\n]+|`|\\$\\(|\\$\\{[ \\t]|[)}]")
+var shellSeparatorPattern = regexp.MustCompile("\\s*(\\|\\||&&)\\s*|(?:\\s)(&)(?:\\s|$)|\\s*([;|])\\s*|[\\r\\n]+|`|\\$\\(|\\$\\{[ \\t]")
 
 // extractAllBaseCommands splits a command string on shell separators and extracts
 // the base command from each sub-command. This ensures every command in a chain
@@ -418,6 +424,13 @@ func extractBaseCommandSingle(segment string) string {
 	parts := strings.Fields(segment)
 	if len(parts) > 0 {
 		baseCmd := parts[0]
+		// A command substitution close ")"/"}" (or backtick) can be attached to the
+		// base token when the inner command took no args (e.g. "$(hostname)" splits
+		// to the segment "hostname)"). Trim those trailing delimiters so the inner
+		// base command still whitelist-checks correctly. We do NOT split on bare
+		// ")"/"}" (that wrongly rejects quoted args like findstr "foo)"), so this
+		// trim is what preserves inner-command coverage without the false rejects.
+		baseCmd = strings.TrimRight(baseCmd, ")}`")
 		// CW-002: Clean path before extracting base to prevent traversal bypass
 		// Paths like /usr/bin/../../evil/rm would resolve to /evil/rm
 		if strings.Contains(baseCmd, "/") || strings.Contains(baseCmd, "\\") {
