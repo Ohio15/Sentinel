@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"testing"
 
 	"golang.org/x/sys/windows"
 )
@@ -28,62 +29,65 @@ const fileSecurityDescriptor = "D:P(A;;FA;;;SY)(A;;FA;;;BA)"
 // (A;OICI;FA;;;BA) = Allow File All Access to Builtin Administrators, inherit to child objects and containers
 const dirSecurityDescriptor = "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
 
-// setFileACL applies a restrictive Windows DACL to the given file path,
-// allowing access only to SYSTEM and Builtin Administrators.
-func setFileACL(path string) error {
-	if TestDisableACL {
+// applyProtectedSecurity parses the given SDDL, applies its protected DACL, and
+// reclaims ownership of the object to LocalSystem.
+//
+// Ownership reclaim (C-1) is essential: an owner implicitly holds WRITE_DAC and
+// READ_CONTROL, so if a pre-planting attacker created the file/dir before the
+// agent, they would remain owner and could re-grant themselves read access
+// after SYSTEM writes the secret. Setting the owner to SYSTEM (which the agent
+// runs as) makes the DACL authoritative.
+//
+// The gate on testing.Testing() replaces the former exported TestDisableACL
+// kill switch (H-1): a shipped production binary can NEVER skip the DACL — the
+// no-op only applies under `go test`, where applying a SYSTEM+Administrators-only
+// ACL to a temp path would lock the non-elevated test process out of files it
+// just created.
+func applyProtectedSecurity(path, sddlDACL string) error {
+	if testing.Testing() {
 		return nil
 	}
-	sd, err := windows.SecurityDescriptorFromString(fileSecurityDescriptor)
+
+	sd, err := windows.SecurityDescriptorFromString(sddlDACL)
 	if err != nil {
-		return fmt.Errorf("failed to parse file security descriptor: %w", err)
+		return fmt.Errorf("failed to parse security descriptor: %w", err)
 	}
 
 	dacl, _, err := sd.DACL()
 	if err != nil {
-		return fmt.Errorf("failed to get file DACL: %w", err)
+		return fmt.Errorf("failed to get DACL: %w", err)
+	}
+
+	owner, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
+	if err != nil {
+		return fmt.Errorf("failed to build LocalSystem owner SID: %w", err)
 	}
 
 	err = windows.SetNamedSecurityInfo(
 		path,
 		windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil, nil, dacl, nil,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		owner, nil, dacl, nil,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to set file ACL on %s: %w", path, err)
+		return fmt.Errorf("failed to set protected security on %s: %w", path, err)
 	}
 
 	return nil
 }
 
+// setFileACL applies a restrictive Windows DACL to the given file path,
+// allowing access only to SYSTEM and Builtin Administrators, and reclaims
+// ownership to SYSTEM.
+func setFileACL(path string) error {
+	return applyProtectedSecurity(path, fileSecurityDescriptor)
+}
+
 // setDirectoryACL applies a restrictive Windows DACL to the given directory,
-// allowing access only to SYSTEM and Builtin Administrators, with inheritance.
+// allowing access only to SYSTEM and Builtin Administrators (with inheritance),
+// and reclaims ownership to SYSTEM.
 func setDirectoryACL(path string) error {
-	if TestDisableACL {
-		return nil
-	}
-	sd, err := windows.SecurityDescriptorFromString(dirSecurityDescriptor)
-	if err != nil {
-		return fmt.Errorf("failed to parse directory security descriptor: %w", err)
-	}
-
-	dacl, _, err := sd.DACL()
-	if err != nil {
-		return fmt.Errorf("failed to get directory DACL: %w", err)
-	}
-
-	err = windows.SetNamedSecurityInfo(
-		path,
-		windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil, nil, dacl, nil,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to set directory ACL on %s: %w", path, err)
-	}
-
-	return nil
+	return applyProtectedSecurity(path, dirSecurityDescriptor)
 }
 
 // secureWriteFile writes data to a file with restrictive Unix permissions and Windows ACLs.
@@ -157,7 +161,7 @@ func EnsureSecureDir(path string, perm os.FileMode) error {
 // key) before its contents are trusted. Returns an error describing the first
 // discrepancy found.
 func VerifyFileSecurity(path string) error {
-	if TestDisableACL {
+	if testing.Testing() {
 		return nil
 	}
 	sd, err := windows.GetNamedSecurityInfo(
