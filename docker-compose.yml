@@ -139,7 +139,9 @@ services:
       - "5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./src/main/migrations:/docker-entrypoint-initdb.d:ro
+      # NOTE: schema is owned by the backend's golang-migrate runner
+      # (server/pkg/database/migrations, applied on boot). The old
+      # ./src/main/migrations initdb mount was empty and misleading — removed.
       - ${PG_CERT_DIR:-./certs/postgres}/server-cert.pem:/var/lib/postgresql/server.crt:ro
       - ${PG_CERT_DIR:-./certs/postgres}/server-key.pem:/var/lib/postgresql/server.key:ro
       - ${PG_CERT_DIR:-./certs/postgres}/ca-cert.pem:/var/lib/postgresql/ca.crt:ro

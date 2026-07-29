@@ -232,7 +232,7 @@ SENTINEL_EMBEDDED_TOKEN:________________________________________________________
 $sourceBinary = "D:\Projects\Sentinel\installers\sentinel-agent-windows-amd64.exe"
 $outputBinary = "D:\Projects\sentinel-agent.exe"
 $serverURL = "https://sentinelrmm.us:8443"
-$token = "40addfff-a1c0-4825-8e70-ca422dffd90e"
+$token = $env:SENTINEL_ENROLLMENT_TOKEN   # pull from .env / secret store — do NOT hardcode
 
 # Read binary
 $bytes = [System.IO.File]::ReadAllBytes($sourceBinary)
@@ -291,7 +291,10 @@ The agent enables file/process protection on startup. To replace the binary:
 | Public Web (HTTPS) | Routed by `infra-traefik` in the separate `~/infra/` stack on NEXUS; Sentinel containers join the shared `edge` network to receive routing |
 
 ### Enrollment Token
-Default token: `40addfff-a1c0-4825-8e70-ca422dffd90e`
+Stored in `.env` as `ENROLLMENT_TOKEN` (never commit it). Additional/rotatable
+tokens are managed in the `enrollment_tokens` DB table. If the literal token that
+previously lived here was ever exposed, rotate it (issue a new token, update `.env`,
+restart `sentinel-backend`) and revoke the old one.
 
 ---
 

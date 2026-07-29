@@ -70,7 +70,10 @@ services:
       - SERVER_URL=http://localhost:8091
       - PUBLIC_URL=http://localhost:8091
       - API_KEY=test_api_key_for_testing_only
-      - MTLS_ENABLED=false
+      # Server reads ENABLE_MTLS (not MTLS_ENABLED). The old key was never read, so
+      # mTLS defaulted ON and the test backend hit log.Fatalf (no certs mounted) and
+      # never became healthy — the root cause of the non-blocking integration-test gate.
+      - ENABLE_MTLS=false
     depends_on:
       postgres-test:
         condition: service_healthy
