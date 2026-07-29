@@ -123,8 +123,12 @@ func evaluateAgentCertBinding(ctx context.Context, pool *pgxpool.Pool, agentID, 
 
 	// Structured, greppable WARN. [CERT-BINDING] + would_break lets us enumerate
 	// the agents that must reach direct mTLS before enforcement can be enabled.
+	// would_break = would this connection be rejected IF enforcement were enabled.
+	// That is exactly "holds a cert while using token auth", which is true for
+	// every line we reach here — NOT decision.Reject (which is false in warn mode
+	// and would make this field uselessly always-false, defeating its purpose).
 	log.Printf("[CERT-BINDING] WARN agent=%s ip=%s holds_active_client_cert=true auth_method=enrollment_token mode=%s would_break=%t — cert-holding agent authenticated by token over tunnel",
-		agentID, clientIP, mode, decision.Reject)
+		agentID, clientIP, mode, decision.HoldsCert)
 
 	return decision.Reject
 }
