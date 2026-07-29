@@ -4,6 +4,8 @@ package desktop
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -226,8 +228,11 @@ func (m *Manager) Shutdown() {
 func (m *Manager) spawnHelper(sessionID uint32) (*HelperSession, error) {
 	log.Printf("[Manager] Spawning helper for session %d", sessionID)
 
-	// Generate token for this session
-	token := generateToken(sessionID)
+	// Generate a cryptographically random token for this session (AG-H desktop).
+	token, err := generateToken()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate session token: %w", err)
+	}
 
 	// Create IPC server first
 	handler := &helperHandler{
@@ -235,7 +240,14 @@ func (m *Manager) spawnHelper(sessionID uint32) (*HelperSession, error) {
 		sessionID: sessionID,
 	}
 
-	server, err := NewIPCServer(sessionID, handler)
+	// Resolve the target session's interactive user so the pipe DACL can be
+	// scoped to SYSTEM + that user only (AG-H desktop).
+	ownerSID, sidErr := GetSessionUserSID(sessionID)
+	if sidErr != nil {
+		log.Printf("[Manager] Warning: could not resolve session %d user SID; pipe restricted to SYSTEM+Administrators: %v", sessionID, sidErr)
+	}
+
+	server, err := NewIPCServer(sessionID, ownerSID, handler)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create IPC server: %w", err)
 	}
@@ -334,10 +346,17 @@ func (m *Manager) spawnHelper(sessionID uint32) (*HelperSession, error) {
 	}
 }
 
-// generateToken creates a simple token for the session
-// In Phase 4, this will be replaced with proper HMAC-signed tokens
-func generateToken(sessionID uint32) string {
-	return fmt.Sprintf("token-%d-%d", sessionID, time.Now().UnixNano())
+// generateToken creates a cryptographically random helper-authentication token
+// (AG-H desktop). The previous "token-<sid>-<UnixNano>" scheme was guessable —
+// both the session ID and a coarse timestamp are observable, so a local
+// attacker could predict the token and authenticate to the helper control pipe.
+// 256 bits from crypto/rand removes that predictability.
+func generateToken() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("crypto/rand read failed: %w", err)
+	}
+	return hex.EncodeToString(buf), nil
 }
 
 // helperHandler implements IPCHandler for processing helper messages

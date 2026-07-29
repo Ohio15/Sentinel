@@ -75,6 +75,45 @@ func GetSessionUsername(sessionID uint32) (string, string, error) {
 	return username, domain, nil
 }
 
+// GetSessionUserSID returns the SDDL string SID of the interactive user logged
+// into the given Windows session. Used to scope the desktop-helper pipe DACL to
+// SYSTEM + that user (AG-H desktop).
+func GetSessionUserSID(sessionID uint32) (string, error) {
+	var userToken windows.Token
+	ret, _, err := procWTSQueryUserToken.Call(
+		uintptr(sessionID),
+		uintptr(unsafe.Pointer(&userToken)),
+	)
+	if ret == 0 {
+		return "", fmt.Errorf("WTSQueryUserToken failed: %w", err)
+	}
+	defer userToken.Close()
+
+	tokenUser, err := userToken.GetTokenUser()
+	if err != nil {
+		return "", fmt.Errorf("GetTokenUser failed: %w", err)
+	}
+	if tokenUser.User.Sid == nil {
+		return "", fmt.Errorf("token user has no SID")
+	}
+	return tokenUser.User.Sid.String(), nil
+}
+
+// currentUserSID returns the SDDL string SID of the account the current process
+// runs as. Used as the fall-back grantee for the helper pipe DACL when the
+// target session user's SID cannot be resolved (AG-H desktop).
+func currentUserSID() (string, error) {
+	token := windows.GetCurrentProcessToken()
+	tokenUser, err := token.GetTokenUser()
+	if err != nil {
+		return "", fmt.Errorf("GetTokenUser failed: %w", err)
+	}
+	if tokenUser.User.Sid == nil {
+		return "", fmt.Errorf("token user has no SID")
+	}
+	return tokenUser.User.Sid.String(), nil
+}
+
 // EnsureScheduledTaskForUser creates the scheduled task for a specific user
 func EnsureScheduledTaskForUser(helperPath string, username, domain string) error {
 	// Delete any existing task first to ensure clean state
