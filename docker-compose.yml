@@ -347,6 +347,11 @@ services:
       - ./configs/blackbox/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
     networks:
       - sentinel-network
+    # Allow unprivileged ICMP (ping sockets) for the icmp module — the
+    # exporter runs as nobody, so raw sockets are unavailable; ping sockets
+    # need no extra capabilities and keep no-new-privileges intact.
+    sysctls:
+      net.ipv4.ping_group_range: "0 2147483647"
     security_opt:
       - no-new-privileges:true
     deploy:

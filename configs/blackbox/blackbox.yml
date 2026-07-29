@@ -31,3 +31,12 @@ modules:
       follow_redirects: true
       tls_config:
         insecure_skip_verify: true
+
+  # ICMP probe for WAN-circuit witness monitoring (e.g. Patriot site WAN IP).
+  # Requires the container to allow unprivileged ping sockets — see the
+  # net.ipv4.ping_group_range sysctl on the blackbox-exporter service.
+  icmp:
+    prober: icmp
+    timeout: 5s
+    icmp:
+      preferred_ip_protocol: ip4

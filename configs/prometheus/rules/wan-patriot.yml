@@ -1,0 +1,40 @@
+groups:
+  - name: wan-patriot
+    rules:
+      # External witness for the Patriot Companies WAN circuit (AT&T).
+      # Fires when the site's public IP stops answering ICMP from NEXUS —
+      # an observation made entirely OUTSIDE the site's hardware chain.
+      # Built after the 2026-07-29 outage (shared-brain incident 858e8538),
+      # where the fault could not be localized remotely.
+      - alert: PatriotWANDown
+        expr: probe_success{job="blackbox-wan-patriot"} == 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Patriot WAN {{ $labels.instance }} unreachable from NEXUS"
+          description: >-
+            ICMP probe of the Patriot site WAN IP has failed for 3+ minutes,
+            observed from NEXUS (outside the site). Discriminators, in order:
+            (1) site heartbeat also missing -> site-wide (circuit, AT&T
+            gateway, or power); (2) AT&T gateway Broadband LED solid green
+            on-site but this alert active -> fault is downstream (USG wedge —
+            power-cycle the USG, see lesson 83b46cbc); (3) probe failing but
+            site reports internet working -> WAN IP likely changed after an
+            AT&T gateway reboot — update the target in prometheus.yml.
+
+      # Guard against the witness itself silently disappearing (job removed,
+      # blackbox-exporter unable to ICMP, scrape config error). An absent
+      # probe must not read as "all quiet".
+      - alert: PatriotWANProbeAbsent
+        expr: absent(up{job="blackbox-wan-patriot"})
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Patriot WAN witness probe is not being scraped"
+          description: >-
+            No 'up' series exists for job blackbox-wan-patriot for 15+
+            minutes. The external WAN witness is blind — check the Prometheus
+            scrape config and the blackbox-exporter container (icmp module
+            requires the ping_group_range sysctl).

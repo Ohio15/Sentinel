@@ -76,3 +76,28 @@ scrape_configs:
         target_label: instance
       - target_label: __address__
         replacement: blackbox-exporter:9115
+
+  # External witness for the Patriot Companies WAN circuit (AT&T).
+  # ICMP-probes the site's public IP from NEXUS, so a site-wide outage is
+  # observed from a vantage OUTSIDE the site's own hardware chain
+  # (AT&T gateway -> USG -> LAN). Motivated by the 2026-07-29 outage
+  # (shared-brain incident 858e8538): with no external witness, the fault
+  # could not be localized to ISP-vs-USG-vs-power without on-site eyes.
+  # NOTE: target assumes the site WAN IP is static. The AT&T gateway was
+  # power-cycled during that incident and MAY have been issued a new IP —
+  # re-verify the target once the site is back online.
+  - job_name: 'blackbox-wan-patriot'
+    metrics_path: /probe
+    params:
+      module: [icmp]
+    static_configs:
+      - targets:
+          - 104.189.209.197  # Patriot site WAN IP (AT&T)
+    scrape_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
