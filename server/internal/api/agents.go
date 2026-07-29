@@ -159,6 +159,12 @@ func (r *Router) getEnrollmentToken(c *gin.Context) {
 		return
 	}
 
+	// SEC-005: mask the token the same way listEnrollmentTokens does. The full
+	// plaintext value is only ever returned at creation/regeneration time.
+	if len(t.Token) > 8 {
+		t.Token = t.Token[:8] + "..."
+	}
+
 	c.JSON(http.StatusOK, t)
 }
 
@@ -195,8 +201,8 @@ func (r *Router) updateEnrollmentToken(c *gin.Context) {
 			max_uses = COALESCE($5, max_uses),
 			tags = COALESCE($6, tags),
 			metadata = COALESCE($7, metadata)
-		WHERE id = $8
-	`, req.Name, req.Description, req.IsActive, req.ExpiresAt, req.MaxUses, req.Tags, req.Metadata, tokenID)
+		WHERE id = $8 AND organization_id = $9
+	`, req.Name, req.Description, req.IsActive, req.ExpiresAt, req.MaxUses, req.Tags, req.Metadata, tokenID, constants.CurrentOrganizationID)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update token"})
@@ -242,8 +248,8 @@ func (r *Router) regenerateEnrollmentToken(c *gin.Context) {
 	newToken := hex.EncodeToString(tokenBytes)
 
 	_, err = r.db.Pool().Exec(c.Request.Context(), `
-		UPDATE enrollment_tokens SET token = $1, use_count = 0 WHERE id = $2
-	`, newToken, tokenID)
+		UPDATE enrollment_tokens SET token = $1, use_count = 0 WHERE id = $2 AND organization_id = $3
+	`, newToken, tokenID, constants.CurrentOrganizationID)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to regenerate token"})

@@ -74,7 +74,11 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 		}
 
 		// Agent routes (uses enrollment token)
+		// SEC-001: rate-limit BEFORE the auth middleware so a flood of invalid
+		// tokens can't drive the bcrypt-scan in ValidateDatabaseToken (up to 50
+		// comparisons per miss) into a CPU-exhaustion DoS.
 		agent := api.Group("/agent")
+		agent.Use(rateLimitMiddleware(cache, 60, 60, "agent-enroll")) // 60/min per IP
 		agent.Use(middleware.NewAgentAuthMiddleware(db.Pool(), cfg.EnrollmentToken))
 		{
 			agent.POST("/enroll", router.enrollAgent)
@@ -113,7 +117,9 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 		}
 
 		// Agent download routes (public with token validation)
+		// SEC-001: rate-limit the token-validating installer endpoints per IP.
 		agents := api.Group("/agents")
+		agents.Use(rateLimitMiddleware(cache, 60, 60, "agent-download")) // 60/min per IP
 		{
 			agents.GET("/download/:platform/:arch", router.downloadAgentInstaller)
 			agents.GET("/script/:platform", router.getAgentInstallScript)
@@ -274,7 +280,11 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 		}
 
 		// Agent routes (uses enrollment token)
+		// SEC-001: rate-limit BEFORE the auth middleware so a flood of invalid
+		// tokens can't drive the bcrypt-scan in ValidateDatabaseToken (up to 50
+		// comparisons per miss) into a CPU-exhaustion DoS.
 		agent := api.Group("/agent")
+		agent.Use(rateLimitMiddleware(services.Redis, 60, 60, "agent-enroll")) // 60/min per IP
 		agent.Use(middleware.NewAgentAuthMiddleware(services.DB.Pool(), services.Config.EnrollmentToken))
 		{
 			agent.POST("/enroll", enrollAgentHandler(services))
@@ -289,7 +299,10 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 
 		// Agent update download & status (mandatory auth)
 		// C-02: Phase 2 — agents now send enrollment token; reject unauthenticated requests
+		// SEC-001: rate-limit BEFORE the auth middleware to cap the bcrypt-scan
+		// cost of invalid-token floods (matches the legacy NewRouter bucket size).
 		agentUpdate := api.Group("/agent")
+		agentUpdate.Use(rateLimitMiddleware(services.Redis, 600, 60, "agent-update")) // 600/min per IP (survives old-agent goroutine storm)
 		agentUpdate.Use(middleware.NewAgentAuthMiddleware(services.DB.Pool(), services.Config.EnrollmentToken))
 		{
 			agentUpdate.GET("/update/download", downloadAgentUpdateHandler(services))
@@ -307,7 +320,9 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 		}
 
 		// Agent download routes (public with token validation)
+		// SEC-001: rate-limit the token-validating installer endpoints per IP.
 		agents := api.Group("/agents")
+		agents.Use(rateLimitMiddleware(services.Redis, 60, 60, "agent-download")) // 60/min per IP
 		{
 			agents.GET("/download/:platform/:arch", downloadAgentInstallerHandler(services))
 			agents.GET("/script/:platform", getAgentInstallScriptHandler(services))
