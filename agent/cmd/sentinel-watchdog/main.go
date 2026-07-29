@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -39,6 +40,30 @@ const (
 	checkInterval      = 10 * time.Second
 	maxRestartAttempts = 5
 	restartCooldown    = 60 * time.Second
+
+	// WD-C1: after an update finishes, suppress monitor-driven restarts for this
+	// grace window so the freshly-swapped agent has time to start and report
+	// health without the 10s monitor racing it back into a restart.
+	updateGracePeriod = 60 * time.Second
+
+	// WD-C2: crash-loop breaker tuning.
+	// healthyResetThreshold is how many consecutive healthy checks are required
+	// before the restart counters are cleared — a single SCM "start accepted"
+	// no longer masks an agent that keeps dying.
+	healthyResetThreshold = 3
+	// Exponential backoff bounds applied between restart attempts so a
+	// crash-looping agent is retried with increasing spacing instead of every
+	// monitor tick.
+	restartBaseBackoff = 10 * time.Second
+	restartMaxBackoff  = 5 * time.Minute
+
+	// WD-H6: hard timeout for external processes invoked from the restart path
+	// (agent reinstall) so a hung child can never wedge the monitor.
+	reinstallTimeout = 120 * time.Second
+
+	// WD-M6: consecutive non-running samples required before the post-update
+	// health monitor declares the agent unrecovered and rolls back.
+	minNonRunningSamplesForRollback = 3
 
 	// Update orchestration constants
 	updateCheckInterval    = 5 * time.Second  // How often to check for pending updates
@@ -83,7 +108,9 @@ type watchdogService struct {
 	config              *WatchdogConfig
 	restartCount        int
 	consecutiveFailCycles int // Track how many times we hit maxRestarts and cooled down
+	healthyStreak       int // WD-C2: consecutive healthy checks; counters reset only after this reaches healthyResetThreshold
 	lastRestart         time.Time
+	lastUpdateFinished  time.Time // WD-C1: when the last agent update/self-update cleared; drives the post-update restart grace window
 	mu                  sync.Mutex
 	stopChan            chan struct{}
 	installPath         string
@@ -162,6 +189,16 @@ func printUsage() {
 	fmt.Println("  sentinel-watchdog version                              - Show version")
 }
 
+// guardGoroutine recovers from a panic in a long-lived goroutine (WD-H5). An
+// unrecovered panic in ANY goroutine tears down the whole watchdog process,
+// which would silently end agent supervision — this converts that into a
+// logged, contained failure of the individual goroutine.
+func guardGoroutine(name string) {
+	if r := recover(); r != nil {
+		logMessage(fmt.Sprintf("[Panic] goroutine %s recovered: %v", name, r))
+	}
+}
+
 func loadConfig(installPath string) *WatchdogConfig {
 	configPath := filepath.Join(installPath, "watchdog-config.json")
 
@@ -174,7 +211,33 @@ func loadConfig(installPath string) *WatchdogConfig {
 
 	data, err := os.ReadFile(configPath)
 	if err == nil {
-		json.Unmarshal(data, config)
+		// WD-H5: a malformed config file previously left the (partially
+		// populated) struct in place silently. Log the parse failure so an
+		// operator can see the config was ignored; defaults + clamping below
+		// keep the watchdog running safely regardless.
+		if uerr := json.Unmarshal(data, config); uerr != nil {
+			logMessage(fmt.Sprintf("[Config] Failed to parse %s: %v — falling back to defaults for unset fields", configPath, uerr))
+		}
+	} else if !os.IsNotExist(err) {
+		logMessage(fmt.Sprintf("[Config] Failed to read %s: %v — using defaults", configPath, err))
+	}
+
+	// WD-H5: clamp CheckInterval to a sane range. 0/negative panics
+	// time.NewTicker (non-positive duration), taking down monitorAgent.
+	if config.CheckInterval < 1 {
+		logMessage(fmt.Sprintf("[Config] checkIntervalSeconds=%d is invalid — clamping to 1s", config.CheckInterval))
+		config.CheckInterval = 1
+	} else if config.CheckInterval > 3600 {
+		logMessage(fmt.Sprintf("[Config] checkIntervalSeconds=%d exceeds max — clamping to 3600s", config.CheckInterval))
+		config.CheckInterval = 3600
+	}
+
+	// WD-H5: MaxRestarts of 0 is poisonous — restartCount (>=0) is always
+	// >= MaxRestarts, so the cooldown gate fires immediately and the crash-loop
+	// accounting never behaves as intended. Enforce a floor of 1.
+	if config.MaxRestarts < 1 {
+		logMessage(fmt.Sprintf("[Config] maxRestarts=%d is invalid — clamping to 1", config.MaxRestarts))
+		config.MaxRestarts = 1
 	}
 
 	return config
@@ -336,6 +399,8 @@ func (ws *watchdogService) Execute(args []string, r <-chan svc.ChangeRequest, ch
 
 // monitorAgent continuously monitors the agent service
 func (ws *watchdogService) monitorAgent() {
+	defer guardGoroutine("monitorAgent")
+
 	// Immediately check and start agent on watchdog startup
 	ws.checkAndRestartAgent()
 
@@ -352,83 +417,172 @@ func (ws *watchdogService) monitorAgent() {
 	}
 }
 
-// checkAndRestartAgent checks if the agent is running and restarts it if needed
+// restartBackoff computes the exponential backoff to enforce between restart
+// attempts (WD-C2). Caller must hold ws.mu. Backoff grows base*2^(n-1) with the
+// number of attempts since the last health-verified reset, capped at
+// restartMaxBackoff. Returns 0 when no attempts have been made yet.
+func (ws *watchdogService) restartBackoff() time.Duration {
+	if ws.restartCount < 1 {
+		return 0
+	}
+	backoff := restartBaseBackoff
+	for i := 1; i < ws.restartCount; i++ {
+		backoff *= 2
+		if backoff >= restartMaxBackoff {
+			return restartMaxBackoff
+		}
+	}
+	if backoff > restartMaxBackoff {
+		backoff = restartMaxBackoff
+	}
+	return backoff
+}
+
+// checkAndRestartAgent checks if the agent is running and restarts it if needed.
+//
+// Locking: ws.mu is held only while reading/mutating the restart accounting
+// fields. It is explicitly released before any health probe (SCM/file I/O) and
+// before restartAgent (which may spawn an external reinstall process) so the
+// mutex can never be held across a blocking external call (WD-H6).
 func (ws *watchdogService) checkAndRestartAgent() {
 	ws.mu.Lock()
-	defer ws.mu.Unlock()
 
-	// Check cooldown
-	if ws.restartCount >= ws.config.MaxRestarts {
-		if time.Since(ws.lastRestart) < restartCooldown {
-			// Too many restarts, wait for cooldown
-			return
-		}
-		// Completed a full fail cycle (maxRestarts reached + cooldown elapsed)
-		ws.consecutiveFailCycles++
-		logMessage(fmt.Sprintf("Restart cooldown elapsed — consecutive fail cycles: %d", ws.consecutiveFailCycles))
-
-		// If we've gone through 2+ full fail cycles, the binary is likely bad
-		if ws.consecutiveFailCycles >= 2 {
-			logMessage("CRITICAL: Agent binary appears corrupted — 2 consecutive fail cycles detected")
-
-			// Write alert for the agent/server
-			ipc.WriteAlert(&ipc.AlertRelayPayload{
-				Severity: "critical",
-				Title:    "Agent Binary Corrupted — Bootstrap Recovery Triggered",
-				Message:  fmt.Sprintf("Agent failed %d restart cycles (%d restarts each). Binary declared bad. Attempting bootstrap recovery.",
-					ws.consecutiveFailCycles, ws.config.MaxRestarts),
-			})
-
-			// Attempt bootstrap recovery
-			bootstrapPath := filepath.Join(ws.installPath, "sentinel-bootstrap.exe")
-			if _, statErr := os.Stat(bootstrapPath); statErr == nil {
-				logMessage(fmt.Sprintf("Launching bootstrap recovery: %s --repair --silent", bootstrapPath))
-				cmd := exec.Command(bootstrapPath, "--repair", "--silent")
-				cmd.Dir = ws.installPath
-				if startErr := cmd.Start(); startErr != nil {
-					logMessage(fmt.Sprintf("Failed to launch bootstrap recovery: %v", startErr))
-				} else {
-					logMessage("Bootstrap recovery process launched successfully")
-				}
-			} else {
-				logMessage(fmt.Sprintf("Bootstrap binary not found at %s — cannot auto-recover", bootstrapPath))
-			}
-
-			// Reset cycles so we don't spam recovery attempts every cooldown
-			ws.consecutiveFailCycles = 0
-		}
-
-		// Reset counter after cooldown
-		ws.restartCount = 0
+	// WD-C1: never fight an in-flight binary swap. Restarting the agent mid-swap
+	// corrupts the update and can brick the install.
+	if ws.updateInProgress || ws.selfUpdateInProgress {
+		ws.mu.Unlock()
+		logMessage("[Monitor] Update in progress — skipping restart check")
+		return
 	}
 
-	// Check if agent service is running
+	// WD-C1: honor the post-update grace window so the freshly-started agent can
+	// come up and write its health heartbeat before the monitor judges it.
+	if !ws.lastUpdateFinished.IsZero() && time.Since(ws.lastUpdateFinished) < updateGracePeriod {
+		remaining := (updateGracePeriod - time.Since(ws.lastUpdateFinished)).Round(time.Second)
+		ws.mu.Unlock()
+		logMessage(fmt.Sprintf("[Monitor] Within post-update grace period (%v remaining) — skipping restart check", remaining))
+		return
+	}
+
+	// WD-C2: crash-loop breaker. When we have exhausted MaxRestarts, hold for the
+	// cooldown; once it elapses, count a full fail cycle and (after 2 cycles)
+	// trigger bootstrap recovery. This path is now reachable because restartCount
+	// is no longer reset on every SCM "start accepted".
+	if ws.restartCount >= ws.config.MaxRestarts {
+		if time.Since(ws.lastRestart) < restartCooldown {
+			ws.mu.Unlock()
+			return
+		}
+		ws.consecutiveFailCycles++
+		cycles := ws.consecutiveFailCycles
+		maxR := ws.config.MaxRestarts
+		logMessage(fmt.Sprintf("Restart cooldown elapsed — consecutive fail cycles: %d", cycles))
+
+		if cycles >= 2 {
+			// Reset accounting and run bootstrap recovery without holding the lock
+			// (it may launch an external process).
+			ws.consecutiveFailCycles = 0
+			ws.restartCount = 0
+			installPath := ws.installPath
+			ws.mu.Unlock()
+			ws.triggerBootstrapRecovery(cycles, maxR, installPath)
+			return
+		}
+
+		// Reset the per-cycle restart counter so the next cooldown cycle can be
+		// reached; consecutiveFailCycles keeps climbing until recovery fires.
+		ws.restartCount = 0
+	}
+	ws.mu.Unlock()
+
+	// Probe health WITHOUT holding the lock (SCM connect + file reads may block).
 	running, err := isServiceRunning(ws.config.AgentService)
 	if err != nil {
 		logMessage(fmt.Sprintf("Error checking agent service: %v", err))
 		return
 	}
+	healthy := running && ws.isAgentResponding()
+
+	if healthy {
+		// WD-C2: only clear the counters after the agent has been observed
+		// healthy for healthyResetThreshold consecutive checks.
+		ws.mu.Lock()
+		ws.healthyStreak++
+		streak := ws.healthyStreak
+		hadCounters := ws.restartCount != 0 || ws.consecutiveFailCycles != 0
+		reset := streak >= healthyResetThreshold
+		if reset {
+			ws.restartCount = 0
+			ws.consecutiveFailCycles = 0
+		}
+		ws.mu.Unlock()
+		if reset && hadCounters {
+			logMessage(fmt.Sprintf("Agent healthy for %d consecutive checks — restart counters reset", streak))
+		}
+		return
+	}
+
+	// Unhealthy: reset the healthy streak and apply exponential backoff between
+	// attempts so a crash-looping agent is retried with increasing spacing.
+	ws.mu.Lock()
+	ws.healthyStreak = 0
+	backoff := ws.restartBackoff()
+	if !ws.lastRestart.IsZero() && time.Since(ws.lastRestart) < backoff {
+		remaining := (backoff - time.Since(ws.lastRestart)).Round(time.Second)
+		attempts := ws.restartCount
+		ws.mu.Unlock()
+		logMessage(fmt.Sprintf("[Monitor] Backing off before next restart (%v remaining, %d attempts since last healthy)", remaining, attempts))
+		return
+	}
+	// WD-C2: count the restart ATTEMPT unconditionally, before we act on it.
+	ws.restartCount++
+	ws.lastRestart = time.Now()
+	attempt := ws.restartCount
+	ws.mu.Unlock()
 
 	if running {
-		// Also verify the process is actually responding
-		if ws.isAgentResponding() {
-			return // All good
-		}
-		logMessage("Agent service running but not responding, restarting...")
+		logMessage(fmt.Sprintf("Agent service running but not responding — restart attempt %d", attempt))
 	} else {
-		logMessage("Agent service not running, attempting restart...")
+		logMessage(fmt.Sprintf("Agent service not running — restart attempt %d", attempt))
 	}
 
-	// Attempt to restart
+	// WD-H6: restartAgent (and its reinstall fallback, which spawns an external
+	// process) runs here with ws.mu released.
 	if err := ws.restartAgent(); err != nil {
-		logMessage(fmt.Sprintf("Failed to restart agent: %v", err))
-		ws.restartCount++
-		ws.lastRestart = time.Now()
+		logMessage(fmt.Sprintf("Failed to restart agent (attempt %d): %v", attempt, err))
 	} else {
-		logMessage("Agent service restarted successfully")
-		ws.restartCount = 0
-		ws.consecutiveFailCycles = 0 // Successful restart resets fail cycle tracking
+		logMessage(fmt.Sprintf("Agent restart attempt %d issued", attempt))
 	}
+}
+
+// triggerBootstrapRecovery launches the bootstrap repair binary when the agent
+// has crash-looped through repeated fail cycles. Runs without ws.mu held (WD-H6)
+// since it starts an external process.
+func (ws *watchdogService) triggerBootstrapRecovery(cycles, maxRestarts int, installPath string) {
+	logMessage("CRITICAL: Agent binary appears corrupted — 2 consecutive fail cycles detected")
+
+	// Write alert for the agent/server
+	ipc.WriteAlert(&ipc.AlertRelayPayload{
+		Severity: "critical",
+		Title:    "Agent Binary Corrupted — Bootstrap Recovery Triggered",
+		Message: fmt.Sprintf("Agent failed %d restart cycles (%d restarts each). Binary declared bad. Attempting bootstrap recovery.",
+			cycles, maxRestarts),
+	})
+
+	bootstrapPath := filepath.Join(installPath, "sentinel-bootstrap.exe")
+	if _, statErr := os.Stat(bootstrapPath); statErr != nil {
+		logMessage(fmt.Sprintf("Bootstrap binary not found at %s — cannot auto-recover", bootstrapPath))
+		return
+	}
+
+	logMessage(fmt.Sprintf("Launching bootstrap recovery: %s --repair --silent", bootstrapPath))
+	cmd := exec.Command(bootstrapPath, "--repair", "--silent")
+	cmd.Dir = installPath
+	if startErr := cmd.Start(); startErr != nil {
+		logMessage(fmt.Sprintf("Failed to launch bootstrap recovery: %v", startErr))
+		return
+	}
+	logMessage("Bootstrap recovery process launched successfully")
 }
 
 // isServiceRunning checks if a Windows service is running
@@ -495,9 +649,18 @@ func (ws *watchdogService) reinstallAgent() error {
 		return fmt.Errorf("agent executable not found: %s", ws.config.AgentPath)
 	}
 
+	// WD-H6: bound the external install with a hard timeout so a hung child
+	// process can never wedge the restart path. Caller invokes reinstallAgent
+	// with ws.mu released, so a slow install no longer risks a monitor deadlock.
+	ctx, cancel := context.WithTimeout(context.Background(), reinstallTimeout)
+	defer cancel()
+
 	// Run agent install command (uses --install flag)
-	cmd := exec.Command(ws.config.AgentPath, "--install")
+	cmd := exec.CommandContext(ctx, ws.config.AgentPath, "--install")
 	output, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("agent install timed out after %v (process killed)", reinstallTimeout)
+	}
 	if err != nil {
 		return fmt.Errorf("install failed: %v - %s", err, string(output))
 	}
@@ -684,6 +847,8 @@ func init() {
 
 // startPipeServer creates and runs the named pipe server for update coordination
 func (ws *watchdogService) startPipeServer() {
+	defer guardGoroutine("startPipeServer")
+
 	handler := func(msg ipc.PipeMessage) *ipc.PipeMessage {
 		switch msg.Type {
 		case ipc.MsgUpdateReady:
@@ -758,6 +923,8 @@ func (ws *watchdogService) startPipeServer() {
 
 // checkForPendingUpdate checks for any pending updates from before a restart
 func (ws *watchdogService) checkForPendingUpdate() {
+	defer guardGoroutine("checkForPendingUpdate")
+
 	// Give the system a moment to stabilize after startup
 	time.Sleep(5 * time.Second)
 
@@ -841,6 +1008,8 @@ func (ws *watchdogService) checkForPendingUpdate() {
 
 // updateChecker periodically checks for pending update requests
 func (ws *watchdogService) updateChecker() {
+	defer guardGoroutine("updateChecker")
+
 	ticker := time.NewTicker(updateCheckInterval)
 	defer ticker.Stop()
 
@@ -1003,6 +1172,8 @@ func (ws *watchdogService) updateChecker() {
 
 // watchdogUpdateChecker periodically checks for pending watchdog self-update requests
 func (ws *watchdogService) watchdogUpdateChecker() {
+	defer guardGoroutine("watchdogUpdateChecker")
+
 	// Short delay to allow system to stabilize
 	// NOTE: Reduced from 10s to 2s to ensure watchdog updates before agent updates
 	time.Sleep(2 * time.Second)
@@ -1059,8 +1230,13 @@ func (ws *watchdogService) watchdogUpdateChecker() {
 // applySelfUpdate performs the watchdog self-update via Task Scheduler
 func (ws *watchdogService) applySelfUpdate(request *ipc.WatchdogUpdateRequest) {
 	defer func() {
+		if r := recover(); r != nil {
+			logMessage(fmt.Sprintf("[SelfUpdate] PANIC recovered: %v", r))
+		}
 		ws.mu.Lock()
 		ws.selfUpdateInProgress = false
+		// WD-C1: a self-update also opens the post-update grace window.
+		ws.lastUpdateFinished = time.Now()
 		ws.mu.Unlock()
 	}()
 
@@ -1103,6 +1279,9 @@ func (ws *watchdogService) applyUpdate(request *ipc.UpdateRequest) {
 		}
 		ws.mu.Lock()
 		ws.updateInProgress = false
+		// WD-C1: stamp completion so the monitor honors the post-update grace
+		// window before it is allowed to restart the agent again.
+		ws.lastUpdateFinished = time.Now()
 		ws.mu.Unlock()
 		logMessage(fmt.Sprintf("[ApplyUpdate] Completed in %v — updateInProgress reset to false", time.Since(updateStart).Round(time.Millisecond)))
 	}()
@@ -1138,6 +1317,26 @@ func (ws *watchdogService) applyUpdate(request *ipc.UpdateRequest) {
 	// Step 2: Disable protection on target file AND directory FIRST (before stopping service)
 	stepStart = time.Now()
 	protMgr := protection.NewManager(ws.installPath, ws.config.AgentService)
+
+	// WD-H1: guarantee protection is re-enabled on EVERY exit path (failUpdate,
+	// early return, panic) — not just the success and rollback branches. The
+	// restore is idempotent, so the explicit success-path call below is a no-op
+	// once this defer (or rollback) has already restored protection.
+	protectionRestored := false
+	restoreProtection := func() {
+		if protectionRestored {
+			return
+		}
+		protectionRestored = true
+		if err := protMgr.EnableProtectionForFile(request.TargetPath); err != nil {
+			logMessage(fmt.Sprintf("[ApplyUpdate] Restore: Warning — failed to re-enable file protection on %s: %v", request.TargetPath, err))
+		}
+		if err := protMgr.EnableProtectionForDir(ws.installPath); err != nil {
+			logMessage(fmt.Sprintf("[ApplyUpdate] Restore: Warning — failed to re-enable directory protection on %s: %v", ws.installPath, err))
+		}
+	}
+	defer restoreProtection()
+
 	if err := protMgr.DisableProtectionForDir(ws.installPath); err != nil {
 		logMessage(fmt.Sprintf("[ApplyUpdate] Step 2: Warning — failed to disable directory protection on %s: %v", ws.installPath, err))
 	}
@@ -1208,14 +1407,11 @@ func (ws *watchdogService) applyUpdate(request *ipc.UpdateRequest) {
 	}
 	logMessage(fmt.Sprintf("[ApplyUpdate] Step 8/10: Version verified in %v", time.Since(stepStart).Round(time.Millisecond)))
 
-	// Step 9: Re-enable protection on the new file and directory (after verified running)
+	// Step 9: Re-enable protection on the new file and directory (after verified running).
+	// WD-H1: routed through the idempotent restore closure; the deferred restore
+	// then becomes a no-op on this success path.
 	stepStart = time.Now()
-	if err := protMgr.EnableProtectionForFile(request.TargetPath); err != nil {
-		logMessage(fmt.Sprintf("[ApplyUpdate] Step 9: Warning — failed to re-enable file protection: %v", err))
-	}
-	if err := protMgr.EnableProtectionForDir(ws.installPath); err != nil {
-		logMessage(fmt.Sprintf("[ApplyUpdate] Step 9: Warning — failed to re-enable directory protection: %v", err))
-	}
+	restoreProtection()
 	logMessage(fmt.Sprintf("[ApplyUpdate] Step 9/10: Protection re-enabled in %v", time.Since(stepStart).Round(time.Millisecond)))
 
 	// Step 10: Resume tamper monitoring
@@ -1577,6 +1773,9 @@ type PostUpdateHealth struct {
 	HealthFileWritten bool
 	AllChecksPassed   bool
 	FailureReason     string
+	// WD-M6: consecutive checks observing the service NOT running. A single
+	// transient sample (e.g. mid-restart) must not trigger a rollback.
+	NonRunningStreak int
 }
 
 // runPostUpdateHealthChecks runs comprehensive health checks for the specified duration
@@ -1615,6 +1814,12 @@ func (ws *watchdogService) runPostUpdateHealthChecks(expectedVersion string) err
 					}
 				case "service_running":
 					health.ServiceRunning = result.Passed
+					// WD-M6: track consecutive non-running samples.
+					if result.Passed {
+						health.NonRunningStreak = 0
+					} else {
+						health.NonRunningStreak++
+					}
 				case "memory":
 					health.MemoryOK = result.Passed
 				case "crash_count":
@@ -1808,6 +2013,31 @@ func getProcessMemoryInfo(handle windows.Handle, memCounters *processMemoryCount
 	return nil
 }
 
+// verifyProcessImage confirms an opened process handle refers to the configured
+// agent binary (WD-M1/M2 PID-reuse guard). It returns the resolved image path
+// for diagnostics. A match is accepted on either the full cleaned path
+// (case-insensitive, Windows) or the basename, since the configured AgentPath
+// may differ from the resolved image path by symlink/casing but must share the
+// executable name.
+func (ws *watchdogService) verifyProcessImage(handle windows.Handle) (bool, string) {
+	buf := make([]uint16, 1024)
+	size := uint32(len(buf))
+	if err := windows.QueryFullProcessImageName(handle, 0, &buf[0], &size); err != nil {
+		// Cannot resolve the image — treat as unverified rather than assuming a match.
+		return false, ""
+	}
+	imagePath := windows.UTF16ToString(buf[:size])
+
+	expected := ws.config.AgentPath
+	if strings.EqualFold(filepath.Clean(imagePath), filepath.Clean(expected)) {
+		return true, imagePath
+	}
+	if strings.EqualFold(filepath.Base(imagePath), filepath.Base(expected)) {
+		return true, imagePath
+	}
+	return false, imagePath
+}
+
 // checkAgentMemory checks if the agent process memory usage is within limits
 func (ws *watchdogService) checkAgentMemory() HealthCheckResult {
 	// Get agent process by querying the service
@@ -1850,6 +2080,18 @@ func (ws *watchdogService) checkAgentMemory() HealthCheckResult {
 		}
 	}
 	defer windows.CloseHandle(handle)
+
+	// WD-M1/M2: guard against PID reuse. The SCM-reported PID may have been
+	// recycled to an unrelated process between Query and OpenProcess; verify the
+	// opened handle's image path is actually the agent binary before measuring
+	// its memory (identify before acting).
+	if ok, imagePath := ws.verifyProcessImage(handle); !ok {
+		return HealthCheckResult{
+			Name:    "memory",
+			Passed:  true, // benefit of the doubt — do not roll back on a foreign process
+			Message: fmt.Sprintf("cannot check memory: pid %d image %q does not match agent (possible PID reuse)", status.ProcessId, imagePath),
+		}
+	}
 
 	var memInfo processMemoryCounters
 	memInfo.CB = uint32(unsafe.Sizeof(memInfo))
@@ -1929,9 +2171,11 @@ func (ws *watchdogService) checkHealthFile() HealthCheckResult {
 
 // checkRollbackTriggers checks if any immediate rollback conditions are met
 func (ws *watchdogService) checkRollbackTriggers(health *PostUpdateHealth, elapsed time.Duration) string {
-	// Trigger 1: Service stopped and stays stopped for 10+ seconds after starting
-	if elapsed > 10*time.Second && !health.ServiceRunning {
-		return "agent service stopped and did not recover"
+	// Trigger 1: Service stopped and stays stopped. WD-M6 requires
+	// minNonRunningSamplesForRollback consecutive non-running samples so a single
+	// transient reading (e.g. observed mid-restart) cannot force a rollback.
+	if elapsed > 10*time.Second && !health.ServiceRunning && health.NonRunningStreak >= minNonRunningSamplesForRollback {
+		return fmt.Sprintf("agent service stopped and did not recover (%d consecutive non-running samples)", health.NonRunningStreak)
 	}
 
 	// Trigger 2: Too many crashes
@@ -2013,6 +2257,8 @@ type ServerVersionInfo struct {
 // independentUpdatePoller runs a background loop that polls the server for updates
 // independent of the agent's WebSocket connection
 func (ws *watchdogService) independentUpdatePoller() {
+	defer guardGoroutine("independentUpdatePoller")
+
 	// Initial delay to let everything stabilize
 	time.Sleep(30 * time.Second)
 
@@ -2387,9 +2633,12 @@ func forceUninstallWatchdog(installPath string) {
 	}
 	time.Sleep(2 * time.Second)
 
-	// 4. Kill watchdog processes
+	// 4. Kill watchdog processes.
+	// WD-M1/M2: resolve the watchdog's PID via SCM and verify its image path
+	// before killing, instead of a blind taskkill /IM by image name (which could
+	// hit an unrelated process sharing the name). Identify before killing.
 	log.Println("[ForceUninstall] Killing watchdog processes...")
-	exec.Command("taskkill", "/F", "/IM", "sentinel-watchdog.exe").Run()
+	killWatchdogServiceProcess()
 	time.Sleep(1 * time.Second)
 
 	// 5. Delete the watchdog service from SCM
@@ -2421,6 +2670,58 @@ func forceUninstallWatchdog(installPath string) {
 	}
 
 	log.Println("Watchdog force uninstall completed successfully")
+}
+
+// killWatchdogServiceProcess resolves the running watchdog service's PID via the
+// SCM, verifies the process image is sentinel-watchdog.exe, and only then kills
+// it by PID (WD-M1/M2 — identify before killing). It is a no-op if the service
+// is already stopped or its image cannot be verified.
+func killWatchdogServiceProcess() {
+	m, err := mgr.Connect()
+	if err != nil {
+		log.Printf("[ForceUninstall] Cannot connect to SCM to resolve watchdog PID: %v", err)
+		return
+	}
+	defer m.Disconnect()
+
+	s, err := m.OpenService(serviceName)
+	if err != nil {
+		log.Printf("[ForceUninstall] Watchdog service not present in SCM (already removed?): %v", err)
+		return
+	}
+	defer s.Close()
+
+	status, err := s.Query()
+	if err != nil || status.ProcessId == 0 {
+		log.Printf("[ForceUninstall] No running watchdog process to kill (query err=%v, pid=%d)", err, status.ProcessId)
+		return
+	}
+	pid := status.ProcessId
+
+	// Verify the PID's image path before killing it.
+	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		log.Printf("[ForceUninstall] Cannot open PID %d to verify image: %v — skipping kill", pid, err)
+		return
+	}
+	defer windows.CloseHandle(handle)
+
+	buf := make([]uint16, 1024)
+	size := uint32(len(buf))
+	if err := windows.QueryFullProcessImageName(handle, 0, &buf[0], &size); err != nil {
+		log.Printf("[ForceUninstall] Cannot resolve image path for PID %d: %v — skipping kill", pid, err)
+		return
+	}
+	imagePath := windows.UTF16ToString(buf[:size])
+	if !strings.EqualFold(filepath.Base(imagePath), "sentinel-watchdog.exe") {
+		log.Printf("[ForceUninstall] PID %d image %q is not sentinel-watchdog.exe — refusing to kill (possible PID reuse)", pid, imagePath)
+		return
+	}
+
+	log.Printf("[ForceUninstall] Killing verified watchdog PID %d (%s)", pid, imagePath)
+	if output, err := exec.Command("taskkill", "/PID", fmt.Sprintf("%d", pid), "/F").CombinedOutput(); err != nil {
+		log.Printf("[ForceUninstall] Warning: taskkill /PID %d: %v (output: %s)", pid, err, string(output))
+	}
 }
 
 // validateWatchdogKillToken validates a plaintext kill token against locally stored hashes.
