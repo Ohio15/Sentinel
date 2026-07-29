@@ -16,22 +16,34 @@
     The new version number, strict semver (e.g. "1.77.41")
 .PARAMETER Deploy
     Also deploy to the serving directory on this host
+.PARAMETER DeployOnly
+    Skip build/sign/commit/tag and deploy the already-built, already-signed
+    artifacts for -Version. Used to retry a deploy that failed verification
+    (the tag guard otherwise makes a retry impossible without a version bump).
 .PARAMETER DeployTree
     The deploy tree the update server serves from (default: $HOME/Sentinel)
+.PARAMETER RotateSigningKey
+    Authorize publishing under a signing key that differs from the one the last
+    release published. Without this the release ABORTS on key change — every
+    deployed agent has the old public key baked in and fails closed forever.
 .PARAMETER Changelog
     Optional changelog entry for this release
 .EXAMPLE
     pwsh scripts/release.ps1 -Version "1.77.41" -Changelog "First signed release"
     pwsh scripts/release.ps1 -Version "1.77.41" -Deploy
+    pwsh scripts/release.ps1 -Version "1.77.41" -DeployOnly   # retry a failed deploy
 #>
 param(
     [Parameter(Mandatory=$true)]
-    [ValidatePattern('^\d+\.\d+\.\d+$')]
     [string]$Version,
 
     [switch]$Deploy,
 
+    [switch]$DeployOnly,
+
     [string]$DeployTree = (Join-Path ([Environment]::GetFolderPath('UserProfile')) "Sentinel"),
+
+    [switch]$RotateSigningKey,
 
     [string]$Changelog = ""
 )
@@ -45,11 +57,20 @@ if ($PSVersionTable.PSVersion -lt [version]'7.4') {
 }
 $PSNativeCommandUseErrorActionPreference = $true
 
+# Validate in-body, not via ValidatePattern: .NET '$' also matches before a
+# trailing newline, so an argument with a stray newline would pass an attribute
+# check and then flow into the tag name and Go source.
+if ($Version -cmatch '\s' -or $Version -notmatch '^\d+\.\d+\.\d+$') {
+    throw "Version must be strict semver with no whitespace (got '$Version')."
+}
+if ($DeployOnly) { $Deploy = $true }
+
 $ReleaseDate = Get-Date -Format "yyyy-MM-dd"
 
 Write-Host "=== Sentinel Release Script ===" -ForegroundColor Cyan
 Write-Host "Version: $Version"
 Write-Host "Date: $ReleaseDate"
+if ($DeployOnly) { Write-Host "Mode: DEPLOY-ONLY (no build, no commit, no tag)" -ForegroundColor Yellow }
 Write-Host ""
 
 # The repo root is the parent of scripts/. No fallback: a wrong root must fail.
@@ -58,34 +79,47 @@ if (-not (Test-Path "$ProjectRoot/package.json")) {
     throw "Repo root not found at $ProjectRoot (no package.json). Run this script from a Sentinel checkout."
 }
 
-# SameDir compares two directories through symlinks (device:inode on Linux;
-# normalized-path fallback elsewhere).
+# Test-SameDir compares two directories through symlinks (device:inode on
+# Linux; normalized-path fallback elsewhere).
 function Test-SameDir {
     param([string]$A, [string]$B)
     if (-not (Test-Path $A) -or -not (Test-Path $B)) { return $false }
-    if ($IsLinux) {
-        $ia = stat -c '%d:%i' $A
-        $ib = stat -c '%d:%i' $B
-        return $ia -eq $ib
-    }
+    if ($IsLinux) { return (stat -c '%d:%i' $A) -eq (stat -c '%d:%i' $B) }
     return (Resolve-Path $A).Path -eq (Resolve-Path $B).Path
 }
 
-# Guard BEFORE any mutation: never build from the deploy tree. A build run
+# Test-Contains checks real-path containment with separator awareness, so
+# "/home/x/Sentinel-keys" is NOT considered inside "/home/x/Sentinel".
+function Test-PathContains {
+    param([string]$Parent, [string]$Child)
+    $p = (Resolve-Path $Parent).Path.TrimEnd([IO.Path]::DirectorySeparatorChar)
+    $c = (Resolve-Path $Child).Path
+    if ($IsLinux) {
+        # Resolve symlinks so a symlinked key can't smuggle material into a tree.
+        $p = (readlink -f $p); $c = (readlink -f $c)
+    }
+    return $c -eq $p -or $c.StartsWith($p + [IO.Path]::DirectorySeparatorChar) -or $c.StartsWith($p + '/')
+}
+
+$ServeDir = "$DeployTree/installers"
+
+# Guards BEFORE any mutation: never build from (or into) the deploy tree. A run
 # from there would overwrite live, bind-mounted served binaries mid-script.
 if (Test-SameDir $ProjectRoot $DeployTree) {
     throw "Refusing to run from the deploy tree ($DeployTree). Build from a dedicated clean checkout."
 }
-if ($Deploy -and -not (Test-Path "$DeployTree/installers")) {
-    throw "Deploy tree not found at $DeployTree/installers. -Deploy must run on the serving host (use -DeployTree to override)."
+if ((Test-Path $ServeDir) -and (Test-SameDir "$ProjectRoot/installers" $ServeDir)) {
+    throw "Build installers dir and serving dir are the same directory. Refusing."
+}
+if ($Deploy -and -not (Test-Path $ServeDir)) {
+    throw "Deploy tree not found at $ServeDir. -Deploy must run on the serving host (use -DeployTree to override)."
 }
 
 # ------------------------------------------------------------------------------
-# RW-1 signing gate: every release MUST be signed, and the public key embedded
-# in the binaries MUST be the pair of the private key that signs the manifests.
-# The pubkey is therefore DERIVED from the private key, never taken on trust
-# from the environment (a mismatched pubkey would brick fleet self-update; an
-# attacker-supplied one would substitute the fleet's root of trust).
+# RW-1 signing gate: every release MUST be signed, the public key embedded in
+# the binaries MUST be the pair of the private key that signs the manifests,
+# AND it must be the same key the previously published release used (the fleet
+# has that key baked in and fails closed on anything else).
 # ------------------------------------------------------------------------------
 $SigningKey = $env:SENTINEL_UPDATE_SIGNING_KEY     # PKCS#8 PEM path for cmd/sign
 if ([string]::IsNullOrWhiteSpace($SigningKey)) {
@@ -95,9 +129,10 @@ if (-not (Test-Path $SigningKey)) {
     throw "SENTINEL_UPDATE_SIGNING_KEY points at a missing file: $SigningKey"
 }
 $SigningKeyReal = (Resolve-Path $SigningKey).Path
+if ($IsLinux) { $SigningKeyReal = (readlink -f $SigningKeyReal) }
 foreach ($tree in @($ProjectRoot, $DeployTree)) {
-    if ((Test-Path $tree) -and $SigningKeyReal.StartsWith((Resolve-Path $tree).Path)) {
-        throw "Signing key $SigningKeyReal lives inside $tree — it must never be under a git tree or the serving directory."
+    if ((Test-Path $tree) -and (Test-PathContains $tree $SigningKeyReal)) {
+        throw "Signing key $SigningKeyReal resolves inside $tree — key material must never be under a git tree or the serving directory."
     }
 }
 if ($IsLinux) {
@@ -117,41 +152,59 @@ if ($pubDer.Length -ne 44 -or -not $derHex.StartsWith('302a300506032b6570032100'
     throw "Signing key is not Ed25519 (unexpected SPKI: $derHex)."
 }
 $SigningPubKey = $derHex.Substring(24)
-if (-not [string]::IsNullOrWhiteSpace($env:SENTINEL_UPDATE_SIGNING_PUBKEY) -and
-    $env:SENTINEL_UPDATE_SIGNING_PUBKEY.ToLowerInvariant() -ne $SigningPubKey) {
-    throw "SENTINEL_UPDATE_SIGNING_PUBKEY ($($env:SENTINEL_UPDATE_SIGNING_PUBKEY)) does not match the key derived from the signing private key ($SigningPubKey). Environment is stale or tampered — refusing."
+
+# Pin 1 (optional operator cross-check): env var, if set, must agree.
+$envPub = "$($env:SENTINEL_UPDATE_SIGNING_PUBKEY)".Trim().ToLowerInvariant()
+if ($envPub -ne '' -and $envPub -ne $SigningPubKey) {
+    throw "SENTINEL_UPDATE_SIGNING_PUBKEY ($envPub) does not match the key derived from the signing private key ($SigningPubKey). Environment is stale or tampered — refusing."
+}
+# Pin 2 (MANDATORY): the key the last release published, read from git HEAD.
+# This is the anchor the deployed fleet actually trusts. Unsetting an env var
+# must not be able to silently re-root the fleet's trust.
+$prevPub = ''
+try {
+    $headJson = git -C $ProjectRoot show HEAD:installers/version.json 2>$null | ConvertFrom-Json
+    if ($headJson.PSObject.Properties.Name -contains 'signingPublicKeyHex') {
+        $prevPub = "$($headJson.signingPublicKeyHex)".Trim().ToLowerInvariant()
+    }
+} catch { $prevPub = '' }
+if ($prevPub -ne '' -and $prevPub -ne $SigningPubKey) {
+    if (-not $RotateSigningKey) {
+        throw @"
+SIGNING KEY CHANGED — refusing to publish.
+  previously published: $prevPub
+  this key derives to:  $SigningPubKey
+Every deployed agent has the previous key embedded and fails closed on
+artifacts signed by any other key. Publishing this would permanently break
+fleet self-update. If this rotation is intended and you have a manual
+re-install path for every device, re-run with -RotateSigningKey.
+"@
+    }
+    Write-Host "WARNING: publishing under a ROTATED signing key ($prevPub -> $SigningPubKey). Existing agents will fail closed until manually reinstalled." -ForegroundColor Red
+}
+if ($prevPub -eq '') {
+    Write-Host "NOTE: no previously published signing key found in git HEAD — this is a trust-establishing (TOFU) release." -ForegroundColor Yellow
 }
 Write-Host "Signing public key (derived from private key): $SigningPubKey" -ForegroundColor DarkGray
 $SigningLdflags = "-X github.com/sentinel/agent/internal/updatesig.SigningPublicKeyHex=$SigningPubKey"
 
-# Guard: refuse a version whose tag already exists (locally or on origin).
-# Tags are permanent — v1.77.40 was burned on a commit whose version files
-# still said 1.77.39, so tag-name/file drift is a real, observed failure mode.
-$existingLocal  = git -C $ProjectRoot tag -l "v$Version"
-$existingRemote = git -C $ProjectRoot ls-remote --tags origin "refs/tags/v$Version"
-if ($existingLocal -or $existingRemote) {
-    throw "Tag v$Version already exists (local: '$existingLocal', remote: '$existingRemote'). Pick the next free version."
-}
-
 # ------------------------------------------------------------------------------
-# Version updates
+# Target matrix. Every (platform, arch) the update server ADVERTISES must get a
+# signed binary here, or its agents fail closed — enforced by the served-state
+# check in the deploy block, not by comment. Per-target command lists: the
+# watchdog is Windows-only (its !windows build is a stub that exits 64), so
+# publishing a signed Linux watchdog would ship a signed broken binary.
+# Fleet census 2026-07-29: all windows/amd64 + one ubuntu/amd64.
 # ------------------------------------------------------------------------------
-$FilesToUpdate = @(
-    @{
-        Path = "$ProjectRoot/agent/cmd/sentinel-agent/main.go"
-        Pattern = 'var Version = "[^"]*"'
-        Replacement = "var Version = `"$Version`""
-    },
-    @{
-        Path = "$ProjectRoot/agent/cmd/sentinel-watchdog/main.go"
-        Pattern = 'Version = "[^"]*"'
-        Replacement = "Version = `"$Version`""
-    }
-    # NOTE: root package.json is deliberately NOT updated here — it tracks the
-    # server/repo version line, which diverges from the agent line on
-    # server-only releases. Bumping it to the agent version could silently
-    # DOWNGRADE it (server line is ahead, e.g. 1.78.x vs agent 1.77.x).
+$Targets = @(
+    @{ Platform = "windows"; Arch = "amd64"; Ext = ".exe"
+       Commands = @("sentinel-agent", "sentinel-watchdog", "sentinel-bootstrap", "verify") },
+    @{ Platform = "linux";   Arch = "amd64"; Ext = ""
+       Commands = @("sentinel-agent", "sentinel-bootstrap", "verify") }
 )
+# cmd dir -> published binary basename
+$BinaryName = @{ "sentinel-agent" = "sentinel-agent"; "sentinel-watchdog" = "sentinel-watchdog"
+                 "sentinel-bootstrap" = "sentinel-bootstrap"; "verify" = "sentinel-verify" }
 
 $JsonFiles = @(
     "$ProjectRoot/agent/version.json",
@@ -159,200 +212,245 @@ $JsonFiles = @(
     "$ProjectRoot/installers/version.json"
 )
 
-Write-Host "Updating version in source files..." -ForegroundColor Yellow
-foreach ($file in $FilesToUpdate) {
-    if (-not (Test-Path $file.Path)) { throw "Version file not found: $($file.Path)" }
-    $content = Get-Content $file.Path -Raw
-    $content = $content -replace $file.Pattern, $file.Replacement
-    Set-Content $file.Path $content -NoNewline
-    Write-Host "  Updated: $($file.Path)" -ForegroundColor Green
-}
-
-Write-Host "Updating version.json files..." -ForegroundColor Yellow
-foreach ($jsonPath in $JsonFiles) {
-    if (-not (Test-Path $jsonPath)) { throw "version.json not found: $jsonPath" }
-    $json = Get-Content $jsonPath -Raw | ConvertFrom-Json
-    $json.version = $Version
-    $json.releaseDate = $ReleaseDate
-    if ($Changelog -ne "") {
-        $json.changelog = $Changelog
-    }
-    $json | ConvertTo-Json -Depth 10 | Set-Content $jsonPath
-    Write-Host "  Updated: $jsonPath" -ForegroundColor Green
-}
-
-# ------------------------------------------------------------------------------
-# Build. Target matrix reflects the actual fleet (census 2026-07-29: every
-# device is windows/amd64 plus one ubuntu/amd64 box). Widen deliberately, and
-# only together with server/internal/api/agent_updates.go supportedAgentTargets
-# — every advertised target MUST get a signed binary or its agents fail closed.
-# ------------------------------------------------------------------------------
-$Targets = @(
-    @{ Platform = "windows"; Arch = "amd64"; Ext = ".exe" },
-    @{ Platform = "linux";   Arch = "amd64"; Ext = "" }
-)
-$Commands = @("sentinel-agent", "sentinel-watchdog", "sentinel-bootstrap")
-
 # Artifacts accumulate as @{Path; Platform; Arch} for signing/verify/deploy.
 $Artifacts = [System.Collections.Generic.List[hashtable]]::new()
+foreach ($t in $Targets) {
+    foreach ($cmd in $t.Commands) {
+        $Artifacts.Add(@{
+            Path     = "$ProjectRoot/installers/$($BinaryName[$cmd])-$($t.Platform)-$($t.Arch)$($t.Ext)"
+            Platform = $t.Platform; Arch = $t.Arch; Cmd = $cmd
+        })
+    }
+}
 
-# Host tools (signer + verifier) build into a private temp dir so the one
-# binary that reads the private key never sits in a tree that gets packaged.
-$HostToolDir = Join-Path ([System.IO.Path]::GetTempPath()) "sentinel-release-$PID"
-New-Item -ItemType Directory -Force $HostToolDir | Out-Null
-
-Push-Location "$ProjectRoot/agent"
+$HostToolDir = $null
 try {
+
+if (-not $DeployOnly) {
+
+    # Guard: refuse a version whose tag already exists (locally or on origin).
+    # Tags are permanent — v1.77.40 was burned on a commit whose version files
+    # still said 1.77.39, so tag-name/file drift is a real, observed failure mode.
+    $existingLocal  = git -C $ProjectRoot tag -l "v$Version"
+    $existingRemote = git -C $ProjectRoot ls-remote --tags origin "refs/tags/v$Version"
+    if ($existingLocal -or $existingRemote) {
+        throw "Tag v$Version already exists (local: '$existingLocal', remote: '$existingRemote'). Pick the next free version, or use -DeployOnly to retry deploying this version."
+    }
+    # Refuse to release from a branch whose upstream has moved — a push failing
+    # after the release commit exists is a manual-intervention state.
+    git -C $ProjectRoot fetch origin --quiet
+    $branch = (git -C $ProjectRoot rev-parse --abbrev-ref HEAD).Trim()
+    $behind = (git -C $ProjectRoot rev-list --count "HEAD..origin/$branch" 2>$null)
+    if ($LASTEXITCODE -eq 0 -and "$behind".Trim() -ne '0') {
+        throw "Branch $branch is $behind commit(s) behind origin/$branch. Pull before releasing."
+    }
+
+    # --------------------------------------------------------------------------
+    # Version updates. EVERY published binary's version string must be bumped —
+    # a sidecar attesting v$Version for a binary that self-reports something
+    # else is an audit lie (sentinel-bootstrap shipped as 1.0.0 this way).
+    # --------------------------------------------------------------------------
+    $FilesToUpdate = @(
+        @{ Path = "$ProjectRoot/agent/cmd/sentinel-agent/main.go"
+           Pattern = 'var Version = "[^"]*"';  Replacement = "var Version = `"$Version`"" },
+        # The Windows watchdog declares Version inside a var(...) block, so this
+        # pattern is anchored to its own line rather than the `var ` keyword.
+        @{ Path = "$ProjectRoot/agent/cmd/sentinel-watchdog/main.go"
+           Pattern = '(?m)^\tVersion = "[^"]*"';  Replacement = "`tVersion = `"$Version`"" },
+        @{ Path = "$ProjectRoot/agent/cmd/sentinel-watchdog/main_other.go"
+           Pattern = 'var Version = "[^"]*"';  Replacement = "var Version = `"$Version`"" },
+        @{ Path = "$ProjectRoot/agent/cmd/sentinel-bootstrap/main.go"
+           Pattern = 'var Version = "[^"]*"';  Replacement = "var Version = `"$Version`"" }
+        # NOTE: root package.json is deliberately NOT updated here — it tracks the
+        # server/repo version line, which diverges from the agent line on
+        # server-only releases. Bumping it to the agent version could silently
+        # DOWNGRADE it (server line is ahead, e.g. 1.78.x vs agent 1.77.x).
+    )
+
+    Write-Host "Updating version in source files..." -ForegroundColor Yellow
+    foreach ($file in $FilesToUpdate) {
+        if (-not (Test-Path $file.Path)) { throw "Version file not found: $($file.Path)" }
+        $content = Get-Content $file.Path -Raw
+        if ($content -notmatch $file.Pattern) { throw "Version pattern not found in $($file.Path) — refusing to publish a binary with an unbumped version." }
+        # Escape '$' in the replacement so a version can never be interpreted as
+        # a .NET substitution token.
+        Set-Content $file.Path ($content -replace $file.Pattern, $file.Replacement.Replace('$', '$$')) -NoNewline
+        Write-Host "  Updated: $($file.Path)" -ForegroundColor Green
+    }
+
+    Write-Host "Updating version.json files..." -ForegroundColor Yellow
+    foreach ($jsonPath in $JsonFiles) {
+        if (-not (Test-Path $jsonPath)) { throw "version.json not found: $jsonPath" }
+        $json = Get-Content $jsonPath -Raw | ConvertFrom-Json
+        $json.version = $Version
+        $json.releaseDate = $ReleaseDate
+        if ($Changelog -ne "") { $json.changelog = $Changelog }
+        $json | ConvertTo-Json -Depth 10 | Set-Content $jsonPath
+        Write-Host "  Updated: $jsonPath" -ForegroundColor Green
+    }
+
+    # --------------------------------------------------------------------------
+    # Build. Host tools go in a private mode-700 temp dir (mktemp -d, not a
+    # predictable name): sentinel-sign is the one binary that reads the signing
+    # key, so a pre-created world-writable path would be a key-exfil TOCTOU.
+    # --------------------------------------------------------------------------
+    $HostToolDir = if ($IsLinux) { (mktemp -d "/tmp/sentinel-release-XXXXXXXX").Trim() }
+                   else { (New-Item -ItemType Directory -Force (Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString()))).FullName }
+
+    Push-Location "$ProjectRoot/agent"
+    try {
+        Write-Host ""
+        Write-Host "Building host tools (cmd/sign, cmd/verify)..." -ForegroundColor Yellow
+        # Clear any inherited cross-compile env FIRST — host tools must be
+        # native or the signing step dies after all files have been mutated.
+        Remove-Item Env:GOOS, Env:GOARCH -ErrorAction SilentlyContinue
+        $env:CGO_ENABLED = "0"
+        $SignTool   = Join-Path $HostToolDir "sentinel-sign"
+        $VerifyTool = Join-Path $HostToolDir "sentinel-verify"
+        go build -o $SignTool ./cmd/sign
+        # The verifier gets the DERIVED pubkey embedded — running it against
+        # every signed artifact proves end-to-end that the key that signed is
+        # the pair of the key the fleet binaries will trust.
+        go build -ldflags $SigningLdflags -o $VerifyTool ./cmd/verify
+
+        Write-Host "Building agent binaries..." -ForegroundColor Yellow
+        foreach ($a in $Artifacts) {
+            Write-Host "  Building $($a.Path)"
+            $env:GOOS = $a.Platform; $env:GOARCH = $a.Arch; $env:CGO_ENABLED = "0"
+            go build -ldflags $SigningLdflags -o $a.Path "./cmd/$($a.Cmd)"
+        }
+    }
+    finally {
+        Pop-Location
+        Remove-Item Env:GOOS, Env:GOARCH, Env:CGO_ENABLED -ErrorAction SilentlyContinue
+    }
+
+    # --------------------------------------------------------------------------
+    # RW-1: sign every artifact with its OWN platform/arch tuple, then verify
+    # every signature with the independently built verifier. cmd/sign writes a
+    # "<file>.manifest.json" sidecar binding {version, platform, arch, sha256,
+    # signedDowngrade} under one Ed25519 signature; the server serves the
+    # sidecar next to the binary and agents rebuild + verify that manifest.
+    # --------------------------------------------------------------------------
     Write-Host ""
-    Write-Host "Building host tools (cmd/sign, cmd/verify)..." -ForegroundColor Yellow
-    $SignTool   = Join-Path $HostToolDir "sentinel-sign"
+    Write-Host "Signing artifacts (Ed25519 signed manifest)..." -ForegroundColor Yellow
+    $env:SENTINEL_UPDATE_SIGNING_KEY = $SigningKeyReal
+    foreach ($a in $Artifacts) {
+        # No signed downgrade on a forward release — anti-rollback holds.
+        $sig = & $SignTool -version $Version -platform $a.Platform -arch $a.Arch $a.Path
+        $a.Signature = "$sig".Trim()
+        Write-Host "  Signed ($($a.Platform)/$($a.Arch)): $($a.Path)" -ForegroundColor Green
+    }
+
+    Write-Host "Verifying every signature end-to-end (independent verifier)..." -ForegroundColor Yellow
+    foreach ($a in $Artifacts) {
+        & $VerifyTool -binary $a.Path -manifest "$($a.Path).manifest.json"
+        Write-Host "  Verified: $($a.Path)" -ForegroundColor Green
+    }
+
+    # Record the primary-platform agent signature AND the signing public key in
+    # version.json. The sidecars remain the trust source (agents fail closed
+    # without them); signingPublicKeyHex is the durable audit record AND the
+    # anchor Pin 2 reads on the next release.
+    $primary = $Artifacts | Where-Object { $_.Cmd -eq 'sentinel-agent' -and $_.Platform -eq 'windows' -and $_.Arch -eq 'amd64' }
+    if (-not $primary -or [string]::IsNullOrWhiteSpace($primary.Signature)) {
+        throw "Primary windows/amd64 agent signature missing — refusing to write a null signature into version.json."
+    }
+    Write-Host "Recording signature + public key in version.json files..." -ForegroundColor Yellow
+    foreach ($jsonPath in $JsonFiles) {
+        $json = Get-Content $jsonPath -Raw | ConvertFrom-Json
+        foreach ($field in @(@{ N = 'signature'; V = $primary.Signature }, @{ N = 'signingPublicKeyHex'; V = $SigningPubKey })) {
+            if ($json.PSObject.Properties.Name -contains $field.N) { $json.($field.N) = $field.V }
+            else { $json | Add-Member -NotePropertyName $field.N -NotePropertyValue $field.V }
+        }
+        $json | ConvertTo-Json -Depth 10 | Set-Content $jsonPath
+        Write-Host "  Recorded: $jsonPath" -ForegroundColor Green
+    }
+
+    # --------------------------------------------------------------------------
+    # Git. Binaries are gitignored BY DESIGN (10MB size guard; "binaries do not
+    # go in git") — commit version files and the installers/ signed sidecars
+    # only. Native failures throw, so the tag can only ever land on a
+    # successful release commit.
+    # --------------------------------------------------------------------------
+    Write-Host ""
+    Write-Host "Committing changes..." -ForegroundColor Yellow
+    foreach ($f in @("agent/cmd/sentinel-agent/main.go", "agent/cmd/sentinel-watchdog/main.go",
+                     "agent/cmd/sentinel-watchdog/main_other.go", "agent/cmd/sentinel-bootstrap/main.go",
+                     "agent/version.json", "installers/version.json", "release/agent/version.json")) {
+        git -C $ProjectRoot add $f
+    }
+    foreach ($a in $Artifacts) {
+        git -C $ProjectRoot add ([IO.Path]::GetRelativePath($ProjectRoot, "$($a.Path).manifest.json"))
+    }
+
+    $commitMsg = "Release v$Version"
+    if ($Changelog -ne "") { $commitMsg = "Release v$Version - $Changelog" }
+    git -C $ProjectRoot commit -m "$commitMsg`n`nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+    git -C $ProjectRoot push
+
+    # Tag AT the release commit so the tag name and the version files can never
+    # drift (the guard above ensured the tag is free, and a failed commit or
+    # push has already aborted the script before this line).
+    git -C $ProjectRoot tag -a "v$Version" -m "Release v$Version (signing key $SigningPubKey)"
+    git -C $ProjectRoot push origin "v$Version"
+
+    Write-Host ""
+    Write-Host "=== Release v$Version built, signed, verified, and committed ===" -ForegroundColor Green
+}
+else {
+    # DeployOnly: the artifacts and sidecars must already exist and verify.
+    $HostToolDir = if ($IsLinux) { (mktemp -d "/tmp/sentinel-release-XXXXXXXX").Trim() }
+                   else { (New-Item -ItemType Directory -Force (Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString()))).FullName }
     $VerifyTool = Join-Path $HostToolDir "sentinel-verify"
-    go build -o $SignTool ./cmd/sign
-    # The verifier gets the DERIVED pubkey embedded — running it against every
-    # signed artifact below proves end-to-end that the key that signed is the
-    # pair of the key the fleet binaries will trust.
-    go build -ldflags $SigningLdflags -o $VerifyTool ./cmd/verify
+    Push-Location "$ProjectRoot/agent"
+    try {
+        Remove-Item Env:GOOS, Env:GOARCH -ErrorAction SilentlyContinue
+        $env:CGO_ENABLED = "0"
+        go build -ldflags $SigningLdflags -o $VerifyTool ./cmd/verify
+    } finally { Pop-Location; Remove-Item Env:CGO_ENABLED -ErrorAction SilentlyContinue }
 
-    Write-Host "Building agent binaries..." -ForegroundColor Yellow
-    foreach ($t in $Targets) {
-        foreach ($cmd in $Commands + @("verify")) {
-            $name = if ($cmd -eq "verify") { "sentinel-verify" } else { $cmd }
-            $out = "$ProjectRoot/installers/$name-$($t.Platform)-$($t.Arch)$($t.Ext)"
-            Write-Host "  Building $out"
-            $env:GOOS = $t.Platform; $env:GOARCH = $t.Arch; $env:CGO_ENABLED = "0"
-            go build -ldflags $SigningLdflags -o $out "./cmd/$cmd"
-            $Artifacts.Add(@{ Path = $out; Platform = $t.Platform; Arch = $t.Arch })
-        }
+    Write-Host "Re-verifying existing artifacts for v$Version..." -ForegroundColor Yellow
+    foreach ($a in $Artifacts) {
+        if (-not (Test-Path $a.Path)) { throw "-DeployOnly: missing artifact $($a.Path). Run a full release." }
+        $m = Get-Content "$($a.Path).manifest.json" -Raw | ConvertFrom-Json
+        if ($m.version -ne $Version) { throw "-DeployOnly: $($a.Path) sidecar is v$($m.version), expected v$Version." }
+        & $VerifyTool -binary $a.Path -manifest "$($a.Path).manifest.json"
+        Write-Host "  Verified: $($a.Path)" -ForegroundColor Green
     }
 }
-finally {
-    Pop-Location
-    Remove-Item Env:GOOS, Env:GOARCH, Env:CGO_ENABLED -ErrorAction SilentlyContinue
-}
-
-# Legacy dev-fallback copies the server can resolve when the platform-named
-# file is absent. Identical bytes to the installers copies; each path gets its
-# own sidecar. These live under gitignored release/ and are NOT committed.
-Write-Host "Copying windows/amd64 canonical binaries to release/agent..." -ForegroundColor Yellow
-New-Item -ItemType Directory -Force "$ProjectRoot/release/agent" | Out-Null
-foreach ($pair in @(
-    @{ Src = "sentinel-agent-windows-amd64.exe";    Dst = "sentinel-agent.exe" },
-    @{ Src = "sentinel-watchdog-windows-amd64.exe"; Dst = "sentinel-watchdog.exe" },
-    @{ Src = "sentinel-verify-windows-amd64.exe";   Dst = "sentinel-verify.exe" })) {
-    $dst = "$ProjectRoot/release/agent/$($pair.Dst)"
-    Copy-Item "$ProjectRoot/installers/$($pair.Src)" $dst -Force
-    $Artifacts.Add(@{ Path = $dst; Platform = "windows"; Arch = "amd64" })
-}
-
-# ------------------------------------------------------------------------------
-# RW-1: sign every artifact with its OWN platform/arch tuple, then verify every
-# signature with the independently built verifier (embedded derived pubkey).
-# cmd/sign writes a "<file>.manifest.json" sidecar binding {version, platform,
-# arch, sha256, signedDowngrade} under one Ed25519 signature; the server serves
-# the sidecar next to the binary and agents rebuild + verify the exact manifest.
-# ------------------------------------------------------------------------------
-Write-Host ""
-Write-Host "Signing artifacts (Ed25519 signed manifest)..." -ForegroundColor Yellow
-$env:SENTINEL_UPDATE_SIGNING_KEY = $SigningKeyReal
-$AgentSig = $null
-foreach ($a in $Artifacts) {
-    # No signed downgrade on a forward release — anti-rollback holds.
-    $sig = & $SignTool -version $Version -platform $a.Platform -arch $a.Arch $a.Path
-    $a.Signature = "$sig".Trim()
-    Write-Host "  Signed ($($a.Platform)/$($a.Arch)): $($a.Path)" -ForegroundColor Green
-    if ($a.Path -like "*installers/sentinel-agent-windows-amd64.exe") { $AgentSig = $a.Signature }
-}
-
-Write-Host "Verifying every signature end-to-end (independent verifier)..." -ForegroundColor Yellow
-foreach ($a in $Artifacts) {
-    & $VerifyTool -binary $a.Path -manifest "$($a.Path).manifest.json"
-    Write-Host "  Verified: $($a.Path)" -ForegroundColor Green
-}
-Remove-Item -Recurse -Force $HostToolDir
-
-# Record the primary-platform agent signature AND the signing public key in
-# version.json. The sidecars remain the trust source (agents fail closed
-# without them); these fields are the durable audit record answering "which
-# key did this release embed?" — without them a key substitution would be
-# retroactively undetectable.
-Write-Host "Recording signature + public key in version.json files..." -ForegroundColor Yellow
-foreach ($jsonPath in $JsonFiles) {
-    $json = Get-Content $jsonPath -Raw | ConvertFrom-Json
-    foreach ($field in @(@{ N = 'signature'; V = $AgentSig }, @{ N = 'signingPublicKeyHex'; V = $SigningPubKey })) {
-        if ($json.PSObject.Properties.Name -contains $field.N) {
-            $json.($field.N) = $field.V
-        } else {
-            $json | Add-Member -NotePropertyName $field.N -NotePropertyValue $field.V
-        }
-    }
-    $json | ConvertTo-Json -Depth 10 | Set-Content $jsonPath
-    Write-Host "  Recorded: $jsonPath" -ForegroundColor Green
-}
-
-# ------------------------------------------------------------------------------
-# Git. Binaries are gitignored BY DESIGN (10MB size guard; "binaries do not go
-# in git") — commit version files and the installers/ signed sidecars only.
-# Native failures throw (PSNativeCommandUseErrorActionPreference), so the tag
-# can only ever land on a successful release commit.
-# ------------------------------------------------------------------------------
-Write-Host ""
-Write-Host "Committing changes..." -ForegroundColor Yellow
-git -C $ProjectRoot add agent/cmd/sentinel-agent/main.go
-git -C $ProjectRoot add agent/cmd/sentinel-watchdog/main.go
-git -C $ProjectRoot add agent/version.json
-git -C $ProjectRoot add installers/version.json
-foreach ($a in $Artifacts) {
-    if ($a.Path -like "$ProjectRoot/installers/*") {
-        $rel = [System.IO.Path]::GetRelativePath($ProjectRoot, "$($a.Path).manifest.json")
-        git -C $ProjectRoot add $rel
-    }
-}
-# release/agent/version.json is tracked despite the release/ ignore rule;
-# its sidecars are not (new files under an ignored dir), so they stay local.
-git -C $ProjectRoot add release/agent/version.json
-
-$commitMsg = "Release v$Version"
-if ($Changelog -ne "") {
-    $commitMsg = "Release v$Version - $Changelog"
-}
-git -C $ProjectRoot commit -m "$commitMsg`n`nCo-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
-git -C $ProjectRoot push
-
-# Tag AT the release commit so the tag name and the version files can never
-# drift (the guard above already ensured the tag is free, and a failed commit
-# or push has already aborted the script before this line).
-git -C $ProjectRoot tag -a "v$Version" -m "Release v$Version (signing key $SigningPubKey)"
-git -C $ProjectRoot push origin "v$Version"
-
-Write-Host ""
-Write-Host "=== Release v$Version built, signed, verified, and committed ===" -ForegroundColor Green
 
 # ------------------------------------------------------------------------------
 # Deploy: staged local copy into the serving directory (bind-mounted RO into
-# the update-server container). Order matters — binaries + sidecars land
-# FIRST while the old version.json still advertises the previous release (so
-# no agent is offered the new version until its artifacts are consistent);
-# version.json flips LAST. A backup of every replaced file is kept and
-# restored automatically if post-deploy verification fails.
+# the update-server container). Order matters — binaries + sidecars land FIRST
+# while the old version.json still advertises the previous release (so no agent
+# is offered the new version until its artifacts are consistent); version.json
+# flips LAST. Backups live OUTSIDE the serving directory: that directory is
+# published unauthenticated at /installers/, so a backup inside it would
+# permanently expose every superseded binary and its valid signature.
 # ------------------------------------------------------------------------------
 if ($Deploy) {
     Write-Host ""
-    Write-Host "Deploying to $DeployTree/installers (staged copy)..." -ForegroundColor Yellow
-    $ServeDir  = "$DeployTree/installers"
+    Write-Host "Deploying to $ServeDir (staged copy)..." -ForegroundColor Yellow
+
+    # Single-writer lock: staging names and the served tree are shared state.
+    $LockFile = Join-Path ([Environment]::GetFolderPath('UserProfile')) ".sentinel-release.lock"
+    $lock = $null
+    try { $lock = [IO.File]::Open($LockFile, 'OpenOrCreate', 'Write', 'None') }
+    catch { throw "Another release is deploying (lock held: $LockFile). Refusing to interleave." }
+
     $Stamp     = Get-Date -Format "yyyyMMdd-HHmmss"
-    $BackupDir = "$ServeDir/.backup-v$Version-$Stamp"
+    $BackupDir = Join-Path (Join-Path ([Environment]::GetFolderPath('UserProfile')) ".sentinel-release-backups") "v$Version-$Stamp"
     New-Item -ItemType Directory -Force $BackupDir | Out-Null
 
     $DeployFiles = [System.Collections.Generic.List[string]]::new()
     foreach ($a in $Artifacts) {
-        if ($a.Path -like "$ProjectRoot/installers/*") {
-            $DeployFiles.Add($a.Path)
-            $DeployFiles.Add("$($a.Path).manifest.json")
-        }
+        $DeployFiles.Add($a.Path)
+        $DeployFiles.Add("$($a.Path).manifest.json")
     }
 
     # Atomic per-file replace: rename() on the same filesystem. Move-Item -Force
-    # over an existing target is not guaranteed atomic, native mv -f is.
+    # over an existing target is not guaranteed atomic; native mv -f is.
     function Move-IntoPlace {
         param([string]$Tmp, [string]$Dst)
         if ($IsLinux) { mv -f $Tmp $Dst } else { Move-Item $Tmp $Dst -Force }
@@ -361,74 +459,145 @@ if ($Deploy) {
     # Files the deploy CREATED (no predecessor) must be deleted on restore —
     # otherwise a failed verification leaves a mixed old/new serving state.
     $CreatedFiles = [System.Collections.Generic.List[string]]::new()
+    # Staging names are per-process so a concurrent/stale run can't collide or
+    # have its in-flight files deleted by our cleanup.
+    $StagingSuffix = ".staging-$PID"
 
     try {
-        # Back up whatever is being replaced, then move pairs into place.
         foreach ($src in $DeployFiles) {
             $dst = Join-Path $ServeDir (Split-Path -Leaf $src)
             if (Test-Path $dst) { Copy-Item $dst $BackupDir -Force } else { $CreatedFiles.Add($dst) }
-            $tmp = "$dst.staging"
+            $tmp = "$dst$StagingSuffix"
             Copy-Item $src $tmp -Force
             Move-IntoPlace $tmp $dst
         }
         # version.json flips last — this is the moment the release goes live.
         if (Test-Path "$ServeDir/version.json") { Copy-Item "$ServeDir/version.json" $BackupDir -Force }
-        Copy-Item "$ProjectRoot/installers/version.json" "$ServeDir/version.json.staging" -Force
-        Move-IntoPlace "$ServeDir/version.json.staging" "$ServeDir/version.json"
+        Copy-Item "$ProjectRoot/installers/version.json" "$ServeDir/version.json$StagingSuffix" -Force
+        Move-IntoPlace "$ServeDir/version.json$StagingSuffix" "$ServeDir/version.json"
 
-        # Verify at the serving directory: advertised version, and every served
-        # binary's bytes must match its sidecar's version AND sha256.
+        # ---- Verify at the serving directory ----
         $served = (Get-Content "$ServeDir/version.json" -Raw | ConvertFrom-Json).version
         if ($served -ne $Version) { throw "Deploy verification FAILED: serving version '$served', expected '$Version'." }
         foreach ($a in $Artifacts) {
-            if ($a.Path -notlike "$ProjectRoot/installers/*") { continue }
             $bin = Join-Path $ServeDir (Split-Path -Leaf $a.Path)
             $m = Get-Content "$bin.manifest.json" -Raw | ConvertFrom-Json
             if ($m.version -ne $Version) { throw "Deploy verification FAILED: sidecar for $bin is v$($m.version), expected v$Version." }
             $actual = (Get-FileHash -Algorithm SHA256 $bin).Hash.ToLowerInvariant()
             if ($actual -ne $m.sha256) { throw "Deploy verification FAILED: served $bin sha256 $actual does not match its sidecar ($($m.sha256))." }
+            # Re-verify the SIGNATURE at the boundary that actually serves it,
+            # not just the hash (the verifier is kept alive for this).
+            & $VerifyTool -binary $bin -manifest "$bin.manifest.json"
+        }
+
+        # ---- Enforce "every served agent/watchdog binary is from THIS signed
+        # release". The update server advertises 7 (platform,arch) tuples and
+        # falls back to unsuffixed names in release/agent; any stale artifact
+        # left here is announced as $Version and served unsigned, sending those
+        # agents into a permanent fail-closed retry loop. This is the check
+        # that makes the invariant real instead of a comment.
+        $stale = [System.Collections.Generic.List[string]]::new()
+        $candidates = @()
+        $candidates += Get-ChildItem $ServeDir -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^sentinel-(agent|watchdog|bootstrap|verify)(-|\.exe$)' -and
+                           $_.Name -notmatch '\.(manifest\.json|sig|staging.*)$' -and $_.Name -notmatch '\.bak' }
+        if (Test-Path "$DeployTree/release/agent") {
+            $candidates += Get-ChildItem "$DeployTree/release/agent" -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match '^sentinel-(agent|watchdog)(\.exe)?$' }
+        }
+        foreach ($f in $candidates) {
+            $side = "$($f.FullName).manifest.json"
+            if (-not (Test-Path $side)) { $stale.Add("$($f.FullName) (no signed sidecar)"); continue }
+            $sm = Get-Content $side -Raw | ConvertFrom-Json
+            if ($sm.version -ne $Version) { $stale.Add("$($f.FullName) (sidecar v$($sm.version))") }
+        }
+        if ($stale.Count -gt 0) {
+            throw @"
+Deploy verification FAILED: served artifacts that are NOT from this signed release:
+$($stale -join "`n")
+The update server advertises these targets and will announce v$Version while
+serving these bytes — agents on them fail closed permanently. Archive or
+rebuild them, then re-run with -DeployOnly.
+"@
         }
     }
     catch {
         Write-Host "Deploy verification failed — restoring backup from $BackupDir..." -ForegroundColor Red
-        Get-ChildItem $ServeDir -Filter '*.staging' -ErrorAction SilentlyContinue | Remove-Item -Force
-        foreach ($f in Get-ChildItem $BackupDir) {
-            Copy-Item $f.FullName (Join-Path $ServeDir $f.Name) -Force
+        Get-ChildItem $ServeDir -Filter "*$StagingSuffix" -ErrorAction SilentlyContinue | Remove-Item -Force
+        # Restore atomically too: clients are reading these files live.
+        foreach ($f in Get-ChildItem $BackupDir -File) {
+            $dst = Join-Path $ServeDir $f.Name
+            $tmp = "$dst$StagingSuffix"
+            Copy-Item $f.FullName $tmp -Force
+            Move-IntoPlace $tmp $dst
         }
-        foreach ($f in $CreatedFiles) {
-            if (Test-Path $f) { Remove-Item $f -Force }
+        foreach ($f in $CreatedFiles) { if (Test-Path $f) { Remove-Item $f -Force } }
+        # Positive confirmation that the restore actually landed.
+        $bad = @()
+        foreach ($f in Get-ChildItem $BackupDir -File) {
+            $dst = Join-Path $ServeDir $f.Name
+            if (-not (Test-Path $dst) -or
+                (Get-FileHash -Algorithm SHA256 $dst).Hash -ne (Get-FileHash -Algorithm SHA256 $f.FullName).Hash) { $bad += $dst }
         }
+        if ($bad.Count -gt 0) { Write-Host "RESTORE INCOMPLETE — these files do not match the backup: $($bad -join ', '). Serving state is INCONSISTENT; fix by hand." -ForegroundColor Red }
+        else { Write-Host "Restore verified: serving directory matches the pre-deploy backup." -ForegroundColor Yellow }
         throw
     }
-
-    Write-Host "Deployment verified at the serving directory: v$Version with matching signed sidecars." -ForegroundColor Green
-    Write-Host "Backup of replaced files kept at $BackupDir" -ForegroundColor DarkGray
-
-    # Probe the actual HTTP serving boundary when possible. Positive
-    # confirmation only — an unreachable endpoint is reported as UNVERIFIED,
-    # never as success.
-    $probeUrl = if ($env:SENTINEL_UPDATE_CHECK_URL) { $env:SENTINEL_UPDATE_CHECK_URL } else { "https://sentinel.nexus/api/agent/version?platform=windows&arch=amd64" }
-    try {
-        $resp = Invoke-RestMethod -Uri $probeUrl -SkipCertificateCheck -TimeoutSec 10
-        if ("$($resp.latestVersion)" -eq $Version) {
-            Write-Host "HTTP boundary VERIFIED: $probeUrl reports latestVersion=$Version" -ForegroundColor Green
-        } else {
-            Write-Host "HTTP boundary MISMATCH: $probeUrl reports '$($resp.latestVersion)', expected '$Version'. Investigate before rollout." -ForegroundColor Red
-        }
+    finally {
+        if ($lock) { $lock.Dispose() }
     }
-    catch {
-        Write-Host "HTTP boundary UNVERIFIED: probe of $probeUrl failed ($($_.Exception.Message)). Filesystem checks passed, but confirm the served endpoint manually." -ForegroundColor Yellow
+
+    Write-Host "Deployment verified at the serving directory: v$Version, signatures re-checked, no stale served artifacts." -ForegroundColor Green
+    Write-Host "Backup of replaced files: $BackupDir (outside the served volume)" -ForegroundColor DarkGray
+
+    # The deploy tree is a git checkout and installers/version.json + sidecars
+    # are TRACKED. We just overwrote them, so the tree is now dirty by design:
+    # a future `git pull`/`checkout .`/`stash` there would silently revert the
+    # served release. Report it — rule 11 (a branch move in a deploy tree IS a
+    # deployment) applies in reverse here.
+    $dirty = git -C $DeployTree status --porcelain -- installers 2>$null
+    if ($dirty) {
+        Write-Host ""
+        Write-Host "NOTE: $DeployTree has local changes under installers/ (expected — the deploy wrote them)." -ForegroundColor Yellow
+        Write-Host "A git pull/checkout/stash in that tree would REVERT the served release. Deploy only via this script." -ForegroundColor Yellow
+    }
+
+    # Probe the real HTTP serving boundary. The server caches version.json for
+    # 60s, so poll rather than firing once (a single immediate probe reports a
+    # false MISMATCH on a perfectly good deploy). TLS verification stays ON —
+    # a "VERIFIED" derived from an unauthenticated channel is not verification.
+    $probeUrl = if ($env:SENTINEL_UPDATE_CHECK_URL) { $env:SENTINEL_UPDATE_CHECK_URL } else { "https://sentinel.nexus/api/agent/version?platform=windows&arch=amd64" }
+    $deadline = (Get-Date).AddSeconds(100)
+    $probeState = 'UNVERIFIED'; $probeDetail = ''
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $resp = Invoke-RestMethod -Uri $probeUrl -TimeoutSec 10
+            if ("$($resp.latestVersion)" -eq $Version) { $probeState = 'VERIFIED'; break }
+            $probeState = 'MISMATCH'; $probeDetail = "reports '$($resp.latestVersion)'"
+        }
+        catch { $probeState = 'UNVERIFIED'; $probeDetail = $_.Exception.Message }
+        Start-Sleep -Seconds 10
+    }
+    switch ($probeState) {
+        'VERIFIED'  { Write-Host "HTTP boundary VERIFIED: $probeUrl reports latestVersion=$Version" -ForegroundColor Green }
+        'MISMATCH'  { Write-Host "HTTP boundary MISMATCH after cache TTL: $probeUrl $probeDetail, expected '$Version'. Investigate before rollout." -ForegroundColor Red }
+        default     { Write-Host "HTTP boundary UNVERIFIED: probe of $probeUrl failed ($probeDetail). Filesystem checks passed; confirm the served endpoint manually (set SENTINEL_UPDATE_CHECK_URL to a host-reachable URL)." -ForegroundColor Yellow }
     }
 
     Write-Host ""
     Write-Host "NOTE: agents are NOT offered this update until an agent_releases row" -ForegroundColor Yellow
     Write-Host "for v$Version exists (the server suppresses updateAvailable without it)." -ForegroundColor Yellow
-    Write-Host "That row is the rollout gate — insert it to begin the (canary) rollout;" -ForegroundColor Yellow
-    Write-Host "see scripts/publish-1.77.10-agent_releases.sql for the shape." -ForegroundColor Yellow
+    Write-Host "That row is the rollout gate and it is FLEET-WIDE — inserting it announces" -ForegroundColor Yellow
+    Write-Host "to every online agent. See docs/SIGNED-RELEASE-CANARY-PLAN.md." -ForegroundColor Yellow
 }
 
 Write-Host ""
 Write-Host "Done! Version $Version is ready." -ForegroundColor Cyan
 if (-not $Deploy) {
     Write-Host "Run with -Deploy on the serving host to deploy." -ForegroundColor Yellow
+}
+
+}
+finally {
+    if ($HostToolDir -and (Test-Path $HostToolDir)) { Remove-Item -Recurse -Force $HostToolDir }
 }

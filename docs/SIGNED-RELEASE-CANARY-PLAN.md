@@ -30,6 +30,27 @@ The verify loop must be proven on one device before the fleet sees it.
 ## Plan
 
 ### Phase 0 — deploy dark (gate closed)
+
+> **Hard precondition (new, from review round 2):** the release script now
+> refuses to finish a deploy while the serving directory contains any
+> `sentinel-{agent,watchdog,bootstrap,verify}` binary that is not from the
+> release being deployed (no signed sidecar, or a sidecar for another version).
+> The stale artifacts listed in Phase 3 step 10 — `sentinel-agent-windows-386.exe`,
+> the `*-arm64*` binaries, `*.bak-*`, and the deploy tree's unsuffixed
+> `release/agent/sentinel-agent` — therefore have to be **archived before**
+> Phase 0, not after. This is deliberate: the server advertises seven
+> (platform, arch) tuples and falls back to unsuffixed names, so any stale file
+> left there is announced as the new version and served unsigned, which puts
+> agents on those targets into a permanent fail-closed retry loop. Archiving is
+> a Ron-gated action (it changes what the live server can serve).
+>
+> **Trust-anchor pin status:** `installers/version.json` at HEAD has no
+> `signingPublicKeyHex`, so v1.77.41 is genuinely TOFU and the pin cannot apply.
+> Publishing v1.77.41 writes that field, which makes the pin **active** for
+> v1.77.42 onward — from Phase 2 on, a wrong or rotated signing key aborts the
+> release instead of bricking the fleet (override is an explicit
+> `-RotateSigningKey`).
+
 1. Cut **v1.77.41** on NEXUS: `pwsh scripts/release.ps1 -Version 1.77.41 -Deploy`
    from `~/repos/Sentinel-build` (env from `~/.sentinel-signing/release-signing-vars.sh`).
    Binaries + signed sidecars go live in `~/Sentinel/installers`; **no
@@ -82,8 +103,15 @@ should be scheduled; until then every gate-open is fleet-wide.
 
 ## Preconditions checklist (all must hold before Phase 0)
 
-- [ ] release.ps1 rewrite passed independent adversarial re-review (BLOCKED on
-      Anthropic API incident 2026-07-29 20:33 UTC as of writing)
+- [ ] release.ps1 passed independent adversarial re-review. Round 2 returned
+      5 HIGH / 10 MEDIUM / 8 LOW and all substantive findings were fixed
+      (backups moved out of the served volume, mandatory git-HEAD key pin,
+      Linux watchdog stub dropped from the matrix, `-DeployOnly` retry path,
+      served-artifact staleness gate, per-run staging + deploy lock, atomic
+      verified restore, TLS-verified polling probe, all published binaries'
+      version strings bumped, host tools in a mode-700 mktemp dir). Round 3
+      re-review of those fixes is REQUIRED before Phase 0.
+- [ ] Stale served artifacts archived (see Phase 0 hard precondition)
 - [x] pwsh 7.6.4 on NEXUS; clean build checkout `~/repos/Sentinel-build`
 - [x] Signing key present/0600; pubkey derived `aac3c014…347e70`; sign→verify
       →tamper-reject chain proven on NEXUS with the real key

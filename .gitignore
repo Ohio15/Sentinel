@@ -33,6 +33,11 @@ npm-debug.log*
 # Linux/macOS Go binaries (no .exe extension) — same standing rule.
 installers/sentinel-agent-linux-*
 installers/sentinel-agent-darwin-*
+installers/sentinel-bootstrap-linux-*
+installers/sentinel-bootstrap-darwin-*
+installers/sentinel-verify-linux-*
+installers/sentinel-verify-darwin-*
+installers/sentinel-watchdog-darwin-*
 # Legacy explicit entries (kept for clarity / if *.exe is ever narrowed):
 downloads/sentinel-agent*
 agent/sentinel-installer.exe
