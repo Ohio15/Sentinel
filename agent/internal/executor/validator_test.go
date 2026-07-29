@@ -1168,6 +1168,107 @@ func TestValidateScript_CommandWhitelist(t *testing.T) {
 	}
 }
 
+// TestValidateScript_InvocationResolution proves AG-H script first-token
+// resolution: statements that begin with a call operator, quote, path prefix,
+// or environment expansion are resolved to the invoked binary and rejected when
+// that binary is not whitelisted (deny-by-default), not skipped.
+func TestValidateScript_InvocationResolution(t *testing.T) {
+	tests := []struct {
+		name     string
+		script   string
+		language string
+		wantErr  bool
+	}{
+		{
+			name:     "ATTACK: relative path exe",
+			script:   ".\\payload.exe -beacon",
+			language: "powershell",
+			wantErr:  true,
+		},
+		{
+			name:     "ATTACK: quoted absolute path exe",
+			script:   `"C:\Windows\System32\calc.exe"`,
+			language: "cmd",
+			wantErr:  true,
+		},
+		{
+			name:     "ATTACK: quoted absolute path exe powershell with call op",
+			script:   `& "C:\Windows\System32\calc.exe"`,
+			language: "powershell",
+			wantErr:  true,
+		},
+		{
+			name:     "ATTACK: env var command comspec",
+			script:   "%COMSPEC% /c evil.exe",
+			language: "cmd",
+			wantErr:  true,
+		},
+		{
+			name:     "ATTACK: env var command powershell",
+			script:   "$env:ComSpec /c whoami",
+			language: "powershell",
+			wantErr:  true,
+		},
+		{
+			name:     "ATTACK: obfuscated IEX call operator",
+			script:   "&('IE'+'X')($payload)",
+			language: "powershell",
+			wantErr:  true,
+		},
+		{
+			name:     "ATTACK: subexpression invocation",
+			script:   "(Get-Command Invoke-Expression) $payload",
+			language: "powershell",
+			wantErr:  true,
+		},
+		{
+			name:     "ATTACK: call operator variable",
+			script:   "& $maliciousCmd -arg",
+			language: "powershell",
+			wantErr:  true,
+		},
+		{
+			name:     "Legit: call operator whitelisted cmdlet",
+			script:   "& Get-Process",
+			language: "powershell",
+			wantErr:  false,
+		},
+		{
+			name:     "Legit: bare variable evaluation",
+			script:   "$result",
+			language: "powershell",
+			wantErr:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateScript(tt.script, tt.language)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateScript(%q) error = %v, wantErr %v", tt.script, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestCommandSubstitution proves AG-M cmdsub: the inner command of a
+// substitution is whitelist-checked in both command and script contexts.
+func TestCommandSubstitution(t *testing.T) {
+	if err := ValidateCommand("echo $(start-process calc)", "bash"); err == nil {
+		t.Errorf("SECURITY: command substitution with non-whitelisted inner command must be rejected")
+	}
+	if err := ValidateScript("echo $(start-process calc)", "bash"); err == nil {
+		t.Errorf("SECURITY: script command substitution with non-whitelisted inner command must be rejected")
+	}
+	if err := ValidateCommand("echo `start-process calc`", "bash"); err == nil {
+		t.Errorf("SECURITY: backtick substitution with non-whitelisted inner command must be rejected")
+	}
+	// Legitimate: inner command is whitelisted.
+	if err := ValidateCommand("echo $(hostname)", "bash"); err != nil {
+		t.Errorf("legitimate substitution with whitelisted inner command should pass, got: %v", err)
+	}
+}
+
 func TestSanitizeArguments(t *testing.T) {
 	tests := []struct {
 		name    string

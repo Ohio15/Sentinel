@@ -321,7 +321,18 @@ func (cv *CommandValidator) Validate(command string, cmdType string) error {
 // "whoami\nnet user hacker /add" runs two commands. Without splitting on
 // newlines, extractBaseCommand only validated the first line ("whoami") and the
 // remainder ran unchecked. Treat them as separators so every line is validated.
-var shellSeparatorPattern = regexp.MustCompile(`\s*(\|\||&&)\s*|(?:^|\s)(&)(?:\s|$)|\s*([;|])\s*|[\r\n]+`)
+//
+// AG-M cmdsub: command substitution introduces an inner command that must ALSO
+// be whitelist-checked. Split on "$(", "${ " (bash function-substitution — the
+// trailing space distinguishes it from "${VAR}" parameter expansion), backtick,
+// and the closing ")"/"}" so the substituted command becomes its own segment
+// (e.g. "echo $(start-process calc)" yields a "start-process calc" segment).
+//
+// A LEADING bare "&" is the PowerShell call operator, not a background
+// separator, so it is only treated as a separator when preceded by whitespace
+// (i.e. there is a command before it). This leaves "& $var" / "& cmd" intact for
+// invocation resolution while still splitting "cmd & cmd2".
+var shellSeparatorPattern = regexp.MustCompile("\\s*(\\|\\||&&)\\s*|(?:\\s)(&)(?:\\s|$)|\\s*([;|])\\s*|[\\r\\n]+|`|\\$\\(|\\$\\{[ \\t]|[)}]")
 
 // extractAllBaseCommands splits a command string on shell separators and extracts
 // the base command from each sub-command. This ensures every command in a chain
@@ -624,10 +635,21 @@ func validateScriptCommands(script, language string) error {
 	}
 }
 
+// envVarPattern matches a cmd.exe %VAR% environment expansion used as (part of)
+// a command name — the resolved binary is not statically known.
+var envVarPattern = regexp.MustCompile(`%[A-Za-z_][A-Za-z0-9_]*%`)
+
 // scriptCommandCandidates extracts the command invocations from a single script
-// line, skipping comments, language keywords, labels, literals, and variable
-// references. Only tokens that plausibly invoke an external command or cmdlet
-// are returned for whitelist checking.
+// line and returns the resolved base command name for each so the caller can
+// whitelist-check them.
+//
+// AG-H script (first-token resolution): the token that begins a statement is
+// never blindly skipped just because it starts with a call operator, quote,
+// path prefix, or environment expansion. Such forms are RESOLVED to the binary
+// they actually invoke (".\payload.exe" -> payload, "\"C:\\...\\calc.exe\"" ->
+// calc, "%COMSPEC% /c x" / "&('IE'+'X')(...)" -> unresolvable) and checked. Any
+// invocation that cannot be resolved to a concrete command name is returned
+// verbatim so it fails the whitelist — deny-by-default rather than skip.
 func scriptCommandCandidates(line, cmdType string) []string {
 	line = stripScriptComment(line, cmdType)
 	line = strings.TrimSpace(line)
@@ -655,45 +677,124 @@ func scriptCommandCandidates(line, cmdType string) []string {
 			continue
 		}
 
-		fields := strings.Fields(seg)
-		if len(fields) == 0 {
-			continue
+		if name, ok := resolveScriptInvocation(seg, cmdType); ok {
+			candidates = append(candidates, name)
 		}
-		tok := fields[0]
-
-		if isNonCommandToken(tok) {
-			continue
-		}
-
-		base := scriptBaseName(tok)
-		if base == "" || isNonCommandToken(base) {
-			continue
-		}
-		candidates = append(candidates, base)
 	}
 	return candidates
 }
 
-// isNonCommandToken reports whether a token is a literal, variable reference,
-// operator, label, or language keyword rather than a command name.
-func isNonCommandToken(tok string) bool {
-	if tok == "" {
+// resolveScriptInvocation determines the command a script statement invokes.
+// It returns (name, true) when the statement invokes something that must be
+// whitelist-checked — including unresolvable/obfuscated forms, which are
+// returned verbatim so they fail the check. It returns ("", false) only for
+// statements that invoke nothing (keywords, bare literals, bare variable
+// evaluation, PowerShell bare strings).
+func resolveScriptInvocation(seg, cmdType string) (string, bool) {
+	seg = strings.TrimSpace(seg)
+	if seg == "" {
+		return "", false
+	}
+
+	// Strip a leading PowerShell call (&) or dot-source (.) operator; whatever
+	// follows is the actual invocation and must still be resolved/checked.
+	hadCallOp := false
+	switch {
+	case seg == "&" || seg == ".":
+		return "", false // operator with nothing after it
+	case strings.HasPrefix(seg, "& "), strings.HasPrefix(seg, ". "):
+		hadCallOp = true
+		seg = strings.TrimSpace(seg[2:])
+	case strings.HasPrefix(seg, "&"): // e.g. &('IE'+'X')(...)
+		hadCallOp = true
+		seg = strings.TrimSpace(seg[1:])
+	}
+	if seg == "" {
+		return "", false
+	}
+
+	fields := strings.Fields(seg)
+	tok := fields[0]
+
+	switch {
+	// Obfuscated / dynamic invocation: subexpression, string concatenation, or
+	// command substitution used as the command name — not statically resolvable.
+	case strings.HasPrefix(tok, "("), strings.HasPrefix(tok, "$("),
+		strings.Contains(tok, "'+'"), strings.Contains(tok, `"+"`):
+		return seg, true // deny-by-default
+
+	// Environment-variable expansion as the command name (%COMSPEC%, $env:...).
+	case envVarPattern.MatchString(tok), strings.HasPrefix(strings.ToLower(tok), "$env:"):
+		return tok, true // deny-by-default
+
+	// Bare variable reference.
+	case strings.HasPrefix(tok, "$"):
+		if hadCallOp {
+			return tok, true // "& $x" invokes the variable's contents — unresolvable
+		}
+		return "", false // "$x" merely evaluates a variable
+
+	// Language keyword / label / block syntax invokes nothing.
+	case scriptKeywords[strings.ToLower(tok)], strings.HasPrefix(tok, ":"),
+		tok == "{" || tok == "}" || tok == "[":
+		return "", false
+
+	// Bare numeric literal.
+	case isNumericLiteral(tok):
+		return "", false
+
+	// Quoted token.
+	case strings.HasPrefix(tok, `"`), strings.HasPrefix(tok, "'"):
+		inner := dequoteToken(seg) // may contain spaces inside the quotes
+		if inner == "" {
+			return "", false
+		}
+		// A quoted path/executable is always an invocation; in cmd/batch even a
+		// bare quoted string at statement start is executed, so check it. Only a
+		// PowerShell bare (non-path) string is a no-op echo and skipped.
+		if looksLikePath(inner) || hadCallOp || cmdType != "powershell" {
+			if base := scriptBaseName(inner); base != "" {
+				return base, true
+			}
+		}
+		return "", false
+
+	default:
+		if base := scriptBaseName(tok); base != "" {
+			return base, true
+		}
+		return "", false
+	}
+}
+
+// dequoteToken returns the contents of a leading quoted string in seg (the token
+// may contain spaces, e.g. "C:\\Program Files\\x.exe"), or the first field if
+// unquoted.
+func dequoteToken(seg string) string {
+	if len(seg) == 0 {
+		return ""
+	}
+	q := seg[0]
+	if q == '"' || q == '\'' {
+		if end := strings.IndexByte(seg[1:], q); end >= 0 {
+			return seg[1 : 1+end]
+		}
+		return strings.TrimLeft(seg, `"'`)
+	}
+	return strings.Fields(seg)[0]
+}
+
+// looksLikePath reports whether s looks like a filesystem path or an executable
+// artifact (rather than a plain string literal).
+func looksLikePath(s string) bool {
+	if strings.ContainsAny(s, `/\`) {
 		return true
 	}
-	switch tok[0] {
-	case '$', '"', '\'', '(', ')', '{', '}', '[', ']', '#', ':', '-', '.', '@', '&', '<', '>', '=', '+', '*', '!', '%', '`', ';', '|', ',':
-		return true
-	}
-	// Pure numeric literal.
-	if isNumericLiteral(tok) {
-		return true
-	}
-	// Leftover assignment fragment or comparison.
-	if strings.Contains(tok, "=") {
-		return true
-	}
-	if scriptKeywords[strings.ToLower(tok)] {
-		return true
+	lower := strings.ToLower(s)
+	for _, ext := range []string{".exe", ".bat", ".cmd", ".com", ".ps1", ".scr", ".vbs", ".js", ".msi", ".dll"} {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
 	}
 	return false
 }
