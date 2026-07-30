@@ -22,8 +22,8 @@ export type { Device, DeviceMetrics, Alert, AlertRule, Ticket, TicketComment, Cl
 
 // Devices Service
 export const devices = {
-  async list(clientId?: string): Promise<Device[]> {
-    const result = await api!.getDevices();
+  async list(clientId?: string, includeHidden?: boolean): Promise<Device[]> {
+    const result = await api!.getDevices(includeHidden ? { includeHidden: true } : undefined);
     return (result as any).data || (result as any).devices || result || [];
   },
 
@@ -46,6 +46,14 @@ export const devices = {
 
   async enable(id: string): Promise<void> {
     await api!.updateDevice(id, { tags: [] });
+  },
+
+  async hide(id: string): Promise<void> {
+    await api!.hideDevice(id);
+  },
+
+  async unhide(id: string): Promise<void> {
+    await api!.unhideDevice(id);
   },
 
   async uninstall(id: string): Promise<void> {

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/sentinel/server/internal/audit"
 	"github.com/sentinel/server/internal/constants"
 	"github.com/sentinel/server/internal/models"
@@ -44,9 +46,17 @@ func (r *Router) listDevices(c *gin.Context) {
 	// Calculate offset for pagination
 	offset := (page - 1) * pageSize
 
+	// Hidden devices are excluded by default. ?include_hidden=true opts back in.
+	// The predicate must be identical in the COUNT and the SELECT or the
+	// pagination metadata would describe a different result set than the page.
+	hiddenFilter := " AND hidden_at IS NULL"
+	if c.Query("include_hidden") == "true" {
+		hiddenFilter = ""
+	}
+
 	// Get total count of devices for pagination metadata
 	var total int
-	err := r.db.Pool().QueryRow(ctx, `SELECT COUNT(*) FROM devices WHERE organization_id = $1`, constants.CurrentOrganizationID).Scan(&total)
+	err := r.db.Pool().QueryRow(ctx, `SELECT COUNT(*) FROM devices WHERE organization_id = $1`+hiddenFilter, constants.CurrentOrganizationID).Scan(&total)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to count devices"})
 		return
@@ -65,9 +75,9 @@ func (r *Router) listDevices(c *gin.Context) {
 			   COALESCE(platform, ''), COALESCE(platform_family, ''), COALESCE(architecture, ''), COALESCE(cpu_model, ''), COALESCE(cpu_cores, 0), COALESCE(cpu_threads, 0),
 			   COALESCE(cpu_speed, 0), COALESCE(total_memory, 0), COALESCE(EXTRACT(EPOCH FROM boot_time)::bigint, 0), COALESCE(gpu::jsonb, '[]'::jsonb), COALESCE(storage, '[]'::jsonb), COALESCE(serial_number, ''),
 			   COALESCE(manufacturer, ''), COALESCE(model, ''), COALESCE(domain, ''), COALESCE(agent_version, ''), last_seen, COALESCE(status, 'offline'),
-			   COALESCE(host(ip_address), '' ) as ip_address, COALESCE(host(public_ip), '' ) as public_ip, COALESCE(mac_address, ''), COALESCE(tags, ARRAY[]::text[]), COALESCE(metadata, '{}'::jsonb), client_id, created_at, updated_at
+			   COALESCE(host(ip_address), '' ) as ip_address, COALESCE(host(public_ip), '' ) as public_ip, COALESCE(mac_address, ''), COALESCE(tags, ARRAY[]::text[]), COALESCE(metadata, '{}'::jsonb), client_id, hidden_at, created_at, updated_at
 		FROM devices
-		WHERE organization_id = $1
+		WHERE organization_id = $1`+hiddenFilter+`
 		ORDER BY hostname
 		LIMIT $2 OFFSET $3
 	`, constants.CurrentOrganizationID, pageSize, offset)
@@ -90,7 +100,7 @@ func (r *Router) listDevices(c *gin.Context) {
 			&d.BootTime, &gpuJSON, &storageJSON, &d.SerialNumber, &d.Manufacturer,
 			&d.Model, &d.Domain, &d.AgentVersion, &d.LastSeen, &d.Status,
 			&d.IPAddress, &d.PublicIP, &d.MACAddress, &tags, &metadata,
-			&d.ClientID, &d.CreatedAt, &d.UpdatedAt)
+			&d.ClientID, &d.HiddenAt, &d.CreatedAt, &d.UpdatedAt)
 		if err != nil {
 			log.Printf("Error scanning device row: %v", err)
 			continue
@@ -144,7 +154,7 @@ func (r *Router) getDevice(c *gin.Context) {
 			   COALESCE(cpu_speed, 0), COALESCE(total_memory, 0), COALESCE(EXTRACT(EPOCH FROM boot_time)::bigint, 0), COALESCE(gpu::jsonb, '[]'::jsonb), COALESCE(storage, '[]'::jsonb), COALESCE(serial_number, ''),
 			   COALESCE(manufacturer, ''), COALESCE(model, ''), COALESCE(domain, ''), COALESCE(agent_version, ''), last_seen, COALESCE(status, 'offline'),
 			   COALESCE(host(ip_address), '' ) as ip_address, COALESCE(host(public_ip), '' ) as public_ip, COALESCE(mac_address, ''), COALESCE(tags, ARRAY[]::text[]), COALESCE(metadata, '{}'::jsonb), client_id,
-			   COALESCE(power_management, '{}'::jsonb), created_at, updated_at
+			   COALESCE(power_management, '{}'::jsonb), hidden_at, created_at, updated_at
 		FROM devices WHERE id = $1 AND organization_id = $2
 	`, id, constants.CurrentOrganizationID).Scan(&d.ID, &d.AgentID, &d.Hostname, &d.DisplayName, &d.DeviceType,
 		&d.OSType, &d.OSVersion, &d.OSBuild, &d.Platform, &d.PlatformFamily, &d.Architecture,
@@ -152,7 +162,7 @@ func (r *Router) getDevice(c *gin.Context) {
 		&d.BootTime, &gpuJSON, &storageJSON, &d.SerialNumber, &d.Manufacturer,
 		&d.Model, &d.Domain, &d.AgentVersion, &d.LastSeen, &d.Status,
 		&d.IPAddress, &d.PublicIP, &d.MACAddress, &tags, &metadata,
-		&d.ClientID, &powerMgmtJSON, &d.CreatedAt, &d.UpdatedAt)
+		&d.ClientID, &powerMgmtJSON, &d.HiddenAt, &d.CreatedAt, &d.UpdatedAt)
 
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
@@ -462,6 +472,109 @@ func (r *Router) enableDevice(c *gin.Context) {
 	})
 }
 
+// hideDevice hides a device from the default device list.
+//
+// Hiding is DISPLAY-ONLY and intentionally different from disabling:
+//   - the agent is NOT disconnected and is NOT rejected on reconnect
+//   - no status restriction — online devices can be hidden just like offline ones
+//   - the row keeps collecting metrics, alerts and inventory
+//
+// The hide is automatically reverted the next time the agent establishes an
+// authenticated connection or re-enrolls (see the auth/enroll UPDATEs which
+// clear hidden_at/hidden_by), so a machine that comes back to life cannot stay
+// invisible. Ongoing traffic on an existing session (heartbeats, gRPC metrics,
+// inventory) deliberately does not clear it.
+func (r *Router) hideDevice(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid device ID"})
+		return
+	}
+
+	ctx := context.Background()
+
+	// hidden_by is `UUID REFERENCES users(id)`. The static-API-key auth path sets
+	// userId to uuid.Nil, which is not a real user row — bind NULL for it rather
+	// than triggering a foreign-key violation.
+	var hiddenBy *uuid.UUID
+	if userID, ok := c.MustGet("userId").(uuid.UUID); ok && userID != uuid.Nil {
+		hiddenBy = &userID
+	}
+
+	var hostname, agentID string
+	err = r.db.Pool().QueryRow(ctx, `
+		UPDATE devices SET
+			hidden_at = NOW(),
+			hidden_by = $2,
+			updated_at = NOW()
+		WHERE id = $1 AND organization_id = $3
+		RETURNING COALESCE(hostname, ''), agent_id
+	`, id, hiddenBy, constants.CurrentOrganizationID).Scan(&hostname, &agentID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
+			return
+		}
+		log.Printf("Error hiding device %s: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hide device"})
+		return
+	}
+
+	if r.audit != nil {
+		r.audit.LogFromContextWithSeverity(c, audit.ActionDeviceHide, audit.ResourceTypeDevice, &id, audit.SeverityInfo, map[string]interface{}{
+			"hostname": hostname,
+			"agent_id": agentID,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Device hidden successfully",
+		"hidden":  true,
+	})
+}
+
+// unhideDevice restores a hidden device to the default device list.
+func (r *Router) unhideDevice(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid device ID"})
+		return
+	}
+
+	ctx := context.Background()
+
+	var hostname, agentID string
+	err = r.db.Pool().QueryRow(ctx, `
+		UPDATE devices SET
+			hidden_at = NULL,
+			hidden_by = NULL,
+			updated_at = NOW()
+		WHERE id = $1 AND organization_id = $2
+		RETURNING COALESCE(hostname, ''), agent_id
+	`, id, constants.CurrentOrganizationID).Scan(&hostname, &agentID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Device not found"})
+			return
+		}
+		log.Printf("Error unhiding device %s: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to unhide device"})
+		return
+	}
+
+	if r.audit != nil {
+		r.audit.LogFromContextWithSeverity(c, audit.ActionDeviceUnhide, audit.ResourceTypeDevice, &id, audit.SeverityInfo, map[string]interface{}{
+			"hostname": hostname,
+			"agent_id": agentID,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Device unhidden successfully",
+		"hidden":  false,
+	})
+}
+
 func (r *Router) getDeviceMetrics(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -644,7 +757,8 @@ func (r *Router) enrollAgent(c *gin.Context) {
 				total_memory = $13, boot_time = to_timestamp($14), gpu = $15, storage = $16,
 				serial_number = $17, manufacturer = $18, model = $19, domain = $20,
 				agent_version = $21, ip_address = $22, mac_address = $23,
-				last_seen = NOW(), status = 'online', updated_at = NOW()
+				last_seen = NOW(), status = 'online', updated_at = NOW(),
+				hidden_at = NULL, hidden_by = NULL
 			WHERE agent_id = $1
 		`, enrollment.AgentID, enrollment.Hostname, enrollment.OSType, enrollment.OSVersion,
 			enrollment.OSBuild, enrollment.Platform, enrollment.PlatformFamily, enrollment.Architecture,

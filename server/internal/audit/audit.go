@@ -29,6 +29,8 @@ const (
 	ActionDeviceDelete         = "device_delete"
 	ActionDeviceDeleteInferred = "device_delete_inferred"
 	ActionDeviceUninstall      = "device_uninstall"
+	ActionDeviceHide           = "device_hide"
+	ActionDeviceUnhide         = "device_unhide"
 	ActionDeviceCertReissue    = "device_cert_reissue"
 
 	// User management actions
@@ -168,8 +170,11 @@ func (l *Logger) LogFromContextWithSeverity(c *gin.Context, action, resourceType
 	}
 
 	// Get user ID if authenticated - capture before goroutine
+	// audit_log.user_id is `UUID REFERENCES users(id)`. The static-API-key auth
+	// path sets userId to uuid.Nil, which matches no user row — leave UserID nil
+	// (system actor, stored as NULL) instead of causing an FK violation.
 	if userID, exists := c.Get("userId"); exists {
-		if uid, ok := userID.(uuid.UUID); ok {
+		if uid, ok := userID.(uuid.UUID); ok && uid != uuid.Nil {
 			entry.UserID = &uid
 		}
 	}

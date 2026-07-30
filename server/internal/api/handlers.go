@@ -397,24 +397,26 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 			if _, err := r.db.Pool().Exec(ctx, `
 				UPDATE devices SET status = 'online', last_seen = NOW(),
 				ca_cert_hash = $2, ca_cert_updated_at = NOW(),
-				gpu = COALESCE($3, gpu), storage = COALESCE($4, storage)
+				gpu = COALESCE($3, gpu), storage = COALESCE($4, storage),
+				hidden_at = NULL, hidden_by = NULL
 				WHERE id = $1`, deviceID, authPayload.CACertHash, gpuJSON, storageJSON); err != nil {
 				log.Printf("Error updating device %s status to online: %v", deviceID, err)
 			}
 		} else {
 			if _, err := r.db.Pool().Exec(ctx, `
 				UPDATE devices SET status = 'online', last_seen = NOW(),
-				gpu = COALESCE($2, gpu), storage = COALESCE($3, storage)
+				gpu = COALESCE($2, gpu), storage = COALESCE($3, storage),
+				hidden_at = NULL, hidden_by = NULL
 				WHERE id = $1`, deviceID, gpuJSON, storageJSON); err != nil {
 				log.Printf("Error updating device %s status to online: %v", deviceID, err)
 			}
 		}
 	} else if authPayload.CACertHash != "" {
-		if _, err := r.db.Pool().Exec(ctx, "UPDATE devices SET status = 'online', last_seen = NOW(), ca_cert_hash = $2, ca_cert_updated_at = NOW() WHERE id = $1 AND organization_id = $3", deviceID, authPayload.CACertHash, constants.CurrentOrganizationID); err != nil {
+		if _, err := r.db.Pool().Exec(ctx, "UPDATE devices SET status = 'online', last_seen = NOW(), ca_cert_hash = $2, ca_cert_updated_at = NOW(), hidden_at = NULL, hidden_by = NULL WHERE id = $1 AND organization_id = $3", deviceID, authPayload.CACertHash, constants.CurrentOrganizationID); err != nil {
 			log.Printf("Error updating device %s status to online: %v", deviceID, err)
 		}
 	} else {
-		if _, err := r.db.Pool().Exec(ctx, "UPDATE devices SET status = 'online', last_seen = NOW() WHERE id = $1 AND organization_id = $2", deviceID, constants.CurrentOrganizationID); err != nil {
+		if _, err := r.db.Pool().Exec(ctx, "UPDATE devices SET status = 'online', last_seen = NOW(), hidden_at = NULL, hidden_by = NULL WHERE id = $1 AND organization_id = $2", deviceID, constants.CurrentOrganizationID); err != nil {
 			log.Printf("Error updating device %s status to online: %v", deviceID, err)
 		}
 	}

@@ -114,7 +114,7 @@ func handleAgentWebSocketMTLS(services *Services) gin.HandlerFunc {
 
 		// Update device status to online
 		if _, err := services.DB.Pool().Exec(ctx,
-			"UPDATE devices SET status = 'online', last_seen = NOW() WHERE id = $1",
+			"UPDATE devices SET status = 'online', last_seen = NOW(), hidden_at = NULL, hidden_by = NULL WHERE id = $1",
 			deviceID,
 		); err != nil {
 			log.Printf("[mTLS] Error updating device %s status: %v", deviceID, err)
@@ -373,14 +373,14 @@ func handleAgentWebSocketWithCerts(services *Services) gin.HandlerFunc {
 		// Update device status
 		if authPayload.CACertHash != "" {
 			if _, err := services.DB.Pool().Exec(ctx,
-				"UPDATE devices SET status = 'online', last_seen = NOW(), ca_cert_hash = $2, ca_cert_updated_at = NOW() WHERE id = $1",
+				"UPDATE devices SET status = 'online', last_seen = NOW(), ca_cert_hash = $2, ca_cert_updated_at = NOW(), hidden_at = NULL, hidden_by = NULL WHERE id = $1",
 				deviceID, authPayload.CACertHash,
 			); err != nil {
 				log.Printf("Error updating device %s status: %v", deviceID, err)
 			}
 		} else {
 			if _, err := services.DB.Pool().Exec(ctx,
-				"UPDATE devices SET status = 'online', last_seen = NOW() WHERE id = $1",
+				"UPDATE devices SET status = 'online', last_seen = NOW(), hidden_at = NULL, hidden_by = NULL WHERE id = $1",
 				deviceID,
 			); err != nil {
 				log.Printf("Error updating device %s status: %v", deviceID, err)

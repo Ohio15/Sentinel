@@ -143,6 +143,18 @@ func enableDeviceHandler(services *Services) gin.HandlerFunc {
 	return router.enableDevice
 }
 
+// hide/unhide wire the audit logger (unlike disable/enable, which predate it)
+// so the display-only state change still leaves a trail.
+func hideDeviceHandler(services *Services) gin.HandlerFunc {
+	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub, audit: services.Audit}
+	return router.hideDevice
+}
+
+func unhideDeviceHandler(services *Services) gin.HandlerFunc {
+	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub, audit: services.Audit}
+	return router.unhideDevice
+}
+
 func pingAgentHandler(services *Services) gin.HandlerFunc {
 	router := &Router{config: services.Config, db: services.DB.AsDB(), cache: services.Redis, hub: services.Hub}
 	return router.pingAgent

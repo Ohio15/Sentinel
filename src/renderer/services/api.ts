@@ -201,12 +201,14 @@ class ApiService {
   }
 
   // Device endpoints
-  async getDevices(params?: { status?: string; search?: string; page?: number; pageSize?: number }) {
+  async getDevices(params?: { status?: string; search?: string; page?: number; pageSize?: number; includeHidden?: boolean }) {
     const stringParams: Record<string, string> = {};
     if (params?.status) stringParams.status = params.status;
     if (params?.search) stringParams.search = params.search;
     if (params?.page) stringParams.page = String(params.page);
     if (params?.pageSize) stringParams.pageSize = String(params.pageSize);
+    // Hidden devices are excluded server-side unless explicitly requested.
+    if (params?.includeHidden) stringParams.include_hidden = 'true';
     return this.get<unknown>('/devices', Object.keys(stringParams).length ? stringParams : undefined);
   }
 
@@ -220,6 +222,14 @@ class ApiService {
 
   async deleteDevice(id: string) {
     return this.delete(`/devices/${id}`);
+  }
+
+  async hideDevice(id: string) {
+    return this.post<{ success?: boolean }>(`/devices/${id}/hide`);
+  }
+
+  async unhideDevice(id: string) {
+    return this.post<{ success?: boolean }>(`/devices/${id}/unhide`);
   }
 
   async getDeviceMetrics(id: string, params?: { from?: string; to?: string; limit?: number }) {

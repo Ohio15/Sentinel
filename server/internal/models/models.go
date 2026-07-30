@@ -85,6 +85,9 @@ type Device struct {
 	Metadata        map[string]string `json:"metadata"`
 	ClientID        *uuid.UUID        `json:"clientId,omitempty"`
 	PowerManagement *PowerManagement  `json:"powerManagement,omitempty"`
+	// HiddenAt is set when an operator hides the device from the default list.
+	// Display-only — the agent keeps connecting. Cleared on agent check-in.
+	HiddenAt        *time.Time        `json:"hiddenAt,omitempty"`
 	CreatedAt       time.Time         `json:"createdAt"`
 	UpdatedAt       time.Time         `json:"updatedAt"`
 }

@@ -69,13 +69,14 @@ const linkStatusConfig: Record<string, { label: string; color: string }> = {
 };
 
 export function Devices({ onDeviceSelect }: DevicesProps) {
-  const { devices: rawDevices, loading, deleteDevice, disableDevice, enableDevice, uninstallDevice, forceUpdateDevice, updateDevice } = useDeviceStore();
+  const { devices: rawDevices, loading, deleteDevice, disableDevice, enableDevice, uninstallDevice, forceUpdateDevice, updateDevice, hideDevice, unhideDevice, fetchDevices } = useDeviceStore();
   const devices = Array.isArray(rawDevices) ? rawDevices : [];
   const { clients, currentClientId } = useClientStore();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [osFilter, setOsFilter] = useState<string>('all');
+  const [showHidden, setShowHidden] = useState(false);
 
   const getClientName = (clientId?: string) => {
     if (!clientId) return null;
@@ -404,6 +405,9 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
     return matchesSearch && matchesStatus && matchesType && matchesOs && matchesClient;
   });
 
+  // Hidden rows only ever reach the client when "Show hidden" is on.
+  const hiddenCount = filteredDevices.filter(device => !!device.hiddenAt).length;
+
   const handleDisable = async (id: string) => {
     try {
       await disableDevice(id);
@@ -447,6 +451,44 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
     }
   };
 
+  const handleHide = async (id: string) => {
+    setActionMenu(null);
+    setMenuPosition(null);
+    try {
+      await hideDevice(id);
+      setActionResult({ type: 'success', message: 'Device hidden. Use "Show hidden" to bring it back.' });
+      setTimeout(() => setActionResult(null), 3000);
+    } catch (error) {
+      console.error('Failed to hide device:', error);
+      setActionResult({ type: 'error', message: 'Failed to hide device.' });
+      setTimeout(() => setActionResult(null), 5000);
+    }
+  };
+
+  const handleUnhide = async (id: string) => {
+    setActionMenu(null);
+    setMenuPosition(null);
+    try {
+      await unhideDevice(id);
+      setActionResult({ type: 'success', message: 'Device is visible again.' });
+      setTimeout(() => setActionResult(null), 3000);
+    } catch (error) {
+      console.error('Failed to unhide device:', error);
+      setActionResult({ type: 'error', message: 'Failed to unhide device.' });
+      setTimeout(() => setActionResult(null), 5000);
+    }
+  };
+
+  const handleToggleShowHidden = (next: boolean) => {
+    setShowHidden(next);
+    // The server owns the hidden filter, so the toggle needs a refetch.
+    fetchDevices(currentClientId, true, next).catch((error) => {
+      console.error('Failed to refresh devices:', error);
+      setActionResult({ type: 'error', message: 'Failed to refresh device list.' });
+      setTimeout(() => setActionResult(null), 5000);
+    });
+  };
+
   const handleForceUpdate = async (id: string) => {
     setForceUpdating(id);
     setActionMenu(null);
@@ -469,6 +511,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
         <h1 className="text-2xl font-bold text-text-primary">Devices</h1>
         <span className="text-sm text-text-secondary">
           {filteredDevices.length} of {devices.length} devices
+          {hiddenCount > 0 && ` (${hiddenCount} hidden)`}
         </span>
       </div>
 
@@ -583,12 +626,23 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                 <option key={os} value={os}>{os}</option>
               ))}
             </select>
-            {(statusFilter !== 'all' || typeFilter !== 'all' || osFilter !== 'all') && (
+            <button
+              type="button"
+              onClick={() => handleToggleShowHidden(!showHidden)}
+              aria-pressed={showHidden}
+              className={`btn text-sm flex items-center gap-2 ${showHidden ? 'btn-primary' : 'btn-secondary'}`}
+              title={showHidden ? 'Hide hidden devices from the list' : 'Include hidden devices in the list'}
+            >
+              {showHidden ? <EyeIcon className="w-4 h-4" /> : <EyeOffIcon className="w-4 h-4" />}
+              Show hidden
+            </button>
+            {(statusFilter !== 'all' || typeFilter !== 'all' || osFilter !== 'all' || showHidden) && (
               <button
                 onClick={() => {
                   setStatusFilter('all');
                   setTypeFilter('all');
                   setOsFilter('all');
+                  if (showHidden) handleToggleShowHidden(false);
                 }}
                 className="btn btn-secondary text-sm"
               >
@@ -641,9 +695,24 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                 </thead>
                 <tbody>
                   {filteredDevices.map(device => (
-                    <tr key={device.id} className="cursor-pointer" onClick={() => onDeviceSelect(device.id)}>
+                    <tr
+                      key={device.id}
+                      data-hidden={device.hiddenAt ? 'true' : undefined}
+                      className={`cursor-pointer ${device.hiddenAt ? 'opacity-50' : ''}`}
+                      onClick={() => onDeviceSelect(device.id)}
+                    >
                       <td>
-                        <StatusBadge device={device} />
+                        <div className="flex items-center gap-2">
+                          <StatusBadge device={device} />
+                          {device.hiddenAt && (
+                            <span
+                              className="badge bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300"
+                              title={`Hidden on ${new Date(device.hiddenAt).toLocaleString()}`}
+                            >
+                              Hidden
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td>
                         <span className="text-sm text-text-primary">
@@ -771,6 +840,25 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                                   <UpdateIcon className="w-4 h-4" />
                                   Force Update
                                 </button>
+                                {device.hiddenAt ? (
+                                  <button
+                                    onClick={() => { void handleUnhide(device.id); }}
+                                    className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 text-text-primary flex items-center gap-2"
+                                    title="Show this device in the default device list"
+                                  >
+                                    <EyeIcon className="w-4 h-4" />
+                                    Unhide Device
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => { void handleHide(device.id); }}
+                                    className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 text-text-primary flex items-center gap-2"
+                                    title="Hide this device from the default device list (reversible)"
+                                  >
+                                    <EyeOffIcon className="w-4 h-4" />
+                                    Hide Device
+                                  </button>
+                                )}
                                 <div className="border-t border-border"></div>
                                 <button
                                   onClick={() => {
@@ -1478,6 +1566,14 @@ function EyeIcon({ className }: { className?: string }) {
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
       <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+    </svg>
+  );
+}
+
+function EyeOffIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
     </svg>
   );
 }

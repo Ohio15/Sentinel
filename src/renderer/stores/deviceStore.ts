@@ -65,6 +65,10 @@ export interface Device {
   clientId?: string | null;
   isDisabled?: boolean;
   disabledAt?: string;
+  // ISO timestamp set when an operator hides the device from the default list.
+  // Absent/null means the device is visible. The server auto-clears this when
+  // the agent next authenticates a new connection or re-enrolls.
+  hiddenAt?: string | null;
   powerManagement?: PowerManagement;
   createdAt: string;
   updatedAt: string;
@@ -134,11 +138,16 @@ interface DeviceState {
   metrics: DeviceMetrics[];
   loading: boolean;
   error: string | null;
+  // Sticky: every refresh (manual, periodic, focus, WS-triggered) reuses this
+  // so the visible list never silently changes its hidden-device policy.
+  includeHidden: boolean;
 
-  fetchDevices: (clientId?: string | null, showLoading?: boolean) => Promise<void>;
+  fetchDevices: (clientId?: string | null, showLoading?: boolean, includeHidden?: boolean) => Promise<void>;
   fetchDevice: (id: string) => Promise<void>;
   fetchMetrics: (deviceId: string, hours?: number) => Promise<void>;
   deleteDevice: (id: string) => Promise<void>;
+  hideDevice: (id: string) => Promise<void>;
+  unhideDevice: (id: string) => Promise<void>;
   disableDevice: (id: string) => Promise<void>;
   enableDevice: (id: string) => Promise<void>;
   uninstallDevice: (id: string) => Promise<void>;
@@ -157,12 +166,16 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
   metrics: [],
   loading: false,
   error: null,
+  includeHidden: false,
 
-  fetchDevices: async (clientId?: string | null, showLoading: boolean = true) => {
+  fetchDevices: async (clientId?: string | null, showLoading: boolean = true, includeHidden?: boolean) => {
+    // Omitting includeHidden keeps the last explicit choice (background refreshes).
+    const effectiveIncludeHidden = includeHidden === undefined ? get().includeHidden : includeHidden;
     if (showLoading) set({ loading: true, error: null });
+    if (effectiveIncludeHidden !== get().includeHidden) set({ includeHidden: effectiveIncludeHidden });
     try {
       // Pass undefined instead of null to get all devices
-      const result = await devicesService.list(clientId || undefined);
+      const result = await devicesService.list(clientId || undefined, effectiveIncludeHidden);
       const devices = Array.isArray(result) ? result as unknown as Device[] : [];
       set({ devices, ...(showLoading && { loading: false }) });
     } catch (error: unknown) {
@@ -201,6 +214,43 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
       set({ devices: devices.filter(d => d.id !== id) });
     } catch (error: unknown) {
       set({ error: error instanceof Error ? error.message : 'Unknown error' });
+    }
+  },
+
+  hideDevice: async (id: string) => {
+    try {
+      await devicesService.hide(id);
+      const { devices, selectedDevice, includeHidden } = get();
+      const hiddenAt = new Date().toISOString();
+      set({
+        // When the hidden view is off the row no longer belongs in the list;
+        // when it is on, keep it so the operator can unhide it right back.
+        devices: includeHidden
+          ? devices.map(d => (d.id === id ? { ...d, hiddenAt } : d))
+          : devices.filter(d => d.id !== id),
+        selectedDevice: selectedDevice?.id === id
+          ? { ...selectedDevice, hiddenAt }
+          : selectedDevice,
+      });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error' });
+      throw error;
+    }
+  },
+
+  unhideDevice: async (id: string) => {
+    try {
+      await devicesService.unhide(id);
+      const { devices, selectedDevice } = get();
+      set({
+        devices: devices.map(d => (d.id === id ? { ...d, hiddenAt: null } : d)),
+        selectedDevice: selectedDevice?.id === id
+          ? { ...selectedDevice, hiddenAt: null }
+          : selectedDevice,
+      });
+    } catch (error: unknown) {
+      set({ error: error instanceof Error ? error.message : 'Unknown error' });
+      throw error;
     }
   },
 
@@ -348,6 +398,13 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
           try {
             const newDevice = await devicesService.get(data.deviceId) as unknown as Device;
             if (newDevice) {
+              // The server auto-unhides when the agent authenticates a new
+              // connection, but a stale/hidden record must never be re-inserted
+              // into a list that is excluding hidden devices.
+              if (newDevice.hiddenAt && !get().includeHidden) {
+                console.log('[DeviceStore] Skipping hidden device from online event:', newDevice.hostname);
+                return;
+              }
               set({ devices: [...devices, { ...newDevice, status: 'online' as const }] });
               console.log('[DeviceStore] Added new device to store:', newDevice.hostname);
             }

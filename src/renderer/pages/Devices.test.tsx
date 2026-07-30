@@ -41,6 +41,24 @@ const mockEnableDevice = vi.fn();
 const mockUninstallDevice = vi.fn();
 const mockForceUpdateDevice = vi.fn();
 const mockUpdateDevice = vi.fn();
+const mockHideDevice = vi.fn().mockResolvedValue(undefined);
+const mockUnhideDevice = vi.fn().mockResolvedValue(undefined);
+const mockFetchDevices = vi.fn().mockResolvedValue(undefined);
+
+const storeState = (devices: any[] = mockDevices, overrides: Record<string, unknown> = {}) => ({
+  devices,
+  loading: false,
+  deleteDevice: mockDeleteDevice,
+  disableDevice: mockDisableDevice,
+  enableDevice: mockEnableDevice,
+  uninstallDevice: mockUninstallDevice,
+  forceUpdateDevice: mockForceUpdateDevice,
+  updateDevice: mockUpdateDevice,
+  hideDevice: mockHideDevice,
+  unhideDevice: mockUnhideDevice,
+  fetchDevices: mockFetchDevices,
+  ...overrides,
+});
 
 vi.mock('../stores/deviceStore', () => ({
   useDeviceStore: vi.fn(() => ({
@@ -52,6 +70,9 @@ vi.mock('../stores/deviceStore', () => ({
     uninstallDevice: mockUninstallDevice,
     forceUpdateDevice: mockForceUpdateDevice,
     updateDevice: mockUpdateDevice,
+    hideDevice: mockHideDevice,
+    unhideDevice: mockUnhideDevice,
+    fetchDevices: mockFetchDevices,
   })),
   Device: {},
 }));
@@ -219,5 +240,97 @@ describe('Devices Page', () => {
     render(<Devices onDeviceSelect={mockOnDeviceSelect} />);
     expect(screen.getByText('test-pc-01')).toBeInTheDocument();
     expect(screen.getByText('test-server-01')).toBeInTheDocument();
+  });
+
+  describe('hide / unhide device', () => {
+    const hiddenDevice = {
+      ...mockDevices[1],
+      hiddenAt: '2026-07-01T12:00:00.000Z',
+    };
+
+    const openActionMenu = async (index: number) => {
+      const menuButtons = screen.getAllByTitle('Device actions');
+      fireEvent.click(menuButtons[index]);
+      await waitFor(() => expect(screen.getByText('Force Update')).toBeInTheDocument());
+    };
+
+    const applyStore = async (devices: any[]) => {
+      const deviceStore = await import('../stores/deviceStore');
+      vi.mocked(deviceStore.useDeviceStore).mockReturnValue(storeState(devices) as any);
+    };
+
+    beforeEach(() => {
+      mockHideDevice.mockResolvedValue(undefined);
+      mockUnhideDevice.mockResolvedValue(undefined);
+      mockFetchDevices.mockResolvedValue(undefined);
+    });
+
+    it('calls the store hide action from the kebab menu', async () => {
+      await applyStore(mockDevices);
+      render(<Devices onDeviceSelect={mockOnDeviceSelect} />);
+
+      await openActionMenu(0);
+      fireEvent.click(screen.getByText('Hide Device'));
+
+      await waitFor(() => expect(mockHideDevice).toHaveBeenCalledWith(mockDevices[0].id));
+      expect(mockOnDeviceSelect).not.toHaveBeenCalled();
+    });
+
+    it('does not render hidden devices by default (server excludes them)', async () => {
+      // Default fetch omits hidden devices, so the store never holds one.
+      await applyStore(mockDevices);
+      const { container } = render(<Devices onDeviceSelect={mockOnDeviceSelect} />);
+
+      expect(container.querySelector('tr[data-hidden="true"]')).toBeNull();
+      expect(screen.queryByText('Hidden')).toBeNull();
+      expect(screen.getByText(/2 of 2 devices/)).toBeInTheDocument();
+    });
+
+    it('refetches with hidden devices included when the toggle is turned on', async () => {
+      await applyStore(mockDevices);
+      render(<Devices onDeviceSelect={mockOnDeviceSelect} />);
+
+      fireEvent.click(screen.getByText('Show hidden'));
+
+      await waitFor(() => expect(mockFetchDevices).toHaveBeenCalledWith(null, true, true));
+    });
+
+    it('renders hidden devices dimmed when the toggle is on', async () => {
+      await applyStore([mockDevices[0], hiddenDevice]);
+      const { container } = render(<Devices onDeviceSelect={mockOnDeviceSelect} />);
+
+      fireEvent.click(screen.getByText('Show hidden'));
+
+      const hiddenRow = container.querySelector('tr[data-hidden="true"]');
+      expect(hiddenRow).not.toBeNull();
+      expect(hiddenRow?.className).toContain('opacity-50');
+      expect(screen.getByText('Hidden')).toBeInTheDocument();
+      // The hidden row is still interactive.
+      fireEvent.click(screen.getByText('test-server-01'));
+      expect(mockOnDeviceSelect).toHaveBeenCalledWith(hiddenDevice.id);
+    });
+
+    it('resets the hidden toggle via Clear Filters', async () => {
+      await applyStore([mockDevices[0], hiddenDevice]);
+      render(<Devices onDeviceSelect={mockOnDeviceSelect} />);
+
+      fireEvent.click(screen.getByText('Show hidden'));
+      await waitFor(() => expect(screen.getByText('Clear Filters')).toBeInTheDocument());
+
+      fireEvent.click(screen.getByText('Clear Filters'));
+
+      await waitFor(() => expect(mockFetchDevices).toHaveBeenLastCalledWith(null, true, false));
+    });
+
+    it('calls the store unhide action for a hidden device', async () => {
+      await applyStore([mockDevices[0], hiddenDevice]);
+      render(<Devices onDeviceSelect={mockOnDeviceSelect} />);
+
+      await openActionMenu(1);
+      expect(screen.queryByText('Hide Device')).toBeNull();
+      fireEvent.click(screen.getByText('Unhide Device'));
+
+      await waitFor(() => expect(mockUnhideDevice).toHaveBeenCalledWith(hiddenDevice.id));
+    });
   });
 });
