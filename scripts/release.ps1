@@ -421,9 +421,15 @@ if (-not $DeployOnly) {
     Write-Host "Committing changes..." -ForegroundColor Yellow
     foreach ($f in @("agent/cmd/sentinel-agent/main.go", "agent/cmd/sentinel-watchdog/main.go",
                      "agent/cmd/sentinel-watchdog/main_other.go", "agent/cmd/sentinel-bootstrap/main.go",
-                     "agent/version.json", "installers/version.json", "release/agent/version.json")) {
+                     "agent/version.json", "installers/version.json")) {
         git -C $ProjectRoot add $f
     }
+    # release/agent/version.json is tracked but sits under the ignored release/
+    # directory, so a plain `git add` on it exits 1 ("paths are ignored"). The
+    # pre-rewrite script never checked git exit codes, so this add failed
+    # SILENTLY for every release and the tracked file drifted. -f is correct and
+    # narrow here: one known, explicitly tracked, human-readable JSON file.
+    git -C $ProjectRoot add -f release/agent/version.json
     foreach ($a in $Artifacts) {
         git -C $ProjectRoot add ([IO.Path]::GetRelativePath($ProjectRoot, "$($a.Path).manifest.json"))
     }
