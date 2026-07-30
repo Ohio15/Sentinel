@@ -1,0 +1,8 @@
+{
+  "version": "1.77.41",
+  "platform": "linux",
+  "arch": "amd64",
+  "sha256": "ca612468f68ffca07228808bc40200d722e84a9b52bd49fcf8c356159b88d87d",
+  "signedDowngrade": false,
+  "signature": "NmDoeNMk6hdHJrhfq6WOpGMPZNQhPMjDihX0dy3wDwHFBWAyf5cLBv8pmsP8N8JmzXA+woIZGa+DmCv2cvkHBg=="
+}

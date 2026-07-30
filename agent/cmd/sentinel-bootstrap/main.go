@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-var Version = "1.0.0"
+var Version = "1.77.41"
 
 // Embedded configuration placeholders - replaced at download time
 // Format: SENTINEL_BOOTSTRAP_<KEY>:<64-char-value-padded-with-underscores>:END

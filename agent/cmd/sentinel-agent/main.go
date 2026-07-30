@@ -45,7 +45,7 @@ import (
 	"github.com/sentinel/agent/internal/recert"
 )
 
-var Version = "1.77.39"
+var Version = "1.77.41"
 
 const ServiceName = "SentinelAgent"
 

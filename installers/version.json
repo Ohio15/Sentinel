@@ -1,12 +1,13 @@
 {
-  "version": "1.77.39",
-  "releaseDate": "2026-06-19",
-  "changelog": "Aligned to agent/version.json 1.77.39 (lockstep reconciliation, no forward bump). Convention reminder: installers/version.json reflects the published agent binary version; package.json reflects the server/repo version. They may diverge for server-only releases. Actual fleet updates remain gated by agent_releases DB rows \u00e2\u20ac\u201d confirm a 1.77.39 row exists before announcing.",
+  "version": "1.77.41",
+  "releaseDate": "2026-07-30",
+  "changelog": "First signed release (RW-1): Ed25519 signed update manifests. Agents running this build verify every future update against the embedded release key and fail closed on unsigned or tampered artifacts.",
   "platforms": [
     "windows",
     "linux",
     "darwin"
   ],
   "minAppVersion": "1.50.0",
-  "signature": ""
+  "signature": "9oRYA3/2LbMQuAUqlx/1s+WIVfjS4nwPmCzv9aM5d/x7F7q+GPEuwu6Nte1bS8+KouXPHZ7yfsMYXDdAcbr7AA==",
+  "signingPublicKeyHex": "aac3c014a56747309f21a8733fa589f951827edf82cb40eb1e4893e229347e70"
 }

@@ -1,12 +1,13 @@
 {
-  "version": "1.77.39",
-  "releaseDate": "2026-06-19",
-  "changelog": "Build + deploy infrastructure cycle (no functional agent changes vs 1.77.38). Unblocks the v1.77.38 build chain that never published: #29 migration 058 idempotent for upgrade-in-place over a preexisting agent_health schema, #30 desktop package darwin headless stub so the cross-compile matrix succeeds for macOS amd64+arm64, #31 enrollment-paths cert issuance now subject to the same per-agent rate limit as re-cert (closes #22 H2/H3 gap), #32 macOS Distribution.xml embedded scripts wrapped in CDATA so productbuild's XML parser stops rejecting the JS '<' comparison, #33 capture tests skip cleanly when DXGI/GPU unavailable on CI runners. Server-side patcher fix from PR #27 (#26) is already live on production at version 1.78.0.",
+  "version": "1.77.41",
+  "releaseDate": "2026-07-30",
+  "changelog": "First signed release (RW-1): Ed25519 signed update manifests. Agents running this build verify every future update against the embedded release key and fail closed on unsigned or tampered artifacts.",
   "platforms": [
     "windows",
     "linux",
     "darwin"
   ],
   "minAppVersion": "1.50.0",
-  "signature": ""
+  "signature": "9oRYA3/2LbMQuAUqlx/1s+WIVfjS4nwPmCzv9aM5d/x7F7q+GPEuwu6Nte1bS8+KouXPHZ7yfsMYXDdAcbr7AA==",
+  "signingPublicKeyHex": "aac3c014a56747309f21a8733fa589f951827edf82cb40eb1e4893e229347e70"
 }

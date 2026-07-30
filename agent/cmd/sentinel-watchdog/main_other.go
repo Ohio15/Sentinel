@@ -17,7 +17,7 @@ import (
 
 // Version is set via -ldflags at build time; mirrored from the real main.go
 // so that builds on either side of the build constraint embed the same value.
-var Version = "dev"
+var Version = "1.77.41"
 
 func main() {
 	fmt.Fprintf(os.Stderr,

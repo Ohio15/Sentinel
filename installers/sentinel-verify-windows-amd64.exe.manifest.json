@@ -1,0 +1,8 @@
+{
+  "version": "1.77.41",
+  "platform": "windows",
+  "arch": "amd64",
+  "sha256": "61cbb269e2a4f67bd75a2a00ae482eedab7c9dc39be9b6033e87f9f9d07d2ed7",
+  "signedDowngrade": false,
+  "signature": "tUaJUoIkgkCgXvMn+Das+F3Zk5cDynv8NWE8xcCApsS+lACsKLdUy4nU3c93yReLazkMxuS+UHAyR/5m1TrECw=="
+}
