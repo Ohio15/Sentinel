@@ -55,7 +55,19 @@ services:
     volumes:
       - ./installers:/app/installers:ro
       - ./agent/version.json:/app/agent/version.json:ro
-      - ./release/agent:/app/release/agent:ro
+      # release/agent is deliberately NOT mounted. It is a canonical artifact
+      # search root (installer_paths.go), and findPlatformBinary falls back to
+      # the unsuffixed "sentinel-<kind>" name — so the stale, unsigned,
+      # linux-amd64 release/agent/sentinel-agent tracked in git was being served
+      # as the agent binary for linux-arm64, darwin-amd64 and darwin-arm64.
+      # Under signed updates (RW-1) that is worse than serving nothing: those
+      # agents are told the new version is available, download wrong-arch
+      # unsigned bytes, and fail closed permanently. With the mount gone the
+      # lookup misses and the server correctly answers available:false.
+      # Everything the server actually reads from here exists in ./installers
+      # (sentinel-installer-template.exe, version.json — verified identical by
+      # sha256); latest.yml/agent-latest.yml are legacy electron-updater files
+      # no server code reads.
       - ./certs:/certs:ro
       - agent-certs:/app/agent-certs
     depends_on:
