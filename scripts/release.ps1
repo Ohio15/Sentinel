@@ -569,7 +569,25 @@ if ($Deploy) {
         # scanned: installers/ (the server's first search root) and
         # release/agent (also bind-mounted, and the source of the unsuffixed
         # fallback the server uses for linux-arm64 and darwin-*).
-        $stale = @(Get-ServedArtifactProblems -Roots @($ServeDir, "$DeployTree/release/agent") `
+        # Scan the roots the SERVER can actually read, not every directory that
+        # looks like one. release/agent is a canonical search root in code, but
+        # it is no longer mounted into the backend, so files sitting there are
+        # unreachable and must not block a deploy. If it is ever remounted it
+        # becomes a serving root again — so ask the container rather than
+        # assuming, and fail STRICT (scan it) if that cannot be determined.
+        $servingRoots = @($ServeDir)
+        $fallbackRoot = "$DeployTree/release/agent"
+        if (Test-Path $fallbackRoot) {
+            $isMounted = $true
+            try {
+                $mounts = docker inspect sentinel-backend --format '{{range .Mounts}}{{.Destination}} {{end}}'
+                $isMounted = ("$mounts" -match '/app/release/agent')
+            }
+            catch { $isMounted = $true }
+            if ($isMounted) { $servingRoots += $fallbackRoot }
+            else { Write-Host "  (release/agent exists on disk but is not mounted into the backend — not a serving root)" -ForegroundColor DarkGray }
+        }
+        $stale = @(Get-ServedArtifactProblems -Roots $servingRoots `
                        -ExpectedVersion $Version `
                        -HashProvider { param($p) (Get-FileHash -Algorithm SHA256 $p).Hash.ToLowerInvariant() } `
                        -Verifier {
