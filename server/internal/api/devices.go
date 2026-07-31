@@ -757,8 +757,7 @@ func (r *Router) enrollAgent(c *gin.Context) {
 				total_memory = $13, boot_time = to_timestamp($14), gpu = $15, storage = $16,
 				serial_number = $17, manufacturer = $18, model = $19, domain = $20,
 				agent_version = $21, ip_address = $22, mac_address = $23,
-				last_seen = NOW(), status = 'online', updated_at = NOW(),
-				hidden_at = NULL, hidden_by = NULL
+				last_seen = NOW(), status = 'online', updated_at = NOW()
 			WHERE agent_id = $1
 		`, enrollment.AgentID, enrollment.Hostname, enrollment.OSType, enrollment.OSVersion,
 			enrollment.OSBuild, enrollment.Platform, enrollment.PlatformFamily, enrollment.Architecture,
@@ -771,6 +770,12 @@ func (r *Router) enrollAgent(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update device"})
 			return
 		}
+
+		// A hidden device that re-enrolls is restored to the device list, with
+		// the restore surfaced as an alert + audit entry. No-op for devices that
+		// were not hidden. Only the existing-device branch reaches this — newly
+		// auto-enrolled devices are never hidden to begin with.
+		autoUnhideOnReconnect(ctx, r.db.Pool(), r.hub, existingID, unhideTriggerEnroll)
 
 		// Generate a kill token for re-enrollment (rotates on every enroll)
 		killTokenPlain, killTokenHash, killErr := generateKillToken()

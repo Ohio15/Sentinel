@@ -31,6 +31,7 @@ const (
 	ActionDeviceUninstall      = "device_uninstall"
 	ActionDeviceHide           = "device_hide"
 	ActionDeviceUnhide         = "device_unhide"
+	ActionDeviceAutoUnhide     = "device_auto_unhide"
 	ActionDeviceCertReissue    = "device_cert_reissue"
 
 	// User management actions
