@@ -105,7 +105,7 @@ func agentHasActiveClientCert(ctx context.Context, pool *pgxpool.Pool, agentID s
 func evaluateAgentCertBinding(ctx context.Context, pool *pgxpool.Pool, agentID, clientIP string, enforce bool) (reject bool) {
 	holdsCert, err := agentHasActiveClientCert(ctx, pool, agentID)
 	if err != nil {
-		log.Printf("[CERT-BINDING] cert lookup failed for agent %s from %s: %v — allowing (fail-open)", agentID, clientIP, err)
+		log.Printf("[CERT-BINDING] cert lookup failed for agent %s from %s: %v — allowing (fail-open)", sanitizeForLog(agentID), clientIP, err)
 		return false
 	}
 

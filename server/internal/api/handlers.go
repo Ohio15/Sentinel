@@ -221,7 +221,7 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	}
 
 	if !tokenValid {
-		log.Printf("[WS] Invalid/revoked token from %s for agent %s", c.ClientIP(), authPayload.AgentID)
+		log.Printf("[WS] Invalid/revoked token from %s for agent %s", c.ClientIP(), sanitizeForLog(authPayload.AgentID))
 		conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Invalid token"}`)})
 		conn.Close()
 		return
@@ -248,7 +248,7 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	// is on we reject and the agent must use direct mTLS. This runs before any
 	// auto-enroll / cert-issuance side effects so an enforced reject is clean.
 	if evaluateAgentCertBinding(context.Background(), r.db.Pool(), authPayload.AgentID, c.ClientIP(), r.config.EnforceAgentCertBinding) {
-		log.Printf("[CERT-BINDING] REJECTED agent %s from %s: enforcement on and agent holds an active client cert — must use direct mTLS", authPayload.AgentID, c.ClientIP())
+		log.Printf("[CERT-BINDING] REJECTED agent %s from %s: enforcement on and agent holds an active client cert — must use direct mTLS", sanitizeForLog(authPayload.AgentID), c.ClientIP())
 		conn.WriteJSON(ws.Message{Type: ws.MsgTypeAuthResponse, Payload: json.RawMessage(`{"success":false,"error":"Certificate-bound agent must authenticate via direct mTLS"}`)})
 		conn.Close()
 		return
@@ -267,8 +267,8 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 				authPayload.DeviceInfo.MACAddress).Scan(&deviceID, &isDisabled)
 			if macErr == nil {
 				// Found device by MAC - update agent_id to new hardware fingerprint
-				log.Printf("Migrating device %s from old agent_id to new fingerprint %s (matched by MAC %s)",
-					deviceID, authPayload.AgentID, authPayload.DeviceInfo.MACAddress)
+				log.Printf("Migrating device %s from old agent_id to new fingerprint %s (matched by MAC %q)",
+					deviceID, sanitizeForLog(authPayload.AgentID), authPayload.DeviceInfo.MACAddress)
 				_, updateErr := r.db.Pool().Exec(ctx,
 					"UPDATE devices SET agent_id = $1 WHERE id = $2 AND organization_id = $3",
 					authPayload.AgentID, deviceID, constants.CurrentOrganizationID)
@@ -281,13 +281,13 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 	}
 	if err != nil {
 		// Device not found - auto-enroll as a new device
-		log.Printf("Device not found for agent %s, auto-enrolling...", authPayload.AgentID)
+		log.Printf("Device not found for agent %s, auto-enrolling...", sanitizeForLog(authPayload.AgentID))
 		deviceID = uuid.New()
 		var insertErr error
 		if authPayload.DeviceInfo != nil {
 			// Use device info from agent for proper auto-enrollment
-			log.Printf("Auto-enrolling with device info: hostname=%s, platform=%s",
-				authPayload.DeviceInfo.Hostname, authPayload.DeviceInfo.Platform)
+			log.Printf("Auto-enrolling with device info: hostname=%s, platform=%q",
+				sanitizeForLog(authPayload.DeviceInfo.Hostname), authPayload.DeviceInfo.Platform)
 
 			// Convert GPU and Storage to JSON for database storage
 			gpuJSON, _ := json.Marshal(authPayload.DeviceInfo.GPU)
@@ -322,7 +322,7 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 			conn.Close()
 			return
 		}
-		log.Printf("Auto-enrolled device %s with ID %s", authPayload.AgentID, deviceID)
+		log.Printf("Auto-enrolled device %s with ID %s", sanitizeForLog(authPayload.AgentID), deviceID)
 	}
 
 	// Check if device is disabled
@@ -348,12 +348,12 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 			// Fail-closed: rate limit DB lookup failure means we can't prove
 			// the agent is under budget. Don't issue. Agent falls back to
 			// existing token auth which already proved valid above.
-			log.Printf("[PKI] Rate limit check failed for agent %s: %v — skipping cert issuance", authPayload.AgentID, rateErr)
+			log.Printf("[PKI] Rate limit check failed for agent %s: %v — skipping cert issuance", sanitizeForLog(authPayload.AgentID), rateErr)
 		case !allowed:
 			log.Printf("[PKI] Agent %s over cert issuance rate limit (retry after %s) — skipping issuance, token auth still valid",
 				authPayload.AgentID, retryAfter.Round(time.Second))
 		default:
-			log.Printf("[PKI] Issuing client certificate for agent %s", authPayload.AgentID)
+			log.Printf("[PKI] Issuing client certificate for agent %s", sanitizeForLog(authPayload.AgentID))
 			bundle, err := r.pki.IssueClientCertificate(
 				ctx,
 				authPayload.AgentID,
@@ -362,7 +362,7 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 				r.config.CertValidityYears,
 			)
 			if err != nil {
-				log.Printf("[PKI] Failed to issue certificate for agent %s: %v", authPayload.AgentID, err)
+				log.Printf("[PKI] Failed to issue certificate for agent %s: %v", sanitizeForLog(authPayload.AgentID), err)
 				// Continue without certificate - agent can still function with token auth
 			} else {
 				authRespPayload["clientCert"] = bundle.ClientCert
@@ -460,14 +460,14 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 				// the release pipeline never populated agent_releases.
 				releaseStatus := r.getAgentReleaseStatus(ctx)
 				if !releaseStatus.HasReleaseRow {
-					log.Printf("Suppressing update notification for agent %s (no agent_releases row for %s — release pipeline gap)", authPayload.AgentID, latestVersion)
+					log.Printf("Suppressing update notification for agent %s (no agent_releases row for %s — release pipeline gap)", sanitizeForLog(authPayload.AgentID), latestVersion)
 				} else if osType == "linux" && !isNewerVersion(agentVersion, "1.71.99") {
 					// Linux agents below v1.72.0 have completely broken self-update
 					// (hardcoded Windows paths, no execute_command support). Don't send
 					// update notifications — they just trigger a useless download storm.
-					log.Printf("Suppressing update notification for agent %s (Linux v%s < v1.72.0, requires manual update)", authPayload.AgentID, agentVersion)
+					log.Printf("Suppressing update notification for agent %s (Linux %q < v1.72.0, requires manual update)", sanitizeForLog(authPayload.AgentID), agentVersion)
 				} else if r.hasRecentUpdateFailure(ctx, authPayload.AgentID, latestVersion) {
-					log.Printf("Suppressing update notification for agent %s (recent update failure, 30min cooldown)", authPayload.AgentID)
+					log.Printf("Suppressing update notification for agent %s (recent update failure, 30min cooldown)", sanitizeForLog(authPayload.AgentID))
 				} else {
 					ackMsg, _ := json.Marshal(map[string]interface{}{
 						"type": ws.MsgTypeHeartbeatAck,
@@ -477,7 +477,7 @@ func (r *Router) handleAgentWebSocket(c *gin.Context) {
 						},
 					})
 					r.hub.SendToAgent(authPayload.AgentID, ackMsg)
-					log.Printf("Proactive update notification for agent %s: %s -> %s", authPayload.AgentID, agentVersion, latestVersion)
+					log.Printf("Proactive update notification for agent %s: %q -> %s", sanitizeForLog(authPayload.AgentID), agentVersion, latestVersion)
 
 					// SEC-007: the former server-pushed force-update path
 					// (sendForceUpdateCommand) has been removed. It emitted a
@@ -536,7 +536,7 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 		if err := json.Unmarshal(message, &heartbeat); err != nil {
 			log.Printf("Failed to unmarshal heartbeat: %v, raw: %s", err, string(message))
 		}
-		log.Printf("Heartbeat from %s: version=%q", agentID, heartbeat.AgentVersion)
+		log.Printf("Heartbeat from %s: version=%q", sanitizeForLog(agentID), heartbeat.AgentVersion)
 
 		// Best-effort agent_health update — failures are logged but don't gate
 		// the heartbeat path. Even when LayerState is nil this populates
@@ -551,7 +551,7 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 			if err := r.db.Pool().QueryRow(ctx, "SELECT COALESCE(agent_version, ''), COALESCE(hostname, '') FROM devices WHERE id = $1", deviceID).Scan(&previousVersion, &hostname); err == nil {
 				// Detect rollback: if previous version is newer than current, it's a rollback
 				if previousVersion != "" && isNewerVersion(previousVersion, heartbeat.AgentVersion) {
-					log.Printf("ALERT: Agent rollback detected on %s (%s): %s -> %s", hostname, agentID, previousVersion, heartbeat.AgentVersion)
+					log.Printf("ALERT: Agent rollback detected on %s (%s): %q -> %q", sanitizeForLog(hostname), sanitizeForLog(agentID), previousVersion, heartbeat.AgentVersion)
 					r.createAgentRollbackAlert(ctx, deviceID, agentID, hostname, previousVersion, heartbeat.AgentVersion)
 				}
 			}
@@ -577,7 +577,7 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 			ackPayload["updateAvailable"] = true
 			ackPayload["latestVersion"] = releaseVer
 			ackPayload["rolloutId"] = rolloutID
-			log.Printf("[Rollouts] dispatched rollout %s -> agent %s (%s -> %s)", rolloutID, agentID, heartbeat.AgentVersion, releaseVer)
+			log.Printf("[Rollouts] dispatched rollout %s -> agent %s (%q -> %s)", rolloutID, sanitizeForLog(agentID), heartbeat.AgentVersion, releaseVer)
 			ackMsg, _ := json.Marshal(map[string]interface{}{
 				"type":    ws.MsgTypeHeartbeatAck,
 				"payload": ackPayload,
@@ -606,16 +606,16 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 				// Don't tell this agent about updates — it can't apply them
 			} else if recentFailure {
 				// Don't tell this agent about updates — it recently failed, back off
-				log.Printf("Agent %s update suppressed for 30min (recent failure)", agentID)
+				log.Printf("Agent %s update suppressed for 30min (recent failure)", sanitizeForLog(agentID))
 			} else if noRelease {
 				// Don't tell this agent about updates — server has no published release to serve
-				log.Printf("Agent %s update suppressed (no agent_releases row for %s — release pipeline gap)", agentID, latestVersion)
+				log.Printf("Agent %s update suppressed (no agent_releases row for %s — release pipeline gap)", sanitizeForLog(agentID), latestVersion)
 			} else {
 				ackPayload["updateAvailable"] = true
 				ackPayload["latestVersion"] = latestVersion
 			}
 			suppressed := (deviceOSType == "linux" && !isNewerVersion(heartbeat.AgentVersion, "1.71.99")) || recentFailure || noRelease
-			log.Printf("Agent %s has update available: %s -> %s (os=%s, suppressed=%v)", agentID, heartbeat.AgentVersion, latestVersion, deviceOSType, suppressed)
+			log.Printf("Agent %s has update available: %q -> %s (os=%q, suppressed=%v)", sanitizeForLog(agentID), heartbeat.AgentVersion, latestVersion, deviceOSType, suppressed)
 		} else if heartbeat.AgentVersion != "" {
 			// Agent is at latest version — auto-resolve any stale update failure alerts
 			if result, err := r.db.Pool().Exec(ctx, `
@@ -623,7 +623,7 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 				WHERE device_id = $1 AND status = 'open'
 				  AND (title LIKE '%Download Failed%' OR title LIKE '%Update Loop%' OR title LIKE '%Rolled Back%')
 			`, deviceID); err == nil && result.RowsAffected() > 0 {
-				log.Printf("Auto-resolved %d update alert(s) for agent %s (now at latest %s)", result.RowsAffected(), agentID, heartbeat.AgentVersion)
+				log.Printf("Auto-resolved %d update alert(s) for agent %s (now at latest %q)", result.RowsAffected(), sanitizeForLog(agentID), heartbeat.AgentVersion)
 			}
 		}
 
@@ -664,7 +664,7 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 			} `json:"data"`
 		}
 		if err := json.Unmarshal(message, &metricsMsg); err != nil {
-			log.Printf("Error parsing metrics from %s: %v", agentID, err)
+			log.Printf("Error parsing metrics from %s: %v", sanitizeForLog(agentID), err)
 			return
 		}
 		m := metricsMsg.Data
@@ -735,7 +735,7 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 	case ws.MsgTypeResponse:
 		// Agent sends response data at root level, not in payload field
 		// Parse from raw message instead of msg.Payload
-		log.Printf("[Agent] Response received from %s: %s", agentID, string(message))
+		log.Printf("[Agent] Response received from %s: %q", sanitizeForLog(agentID), string(message))
 		var response struct {
 			Type      string          `json:"type"`
 			RequestID string          `json:"requestId"`
@@ -830,10 +830,10 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 			Signal    json.RawMessage `json:"signal"`
 		}
 		if err := json.Unmarshal(message, &signal); err != nil {
-			log.Printf("[WebRTC] Failed to parse webrtc_signal from %s: %v", agentID, err)
+			log.Printf("[WebRTC] Failed to parse webrtc_signal from %s: %v", sanitizeForLog(agentID), err)
 			return
 		}
-		log.Printf("[WebRTC] Signal from agent %s for session %s", agentID, signal.SessionID)
+		log.Printf("[WebRTC] Signal from agent %s for session %q", sanitizeForLog(agentID), signal.SessionID)
 		broadcastMsg, _ := json.Marshal(map[string]interface{}{
 			"type":      ws.MsgTypeWebRTCSignal,
 			"deviceId":  deviceID,
@@ -851,7 +851,7 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 			Error    string `json:"error"`
 		}
 		if err := json.Unmarshal(message, &ackData); err != nil {
-			log.Printf("[Certs] Failed to parse cert_update_ack from %s: %v", agentID, err)
+			log.Printf("[Certs] Failed to parse cert_update_ack from %s: %v", sanitizeForLog(agentID), err)
 			return
 		}
 
@@ -870,7 +870,7 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 		}
 
 		if ackData.Success {
-			log.Printf("[Certs] Agent %s confirmed certificate update (hash: %s...)", agentID, ackData.CertHash[:8])
+			log.Printf("[Certs] Agent %s confirmed certificate update (hash: %s...)", sanitizeForLog(agentID), ackData.CertHash[:8])
 			// Update database to record distribution
 			if _, err := r.db.Pool().Exec(ctx, `
 				UPDATE devices SET
@@ -879,10 +879,10 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 					ca_cert_updated_at = NOW()
 				WHERE agent_id = $2
 			`, ackData.CertHash, agentID); err != nil {
-				log.Printf("[Certs] Failed to update device cert status for %s: %v", agentID, err)
+				log.Printf("[Certs] Failed to update device cert status for %s: %v", sanitizeForLog(agentID), err)
 			}
 		} else {
-			log.Printf("[Certs] Agent %s failed to update certificate: %s", agentID, ackData.Error)
+			log.Printf("[Certs] Agent %s failed to update certificate: %q", sanitizeForLog(agentID), ackData.Error)
 		}
 
 	case ws.MsgTypeUSBDeviceEvent:
@@ -918,7 +918,7 @@ func (r *Router) handleAgentMessage(agentID string, deviceID uuid.UUID, message 
 		}
 
 	default:
-		log.Printf("[Agent] Unhandled message type from %s: %s", agentID, msg.Type)
+		log.Printf("[Agent] Unhandled message type from %s: %q", sanitizeForLog(agentID), msg.Type)
 	}
 }
 
@@ -1013,7 +1013,7 @@ func (r *Router) handleAgentAlert(ctx context.Context, deviceID uuid.UUID, agent
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(message, &alertMsg); err != nil {
-		log.Printf("[AgentAlert] Failed to parse alert from %s: %v", agentID, err)
+		log.Printf("[AgentAlert] Failed to parse alert from %s: %v", sanitizeForLog(agentID), err)
 		return
 	}
 
@@ -1035,11 +1035,11 @@ func (r *Router) handleAgentAlert(ctx context.Context, deviceID uuid.UUID, agent
 		title = "Agent Alert"
 	}
 	if alertMessage == "" {
-		log.Printf("[AgentAlert] Empty alert message from %s, ignoring", agentID)
+		log.Printf("[AgentAlert] Empty alert message from %s, ignoring", sanitizeForLog(agentID))
 		return
 	}
 
-	log.Printf("[AgentAlert] %s from %s: [%s] %s - %s", alertMsg.Type, agentID, severity, title, alertMessage)
+	log.Printf("[AgentAlert] %q from %s: [%s] %q - %q", alertMsg.Type, sanitizeForLog(agentID), severity, title, alertMessage)
 
 	// Get hostname for alert context
 	var hostname string
@@ -1053,7 +1053,7 @@ func (r *Router) handleAgentAlert(ctx context.Context, deviceID uuid.UUID, agent
 		AND created_at > NOW() - INTERVAL '15 minutes'
 	`, deviceID, title).Scan(&existingCount)
 	if existingCount > 0 {
-		log.Printf("[AgentAlert] Duplicate alert suppressed for %s: %s", agentID, title)
+		log.Printf("[AgentAlert] Duplicate alert suppressed for %s: %q", sanitizeForLog(agentID), title)
 		return
 	}
 
@@ -1064,7 +1064,7 @@ func (r *Router) handleAgentAlert(ctx context.Context, deviceID uuid.UUID, agent
 		VALUES ($1, $2, $3, $4, $5, 'open', $6, NOW())
 	`, alertID, deviceID, severity, title, alertMessage, constants.CurrentOrganizationID)
 	if err != nil {
-		log.Printf("[AgentAlert] Failed to insert alert for %s: %v", agentID, err)
+		log.Printf("[AgentAlert] Failed to insert alert for %s: %v", sanitizeForLog(agentID), err)
 		return
 	}
 
@@ -2720,20 +2720,20 @@ func (r *Router) autoDistributeCertificate(client *ws.Client, agentID string, ag
 	caCertPath := certsDir + "/ca-cert.pem"
 	caCertPEM, err := os.ReadFile(caCertPath)
 	if err != nil {
-		log.Printf("[AutoCert] Failed to read CA cert for agent %s: %v", agentID, err)
+		log.Printf("[AutoCert] Failed to read CA cert for agent %s: %v", sanitizeForLog(agentID), err)
 		return
 	}
 
 	// Calculate current CA cert hash
 	block, _ := pem.Decode(caCertPEM)
 	if block == nil {
-		log.Printf("[AutoCert] Failed to decode CA cert PEM for agent %s", agentID)
+		log.Printf("[AutoCert] Failed to decode CA cert PEM for agent %s", sanitizeForLog(agentID))
 		return
 	}
 
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		log.Printf("[AutoCert] Failed to parse CA cert for agent %s: %v", agentID, err)
+		log.Printf("[AutoCert] Failed to parse CA cert for agent %s: %v", sanitizeForLog(agentID), err)
 		return
 	}
 
@@ -2742,13 +2742,13 @@ func (r *Router) autoDistributeCertificate(client *ws.Client, agentID string, ag
 
 	// Compare with agent's cert hash
 	if agentCertHash == currentHash {
-		log.Printf("[AutoCert] Agent %s already has current CA cert (hash: %s...)", agentID, currentHash[:8])
+		log.Printf("[AutoCert] Agent %s already has current CA cert (hash: %s...)", sanitizeForLog(agentID), currentHash[:8])
 		return
 	}
 
 	// Agent needs the certificate - send it
 	if agentCertHash == "" {
-		log.Printf("[AutoCert] Agent %s has no CA cert, distributing (hash: %s...)", agentID, currentHash[:8])
+		log.Printf("[AutoCert] Agent %s has no CA cert, distributing (hash: %s...)", sanitizeForLog(agentID), currentHash[:8])
 	} else {
 		log.Printf("[AutoCert] Agent %s has outdated CA cert (%s...), updating to %s...",
 			agentID, agentCertHash[:8], currentHash[:8])
@@ -2766,16 +2766,16 @@ func (r *Router) autoDistributeCertificate(client *ws.Client, agentID string, ag
 
 	msgBytes, err := json.Marshal(updateMsg)
 	if err != nil {
-		log.Printf("[AutoCert] Failed to marshal cert update message for agent %s: %v", agentID, err)
+		log.Printf("[AutoCert] Failed to marshal cert update message for agent %s: %v", sanitizeForLog(agentID), err)
 		return
 	}
 
 	if err := client.Send(msgBytes); err != nil {
-		log.Printf("[AutoCert] Failed to send cert to agent %s: %v", agentID, err)
+		log.Printf("[AutoCert] Failed to send cert to agent %s: %v", sanitizeForLog(agentID), err)
 		return
 	}
 
-	log.Printf("[AutoCert] CA certificate sent to agent %s", agentID)
+	log.Printf("[AutoCert] CA certificate sent to agent %s", sanitizeForLog(agentID))
 }
 
 // createAgentRollbackAlert creates a critical alert when an agent version rolls back
@@ -2806,7 +2806,7 @@ func (r *Router) createAgentRollbackAlert(ctx context.Context, deviceID uuid.UUI
 		return
 	}
 
-	log.Printf("Created rollback alert for device %s: %s -> %s", hostname, previousVersion, currentVersion)
+	log.Printf("Created rollback alert for device %s: %q -> %q", sanitizeForLog(hostname), previousVersion, currentVersion)
 
 	// AUTO-REMEDIATION: Send command to update the watchdog
 	r.sendWatchdogFixCommand(ctx, deviceID, agentID, hostname)
@@ -2834,7 +2834,7 @@ func (r *Router) createAgentRollbackAlert(ctx context.Context, deviceID uuid.UUI
 // This is auto-remediation for the rollback issue caused by old watchdog settings
 func (r *Router) sendWatchdogFixCommand(ctx context.Context, deviceID uuid.UUID, agentID, hostname string) {
 	if r.hub == nil || !r.hub.IsAgentOnline(agentID) {
-		log.Printf("[AutoFix] Cannot send watchdog fix to %s - agent offline", hostname)
+		log.Printf("[AutoFix] Cannot send watchdog fix to %s - agent offline", sanitizeForLog(hostname))
 		return
 	}
 
@@ -2852,7 +2852,7 @@ func (r *Router) sendWatchdogFixCommand(ctx context.Context, deviceID uuid.UUID,
 		commandType = "bash"
 	case platform == "":
 		// Unknown platform - skip auto-fix to avoid sending wrong command
-		log.Printf("[AutoFix] Skipping fix for %s - unknown platform (cannot determine OS)", hostname)
+		log.Printf("[AutoFix] Skipping fix for %s - unknown platform (cannot determine OS)", sanitizeForLog(hostname))
 		return
 	default:
 		// Windows: PowerShell command to update the watchdog
@@ -2868,7 +2868,7 @@ func (r *Router) sendWatchdogFixCommand(ctx context.Context, deviceID uuid.UUID,
 		INSERT INTO commands (id, device_id, command_type, command, status, created_by)
 		VALUES ($1, $2, $3, $4, 'pending', NULL)
 	`, commandID, deviceID, commandType, fixCommand); err != nil {
-		log.Printf("[AutoFix] Failed to record fix command for %s: %v", hostname, err)
+		log.Printf("[AutoFix] Failed to record fix command for %s: %v", sanitizeForLog(hostname), err)
 	}
 
 	// Send the command to the agent
@@ -2884,11 +2884,11 @@ func (r *Router) sendWatchdogFixCommand(ctx context.Context, deviceID uuid.UUID,
 
 	msgBytes, _ := json.Marshal(msg)
 	if err := r.hub.SendToAgent(agentID, msgBytes); err != nil {
-		log.Printf("[AutoFix] Failed to send watchdog fix command to %s: %v", hostname, err)
+		log.Printf("[AutoFix] Failed to send watchdog fix command to %s: %v", sanitizeForLog(hostname), err)
 		return
 	}
 
-	log.Printf("[AutoFix] Sent watchdog fix command to %s (commandId: %s)", hostname, commandID)
+	log.Printf("[AutoFix] Sent watchdog fix command to %s (commandId: %s)", sanitizeForLog(hostname), commandID)
 
 	// Update command status to running
 	if _, err := r.db.Pool().Exec(ctx, `

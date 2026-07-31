@@ -155,15 +155,15 @@ func (d *SilentAgentDetector) healOne(ctx context.Context, deviceID uuid.UUID, a
 		}
 		msgBytes, mErr := json.Marshal(cmd)
 		if mErr != nil {
-			log.Printf("[SilentAgent] Failed to marshal repair command for %s: %v", agentID, mErr)
+			log.Printf("[SilentAgent] Failed to marshal repair command for %s: %v", sanitizeForLog(agentID), mErr)
 			return
 		}
 		if err := d.hub.SendToAgent(agentID, msgBytes); err != nil {
-			log.Printf("[SilentAgent] WS push to %s (%s) failed: %v", hostname, agentID, err)
+			log.Printf("[SilentAgent] WS push to %s (%s) failed: %v", sanitizeForLog(hostname), sanitizeForLog(agentID), err)
 			d.recordAction(ctx, deviceID, agentID, "ws_push_failed", err.Error())
 			return
 		}
-		log.Printf("[SilentAgent] Pushed repair command via WS to %s (%s, silent for %s)", hostname, agentID, silentFor)
+		log.Printf("[SilentAgent] Pushed repair command via WS to %s (%s, silent for %s)", sanitizeForLog(hostname), sanitizeForLog(agentID), silentFor)
 		d.recordAction(ctx, deviceID, agentID, "ws_repair_pushed", "silent="+silentFor)
 		return
 	}
@@ -174,7 +174,7 @@ func (d *SilentAgentDetector) healOne(ctx context.Context, deviceID uuid.UUID, a
 	// the scheduled bootstrap task fires every 6h (Layer 4). The detector
 	// records the silence so the dashboard reflects "manual review" rather
 	// than letting it sit as silently-online-but-stale.
-	log.Printf("[SilentAgent] WS down for %s (%s, silent for %s) — relying on agent-side recovery layers", hostname, agentID, silentFor)
+	log.Printf("[SilentAgent] WS down for %s (%s, silent for %s) — relying on agent-side recovery layers", sanitizeForLog(hostname), sanitizeForLog(agentID), silentFor)
 	d.recordAction(ctx, deviceID, agentID, "ws_down_waiting_self_heal", "silent="+silentFor)
 }
 
@@ -185,6 +185,6 @@ func (d *SilentAgentDetector) recordAction(ctx context.Context, deviceID uuid.UU
 		VALUES ($1, $2, $3, $4, NOW())
 	`, deviceID, agentID, action, payload)
 	if err != nil {
-		log.Printf("[SilentAgent] Failed to record action %q for %s: %v", action, agentID, err)
+		log.Printf("[SilentAgent] Failed to record action %q for %s: %v", action, sanitizeForLog(agentID), err)
 	}
 }

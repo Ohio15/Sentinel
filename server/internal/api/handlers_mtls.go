@@ -283,7 +283,7 @@ func handleAgentWebSocketWithCerts(services *Services) gin.HandlerFunc {
 
 		if err != nil {
 			// Auto-enroll new device
-			log.Printf("Device not found for agent %s, auto-enrolling...", authPayload.AgentID)
+			log.Printf("Device not found for agent %s, auto-enrolling...", sanitizeForLog(authPayload.AgentID))
 			deviceID = uuid.New()
 			var insertErr error
 			if authPayload.DeviceInfo != nil {
@@ -316,7 +316,7 @@ func handleAgentWebSocketWithCerts(services *Services) gin.HandlerFunc {
 				conn.Close()
 				return
 			}
-			log.Printf("Auto-enrolled device %s with ID %s", authPayload.AgentID, deviceID)
+			log.Printf("Auto-enrolled device %s with ID %s", sanitizeForLog(authPayload.AgentID), deviceID)
 		}
 
 		if isDisabled {
@@ -340,12 +340,12 @@ func handleAgentWebSocketWithCerts(services *Services) gin.HandlerFunc {
 			case rateErr != nil:
 				// Fail-closed: rate limit DB lookup failure means we can't
 				// prove the agent is under budget. Don't issue.
-				log.Printf("[PKI] Rate limit check failed for agent %s: %v — skipping cert issuance", authPayload.AgentID, rateErr)
+				log.Printf("[PKI] Rate limit check failed for agent %s: %v — skipping cert issuance", sanitizeForLog(authPayload.AgentID), rateErr)
 			case !allowed:
 				log.Printf("[PKI] Agent %s over cert issuance rate limit (retry after %s) — skipping issuance, token auth still valid",
 					authPayload.AgentID, retryAfter.Round(time.Second))
 			default:
-				log.Printf("[PKI] Issuing client certificate for agent %s", authPayload.AgentID)
+				log.Printf("[PKI] Issuing client certificate for agent %s", sanitizeForLog(authPayload.AgentID))
 				bundle, err := services.PKI.IssueClientCertificate(
 					ctx,
 					authPayload.AgentID,
@@ -354,7 +354,7 @@ func handleAgentWebSocketWithCerts(services *Services) gin.HandlerFunc {
 					services.Config.CertValidityYears,
 				)
 				if err != nil {
-					log.Printf("[PKI] Failed to issue certificate for agent %s: %v", authPayload.AgentID, err)
+					log.Printf("[PKI] Failed to issue certificate for agent %s: %v", sanitizeForLog(authPayload.AgentID), err)
 					// Continue without certificate - agent can still function with token auth
 				} else {
 					authRespPayload["clientCert"] = bundle.ClientCert
@@ -395,7 +395,11 @@ func handleAgentWebSocketWithCerts(services *Services) gin.HandlerFunc {
 		// A hidden device that successfully authenticates is restored to the
 		// device list, with the restore surfaced as an alert + audit entry.
 		// No-op for devices that were not hidden.
-		autoUnhideOnReconnect(ctx, services.DB.Pool(), services.Hub, deviceID, unhideTriggerWSAuth)
+		//
+		// This handler is currently unregistered, so the trigger is its own
+		// constant: if it is ever wired up, the audit trail distinguishes it
+		// from the token-auth WebSocket handler in handlers.go.
+		autoUnhideOnReconnect(ctx, services.DB.Pool(), services.Hub, deviceID, unhideTriggerWSCerts)
 
 		// Broadcast online status
 		onlineMsg, _ := json.Marshal(map[string]interface{}{

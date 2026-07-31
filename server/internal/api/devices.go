@@ -480,10 +480,16 @@ func (r *Router) enableDevice(c *gin.Context) {
 //   - the row keeps collecting metrics, alerts and inventory
 //
 // The hide is automatically reverted the next time the agent establishes an
-// authenticated connection or re-enrolls (see the auth/enroll UPDATEs which
-// clear hidden_at/hidden_by), so a machine that comes back to life cannot stay
-// invisible. Ongoing traffic on an existing session (heartbeats, gRPC metrics,
-// inventory) deliberately does not clear it.
+// authenticated connection or re-enrolls, so a machine that comes back to life
+// cannot stay invisible. That revert lives in autoUnhideOnReconnect
+// (device_unhide.go): a conditional `hidden_at IS NOT NULL` UPDATE whose
+// rows-affected count identifies a genuine restore, which is then surfaced
+// out-of-band as an informational alert plus a device.auto_unhide audit entry
+// so the change is never silent. Disabled devices are excluded — the WS and
+// mTLS paths reject them before unhiding, and the enroll path skips it.
+//
+// Ongoing traffic on an existing session (heartbeats, gRPC metrics, inventory)
+// deliberately does not clear it.
 func (r *Router) hideDevice(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -745,7 +751,11 @@ func (r *Router) enrollAgent(c *gin.Context) {
 
 	// Check if agent already exists
 	var existingID uuid.UUID
-	err := r.db.Pool().QueryRow(ctx, "SELECT id FROM devices WHERE agent_id = $1 AND organization_id = $2", enrollment.AgentID, constants.CurrentOrganizationID).Scan(&existingID)
+	var existingDisabled bool
+	err := r.db.Pool().QueryRow(ctx,
+		"SELECT id, COALESCE(is_disabled, false) FROM devices WHERE agent_id = $1 AND organization_id = $2",
+		enrollment.AgentID, constants.CurrentOrganizationID,
+	).Scan(&existingID, &existingDisabled)
 
 	if err == nil {
 		// Update existing device
@@ -775,7 +785,14 @@ func (r *Router) enrollAgent(c *gin.Context) {
 		// the restore surfaced as an alert + audit entry. No-op for devices that
 		// were not hidden. Only the existing-device branch reaches this — newly
 		// auto-enrolled devices are never hidden to begin with.
-		autoUnhideOnReconnect(ctx, r.db.Pool(), r.hub, existingID, unhideTriggerEnroll)
+		//
+		// Disabled devices are excluded: the WebSocket and mTLS paths reject a
+		// disabled device outright before they can unhide it, so unhiding here
+		// would let a disabled agent undo an administrator's hide simply by
+		// re-enrolling. Enrollment itself is deliberately left unchanged.
+		if !existingDisabled {
+			autoUnhideOnReconnect(ctx, r.db.Pool(), r.hub, existingID, unhideTriggerEnroll)
+		}
 
 		// Generate a kill token for re-enrollment (rotates on every enroll)
 		killTokenPlain, killTokenHash, killErr := generateKillToken()
