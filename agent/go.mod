@@ -16,8 +16,8 @@ require (
 	github.com/pion/webrtc/v4 v4.1.8
 	github.com/shirou/gopsutil/v3 v3.24.1
 	github.com/y9o/go-openh264 v0.2.0
-	golang.org/x/sys v0.43.0
-	golang.org/x/text v0.36.0
+	golang.org/x/sys v0.45.0
+	golang.org/x/text v0.37.0
 	google.golang.org/grpc v1.79.3
 	google.golang.org/protobuf v1.36.10
 	modernc.org/sqlite v1.34.4
@@ -56,8 +56,8 @@ require (
 	github.com/tklauser/numcpus v0.7.0 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	github.com/yusufpapurcu/wmi v1.2.3 // indirect
-	golang.org/x/crypto v0.50.0 // indirect
-	golang.org/x/net v0.53.0 // indirect
+	golang.org/x/crypto v0.52.0 // indirect
+	golang.org/x/net v0.54.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217 // indirect
 	modernc.org/gc/v3 v3.0.0-20240107210532-573471604cb6 // indirect
 	modernc.org/libc v1.55.3 // indirect
