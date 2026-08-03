@@ -142,6 +142,8 @@ jobs:
     name: Integration Tests
     runs-on: self-hosted
     needs: [agent, app]
+    # Stays non-blocking until the backend boot failure is actually fixed. The
+    # diagnostics step below exists to make that failure diagnosable.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -156,14 +158,32 @@ jobs:
           for i in $(seq 1 30); do
             if curl -sf http://localhost:8091/health > /dev/null 2>&1; then
               echo "Backend healthy on attempt $i"
-              break
+              exit 0
             fi
             echo "Waiting for backend... attempt $i/30"
             sleep 2
           done
+          # Fail here so the root cause is attributed to the backend never
+          # booting, not to the validation script's downstream curl errors.
+          echo "::error::backend never became healthy on http://localhost:8091/health after 30 attempts (~60s)"
+          exit 1
 
       - name: Run validation script
         run: bash ./scripts/validate-critical-paths.sh http://localhost:8091
+
+      # Must run BEFORE teardown: `down -v` destroys the only evidence of why
+      # the backend failed to boot.
+      - name: Dump test environment diagnostics
+        if: always()
+        run: |
+          echo "=== container status ==="
+          docker compose -f docker-compose.test.yml ps -a || true
+          echo "=== backend-test logs (tail 200) ==="
+          docker compose -f docker-compose.test.yml logs --no-color --tail=200 backend-test || true
+          echo "=== postgres-test logs (tail 50) ==="
+          docker compose -f docker-compose.test.yml logs --no-color --tail=50 postgres-test || true
+          echo "=== redis-test logs (tail 50) ==="
+          docker compose -f docker-compose.test.yml logs --no-color --tail=50 redis-test || true
 
       - name: Tear down test environment
         if: always()
