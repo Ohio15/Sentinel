@@ -45,8 +45,17 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
 CREATE INDEX idx_webhook_deliveries_webhook ON webhook_deliveries(webhook_id);
 CREATE INDEX idx_webhook_deliveries_created ON webhook_deliveries(created_at);
 
--- Clean up old deliveries (keep last 30 days)
-CREATE INDEX idx_webhook_deliveries_cleanup ON webhook_deliveries(created_at) WHERE created_at < NOW() - INTERVAL '30 days';
+-- Retention sweeps over old deliveries are served by
+-- idx_webhook_deliveries_created above.
+--
+-- There used to be a partial index here with the predicate
+--   WHERE created_at < NOW() - INTERVAL '30 days'
+-- which PostgreSQL rejects outright ("functions in index predicate must be
+-- marked IMMUTABLE"), aborting the migration on every fresh database. NOW() is
+-- STABLE, not IMMUTABLE. The predicate was also meaningless even if it had been
+-- accepted: an index predicate is evaluated per row at write time against a
+-- fixed expression, so it would have frozen a moving 30-day window at whatever
+-- instant the index was built. The plain created_at index is the correct tool.
 
 -- +migrate Down
 DROP TABLE IF EXISTS webhook_deliveries;
