@@ -3,7 +3,13 @@
 
 CREATE TABLE IF NOT EXISTS script_schedules (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    -- INTEGER to match organizations.id (SERIAL, 000034). Was UUID, which made
+    -- this CREATE TABLE fail outright on any fresh database: PostgreSQL rejects
+    -- the inline FK with "Key columns organization_id and id are of incompatible
+    -- types: uuid and integer". 000052 already fixed the identical mistake in
+    -- webhooks forward-only for existing deployments; that repair stays, and
+    -- this in-place correction is what lets a FRESH database get past here.
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     script_id UUID NOT NULL REFERENCES scripts(id) ON DELETE CASCADE,
     name VARCHAR(255) NOT NULL,
     description TEXT,
@@ -46,7 +52,13 @@ CREATE TABLE IF NOT EXISTS script_executions (
     schedule_id UUID REFERENCES script_schedules(id) ON DELETE SET NULL,
     script_id UUID NOT NULL REFERENCES scripts(id) ON DELETE CASCADE,
     device_id UUID REFERENCES devices(id) ON DELETE SET NULL,
-    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    -- INTEGER to match organizations.id (SERIAL, 000034). Was UUID, which made
+    -- this CREATE TABLE fail outright on any fresh database: PostgreSQL rejects
+    -- the inline FK with "Key columns organization_id and id are of incompatible
+    -- types: uuid and integer". 000052 already fixed the identical mistake in
+    -- webhooks forward-only for existing deployments; that repair stays, and
+    -- this in-place correction is what lets a FRESH database get past here.
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
 
     status VARCHAR(20) NOT NULL DEFAULT 'pending',    -- pending, running, success, failed, timeout
     exit_code INTEGER,

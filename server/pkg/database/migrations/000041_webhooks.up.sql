@@ -3,7 +3,13 @@
 
 CREATE TABLE IF NOT EXISTS webhooks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    -- INTEGER to match organizations.id (SERIAL, 000034). Was UUID, which made
+    -- this CREATE TABLE fail outright on any fresh database: PostgreSQL rejects
+    -- the inline FK with "Key columns organization_id and id are of incompatible
+    -- types: uuid and integer". 000052 already fixed the identical mistake in
+    -- webhooks forward-only for existing deployments; that repair stays, and
+    -- this in-place correction is what lets a FRESH database get past here.
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     name VARCHAR(255) NOT NULL,
     url TEXT NOT NULL,
     secret TEXT, -- HMAC signing secret
