@@ -22,8 +22,22 @@ CREATE TABLE IF NOT EXISTS agent_installation_links (
     download_token VARCHAR(64) UNIQUE NOT NULL,
     installation_code VARCHAR(12) UNIQUE,  -- Short code like "AB12-CD34"
 
-    -- Multi-tenant support
-    organization_id UUID DEFAULT '00000000-0000-0000-0000-000000000001',
+    -- Multi-tenant support. INTEGER, matching organizations.id (SERIAL, created
+    -- by 000034) and every other organization_id column in the schema.
+    --
+    -- This was UUID DEFAULT '00000000-...-0001', which killed every fresh
+    -- install: 000034 adds organization_id to this table behind an
+    -- information_schema "does the column exist" guard, so on a fresh database
+    -- the guard saw the UUID column, skipped the INTEGER ADD COLUMN, and the
+    -- later `UPDATE agent_installation_links SET organization_id = 1` aborted
+    -- the migration with:
+    --     column "organization_id" is of type uuid but expression is of type
+    --     integer (SQLSTATE 42804)
+    -- Existing deployments never had the UUID column (they applied 000034's
+    -- INTEGER ADD COLUMN before this declaration existed) and are already past
+    -- v33, so they are unaffected; verified against production, where this
+    -- column is integer NOT NULL DEFAULT 1 like every other one.
+    organization_id INTEGER DEFAULT 1,
 
     -- Device pre-registration
     device_name VARCHAR(255) NOT NULL,
