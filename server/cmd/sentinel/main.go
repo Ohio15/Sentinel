@@ -599,9 +599,17 @@ func ensureFirstRunAdmin(db *database.DB) error {
 		return fmt.Errorf("failed to hash password: %w", err)
 	}
 
+	// username is NOT NULL UNIQUE (migration 000031) and must be supplied here.
+	// Omitting it made every fresh install abort at startup with
+	// `null value in column "username" ... violates not-null constraint`
+	// (SQLSTATE 23502) — invisible on existing deployments because this whole
+	// function short-circuits once the users table is non-empty. The value
+	// follows the same convention 000031 used to backfill existing rows: the
+	// lower-cased local part of the email. A collision is impossible here, as
+	// this code only runs when the users table is empty.
 	_, err = db.Pool().Exec(ctx,
-		"INSERT INTO users (email, password_hash, first_name, last_name, role) VALUES ($1, $2, $3, $4, $5)",
-		"admin@sentinel.local", string(hash), "Admin", "User", "admin",
+		"INSERT INTO users (email, username, password_hash, first_name, last_name, role) VALUES ($1, $2, $3, $4, $5, $6)",
+		"admin@sentinel.local", "admin", string(hash), "Admin", "User", "admin",
 	)
 	if err != nil {
 		return fmt.Errorf("failed to insert admin user: %w", err)
