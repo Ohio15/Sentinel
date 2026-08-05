@@ -292,8 +292,13 @@ services:
           memory: 64M
 
   # Monitoring - cAdvisor (per-container metrics: CPU, memory, network, restarts)
+  # v0.55.1 minimum: v0.49.1's Docker client speaks API 1.41, below dockerd 29.x's
+  # MinAPIVersion 1.44, so its Docker factory fails to register and cAdvisor falls
+  # back to the Raw/containerd factory — which emits cgroup `id` labels but no
+  # `name` label. Every alert in configs/prometheus/rules/containers.yml selects on
+  # {name!=""}, so they silently matched zero series. Do not downgrade.
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
     container_name: sentinel-cadvisor
     restart: unless-stopped
     privileged: true
