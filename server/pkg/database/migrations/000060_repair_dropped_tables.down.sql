@@ -1,0 +1,36 @@
+-- Reverse 000060_repair_dropped_tables — INTENTIONALLY A NO-OP.
+--
+-- 000060 is a repair migration: it re-creates objects that 000042/000043/
+-- 000044/000047 own but that the legacy sql-migrate-style runner destroyed on
+-- the production database. Every statement in the up-migration is guarded
+-- (CREATE TABLE IF NOT EXISTS / ADD COLUMN IF NOT EXISTS / CREATE INDEX IF NOT
+-- EXISTS), so on any database where those objects already exist — every fresh
+-- install, where 000042-000047 create them correctly — 000060 creates nothing
+-- at all.
+--
+-- A rollback therefore cannot be written safely. PostgreSQL records no
+-- provenance for a table, column or index, so at rollback time there is no way
+-- to distinguish:
+--
+--   (a) an object 000060 created on the damaged production database, from
+--   (b) the identical object 000042/000043/000044/000047 created on a healthy
+--       one, which 000060 skipped.
+--
+-- Dropping unconditionally would, on case (b), delete live patch-approval,
+-- MFA-audit, script-execution and USB-transfer data that belongs to earlier
+-- migrations and is not 000060's to remove — and would silently re-open the
+-- exact "relation does not exist" outage this migration closes. Guarding the
+-- drops with IF EXISTS does not help: IF EXISTS suppresses the error, not the
+-- data loss.
+--
+-- So the rollback path is: do nothing. `migrate down` past version 60 succeeds
+-- and leaves the schema intact; the reversal of 000042/000043/000044 remains
+-- the responsibility of their own .down.sql companions, which continue down
+-- the chain and drop these objects at their own versions. The only cost of
+-- this no-op is that a database rolled back to exactly version 59 keeps the
+-- repaired objects — which is the correct outcome, since version 59 is the
+-- state production was in WITH those objects expected to be present.
+--
+-- An explicit no-op statement rather than a comment-only file, so the rollback
+-- is unambiguously a statement to the driver and to anyone reading it.
+DO $$ BEGIN /* 000060 is not reversible by design — see header. */ END $$;

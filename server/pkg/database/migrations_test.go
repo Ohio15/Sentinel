@@ -100,6 +100,34 @@ var duplicateTableDefinitionAllowlist = map[string]string{
 	// this table at all, so it cannot abort a migration. Left as-is rather
 	// than guessed at: reconciling the two shapes needs a product decision.
 	"email_templates:000033_agent_installation_links.up.sql": "dead redefinition, no downstream references",
+
+	// 000060 is a repair migration: it re-creates the tables that the legacy
+	// sql-migrate-style runner created and then immediately dropped inside
+	// 000042/000043/000044 (and 000047, which never executed) on the
+	// production database, which sits at schema_migrations version 59 with
+	// those versions already recorded as applied. Re-declaring the tables is
+	// the entire point, and the duplication is safe by construction:
+	//
+	//   - the definitions are byte-faithful copies of the corrected 000042/
+	//     000043/000044/000047 definitions on main after PR #70, so "earlier
+	//     file wins" and "later file wins" produce the identical shape; and
+	//   - every statement in 000060 is guarded (CREATE TABLE IF NOT EXISTS,
+	//     ADD COLUMN IF NOT EXISTS, CREATE INDEX IF NOT EXISTS), so on a fresh
+	//     database — where 000042-000047 already built everything — the whole
+	//     file is a no-op and cannot reference a column the earlier shape
+	//     lacks. That is exactly the failure mode this test guards, and it is
+	//     structurally impossible here because the two shapes are the same.
+	//
+	// If 000042/000043/000044/000047 are ever edited, 000060 must be edited in
+	// lockstep or these entries stop being true.
+	"patch_policies:000060_repair_dropped_tables.up.sql":           "repair of table dropped by legacy runner; definition identical to 000042",
+	"patch_approvals:000060_repair_dropped_tables.up.sql":          "repair of table dropped by legacy runner; definition identical to 000042",
+	"device_patch_assignments:000060_repair_dropped_tables.up.sql": "repair of table dropped by legacy runner; definition identical to 000042",
+	"patch_installations:000060_repair_dropped_tables.up.sql":      "repair of table dropped by legacy runner; definition identical to 000042",
+	"mfa_events:000060_repair_dropped_tables.up.sql":               "repair of table dropped by legacy runner; definition identical to 000043",
+	"script_schedules:000060_repair_dropped_tables.up.sql":         "repair of table dropped by legacy runner; definition identical to 000044",
+	"script_executions:000060_repair_dropped_tables.up.sql":        "repair of table dropped by legacy runner; definition identical to 000044",
+	"usb_file_transfers:000060_repair_dropped_tables.up.sql":       "repair of table never created (000047 did not execute); definition identical to 000047",
 }
 
 // TestNoUnreviewedDuplicateTableDefinitions guards the defect class that broke
