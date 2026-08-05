@@ -53,10 +53,13 @@ CONF_FILE="$CONF_DIR/redis.conf"
 [[ -f "$ENV_FILE" ]] || fatal "$ENV_FILE not found. Copy .env.production.template and fill it in."
 
 # Read REDIS_PASSWORD without echoing it and without ever placing it on an argv.
-set -a
+# Plain `source`, NOT `set -a`: exporting it would hand the secret to every
+# child process this script spawns (docker run/inspect below), and an exported
+# REDIS_PASSWORD outlives its accuracy — docker compose lets OS environment win
+# over .env, which is exactly how the first rotation attempt crash-looped the
+# backend on a stale password (2026-08-05).
 # shellcheck disable=SC1090
 source "$ENV_FILE"
-set +a
 
 [[ -n "${REDIS_PASSWORD:-}" ]] || fatal "REDIS_PASSWORD is unset or empty in $ENV_FILE. Refusing to render a passwordless Redis."
 

@@ -133,9 +133,15 @@ fi
 [[ -f "$ENV_FILE" ]] || fatal "$ENV_FILE not found."
 command -v openssl >/dev/null || fatal "openssl is required to mint the new secret."
 
-set -a; # shellcheck disable=SC1090
-source "$ENV_FILE"; set +a
-OLD_PASSWORD="${REDIS_PASSWORD:-}"
+# Read ONLY the one value needed, WITHOUT exporting anything. The first version
+# of this script did `set -a; source .env`, which exported the OLD password into
+# this shell's environment; docker compose gives OS environment variables
+# precedence over .env, so after the .env rewrite below, `compose up` was still
+# interpolating REDIS_URL with the OLD value while redis loaded the NEW config —
+# a guaranteed WRONGPASS crash loop on the backend, discovered live 2026-08-05
+# (the rotation rolled itself back, as designed). The env var must never exist
+# in the environment compose runs in; .env is the single source of truth.
+OLD_PASSWORD="$(sed -n 's/^REDIS_PASSWORD=//p' "$ENV_FILE" | tail -1)"
 [[ -n "$OLD_PASSWORD" ]] || fatal "REDIS_PASSWORD is not set in $ENV_FILE; this script rotates, it does not bootstrap."
 
 BACKUP="$ENV_FILE.pre-redis-rotate-$(date +%Y%m%d-%H%M%S)"
@@ -152,7 +158,9 @@ rollback() {
   err "ROLLING BACK to $BACKUP"
   cp -p "$BACKUP" "$ENV_FILE"
   bash "$PROJECT_DIR/scripts/generate-redis-conf.sh" || err "rollback: config regeneration failed"
-  docker compose up -d --force-recreate redis backend || err "rollback: recreate failed"
+  # env -u: compose must interpolate from .env, never from an inherited
+  # REDIS_PASSWORD in this or the operator's environment (OS env wins over .env).
+  env -u REDIS_PASSWORD docker compose up -d --force-recreate redis backend || err "rollback: recreate failed"
   err "rollback complete; stack is back on the previous secret."
 }
 
@@ -187,7 +195,11 @@ fi
 # when .env changes and plain `up -d` would leave the old container running with
 # the old password. The backend recreates on its own (its config hash does move),
 # but naming it here keeps both cutovers inside one compose run.
-if ! docker compose up -d --force-recreate redis backend; then
+# env -u: see rollback() — compose must read REDIS_PASSWORD from the rewritten
+# .env, and an inherited environment value (this script's, or an operator shell
+# that happens to export one) would silently override it and re-create the
+# split-credential crash loop this comment block exists to prevent.
+if ! env -u REDIS_PASSWORD docker compose up -d --force-recreate redis backend; then
   rollback; fatal "recreate failed."
 fi
 
