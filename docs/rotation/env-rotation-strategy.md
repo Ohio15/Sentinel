@@ -298,3 +298,40 @@ cd D:/Projects/Sentinel && git check-ignore -v .env.local
 - DB-side companion: `docs/rotation/migrate-shim-revocation.md`.
 - SQL companion: `docs/rotation/revoke_legacy_api_key.up.sql` (apply post-Section 6d), `revoke_legacy_api_key.down.sql` (rollback).
 - Top-level SOP: `CREDENTIAL_ROTATION_PLAN.md`.
+
+---
+
+## Related: rotating the Redis secret
+
+The Redis secret does **not** follow the append-both-values pattern documented
+above, because `requirepass` accepts exactly one value — there is no two-value
+overlap window. It is a hard cutover, and it is automated:
+
+```bash
+ssh ohio_@192.168.1.20 'cd ~/Sentinel && bash scripts/rotate-redis-password.sh'
+```
+
+That script snapshots `.env` to `.env.pre-redis-rotate-<timestamp>`, mints a new
+64-hex secret, rewrites `.env` atomically, regenerates `configs/redis/redis.conf`
+(where `requirepass` now lives — see `configs/redis/README.md` for why it is no
+longer on the argv or in the healthcheck), and recreates `redis` and `backend`
+in a single `docker compose up`.
+
+Two properties make the single-command form mandatory rather than convenient:
+
+1. **Both services consume the value.** `redis` reads it from the generated
+   config; `backend` receives it inside `REDIS_URL`. Naming only one service in
+   `docker compose up -d` does not stop the other from recreating.
+2. **The backend fails fast on a Redis auth error** (`log.Fatalf` in
+   `server/cmd/sentinel/main.go`). A window where the two sides disagree is a
+   backend crash loop, not a degraded mode. Recreating both together lets
+   `depends_on: redis: condition: service_healthy` sequence the cutover.
+
+Rollback is one file copy plus a recreate; the script prints the exact command,
+and performs it automatically if any post-rotation check fails.
+
+Verification only, no changes:
+
+```bash
+ssh ohio_@192.168.1.20 'cd ~/Sentinel && bash scripts/rotate-redis-password.sh --verify'
+```

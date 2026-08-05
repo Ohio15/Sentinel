@@ -158,10 +158,26 @@ sudo ./scripts/deploy.sh
    export ENROLLMENT_TOKEN=$(openssl rand -base64 32)
    ```
 
-2. Start the services:
+2. Generate the Redis config (required before the first start):
+   ```bash
+   bash scripts/generate-redis-conf.sh
+   ```
+   `REDIS_PASSWORD` (64 hex chars, `openssl rand -hex 32`) must be set in `.env`
+   first — compose has no default for it and will refuse to start without it.
+   The generator renders `configs/redis/redis.conf`, which holds `requirepass`
+   so the password never reaches the redis-server argv or the Docker event
+   stream. The file is gitignored and must be regenerated on every host and
+   after every password change. See `configs/redis/README.md`.
+
+3. Start the services:
    ```bash
    docker-compose up -d
    ```
+
+To rotate the Redis password later, use `bash scripts/rotate-redis-password.sh`
+— it updates `.env`, regenerates the config, recreates `redis` and `backend`
+together (the backend fails fast on a Redis auth error, so they must cut over as
+one), verifies, and rolls back automatically on failure.
 
 ## Agent Installation
 
