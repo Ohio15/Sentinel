@@ -1,4 +1,3 @@
--- +migrate Up
 -- Webhook configurations for alert and event notifications
 
 CREATE TABLE IF NOT EXISTS webhooks (
@@ -56,7 +55,3 @@ CREATE INDEX idx_webhook_deliveries_created ON webhook_deliveries(created_at);
 -- accepted: an index predicate is evaluated per row at write time against a
 -- fixed expression, so it would have frozen a moving 30-day window at whatever
 -- instant the index was built. The plain created_at index is the correct tool.
-
--- +migrate Down
-DROP TABLE IF EXISTS webhook_deliveries;
-DROP TABLE IF EXISTS webhooks;

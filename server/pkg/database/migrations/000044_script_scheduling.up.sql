@@ -1,4 +1,3 @@
--- +migrate Up
 -- Script scheduling support
 
 CREATE TABLE IF NOT EXISTS script_schedules (
@@ -77,7 +76,3 @@ CREATE INDEX idx_script_executions_script ON script_executions(script_id);
 CREATE INDEX idx_script_executions_device ON script_executions(device_id);
 CREATE INDEX idx_script_executions_status ON script_executions(status);
 CREATE INDEX idx_script_executions_created ON script_executions(created_at);
-
--- +migrate Down
-DROP TABLE IF EXISTS script_executions;
-DROP TABLE IF EXISTS script_schedules;

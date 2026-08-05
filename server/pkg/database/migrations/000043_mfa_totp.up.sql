@@ -1,4 +1,3 @@
--- +migrate Up
 -- Multi-Factor Authentication (TOTP) support
 
 -- Add MFA columns to users table
@@ -20,11 +19,3 @@ CREATE TABLE IF NOT EXISTS mfa_events (
 
 CREATE INDEX idx_mfa_events_user ON mfa_events(user_id);
 CREATE INDEX idx_mfa_events_created ON mfa_events(created_at);
-
--- +migrate Down
-DROP TABLE IF EXISTS mfa_events;
-ALTER TABLE users DROP COLUMN IF EXISTS backup_codes;
-ALTER TABLE users DROP COLUMN IF EXISTS mfa_required;
-ALTER TABLE users DROP COLUMN IF EXISTS totp_verified_at;
-ALTER TABLE users DROP COLUMN IF EXISTS totp_enabled;
-ALTER TABLE users DROP COLUMN IF EXISTS totp_secret;

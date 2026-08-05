@@ -172,3 +172,121 @@ func TestNoUnreviewedDuplicateTableDefinitions(t *testing.T) {
 		}
 	}
 }
+
+// sqlMigrateDirectivePattern matches the rubenv/sql-migrate direction markers
+// `-- +migrate Up` and `-- +migrate Down`.
+var sqlMigrateDirectivePattern = regexp.MustCompile(`(?m)^\s*--\s*\+migrate\s+(Up|Down)`)
+
+// TestNoSQLMigrateDirectivesInUpMigrations guards a silent, success-reporting
+// data-loss class.
+//
+// Two migration runners express direction in incompatible ways:
+//
+//	sql-migrate (rubenv/sql-migrate) puts BOTH directions in ONE file and
+//	  splits them on the `-- +migrate Up` / `-- +migrate Down` marker comments.
+//	golang-migrate (this repo's runner, server/go.mod) puts each direction in
+//	  its OWN file and derives direction from the .up.sql / .down.sql FILENAME.
+//	  It has no notion of `+migrate` markers — to golang-migrate they are
+//	  ordinary SQL comments.
+//
+// So a file written for sql-migrate and fed to golang-migrate executes its
+// Up block AND its Down block, back to back, in the same migration. The
+// tables are created and then immediately dropped. Nothing errors, the
+// migration is recorded as applied, and the runner exits 0 — the schema is
+// simply missing. That is exactly what happened to 000041/000042/000043/000044:
+// a fresh database came up "successfully" with no webhooks, patch_*, script_*
+// or mfa_events tables, and the failure only surfaced later as runtime
+// "relation does not exist" errors far from the cause.
+//
+// A .down.sql file is allowed to contain drops — that is its job, and
+// golang-migrate only runs it on an explicit rollback. The invariant is
+// narrow and absolute: no direction marker may appear in a .up.sql.
+func TestNoSQLMigrateDirectivesInUpMigrations(t *testing.T) {
+	entries, err := migrations.ReadDir("migrations")
+	if err != nil {
+		t.Fatalf("read embedded migrations dir: %v", err)
+	}
+
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".up.sql") {
+			continue
+		}
+		body, err := migrations.ReadFile("migrations/" + e.Name())
+		if err != nil {
+			t.Fatalf("read migration %s: %v", e.Name(), err)
+		}
+		for _, m := range sqlMigrateDirectivePattern.FindAllStringSubmatch(string(body), -1) {
+			t.Errorf("%s contains sql-migrate directive %q: this repo runs "+
+				"golang-migrate, which ignores +migrate markers and executes the "+
+				"WHOLE file. Any statements under a `-- +migrate Down` marker "+
+				"therefore run immediately after the Up statements — the migration "+
+				"drops what it just created and still reports success, leaving a "+
+				"silently incomplete schema. Delete the markers and move the Down "+
+				"statements into a sibling %s file.",
+				e.Name(), strings.TrimSpace(m[0]),
+				strings.TrimSuffix(e.Name(), ".up.sql")+".down.sql")
+		}
+	}
+}
+
+// dropTablePattern matches a DROP TABLE naming a literal table. Identifiers
+// interpolated at runtime (`EXECUTE format('DROP TABLE IF EXISTS %I', ...)` in
+// the 000003 partition sweeper) do not match, which is correct: those drop
+// partitions by computed name, not anything this file created.
+var dropTablePattern = regexp.MustCompile(`(?is)DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?"?([a-z_][a-z0-9_]*)"?`)
+
+// TestNoTableCreatedAndDroppedInSameMigration is the static half of the
+// stronger schema guard: it asserts no up-migration both creates a table and
+// drops that same table.
+//
+// The ideal check applies the full migration set to a live PostgreSQL instance
+// and asserts every table created by some .up.sql (minus any intentionally
+// dropped by a LATER migration) actually exists afterward. That needs a real
+// database; this package's tests run with no DB dependency, so the live half
+// belongs in CI's migration job rather than here. This static half catches the
+// same defect at its source: a self-destructing migration is always a
+// create-then-drop within one file, whatever produced it (a stray sql-migrate
+// Down block, a bad merge, a copy-pasted rollback).
+//
+// Cross-file drops are deliberately NOT flagged — 000018 dropping a
+// mistyped device_updates so a later migration can recreate it is legitimate
+// repair, and only a live database can tell that apart from a mistake.
+func TestNoTableCreatedAndDroppedInSameMigration(t *testing.T) {
+	entries, err := migrations.ReadDir("migrations")
+	if err != nil {
+		t.Fatalf("read embedded migrations dir: %v", err)
+	}
+
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".up.sql") {
+			continue
+		}
+		body, err := migrations.ReadFile("migrations/" + e.Name())
+		if err != nil {
+			t.Fatalf("read migration %s: %v", e.Name(), err)
+		}
+		text := string(body)
+
+		created := make(map[string]bool)
+		for _, m := range createTablePattern.FindAllStringSubmatch(text, -1) {
+			created[strings.ToLower(m[1])] = true
+		}
+		if len(created) == 0 {
+			continue
+		}
+		reported := make(map[string]bool)
+		for _, m := range dropTablePattern.FindAllStringSubmatch(text, -1) {
+			table := strings.ToLower(m[1])
+			if !created[table] || reported[table] {
+				continue
+			}
+			reported[table] = true
+			t.Errorf("%s creates table %q and then drops it in the same migration: "+
+				"golang-migrate runs the whole file as one migration, so this "+
+				"applies cleanly, records the version as applied, and leaves no "+
+				"%s table behind. Move the DROP into %s.",
+				e.Name(), table, table,
+				strings.TrimSuffix(e.Name(), ".up.sql")+".down.sql")
+		}
+	}
+}

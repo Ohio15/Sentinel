@@ -1,4 +1,3 @@
--- +migrate Up
 -- Patch approval workflow for Windows Updates
 
 CREATE TABLE IF NOT EXISTS patch_policies (
@@ -82,9 +81,3 @@ CREATE TABLE IF NOT EXISTS patch_installations (
 CREATE INDEX idx_patch_installations_device ON patch_installations(device_id);
 CREATE INDEX idx_patch_installations_kb ON patch_installations(kb_article);
 CREATE INDEX idx_patch_installations_status ON patch_installations(status);
-
--- +migrate Down
-DROP TABLE IF EXISTS patch_installations;
-DROP TABLE IF EXISTS device_patch_assignments;
-DROP TABLE IF EXISTS patch_approvals;
-DROP TABLE IF EXISTS patch_policies;
