@@ -1,9 +1,14 @@
--- +migrate Up
 -- Patch approval workflow for Windows Updates
 
 CREATE TABLE IF NOT EXISTS patch_policies (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    -- INTEGER to match organizations.id (SERIAL, 000034). Was UUID, which made
+    -- this CREATE TABLE fail outright on any fresh database: PostgreSQL rejects
+    -- the inline FK with "Key columns organization_id and id are of incompatible
+    -- types: uuid and integer". 000052 already fixed the identical mistake in
+    -- webhooks forward-only for existing deployments; that repair stays, and
+    -- this in-place correction is what lets a FRESH database get past here.
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     name VARCHAR(255) NOT NULL,
     description TEXT,
     auto_approve_security BOOLEAN NOT NULL DEFAULT true,  -- Auto-approve security updates
@@ -24,7 +29,13 @@ CREATE INDEX idx_patch_policies_organization ON patch_policies(organization_id);
 -- Individual patch approvals (overrides policy)
 CREATE TABLE IF NOT EXISTS patch_approvals (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    -- INTEGER to match organizations.id (SERIAL, 000034). Was UUID, which made
+    -- this CREATE TABLE fail outright on any fresh database: PostgreSQL rejects
+    -- the inline FK with "Key columns organization_id and id are of incompatible
+    -- types: uuid and integer". 000052 already fixed the identical mistake in
+    -- webhooks forward-only for existing deployments; that repair stays, and
+    -- this in-place correction is what lets a FRESH database get past here.
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     kb_article VARCHAR(50) NOT NULL,                      -- KB number (e.g., "KB5001234")
     title TEXT NOT NULL,
     classification VARCHAR(100),                          -- Security, Critical, etc.
@@ -70,9 +81,3 @@ CREATE TABLE IF NOT EXISTS patch_installations (
 CREATE INDEX idx_patch_installations_device ON patch_installations(device_id);
 CREATE INDEX idx_patch_installations_kb ON patch_installations(kb_article);
 CREATE INDEX idx_patch_installations_status ON patch_installations(status);
-
--- +migrate Down
-DROP TABLE IF EXISTS patch_installations;
-DROP TABLE IF EXISTS device_patch_assignments;
-DROP TABLE IF EXISTS patch_approvals;
-DROP TABLE IF EXISTS patch_policies;

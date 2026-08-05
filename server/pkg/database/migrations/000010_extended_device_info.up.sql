@@ -10,7 +10,14 @@ ALTER TABLE devices ADD COLUMN IF NOT EXISTS cpu_cores INTEGER DEFAULT 0;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS cpu_threads INTEGER DEFAULT 0;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS cpu_speed REAL DEFAULT 0;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS total_memory BIGINT DEFAULT 0;
-ALTER TABLE devices ADD COLUMN IF NOT EXISTS boot_time BIGINT DEFAULT 0;
+-- TIMESTAMPTZ, not BIGINT. Every Go call site treats this column as a
+-- timestamp: internal/api/devices.go writes it as `boot_time = to_timestamp($N)`
+-- (enrollment update and insert) and reads it as
+-- `EXTRACT(EPOCH FROM boot_time)::bigint`. Both forms are type errors against a
+-- BIGINT column (42883 / 42804), so a fresh install would fail at first
+-- enrollment. Production is already TIMESTAMPTZ; only fresh databases were
+-- getting the wrong type from this file.
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS boot_time TIMESTAMPTZ;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS gpu JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS storage JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS serial_number VARCHAR(255);

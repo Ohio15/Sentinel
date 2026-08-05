@@ -131,20 +131,16 @@ jobs:
 
   # Integration Tests (runs after build jobs succeed)
   #
-  # TECH DEBT (2026-06-22): non-blocking until the self-hosted test harness is
-  # repaired. The test backend never passes its health check on the runner
-  # (docker-compose.test.yml doesn't give it what it needs to boot), so this job
-  # has never succeeded. Because deploy-web.yml gates on the whole CI workflow
-  # concluding success, a red job here blocks ALL web deploys. continue-on-error
-  # lets CI conclude success so deploys work again; the harness fix is tracked
-  # separately. REMOVE this once the integration test environment is fixed.
+  # BLOCKING as of 2026-08-04. The backend boot failure that kept this job
+  # non-blocking was not a harness problem: migration 000013 re-declared
+  # agent_logs (owned by 000008) with a "timestamp" column and then indexed it,
+  # so db.Migrate() aborted with SQLSTATE 42703 on every fresh database. Fixed
+  # in 000013_grpc_dataplane.up.sql; this job is the regression guard, so it
+  # must be able to fail the workflow.
   integration-tests:
     name: Integration Tests
     runs-on: self-hosted
     needs: [agent, app]
-    # Stays non-blocking until the backend boot failure is actually fixed. The
-    # diagnostics step below exists to make that failure diagnosable.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
