@@ -98,5 +98,12 @@ backups/
 # Deprecated dnsmasq config (replaced by AdGuardHome on NEXUS)
 configs/dnsmasq/
 
+# Generated Redis config — CONTAINS THE REDIS PASSWORD.
+# Rendered on each host by scripts/generate-redis-conf.sh from .env so that
+# requirepass stays off the redis-server argv (and therefore out of Config.Cmd
+# and the Docker event stream). Must never be committed. Being untracked also
+# means deploy-web.yml's `git reset --hard origin/main` preserves it.
+configs/redis/redis.conf
+
 # openssl extension scratch files (certs/*.key|pem|crt|srl|cnf already ignored)
 certs/*.ext

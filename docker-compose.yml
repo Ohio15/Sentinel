@@ -18,7 +18,15 @@ services:
     restart: unless-stopped
     environment:
       - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=${DB_SSL_MODE:-require}
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-redis_dev_password}@redis:6379
+      # No default: an unset REDIS_PASSWORD must fail compose closed rather than
+      # silently starting the stack on a publicly-known password.
+      # KNOWN RESIDUAL EXPOSURE: this value lands in sentinel-backend's
+      # Config.Env, readable by any holder of the Docker socket (currently
+      # shared-brain-docker-proxy, infra-traefik, sentinel-cadvisor,
+      # sentinel-node-exporter). Closing it requires the backend to read the
+      # secret from a file (REDIS_PASSWORD_FILE) instead of a URL in env.
+      # Tracked separately — do not assume this line is safe.
+      - REDIS_URL=redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env (64 hex chars); run scripts/rotate-redis-password.sh to generate one}@redis:6379
       - JWT_SECRET=${JWT_SECRET}
       - ENROLLMENT_TOKEN=${ENROLLMENT_TOKEN}
       - SERVER_ENV=${SERVER_ENV:-production}
@@ -186,9 +194,18 @@ services:
     image: redis:7-alpine
     container_name: sentinel-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD:-redis_dev_password}
+    # requirepass deliberately does NOT appear on the argv. Anything on the argv
+    # is recorded verbatim in the container's Config.Cmd, which every holder of
+    # the Docker socket can read. The password now lives only in a generated,
+    # non-world-readable config file — see scripts/generate-redis-conf.sh.
+    # The conf file is NOT in git (configs/redis/redis.conf is gitignored); it is
+    # produced on the host from .env at deploy time. If it is missing, Docker
+    # would create a directory at the mount path and redis would fail to start,
+    # so run the generator before `docker compose up`.
+    command: redis-server /usr/local/etc/redis/redis.conf
     volumes:
       - redis-data:/data
+      - ${REDIS_CONF_DIR:-./configs/redis}/redis.conf:/usr/local/etc/redis/redis.conf:ro
     networks:
       - sentinel-network
     security_opt:
@@ -201,8 +218,24 @@ services:
         reservations:
           cpus: '0.25'
           memory: 128M
+    # The healthcheck argv is what Docker publishes in the event stream, once per
+    # `interval`, forever, to every consumer of `docker events` (infra-traefik
+    # consumes it continuously). The previous ["CMD","redis-cli","-a","<pw>",...]
+    # form therefore broadcast the password roughly every 10 seconds.
+    #
+    # CMD-SHELL keeps the recorded argv a literal, unexpanded string: the event
+    # stream shows the `$(sed ...)` text, never its value. The secret is read at
+    # runtime inside the container from the same root-owned conf file redis
+    # itself reads, and passed via REDISCLI_AUTH (process environ) rather than
+    # `-a` (process argv), so it does not appear in the container's own `ps`
+    # either. It is deliberately NOT put in the service `environment:` block,
+    # which would restore the Config.Env exposure this change exists to remove.
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_dev_password}", "ping"]
+      test:
+        - CMD-SHELL
+        - >-
+          REDISCLI_AUTH="$$(sed -n 's/^requirepass //p' /usr/local/etc/redis/redis.conf)"
+          redis-cli ping | grep -q PONG
       interval: 10s
       timeout: 5s
       retries: 5
