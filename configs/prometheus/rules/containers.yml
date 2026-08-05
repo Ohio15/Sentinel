@@ -10,9 +10,13 @@ groups:
           summary: "Container {{ $labels.name }} restart loop"
           description: "{{ $labels.name }} has restarted {{ $value }} times in the last 15 minutes"
 
+      # working_set, not usage: container_memory_usage_bytes counts reclaimable
+      # page cache, so a container with a 512M limit reads ~100% while its RSS is
+      # 26M. working_set excludes inactive file cache and is what the kernel uses
+      # for OOM decisions, so it is the only one of the two that predicts a kill.
       - alert: ContainerHighMemory
         expr: |
-          (container_memory_usage_bytes{name!=""}
+          (container_memory_working_set_bytes{name!=""}
             / on(name) (container_spec_memory_limit_bytes{name!=""} > 0)
           ) * 100 > 90
         for: 10m
