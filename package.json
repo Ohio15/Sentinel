@@ -56,7 +56,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "jsdom": "^27.3.0",
     "lucide-react": "^0.303.0",
-    "postcss": "^8.4.33",
+    "postcss": "^8.5.25",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-hot-toast": "^2.4.1",
