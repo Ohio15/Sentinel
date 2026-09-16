@@ -81,7 +81,7 @@ export function Register() {
         lastName,
       });
       toast.success('Account created successfully! Please sign in.');
-      navigate('/login');
+      void navigate('/login');
     } catch (err: unknown) {
       const error = err as Error;
       setError(error.message || 'Registration failed');

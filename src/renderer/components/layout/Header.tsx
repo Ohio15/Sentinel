@@ -32,7 +32,7 @@ export function Header() {
 
   const handleLogout = () => {
     logout();
-    navigate('/login');
+    void navigate('/login');
   };
 
   return (
