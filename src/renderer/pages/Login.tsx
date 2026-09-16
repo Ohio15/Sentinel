@@ -141,7 +141,7 @@ export function Login() {
       connection.connect();
 
       toast.success('Welcome back!');
-      navigate('/');
+      void navigate('/');
     } catch (err: unknown) {
       const error = err as Error & { name?: string };
       if (error.name === 'NotAllowedError') {
@@ -204,7 +204,7 @@ export function Login() {
         }
       }
 
-      navigate('/');
+      void navigate('/');
     } catch {
       // Error is handled by the store — track failed attempts for rate limiting
       const newCount = attemptCount + 1;

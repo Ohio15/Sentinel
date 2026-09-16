@@ -315,7 +315,7 @@ export function TicketsKanban({ onTicketSelect, onViewChange }: TicketsKanbanPro
     if (onTicketSelect) {
       onTicketSelect(ticketId);
     } else {
-      navigate(`/tickets/${ticketId}`);
+      void navigate(`/tickets/${ticketId}`);
     }
   };
 
