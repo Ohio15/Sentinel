@@ -1,0 +1,229 @@
+# Wave 1 — A1 cache gate + v1.77.15 release tag
+#
+# Incident: shared-brain memory df7a7ff8 (synthesis), 03199d76 (decision), df037c47 (scope-locked)
+# Goal: stop the customer-visible 401 storm + Device Offline alert noise.
+# Scope: server-only hotfix. Agent binaries unchanged. No agent rebuild.
+# Risk: low — single new helper + boolean check at two existing announcement sites.
+#
+# What this does:
+#   Heartbeat handlers consult a new cached helper `getAgentReleaseStatus(ctx)` before
+#   announcing `updateAvailable=true`. The helper performs one indexed DB lookup
+#   (`SELECT EXISTS ... agent_releases WHERE version = $1`) per 60s and caches the
+#   result. If the agent_releases table has no row for the version advertised in
+#   installers/version.json, the announcement is suppressed and a clear log line
+#   explains why. Failure-mode is fail-closed: if the DB query errors, we suppress.
+#
+# What this does NOT do (deferred to later waves):
+#   - Wave 2: log-leak fixes in bootstrap.go and auth.go; agent-side setAuthHeaders.
+#   - Wave 3: X-Agent-ID binding, cooldown hardening, fail-closed PublicURL/ServerURL.
+#   - Wave 4: WS-message replacement of sendWindowsForceUpdate; watchdog/version route.
+#   - Phase 2: investigate why the v1.77.10 deploy didn't populate agent_releases.
+#
+# Manual ops after deploy:
+#   - Run cleanup SQL to clear 30-min update-failure suppression so existing agents
+#     re-evaluate cleanly:
+#       UPDATE agent_updates
+#         SET status='superseded', updated_at=NOW()
+#         WHERE status='failed'
+#           AND error_message LIKE '%401%'
+#           AND created_at > NOW() - INTERVAL '30 minutes';
+#     Run MANUALLY by Ron after the deploy lands. Not auto-run.
+#
+# Apply with: git apply --index .audit/phase1-wave1-A1-v1.77.15.diff
+# Review with: git apply --check .audit/phase1-wave1-A1-v1.77.15.diff
+
+diff --git a/server/internal/api/agent_updates.go b/server/internal/api/agent_updates.go
+--- a/server/internal/api/agent_updates.go
++++ b/server/internal/api/agent_updates.go
+@@ -33,6 +33,16 @@ type AgentVersionFile struct {
+ // Cached agent version info
+ var (
+ 	cachedAgentVersion *AgentVersionFile
+ 	versionCacheMutex  sync.RWMutex
+ 	versionCacheTime   time.Time
+ 	cachedChecksums    map[string]string // "windows-amd64" -> sha256
+ 	checksumCacheTime  time.Time
++
++	// Wave 1 hotfix (incident df7a7ff8): release-readiness cache.
++	// Tracks whether the version advertised by installers/version.json has a
++	// corresponding agent_releases row. When false, heartbeat-ack callers must
++	// suppress updateAvailable=true to avoid the 401 retry-storm we hit on the
++	// 2026-04-27 v1.77.10 deploy. Cache TTL 60s, separate mutex from
++	// versionCacheMutex to avoid reentrant-lock issues with getAgentVersionFromFile.
++	cachedReleaseStatus *AgentReleaseStatus
++	releaseStatusMutex  sync.RWMutex
++	releaseStatusTime   time.Time
+ )
+
+@@ -89,6 +99,68 @@ func getAgentVersionFromFile() *AgentVersionFile {
+ // getCurrentAgentVersion returns the current agent version string
+ func getCurrentAgentVersion() string {
+ 	return getAgentVersionFromFile().Version
+ }
+
++// AgentReleaseStatus captures whether the announced version is actually
++// publishable from the server. Heartbeat-ack callers gate updateAvailable=true
++// on HasReleaseRow — without it, the download endpoint will 401/404 and trigger
++// the retry-storm pattern documented in incident df7a7ff8.
++type AgentReleaseStatus struct {
++	Version       string
++	HasReleaseRow bool
++}
++
++// getAgentReleaseStatus returns cached release-readiness, refreshing every 60s.
++// One indexed query per minute (EXISTS over agent_releases) — not per heartbeat.
++// On DB error: HasReleaseRow=false (fail-closed → suppress announcement). Better
++// to under-announce than to flood the fleet with download retries when the
++// release isn't actually serveable.
++func (r *Router) getAgentReleaseStatus(ctx context.Context) *AgentReleaseStatus {
++	releaseStatusMutex.RLock()
++	if cachedReleaseStatus != nil && time.Since(releaseStatusTime) < 60*time.Second {
++		s := cachedReleaseStatus
++		releaseStatusMutex.RUnlock()
++		return s
++	}
++	releaseStatusMutex.RUnlock()
++
++	// Compute outside the write lock so DB latency doesn't block other readers.
++	version := getCurrentAgentVersion()
++	hasRow := false
++	if r != nil && r.db != nil {
++		qctx, cancel := context.WithTimeout(ctx, 2*time.Second)
++		defer cancel()
++		if err := r.db.Pool().QueryRow(qctx,
++			`SELECT EXISTS(SELECT 1 FROM agent_releases WHERE version = $1)`, version,
++		).Scan(&hasRow); err != nil {
++			log.Printf("[ReleaseStatus] agent_releases lookup failed for %s: %v (suppressing updateAvailable)", version, err)
++			hasRow = false
++		}
++	}
++	fresh := &AgentReleaseStatus{Version: version, HasReleaseRow: hasRow}
++
++	releaseStatusMutex.Lock()
++	defer releaseStatusMutex.Unlock()
++	// Another goroutine may have refreshed while we were querying — keep theirs.
++	if cachedReleaseStatus != nil && time.Since(releaseStatusTime) < 60*time.Second {
++		return cachedReleaseStatus
++	}
++	cachedReleaseStatus = fresh
++	releaseStatusTime = time.Now()
++	if !hasRow {
++		log.Printf("[ReleaseStatus] No agent_releases row for advertised version %s — updateAvailable suppressed until release pipeline publishes", version)
++	}
++	return fresh
++}
++
+ // AgentVersionInfo contains version information for auto-update
+ type AgentVersionInfo struct {
+
+diff --git a/server/internal/api/handlers.go b/server/internal/api/handlers.go
+--- a/server/internal/api/handlers.go
++++ b/server/internal/api/handlers.go
+@@ -401,8 +401,15 @@ func (r *Router) handleAgentConnection(...) {
+ 			"SELECT COALESCE(agent_version, ''), COALESCE(os_type, '') FROM devices WHERE id = $1",
+ 			deviceID).Scan(&agentVersion, &osType); verErr == nil && agentVersion != "" {
+ 			latestVersion := getCurrentAgentVersion()
+ 			if isNewerVersion(latestVersion, agentVersion) {
+-				// Linux agents below v1.72.0 have completely broken self-update
+-				// (hardcoded Windows paths, no execute_command support). Don't send
+-				// update notifications — they just trigger a useless download storm.
+-				if osType == "linux" && !isNewerVersion(agentVersion, "1.71.99") {
++				// Wave 1 hotfix (incident df7a7ff8): gate announcement on
++				// agent_releases having a row for latestVersion. Without this,
++				// the v1.77.10 advert sent agents into a 401 retry-storm because
++				// the release pipeline never populated agent_releases.
++				releaseStatus := r.getAgentReleaseStatus(ctx)
++				if !releaseStatus.HasReleaseRow {
++					log.Printf("Suppressing update notification for agent %s (no agent_releases row for %s — release pipeline gap)", authPayload.AgentID, latestVersion)
++				} else if osType == "linux" && !isNewerVersion(agentVersion, "1.71.99") {
++					// Linux agents below v1.72.0 have completely broken self-update
++					// (hardcoded Windows paths, no execute_command support). Don't send
++					// update notifications — they just trigger a useless download storm.
+ 					log.Printf("Suppressing update notification for agent %s (Linux v%s < v1.72.0, requires manual update)", authPayload.AgentID, agentVersion)
+ 				} else if r.hasRecentUpdateFailure(ctx, authPayload.AgentID, latestVersion) {
+@@ -621,6 +628,13 @@ func (r *Router) handleAgentMessage(...) {
+ 		// Build heartbeat ack - include update info if newer version available
+ 		ackPayload := map[string]interface{}{}
+
+ 		latestVersion := getCurrentAgentVersion()
+ 		if heartbeat.AgentVersion != "" && isNewerVersion(latestVersion, heartbeat.AgentVersion) {
+ 			// Suppress update notification for Linux agents below v1.72.0 — their
+ 			// self-update is broken and notifications just cause download storms.
+ 			var deviceOSType string
+ 			_ = r.db.Pool().QueryRow(ctx, "SELECT COALESCE(os_type, '') FROM devices WHERE id = $1", deviceID).Scan(&deviceOSType)
+
+ 			// Suppress update notification for 30 minutes after a failed update attempt.
+ 			// Without this, agents that fail an update get told to try again every heartbeat
+ 			// (~10s), hammering the download endpoint with 429s in an endless loop.
+ 			recentFailure := r.hasRecentUpdateFailure(ctx, agentID, latestVersion)
+
++			// Wave 1 hotfix (incident df7a7ff8): gate on agent_releases row exists.
++			releaseStatus := r.getAgentReleaseStatus(ctx)
++			noRelease := !releaseStatus.HasReleaseRow
++
+ 			if deviceOSType == "linux" && !isNewerVersion(heartbeat.AgentVersion, "1.71.99") {
+ 				// Don't tell this agent about updates — it can't apply them
+ 			} else if recentFailure {
+ 				// Don't tell this agent about updates — it recently failed, back off
+ 				log.Printf("Agent %s update suppressed for 30min (recent failure)", agentID)
++			} else if noRelease {
++				// Don't tell this agent about updates — server has no published release to serve
++				log.Printf("Agent %s update suppressed (no agent_releases row for %s — release pipeline gap)", agentID, latestVersion)
+ 			} else {
+ 				ackPayload["updateAvailable"] = true
+ 				ackPayload["latestVersion"] = latestVersion
+ 			}
+-			suppressed := (deviceOSType == "linux" && !isNewerVersion(heartbeat.AgentVersion, "1.71.99")) || recentFailure
++			suppressed := (deviceOSType == "linux" && !isNewerVersion(heartbeat.AgentVersion, "1.71.99")) || recentFailure || noRelease
+ 			log.Printf("Agent %s has update available: %s -> %s (os=%s, suppressed=%v)", agentID, heartbeat.AgentVersion, latestVersion, deviceOSType, suppressed)
+
+diff --git a/installers/version.json b/installers/version.json
+--- a/installers/version.json
++++ b/installers/version.json
+@@ -1,10 +1,10 @@
+ {
+-    "version":  "1.77.10",
+-    "releaseDate":  "2026-04-27",
+-    "changelog":  "Security patches: upgrade gRPC 1.64.0 -> 1.79.3 (CVE-2026-33186 auth bypass), pgx 5.5.2 -> 5.9.2 (CVE-2026-33816 SQL injection), oauth2 0.23.0 -> 0.34.0 (CVE-2025-22868), JWT 5.2.0 -> 5.2.2 (CVE-2025-30204), x/crypto 0.33.0 -> 0.46.0 (CVE-2025-22869), x/net 0.35.0 -> 0.48.0, redis 9.4.0 -> 9.6.3, Go toolchain go1.25.9 (resolves 9 stdlib advisories). npm audit fix at root and frontend. Migration 030_webhooks organization_id type fix moved to forward-only 041 migration. 039 and 040 migrations registered in runner (previously orphaned).",
++    "version":  "1.77.15",
++    "releaseDate":  "2026-05-05",
++    "changelog":  "Wave 1 hotfix (incident df7a7ff8) — server-only. Suppress updateAvailable=true announcements when agent_releases has no row for the advertised version. Stops the 401 retry-storm and Device Offline alert noise that began with the v1.77.10 deploy on 2026-04-27. No agent-binary change in this release; surviving fleet remains on 1.77.4. Phase 2 will populate agent_releases and ship 1.77.10 binaries end-to-end.",
+     "platforms":  [
+                       "windows",
+                       "linux",
+                       "darwin"
+                   ],
+     "minAppVersion":  "1.50.0"
+ }
+
+diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "sentinel",
+-  "version": "1.77.14",
++  "version": "1.77.15",
+   "description": "Sentinel - Remote Monitoring and Management",
+   "author": "Sentinel",
+   "license": "MIT",
+   "scripts": {
+
+diff --git a/package-lock.json b/package-lock.json
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "sentinel",
+-  "version": "1.77.10",
++  "version": "1.77.15",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "sentinel",
+-      "version": "1.77.10",
++      "version": "1.77.15",
+       "license": "MIT",
+       "dependencies": {
+         "@dnd-kit/core": "^6.3.1",
