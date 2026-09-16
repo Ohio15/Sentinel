@@ -7,7 +7,7 @@
 # Source of truth:  agent/version.json  (the file sentinel-backend serves to
 # agents as "latest available"). Every other lockstep file is compared to it.
 #
-# Scope note: root package.json, frontend/package.json and mobile/package.json
+# Scope note: root package.json and frontend/package.json
 # are intentionally NOT checked. Root package.json tracks the SERVER/repo
 # version line, which legitimately diverges from the agent line on server-only
 # releases (e.g. v1.77.15-17 were server-only; production server reached 1.78.0
