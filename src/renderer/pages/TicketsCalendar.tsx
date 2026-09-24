@@ -116,7 +116,7 @@ export function TicketsCalendar({ onTicketSelect, onViewChange }: TicketsCalenda
     if (onTicketSelect) {
       onTicketSelect(ticket.id);
     } else {
-      navigate(`/tickets/${ticket.id}`);
+      void navigate(`/tickets/${ticket.id}`);
     }
   };
 
@@ -217,7 +217,7 @@ export function TicketsCalendar({ onTicketSelect, onViewChange }: TicketsCalenda
           </div>
 
           <button
-            onClick={() => navigate('/tickets/new')}
+            onClick={() => { void navigate('/tickets/new'); }}
             className="btn btn-primary flex items-center gap-2"
           >
             <Plus className="w-5 h-5" />
