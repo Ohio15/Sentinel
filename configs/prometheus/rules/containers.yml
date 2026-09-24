@@ -14,10 +14,17 @@ groups:
       # page cache, so a container with a 512M limit reads ~100% while its RSS is
       # 26M. working_set excludes inactive file cache and is what the kernel uses
       # for OOM decisions, so it is the only one of the two that predicts a kill.
+      #
+      # Both sides are reduced to one series per name BEFORE the on(name) join.
+      # A container recreate, or a cAdvisor label-set change, leaves the old and
+      # new series side by side for the 5m staleness window; a bare on(name)
+      # then fails with "many-to-many matching not allowed" and the rule stops
+      # evaluating - it was failing every 15s in the run-up to the 2026-09-16
+      # Prometheus OOM, i.e. the alert meant to catch that was blind to it.
       - alert: ContainerHighMemory
         expr: |
-          (container_memory_working_set_bytes{name!=""}
-            / on(name) (container_spec_memory_limit_bytes{name!=""} > 0)
+          (max by(name) (container_memory_working_set_bytes{name!=""})
+            / on(name) (max by(name) (container_spec_memory_limit_bytes{name!=""}) > 0)
           ) * 100 > 90
         for: 10m
         labels:
