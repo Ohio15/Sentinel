@@ -265,10 +265,13 @@ services:
       resources:
         limits:
           cpus: '1'
-          memory: 512M
+          # 512M starved this container: working set sat AT the limit from at
+          # least 2026-09-12 until the cgroup OOM on 2026-09-16 (~11k head
+          # series + 15d TSDB page cache). Measured, not guessed — see PR.
+          memory: 1536M
         reservations:
           cpus: '0.25'
-          memory: 128M
+          memory: 256M
 
   # Monitoring - Alertmanager (Phase 2 shadow mode: UI-only, no external push)
   alertmanager:
@@ -334,6 +337,17 @@ services:
     image: gcr.io/cadvisor/cadvisor:v0.55.1
     container_name: sentinel-cadvisor
     restart: unless-stopped
+    # Collect only what configs/prometheus/rules/containers.yml consumes
+    # (container_cpu_usage_seconds_total, container_memory_*,
+    # container_spec_memory_limit_bytes, container_start_time_seconds) and
+    # only for Docker containers. At defaults cAdvisor walked every cgroup and
+    # every metric family and was cgroup-OOM-killed at 256M 16x on 2026-09-16.
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=30s
+      - --store_container_labels=false
+      - --whitelisted_container_labels=com.docker.compose.service,com.docker.compose.project
+      - --enable_metrics=cpu,memory,oom_event
     privileged: true
     devices:
       - /dev/kmsg:/dev/kmsg
@@ -349,7 +363,7 @@ services:
       resources:
         limits:
           cpus: '0.5'
-          memory: 256M
+          memory: 512M
 
   # Monitoring - Grafana dashboards
   grafana:
