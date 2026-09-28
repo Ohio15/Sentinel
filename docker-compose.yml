@@ -381,6 +381,11 @@ services:
     networks:
       - sentinel-network
       - edge
+      # Grafana's only path to ai-console-prometheus ("AI Usage" dashboard): a
+      # dedicated two-member network, not read-only (ai-console README "Networks");
+      # ai-console-prometheus left the shared `edge` after the ai-console
+      # security audit of 2026-09-28 (F1: unauthenticated OTLP write/query).
+      - ai-console-grafana
     labels:
       - traefik.enable=true
       - traefik.docker.network=edge
@@ -432,6 +437,11 @@ networks:
   edge:
     external: true
     name: edge
+  # Created once on NEXUS by the ai-console rollout; shared only with
+  # ai-console-prometheus.
+  ai-console-grafana:
+    external: true
+    name: ai-console-grafana
 
 volumes:
   postgres-data:
