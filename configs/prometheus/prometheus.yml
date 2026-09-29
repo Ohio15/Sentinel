@@ -62,11 +62,42 @@ scrape_configs:
       - targets:
           - https://updates.nexus/manifest.json
           - https://grafana.nexus/api/health
-          - https://apm.nexus/
           - https://openclaw.nexus/
           - https://toolvault.nexus/
           - https://sentinel.nexus/
         labels:
+          scope: internal
+    scrape_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  # APM (apm.nexus) — dedicated job so APM has its own 5m ApmDown alert
+  # (rules/apm.yml) instead of sharing PublicEndpointDown. Two probes:
+  #  - /api/health through Traefik, body must contain "status":"ok"
+  #    (module http_apm_health). /api/health is reachable from blackbox's
+  #    source IP despite APM single-user mode's client-IP trust.
+  #  - / (the frontend SPA), plain 200 (moved here from blackbox-internal so
+  #    one outage does not page twice).
+  # The per-target __param_module label selects the blackbox module.
+  - job_name: 'blackbox-apm'
+    metrics_path: /probe
+    static_configs:
+      - targets:
+          - https://apm.nexus/api/health
+        labels:
+          __param_module: http_apm_health
+          service: apm
+          scope: internal
+      - targets:
+          - https://apm.nexus/
+        labels:
+          __param_module: http_2xx_internal
+          service: apm
           scope: internal
     scrape_interval: 30s
     relabel_configs:
