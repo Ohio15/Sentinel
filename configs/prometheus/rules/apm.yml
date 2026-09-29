@@ -1,0 +1,29 @@
+groups:
+  - name: apm
+    rules:
+      # APM (apm.nexus) unreachable or unhealthy through Traefik for 5m. Covers
+      # both blackbox-apm probes: /api/health (200 + "status":"ok") and the
+      # frontend root. Routed critical -> Alertmanager -> alertmanager-ntfy ->
+      # ntfy topic cortex-alerts. Blind spot: /api/health does not touch
+      # Postgres, so apm-postgres down behind a healthy API is not detected here.
+      - alert: ApmDown
+        expr: probe_success{job="blackbox-apm"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: apm
+        annotations:
+          summary: "APM endpoint {{ $labels.instance }} is DOWN"
+          description: "Blackbox probe of {{ $labels.instance }} (Traefik -> apm-api / apm-frontend) has failed for 5+ minutes. Check `docker ps --filter name=apm-`, `docker logs apm-api`, and apm-edge network attachment of infra-traefik."
+
+      # The probe job itself vanished (blackbox-exporter down or job removed):
+      # without this, ApmDown can never fire and silence would look healthy.
+      - alert: ApmProbeAbsent
+        expr: absent(probe_success{job="blackbox-apm"})
+        for: 10m
+        labels:
+          severity: warning
+          service: apm
+        annotations:
+          summary: "No APM probe results for 10m"
+          description: "probe_success{job=\"blackbox-apm\"} is absent. ApmDown cannot fire. Check sentinel-blackbox-exporter and the blackbox-apm scrape job."

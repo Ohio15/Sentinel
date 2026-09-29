@@ -32,6 +32,25 @@ modules:
       tls_config:
         insecure_skip_verify: true
 
+  # APM API health through Traefik. Same transport as http_2xx_internal, plus
+  # a body check: a 200 from a wrong upstream (or an error page) is not
+  # healthy. NOTE: APM's /api/health does not probe its database, so a DB
+  # outage behind a live API is NOT caught by this probe.
+  http_apm_health:
+    prober: http
+    timeout: 10s
+    http:
+      method: GET
+      valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+      valid_status_codes: [200]
+      fail_if_not_ssl: true
+      preferred_ip_protocol: ip4
+      follow_redirects: false
+      fail_if_body_not_matches_regexp:
+        - '"status":"ok"'
+      tls_config:
+        insecure_skip_verify: true
+
   # ICMP probe for WAN-circuit witness monitoring (e.g. Patriot site WAN IP).
   # Requires the container to allow unprivileged ping sockets — see the
   # net.ipv4.ping_group_range sysctl on the blackbox-exporter service.
