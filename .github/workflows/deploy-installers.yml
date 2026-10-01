@@ -43,7 +43,13 @@ jobs:
     # workflow_run fires on every completion regardless of conclusion;
     # skip the job entirely when the triggering build failed so we don't
     # waste runner time or accidentally deploy a stale prior tag.
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    # For workflow_run, also require the upstream run to come from this
+    # repository: head_branch is matched by name, and a fork can name a
+    # branch anything (same guard as deploy-web.yml).
+    if: >-
+      ${{ github.event_name != 'workflow_run'
+          || (github.event.workflow_run.conclusion == 'success'
+              && github.event.workflow_run.head_repository.full_name == github.repository) }}
     steps:
       - name: Resolve target tag
         id: tag
