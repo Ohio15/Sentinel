@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "build": "go -C agent build ./... && go -C server build ./...",
+  "test": "node scripts/stability/go-test.mjs",
+  "health": "node scripts/stability/health.mjs",
+  "base": "origin/main"
+}
