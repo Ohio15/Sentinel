@@ -137,9 +137,15 @@ jobs:
   # so db.Migrate() aborted with SQLSTATE 42703 on every fresh database. Fixed
   # in 000013_grpc_dataplane.up.sql; this job is the regression guard, so it
   # must be able to fail the workflow.
+  #
+  # GitHub-hosted, never self-hosted (2026-10-01, restricted-runners brief
+  # 7bf8331d). This job runs on pull_request and executes the PR's own
+  # docker-compose.test.yml, Dockerfile and scripts with Docker access. On the
+  # NEXUS runner that made any PR root on the production host before merge.
+  # Sentinel is public, so hosted minutes cost nothing.
   integration-tests:
     name: Integration Tests
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     needs: [agent, app]
     steps:
       - uses: actions/checkout@v4

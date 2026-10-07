@@ -43,32 +43,57 @@ jobs:
     # workflow_run fires on every completion regardless of conclusion;
     # skip the job entirely when the triggering build failed so we don't
     # waste runner time or accidentally deploy a stale prior tag.
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    # For workflow_run, also require the upstream run to come from this
+    # repository: head_branch is matched by name, and a fork can name a
+    # branch anything (same guard as deploy-web.yml). And pin the upstream
+    # source event to the ones Build Installers actually declares (tag push,
+    # workflow_dispatch), both of which need write access, so a trigger added
+    # to Build Installers later cannot silently reach this runner.
+    if: >-
+      ${{ github.event_name != 'workflow_run'
+          || (github.event.workflow_run.conclusion == 'success'
+              && (github.event.workflow_run.event == 'push'
+                  || github.event.workflow_run.event == 'workflow_dispatch')
+              && github.event.workflow_run.head_repository.full_name == github.repository) }}
     steps:
       - name: Resolve target tag
         id: tag
+        # Event fields arrive through env, never ${{ }} inside the script: a
+        # tag, branch name or dispatch input is attacker-shaped text, and
+        # interpolating it into `run:` makes it shell code on NEXUS.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IN_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          if [ -n "${{ inputs.tag }}" ]; then
-            TAG="${{ inputs.tag }}"
-          elif [ -n "${{ github.event.release.tag_name }}" ]; then
-            TAG="${{ github.event.release.tag_name }}"
-          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+          if [ -n "$IN_TAG" ]; then
+            TAG="$IN_TAG"
+          elif [ -n "$RELEASE_TAG" ]; then
+            TAG="$RELEASE_TAG"
+          elif [ "$EVENT_NAME" = "workflow_run" ]; then
             # build-installers.yml is triggered by a tag push, so the
             # upstream run's head_branch is the tag name (e.g. "v1.77.39").
             # Verify it looks like a version tag before trusting it — a
             # workflow_dispatch from main would yield "main" here and we
             # don't want to fall into a wrong-branch deploy.
-            CANDIDATE="${{ github.event.workflow_run.head_branch }}"
+            CANDIDATE="$RUN_HEAD_BRANCH"
             if [[ ! "$CANDIDATE" =~ ^v[0-9] ]]; then
               echo "workflow_run head_branch=$CANDIDATE is not a version tag — falling back to latest release"
-              CANDIDATE=$(gh release view --repo "${{ github.repository }}" --json tagName -q .tagName)
+              CANDIDATE=$(gh release view --repo "$REPO" --json tagName -q .tagName)
             fi
             TAG="$CANDIDATE"
           else
-            TAG=$(gh release view --repo "${{ github.repository }}" --json tagName -q .tagName)
+            TAG=$(gh release view --repo "$REPO" --json tagName -q .tagName)
+          fi
+          # Strict shape check before the value is used in any path or
+          # command: it names a stage dir under $HOME/Sentinel.
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::refusing tag '$TAG': not vMAJOR.MINOR.PATCH"
+            exit 1
           fi
           echo "Target tag: $TAG"
           echo "value=$TAG" >> "$GITHUB_OUTPUT"
@@ -76,14 +101,15 @@ jobs:
       - name: Download installer assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.value }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          TAG="${{ steps.tag.outputs.value }}"
           STAGE="$HOME/Sentinel/.installer-stage-$TAG"
           rm -rf "$STAGE"
           mkdir -p "$STAGE"
           gh release download "$TAG" \
-            --repo "${{ github.repository }}" \
+            --repo "$REPO" \
             --dir "$STAGE" \
             --pattern '*.exe' \
             --pattern '*.deb' \
@@ -98,9 +124,10 @@ jobs:
           ls -la "$STAGE"
 
       - name: Verify checksums
+        env:
+          TAG: ${{ steps.tag.outputs.value }}
         run: |
           set -euo pipefail
-          TAG="${{ steps.tag.outputs.value }}"
           STAGE="$HOME/Sentinel/.installer-stage-$TAG"
           cd "$STAGE"
           if [ -f SHA256SUMS ]; then
@@ -110,9 +137,10 @@ jobs:
           fi
 
       - name: Atomically swap into installers/ and release/agent/
+        env:
+          TAG: ${{ steps.tag.outputs.value }}
         run: |
           set -euo pipefail
-          TAG="${{ steps.tag.outputs.value }}"
           STAGE="$HOME/Sentinel/.installer-stage-$TAG"
           DEST_INSTALLERS="$HOME/Sentinel/installers"
           DEST_RELEASE="$HOME/Sentinel/release/agent"
@@ -166,5 +194,7 @@ jobs:
             || (echo "::error::Container cannot read template"; exit 1)
 
       - name: Clean up stage dir
-        if: always()
-        run: rm -rf "$HOME/Sentinel/.installer-stage-${{ steps.tag.outputs.value }}"
+        if: always() && steps.tag.outputs.value != ''
+        env:
+          TAG: ${{ steps.tag.outputs.value }}
+        run: rm -rf "$HOME/Sentinel/.installer-stage-$TAG"
