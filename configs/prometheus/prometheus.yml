@@ -114,18 +114,27 @@ scrape_configs:
   # (AT&T gateway -> USG -> LAN). Motivated by the 2026-07-29 outage
   # (shared-brain incident 858e8538): with no external witness, the fault
   # could not be localized to ISP-vs-USG-vs-power without on-site eyes.
-  # NOTE: target assumes the site WAN IP is static. The AT&T gateway was
-  # power-cycled during that incident and MAY have been issued a new IP —
-  # re-verify the target once the site is back online.
+  # Since the 2026-09-01 BGW320 IP-passthrough change the public IP lives on
+  # the USG, whose WAN_LOCAL policy drops ICMP echo — the ICMP leg alone read
+  # 0 permanently and the alert fired nonstop. The TCP leg handshakes the
+  # recorder port-forward (:80, re-enabled 2026-09-22, shared-brain c11d82ef).
+  # Each target carries its own module; PatriotWANDown fires only when EVERY
+  # leg fails. Egress IP last confirmed on site 2026-09-08 (c6179498).
   - job_name: 'blackbox-wan-patriot'
     metrics_path: /probe
-    params:
-      module: [icmp]
     static_configs:
       - targets:
-          - 104.189.209.197  # Patriot site WAN IP (AT&T)
+          - 104.189.209.197  # Patriot site WAN IP (AT&T) — ICMP
+        labels:
+          module: icmp
+      - targets:
+          - 104.189.209.197:80  # same IP — TCP handshake to recorder forward
+        labels:
+          module: tcp_connect
     scrape_interval: 30s
     relabel_configs:
+      - source_labels: [module]
+        target_label: __param_module
       - source_labels: [__address__]
         target_label: __param_target
       - source_labels: [__param_target]

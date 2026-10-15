@@ -59,3 +59,11 @@ modules:
     timeout: 5s
     icmp:
       preferred_ip_protocol: ip4
+
+  # Bare TCP handshake for WAN witnesses whose edge drops ICMP. Sends no
+  # payload, so the service behind the port only ever sees a connect/close.
+  tcp_connect:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      preferred_ip_protocol: ip4

@@ -6,16 +6,22 @@ groups:
       # an observation made entirely OUTSIDE the site's hardware chain.
       # Built after the 2026-07-29 outage (shared-brain incident 858e8538),
       # where the fault could not be localized remotely.
+      # Fires only when ALL legs (ICMP + TCP :80) fail: the USG drops ICMP
+      # since the 2026-09-01 IP-passthrough change, so ICMP alone is not a
+      # usable signal.
       - alert: PatriotWANDown
-        expr: probe_success{job="blackbox-wan-patriot"} == 0
+        expr: max(probe_success{job="blackbox-wan-patriot"}) == 0
         for: 3m
         labels:
           severity: critical
         annotations:
-          summary: "Patriot WAN {{ $labels.instance }} unreachable from NEXUS"
+          summary: "Patriot WAN 104.189.209.197 unreachable from NEXUS"
           description: >-
-            ICMP probe of the Patriot site WAN IP has failed for 3+ minutes,
-            observed from NEXUS (outside the site). Discriminators, in order:
+            Every probe leg (ICMP and TCP :80) of the Patriot site WAN IP has
+            failed for 3+ minutes, observed from NEXUS (outside the site).
+            (0) If the recorder port-forward on :80 was deliberately closed,
+            this alert loses its only live leg — repoint the TCP target.
+            Discriminators, in order:
             (1) site heartbeat also missing -> site-wide (circuit, AT&T
             gateway, or power); (2) AT&T gateway Broadband LED solid green
             on-site but this alert active -> fault is downstream (USG wedge —
