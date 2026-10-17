@@ -38,6 +38,7 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 	}
 
 	r := gin.New()
+	configureTrustedProxies(r, cfg.TrustedProxies)
 	r.Use(gin.Logger())
 	r.Use(gin.Recovery())
 	r.Use(securityHeadersMiddleware())
@@ -240,6 +241,7 @@ func NewRouterWithServices(services *Services) *gin.Engine {
 	}
 
 	r := gin.New()
+	configureTrustedProxies(r, services.Config.TrustedProxies)
 	r.Use(gin.Logger())
 	r.Use(gin.Recovery())
 	r.Use(securityHeadersMiddleware())

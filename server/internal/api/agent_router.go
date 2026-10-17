@@ -27,6 +27,10 @@ func NewAgentMTLSRouter(services *Services, limiter *middleware.AgentRateLimiter
 	}
 
 	r := gin.New()
+	// Agents connect to this listener directly (TLS terminates here, no
+	// proxy in front), so no peer may assert a client IP via forwarded
+	// headers; otherwise the per-IP AgentRateLimiter is bypassable.
+	configureTrustedProxies(r, nil)
 	r.Use(gin.Logger())
 	r.Use(gin.Recovery())
 	r.Use(agentSecurityHeaders())
