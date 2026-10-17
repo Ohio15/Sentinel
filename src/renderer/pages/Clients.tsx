@@ -83,7 +83,7 @@ export function Clients() {
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => setEditingClient(client)}
-                    className="p-1.5 text-text-secondary hover:text-primary transition-colors rounded"
+                    className="p-1.5 text-text-secondary hover:text-primary transition-colors rounded-sm"
                     title="Edit client"
                   >
                     <EditIcon className="w-4 h-4" />
@@ -92,13 +92,13 @@ export function Clients() {
                     <div className="flex items-center gap-1">
                       <button
                         onClick={() => { void handleDelete(client.id); }}
-                        className="p-1.5 text-white bg-danger hover:bg-danger/80 transition-colors rounded text-xs"
+                        className="p-1.5 text-white bg-danger hover:bg-danger/80 transition-colors rounded-sm text-xs"
                       >
                         Confirm
                       </button>
                       <button
                         onClick={() => setDeleteConfirm(null)}
-                        className="p-1.5 text-text-secondary hover:text-text-primary transition-colors rounded text-xs"
+                        className="p-1.5 text-text-secondary hover:text-text-primary transition-colors rounded-sm text-xs"
                       >
                         Cancel
                       </button>
@@ -106,7 +106,7 @@ export function Clients() {
                   ) : (
                     <button
                       onClick={() => setDeleteConfirm(client.id)}
-                      className="p-1.5 text-text-secondary hover:text-danger transition-colors rounded"
+                      className="p-1.5 text-text-secondary hover:text-danger transition-colors rounded-sm"
                       title="Delete client"
                     >
                       <TrashIcon className="w-4 h-4" />
@@ -286,7 +286,7 @@ function ClientModal({ client, onClose, onSave }: ClientModalProps) {
                 maxLength={7}
               />
               <div
-                className="w-20 h-8 rounded flex items-center justify-center text-white text-xs font-medium"
+                className="w-20 h-8 rounded-sm flex items-center justify-center text-white text-xs font-medium"
                 style={{ backgroundColor: color }}
               >
                 Preview
@@ -343,7 +343,7 @@ function ClientModal({ client, onClose, onSave }: ClientModalProps) {
               </div>
               <div className="flex items-center gap-3">
                 <span className="text-xs text-text-secondary">Preview:</span>
-                <div className="flex-1 flex items-center justify-center p-2 bg-white rounded border border-border min-h-[60px]">
+                <div className="flex-1 flex items-center justify-center p-2 bg-white rounded-sm border border-border min-h-[60px]">
                   {!logoError ? (
                     <img
                       key={logoUrl}

@@ -105,7 +105,7 @@ export const Terminal = memo(function Terminal({ deviceId, isOnline }: TerminalP
         {connected ? (
           <button
             onClick={handleDisconnect}
-            className="px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
+            className="px-3 py-1 text-sm bg-red-600 text-white rounded-sm hover:bg-red-700 transition-colors"
           >
             Disconnect
           </button>
@@ -113,7 +113,7 @@ export const Terminal = memo(function Terminal({ deviceId, isOnline }: TerminalP
           <button
             onClick={() => { void handleConnect(); }}
             disabled={connecting}
-            className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 transition-colors disabled:opacity-50"
+            className="px-3 py-1 text-sm bg-green-600 text-white rounded-sm hover:bg-green-700 transition-colors disabled:opacity-50"
           >
             {connecting ? 'Connecting...' : 'Connect'}
           </button>
@@ -137,7 +137,7 @@ export const Terminal = memo(function Terminal({ deviceId, isOnline }: TerminalP
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              className="flex-1 ml-2 bg-transparent text-gray-100 outline-none"
+              className="flex-1 ml-2 bg-transparent text-gray-100 outline-hidden"
               maxLength={MAX_INPUT_LENGTH + 1}
               autoFocus
             />

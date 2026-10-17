@@ -124,7 +124,7 @@ function CategoryItem({
         {hasChildren ? (
           <button
             onClick={handleToggle}
-            className="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-600 rounded"
+            className="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-sm"
           >
             {isExpanded ? (
               <ChevronDown className="w-4 h-4 text-gray-500" />
@@ -137,7 +137,7 @@ function CategoryItem({
         )}
 
         <span
-          className="w-3 h-3 rounded-full flex-shrink-0"
+          className="w-3 h-3 rounded-full shrink-0"
           style={{ backgroundColor: category.color || '#6B7280' }}
         />
 
@@ -146,7 +146,7 @@ function CategoryItem({
         </span>
 
         {isSelected && (
-          <Check className="w-4 h-4 text-blue-600 dark:text-blue-400 flex-shrink-0" />
+          <Check className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
         )}
       </div>
 
@@ -264,7 +264,7 @@ export function CategorySelector({
           bg-white dark:bg-gray-800
           border-gray-300 dark:border-gray-600
           hover:border-gray-400 dark:hover:border-gray-500
-          focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500
+          focus:outline-hidden focus:ring-2 focus:ring-blue-500 focus:border-blue-500
           disabled:opacity-50 disabled:cursor-not-allowed
           ${sizeClasses[size]}
         `}
@@ -273,7 +273,7 @@ export function CategorySelector({
           {selectedCategory ? (
             <>
               <span
-                className="w-3 h-3 rounded-full flex-shrink-0"
+                className="w-3 h-3 rounded-full shrink-0"
                 style={{ backgroundColor: selectedCategory.color || '#6B7280' }}
               />
               <span className="text-gray-900 dark:text-gray-100 truncate">
@@ -290,7 +290,7 @@ export function CategorySelector({
             <button
               type="button"
               onClick={handleClear}
-              className="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-600 rounded"
+              className="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-sm"
             >
               <X className="w-4 h-4 text-gray-400" />
             </button>

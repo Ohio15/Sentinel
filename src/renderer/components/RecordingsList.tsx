@@ -133,26 +133,26 @@ export function RecordingsList({ deviceId, onViewRecording, onRefresh }: Recordi
     switch (status) {
       case 'recording':
         return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-error/10 text-error">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-xs font-medium bg-error/10 text-error">
             <span className="w-1.5 h-1.5 bg-error rounded-full animate-pulse" />
             Recording
           </span>
         );
       case 'completed':
         return (
-          <span className="px-2 py-0.5 rounded text-xs font-medium bg-success/10 text-success">
+          <span className="px-2 py-0.5 rounded-sm text-xs font-medium bg-success/10 text-success">
             Completed
           </span>
         );
       case 'failed':
         return (
-          <span className="px-2 py-0.5 rounded text-xs font-medium bg-warning/10 text-warning">
+          <span className="px-2 py-0.5 rounded-sm text-xs font-medium bg-warning/10 text-warning">
             Failed
           </span>
         );
       default:
         return (
-          <span className="px-2 py-0.5 rounded text-xs font-medium bg-text-secondary/10 text-text-secondary">
+          <span className="px-2 py-0.5 rounded-sm text-xs font-medium bg-text-secondary/10 text-text-secondary">
             {status}
           </span>
         );
@@ -241,7 +241,7 @@ export function RecordingsList({ deviceId, onViewRecording, onRefresh }: Recordi
                   {/* View button */}
                   <button
                     onClick={() => onViewRecording(recording.id)}
-                    className="p-1.5 hover:bg-hover rounded transition-colors"
+                    className="p-1.5 hover:bg-hover rounded-sm transition-colors"
                     title="View recording"
                   >
                     <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -254,7 +254,7 @@ export function RecordingsList({ deviceId, onViewRecording, onRefresh }: Recordi
                   {recording.status === 'completed' && (
                     <div className="relative group">
                       <button
-                        className="p-1.5 hover:bg-hover rounded transition-colors"
+                        className="p-1.5 hover:bg-hover rounded-sm transition-colors"
                         title="Export"
                       >
                         <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -263,7 +263,7 @@ export function RecordingsList({ deviceId, onViewRecording, onRefresh }: Recordi
                           <line x1="12" y1="15" x2="12" y2="3" />
                         </svg>
                       </button>
-                      <div className="absolute right-0 mt-1 w-32 bg-surface border border-border rounded shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
+                      <div className="absolute right-0 mt-1 w-32 bg-surface border border-border rounded-sm shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
                         <button
                           onClick={() => handleExport(recording.id, 'csv')}
                           className="w-full px-3 py-2 text-left text-sm hover:bg-hover transition-colors"
@@ -286,7 +286,7 @@ export function RecordingsList({ deviceId, onViewRecording, onRefresh }: Recordi
                       <div className="flex items-center gap-1">
                         <button
                           onClick={() => { void handleDelete(recording.id); }}
-                          className="p-1.5 hover:bg-error/20 text-error rounded transition-colors"
+                          className="p-1.5 hover:bg-error/20 text-error rounded-sm transition-colors"
                           title="Confirm delete"
                         >
                           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -295,7 +295,7 @@ export function RecordingsList({ deviceId, onViewRecording, onRefresh }: Recordi
                         </button>
                         <button
                           onClick={() => setDeleteConfirm(null)}
-                          className="p-1.5 hover:bg-hover rounded transition-colors"
+                          className="p-1.5 hover:bg-hover rounded-sm transition-colors"
                           title="Cancel"
                         >
                           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -307,7 +307,7 @@ export function RecordingsList({ deviceId, onViewRecording, onRefresh }: Recordi
                     ) : (
                       <button
                         onClick={() => setDeleteConfirm(recording.id)}
-                        className="p-1.5 hover:bg-error/10 text-text-secondary hover:text-error rounded transition-colors"
+                        className="p-1.5 hover:bg-error/10 text-text-secondary hover:text-error rounded-sm transition-colors"
                         title="Delete recording"
                       >
                         <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

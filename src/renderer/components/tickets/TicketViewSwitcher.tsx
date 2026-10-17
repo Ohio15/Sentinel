@@ -52,7 +52,7 @@ export function TicketViewSwitcher({
               inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium
               transition-colors duration-150
               ${isActive
-                ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
+                ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-xs'
                 : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100'
               }
             `}
@@ -133,7 +133,7 @@ export function TicketViewDropdown({
       <select
         value={currentView}
         onChange={handleChange}
-        className="appearance-none w-full pl-9 pr-8 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        className="appearance-none w-full pl-9 pr-8 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
       >
         {viewOptions.map((option) => (
           <option key={option.type} value={option.type}>

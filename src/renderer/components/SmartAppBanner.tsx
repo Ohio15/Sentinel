@@ -118,7 +118,7 @@ export function SmartAppBanner({
     <div className="fixed top-0 left-0 right-0 z-50 bg-surface border-b border-border shadow-lg animate-slide-down">
       <div className="flex items-center gap-3 px-4 py-3">
         {/* App Icon */}
-        <div className="flex-shrink-0 w-12 h-12 bg-primary/20 rounded-xl flex items-center justify-center">
+        <div className="shrink-0 w-12 h-12 bg-primary/20 rounded-xl flex items-center justify-center">
           <Smartphone className="w-6 h-6 text-primary" />
         </div>
 
@@ -133,7 +133,7 @@ export function SmartAppBanner({
         </div>
 
         {/* Actions */}
-        <div className="flex items-center gap-2 flex-shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={handleOpenApp}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary-hover transition-colors"

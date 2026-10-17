@@ -800,7 +800,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                                   setActionMenu(device.id);
                                 }
                               }}
-                              className="text-text-secondary hover:text-text-primary transition-colors p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700"
+                              className="text-text-secondary hover:text-text-primary transition-colors p-1 rounded-sm hover:bg-gray-100 dark:hover:bg-gray-700"
                               title="Device actions"
                             >
                               <MoreIcon className="w-4 h-4" />
@@ -808,7 +808,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                             {actionMenu === device.id && menuPosition && createPortal(
                               <div
                                 onClick={(e) => e.stopPropagation()}
-                                className="fixed bg-surface border border-border rounded-lg shadow-lg z-[9999] min-w-[160px]"
+                                className="fixed bg-surface border border-border rounded-lg shadow-lg z-9999 min-w-[160px]"
                                 style={{ top: menuPosition.y + 4, left: menuPosition.x - 160 }}
                               >
                                 {device.status === 'disabled' ? (
@@ -1070,7 +1070,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
             {/* Note */}
             <div className="mt-6 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
               <div className="flex items-start gap-2">
-                <InfoIcon className="w-5 h-5 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" />
+                <InfoIcon className="w-5 h-5 text-blue-600 dark:text-blue-400 mt-0.5 shrink-0" />
                 <p className="text-sm text-blue-700 dark:text-blue-300">
                   Installers include your enrollment token and server configuration. Just download and run.
                 </p>
@@ -1124,7 +1124,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
               <li>Agents run as a system service and start automatically on boot</li>
               <li>Make sure port {serverInfo.port} is accessible from the target machine</li>
               <li>Windows: Right-click the installer and select "Run as administrator"</li>
-              <li>Linux: Install with <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">sudo dpkg -i *.deb</code> or <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">sudo rpm -i *.rpm</code></li>
+              <li>Linux: Install with <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded-sm">sudo dpkg -i *.deb</code> or <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded-sm">sudo rpm -i *.rpm</code></li>
               <li>macOS: Double-click the .pkg and follow the installer prompts</li>
               <li>Synology: Open Package Center → Manual Install → Browse to .spk file</li>
             </ul>
@@ -1231,7 +1231,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                       </select>
                     </div>
                     <div><label className="block text-sm font-medium text-text-primary mb-1">Notes (internal)</label><textarea value={linkFormData.notes} onChange={(e) => setLinkFormData({ ...linkFormData, notes: e.target.value })} placeholder="New hire - Marketing dept" rows={2} className="input w-full" /></div>
-                    <div className="flex items-center gap-2"><input type="checkbox" id="sendEmail" checked={linkFormData.sendEmail} onChange={(e) => setLinkFormData({ ...linkFormData, sendEmail: e.target.checked })} className="w-4 h-4 text-primary rounded focus:ring-primary" /><label htmlFor="sendEmail" className="text-sm text-text-secondary">Send email notification</label></div>
+                    <div className="flex items-center gap-2"><input type="checkbox" id="sendEmail" checked={linkFormData.sendEmail} onChange={(e) => setLinkFormData({ ...linkFormData, sendEmail: e.target.checked })} className="w-4 h-4 text-primary rounded-sm focus:ring-primary" /><label htmlFor="sendEmail" className="text-sm text-text-secondary">Send email notification</label></div>
                   </div>
                   <div className="flex justify-end gap-3 mt-6">
                     <button onClick={() => setShowCreateModal(false)} className="btn btn-secondary">Cancel</button>
@@ -1280,7 +1280,7 @@ export function Devices({ onDeviceSelect }: DevicesProps) {
                     {selectedLink.createdByName && <div><dt className="text-text-secondary">Created By</dt><dd className="text-text-primary">{selectedLink.createdByName}</dd></div>}
                     <div><dt className="text-text-secondary">Expires</dt><dd className="text-text-primary">{format(new Date(selectedLink.expiresAt), 'MMM d, yyyy HH:mm')}</dd></div>
                     <div><dt className="text-text-secondary">Download Count</dt><dd className="text-text-primary">{selectedLink.downloadCount}</dd></div>
-                    {selectedLink.installationCode && <div><dt className="text-text-secondary">Installation Code</dt><dd><code className="font-mono text-lg font-bold text-indigo-600 bg-indigo-50 dark:bg-indigo-900/30 dark:text-indigo-300 px-3 py-1 rounded">{selectedLink.installationCode}</code></dd></div>}
+                    {selectedLink.installationCode && <div><dt className="text-text-secondary">Installation Code</dt><dd><code className="font-mono text-lg font-bold text-indigo-600 bg-indigo-50 dark:bg-indigo-900/30 dark:text-indigo-300 px-3 py-1 rounded-sm">{selectedLink.installationCode}</code></dd></div>}
                   </dl>
                 </div>
               </div>
@@ -1338,7 +1338,7 @@ function LinkStatCard({ label, value, color = 'primary' }: { label: string; valu
   return (
     <div className="card p-4">
       <div className="text-sm text-text-secondary mb-1">{label}</div>
-      <div className={`text-2xl font-bold ${colors[color] || colors.primary} rounded px-2 py-1 inline-block`}>{value}</div>
+      <div className={`text-2xl font-bold ${colors[color] || colors.primary} rounded-sm px-2 py-1 inline-block`}>{value}</div>
     </div>
   );
 }
@@ -1394,7 +1394,7 @@ function DeviceTypeCell({ device, onUpdate }: { device: Device; onUpdate: (id: s
     <div className="relative" ref={dropdownRef} onClick={e => e.stopPropagation()}>
       <button
         onClick={() => setIsEditing(!isEditing)}
-        className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+        className="flex items-center gap-1.5 px-2 py-1 rounded-sm hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
         title="Click to change device type"
       >
         <span className="text-sm">{config.icon}</span>

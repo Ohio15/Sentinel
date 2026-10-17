@@ -37,7 +37,7 @@ export function ClientSelector() {
         className="flex items-center gap-2 px-3 py-2 bg-surface-secondary rounded-lg border border-border hover:border-primary transition-colors min-w-[180px]"
       >
         <div
-          className="w-3 h-3 rounded-full flex-shrink-0"
+          className="w-3 h-3 rounded-full shrink-0"
           style={{ backgroundColor: displayColor }}
         />
         <span className="text-sm text-text-primary truncate flex-1 text-left">
@@ -55,7 +55,7 @@ export function ClientSelector() {
               currentClientId === null ? 'bg-primary/10' : ''
             }`}
           >
-            <div className="w-3 h-3 rounded-full bg-gradient-to-br from-primary to-secondary flex-shrink-0" />
+            <div className="w-3 h-3 rounded-full bg-linear-to-br from-primary to-secondary shrink-0" />
             <span className="text-sm text-text-primary">All Clients</span>
             {currentClientId === null && <CheckIcon className="w-4 h-4 text-primary ml-auto" />}
           </button>
@@ -74,7 +74,7 @@ export function ClientSelector() {
               }`}
             >
               <div
-                className="w-3 h-3 rounded-full flex-shrink-0"
+                className="w-3 h-3 rounded-full shrink-0"
                 style={{ backgroundColor: client.color || '#6366f1' }}
               />
               <div className="flex-1 text-left min-w-0">
@@ -85,7 +85,7 @@ export function ClientSelector() {
                   </span>
                 )}
               </div>
-              {currentClientId === client.id && <CheckIcon className="w-4 h-4 text-primary flex-shrink-0" />}
+              {currentClientId === client.id && <CheckIcon className="w-4 h-4 text-primary shrink-0" />}
             </button>
           ))}
 

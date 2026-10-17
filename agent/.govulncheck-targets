@@ -1,0 +1,13 @@
+# Targets the security-audit govulncheck job scans for this module.
+# Format: GOOS GOARCH CGO_ENABLED ./pattern [./pattern ...]
+# Mirrors what build-installers.yml ships: every Windows binary (agent,
+# watchdog, bootstrap, desktop, desktop-helper; installer via build.ps1),
+# and agent/watchdog/bootstrap for linux and darwin, all with CGO_ENABLED=0.
+# The cgo X11/PulseAudio desktop code under internal/ is not part of any
+# linux/darwin binary that ships, so it is not a target here.
+windows amd64 0 ./...
+windows arm64 0 ./...
+linux amd64 0 ./cmd/sentinel-agent ./cmd/sentinel-watchdog ./cmd/sentinel-bootstrap
+linux arm64 0 ./cmd/sentinel-agent ./cmd/sentinel-watchdog ./cmd/sentinel-bootstrap
+darwin amd64 0 ./cmd/sentinel-agent ./cmd/sentinel-watchdog ./cmd/sentinel-bootstrap
+darwin arm64 0 ./cmd/sentinel-agent ./cmd/sentinel-watchdog ./cmd/sentinel-bootstrap

@@ -24,7 +24,7 @@ export function Card({ children, className = '', padding = 'md', onClick }: Card
 
   return (
     <div
-      className={`bg-surface border border-border rounded-lg shadow-sm ${paddings[padding]} ${onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''} ${className}`}
+      className={`bg-surface border border-border rounded-lg shadow-xs ${paddings[padding]} ${onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''} ${className}`}
       onClick={onClick}
       role={onClick ? 'button' : undefined}
       tabIndex={onClick ? 0 : undefined}

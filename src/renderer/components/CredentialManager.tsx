@@ -472,7 +472,7 @@ export function CredentialManager() {
                   <p className="text-sm text-green-700 dark:text-green-300 mb-3">
                     Copy this key now. You won't be able to see it again.
                   </p>
-                  <div className="bg-white dark:bg-gray-900 rounded p-3 font-mono text-sm break-all">
+                  <div className="bg-white dark:bg-gray-900 rounded-sm p-3 font-mono text-sm break-all">
                     {newKeyResult.fullKey}
                   </div>
                 </div>
@@ -489,13 +489,13 @@ export function CredentialManager() {
                     void navigator.clipboard.writeText(newKeyResult.fullKey);
                     alert('API key copied to clipboard');
                   }}
-                  className="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700"
+                  className="px-3 py-1.5 bg-green-600 text-white rounded-sm text-sm hover:bg-green-700"
                 >
                   Copy to Clipboard
                 </button>
                 <button
                   onClick={() => setNewKeyResult(null)}
-                  className="px-3 py-1.5 border border-green-600 text-green-600 rounded text-sm hover:bg-green-50 dark:hover:bg-green-900/30"
+                  className="px-3 py-1.5 border border-green-600 text-green-600 rounded-sm text-sm hover:bg-green-50 dark:hover:bg-green-900/30"
                 >
                   Done
                 </button>
@@ -537,7 +537,7 @@ export function CredentialManager() {
                     {PERMISSION_OPTIONS.map((perm) => (
                       <label
                         key={perm.value}
-                        className="flex items-start gap-2 p-2 border border-border rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
+                        className="flex items-start gap-2 p-2 border border-border rounded-sm hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
                       >
                         <input
                           type="checkbox"
@@ -597,7 +597,7 @@ export function CredentialManager() {
                       <div className="flex items-center gap-2">
                         <h4 className="font-medium text-text-primary">{key.name}</h4>
                         {key.revokedAt && (
-                          <span className="px-2 py-0.5 text-xs bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 rounded">
+                          <span className="px-2 py-0.5 text-xs bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 rounded-sm">
                             Revoked
                           </span>
                         )}
@@ -621,7 +621,7 @@ export function CredentialManager() {
                     {key.permissions.map((perm) => (
                       <span
                         key={perm}
-                        className="px-2 py-0.5 text-xs bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded"
+                        className="px-2 py-0.5 text-xs bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded-sm"
                       >
                         {perm}
                       </span>

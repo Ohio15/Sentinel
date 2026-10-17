@@ -63,14 +63,14 @@ function TabErrorFallback({
           <summary className="cursor-pointer text-xs text-text-secondary hover:text-text-primary">
             Technical details
           </summary>
-          <pre className="mt-2 p-2 bg-background rounded text-xs text-red-400 overflow-auto max-h-24">
+          <pre className="mt-2 p-2 bg-background rounded-sm text-xs text-red-400 overflow-auto max-h-24">
             {error.message}
           </pre>
         </details>
       )}
       <button
         onClick={onRetry}
-        className="px-4 py-2 bg-primary text-white rounded hover:bg-primary/90 transition-colors"
+        className="px-4 py-2 bg-primary text-white rounded-sm hover:bg-primary/90 transition-colors"
       >
         Try Again
       </button>
@@ -528,7 +528,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                 {tab.id === 'performance' && activeTab === 'performance' && (
                   <button
                     onClick={() => { void handlePopOut(); }}
-                    className="ml-1 p-1.5 text-text-secondary hover:text-primary hover:bg-hover rounded transition-colors"
+                    className="ml-1 p-1.5 text-text-secondary hover:text-primary hover:bg-hover rounded-sm transition-colors"
                     title="Pop out to new window"
                     disabled={isPopOutOpen(deviceId, 'performance')}
                   >
@@ -571,7 +571,7 @@ export function DeviceDetail({ deviceId, onBack }: DeviceDetailProps) {
                             if (e.key === 'Enter') void handleSaveName();
                             if (e.key === 'Escape') handleCancelEdit();
                           }}
-                          className="text-2xl font-bold text-text-primary bg-surface-alt border border-border rounded-lg px-3 py-1 focus:outline-none focus:ring-2 focus:ring-primary"
+                          className="text-2xl font-bold text-text-primary bg-surface-alt border border-border rounded-lg px-3 py-1 focus:outline-hidden focus:ring-2 focus:ring-primary"
                           autoFocus
                         />
                         <button
