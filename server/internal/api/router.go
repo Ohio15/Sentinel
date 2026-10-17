@@ -15,6 +15,7 @@ import (
 	"github.com/sentinel/server/internal/middleware"
 	"github.com/sentinel/server/internal/pki"
 	"github.com/sentinel/server/internal/turn"
+	"github.com/sentinel/server/internal/version"
 	"github.com/sentinel/server/internal/websocket"
 	"github.com/sentinel/server/pkg/cache"
 	"github.com/sentinel/server/pkg/config"
@@ -51,12 +52,7 @@ func NewRouter(cfg *config.Config, db *database.DB, cache *cache.Cache, hub *web
 	}
 
 	// Health check
-	r.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"status":    "healthy",
-			"timestamp": time.Now().UTC(),
-		})
-	})
+	r.GET("/health", liveness)
 
 	// API routes
 	api := r.Group("/api")
@@ -698,6 +694,7 @@ func healthCheck(services *Services) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"status":    "healthy",
+			"version":   version.Version,
 			"timestamp": time.Now().UTC(),
 			"serverId":  services.Config.ServerID,
 		})
@@ -946,4 +943,15 @@ func rateLimitMiddleware(cache *cache.Cache, maxRequests int, windowSeconds int,
 
 		c.Next()
 	}
+}
+
+// liveness answers GET /health on the main listener (127.0.0.1:8090 on NEXUS).
+// nexus-deploy polls it after every deploy and requires `version` to equal the
+// deployed tag without its "v"; a mismatch rolls the release back.
+func liveness(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"status":    "healthy",
+		"version":   version.Version,
+		"timestamp": time.Now().UTC(),
+	})
 }

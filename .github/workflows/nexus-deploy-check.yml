@@ -1,0 +1,77 @@
+name: nexus-deploy check
+
+# Manual, READ-ONLY probe of the Sentinel deploy path on NEXUS. Runs on the same
+# [self-hosted, nexus-deploy] runner the release deploy job uses (account
+# runner-sentinel) and proves, without changing the running stack:
+#   1. the job runs as runner-sentinel, with no docker access, no general sudo and
+#      no read access to /home/ohio_ (the old deploy account's home);
+#   2. `sudo -n nexus-deploy sentinel status` works from the runner (same sudoers
+#      grant the deploy uses) and reports the live release;
+#   3. optionally `nexus-deploy sentinel plan <tag>`: source fetch, image digest
+#      resolution and the compose policy for that tag, with no deploy.
+# Use after re-registering the runner or changing the helper, before a release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Optional release tag to plan (vX.Y.Z). Empty = status only."
+        required: false
+        default: ""
+
+permissions: {}
+
+concurrency:
+  group: nexus-deploy-sentinel-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: [self-hosted, nexus-deploy]
+    timeout-minutes: 10
+    steps:
+      - name: Runner identity and privilege boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          me="$(id -un)"
+          echo "runner account: ${me} ($(id))"
+          [ "${me}" = "runner-sentinel" ] || { echo "::error::deploy runner runs as ${me}, expected runner-sentinel"; exit 1; }
+          [ "$(id -Gn)" = "runner-sentinel" ] || { echo "::error::runner-sentinel has extra groups: $(id -Gn)"; exit 1; }
+          # Each probe must fail for the RIGHT reason (a denial), otherwise the
+          # boundary is "not examined", never "OK": a missing binary or path
+          # also makes the command fail.
+          denied() {  # $1 label, $2 regex the denial must match, rest = command
+            local label="$1" want="$2" out rc
+            shift 2
+            set +e; out="$("$@" 2>&1)"; rc=$?; set -e
+            if [ "$rc" -eq 0 ]; then echo "::error::runner-sentinel CAN ${label}"; exit 1; fi
+            if ! grep -qiE -- "$want" <<<"$out"; then
+              echo "::error::${label}: not examined (rc=${rc}, no denial in output: ${out:0:200})"; exit 1
+            fi
+            echo "denied as expected: ${label}"
+          }
+          command -v docker >/dev/null || { echo "::error::docker CLI absent: docker boundary not examined"; exit 1; }
+          [ -d /home/ohio_ ] || { echo "::error::/home/ohio_ absent: home boundary not examined"; exit 1; }
+          unset DOCKER_HOST DOCKER_CONTEXT
+          denied "use docker" 'permission denied' docker ps
+          denied "read /home/ohio_" 'permission denied' ls /home/ohio_
+          denied "use general sudo" 'password is required' sudo -n true
+          echo "boundary OK: docker, /home/ohio_ and general sudo all denied"
+
+      - name: nexus-deploy sentinel status
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -n /usr/local/sbin/nexus-deploy sentinel status
+
+      - name: nexus-deploy sentinel plan
+        if: inputs.tag != ''
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tag must match vX.Y.Z"; exit 1; }
+          sudo -n /usr/local/sbin/nexus-deploy sentinel plan "${TAG}"

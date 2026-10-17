@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/sentinel/server/internal/middleware"
+	"github.com/sentinel/server/internal/version"
 )
 
 // NewAgentMTLSRouter creates a dedicated Gin engine for the mTLS listener on
@@ -36,6 +37,7 @@ func NewAgentMTLSRouter(services *Services, limiter *middleware.AgentRateLimiter
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"status":    "healthy",
+			"version":   version.Version,
 			"listener":  "mtls",
 			"timestamp": time.Now().UTC(),
 		})
