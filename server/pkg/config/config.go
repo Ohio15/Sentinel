@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -29,6 +30,11 @@ type Config struct {
 	EnrollmentToken string
 	APIKey          string
 	AllowedOrigins  []string
+	// TrustedProxies lists the IPs/CIDRs of reverse proxies whose
+	// X-Forwarded-For / X-Real-IP headers are honoured when deriving the
+	// client IP (TRUSTED_PROXIES, comma-separated). Empty means no proxy is
+	// trusted and the client IP is always the direct TCP peer.
+	TrustedProxies []string
 
 	// Rate Limiting
 	RateLimitRequests int
@@ -123,6 +129,7 @@ func Load() (*Config, error) {
 		EnrollmentToken: getEnv("ENROLLMENT_TOKEN", ""),
 		APIKey:          getEnv("API_KEY", ""),
 		AllowedOrigins:  getEnvSlice("ALLOWED_ORIGINS", []string{}),
+		TrustedProxies:  getEnvSlice("TRUSTED_PROXIES", []string{}),
 
 		// Rate Limiting
 		RateLimitRequests: getEnvInt("RATE_LIMIT_REQUESTS", 100),
@@ -190,7 +197,34 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("ALLOWED_ORIGINS is required in production")
 	}
 
+	if err := validateTrustedProxies(cfg.TrustedProxies); err != nil {
+		return nil, err
+	}
+
 	return cfg, nil
+}
+
+// validateTrustedProxies rejects any TRUSTED_PROXIES entry that is not a
+// literal IP or CIDR, and rejects catch-all ranges. A typo must stop startup
+// rather than silently widen (or drop) the set of peers allowed to assert a
+// client IP, because that IP keys rate limits, cooldowns and audit rows.
+func validateTrustedProxies(entries []string) error {
+	for _, entry := range entries {
+		if strings.Contains(entry, "/") {
+			_, network, err := net.ParseCIDR(entry)
+			if err != nil {
+				return fmt.Errorf("TRUSTED_PROXIES: invalid CIDR %q: %w", entry, err)
+			}
+			if ones, _ := network.Mask.Size(); ones == 0 {
+				return fmt.Errorf("TRUSTED_PROXIES: %q trusts every address; list the reverse proxy addresses instead", entry)
+			}
+			continue
+		}
+		if net.ParseIP(entry) == nil {
+			return fmt.Errorf("TRUSTED_PROXIES: %q is not an IP address or CIDR", entry)
+		}
+	}
+	return nil
 }
 
 // Validate checks all required configuration fields and returns a combined error

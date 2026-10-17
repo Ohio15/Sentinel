@@ -36,6 +36,13 @@ services:
       - SERVER_URL=${SERVER_URL:-http://localhost:8090}
       - PUBLIC_URL=${PUBLIC_URL:-http://localhost:8090}
       - API_KEY=${API_KEY}
+      # Peers allowed to assert the client IP via X-Forwarded-For/X-Real-IP.
+      # Traefik reaches the backend over the external `edge` network, so the
+      # default trusts that subnet. DEBT: every edge sibling container can still
+      # forge its client IP; narrow this to Traefik's own /32 once it has a
+      # pinned address on a Sentinel-only network (brain fbfa5648). Unset or
+      # empty = trust no proxy. The mTLS agent listener (8443) never trusts one.
+      - TRUSTED_PROXIES=${SENTINEL_TRUSTED_PROXIES:-172.25.0.0/16}
       # mTLS configuration
       - ENABLE_MTLS=${ENABLE_MTLS:-true}
       - AGENT_MTLS_PORT=8443
