@@ -130,26 +130,26 @@ export function TicketsCalendar({ onTicketSelect, onViewChange }: TicketsCalenda
       <div className="flex items-center gap-1 px-1 py-0.5 overflow-hidden w-full">
         {/* Priority indicator */}
         <span
-          className="w-2 h-2 rounded-full flex-shrink-0"
+          className="w-2 h-2 rounded-full shrink-0"
           style={{ backgroundColor: priorityIndicators[ticket.priority] || '#9CA3AF' }}
         />
 
         {/* Event type icon */}
         {eventType === 'due' && (
-          <Clock className={`w-3 h-3 flex-shrink-0 ${isOverdue ? 'text-red-600' : 'text-yellow-600'}`} />
+          <Clock className={`w-3 h-3 shrink-0 ${isOverdue ? 'text-red-600' : 'text-yellow-600'}`} />
         )}
         {eventType === 'response' && (
-          <AlertTriangle className={`w-3 h-3 flex-shrink-0 ${isOverdue ? 'text-red-600' : 'text-indigo-600'}`} />
+          <AlertTriangle className={`w-3 h-3 shrink-0 ${isOverdue ? 'text-red-600' : 'text-indigo-600'}`} />
         )}
         {eventType === 'created' && ticket.status === 'resolved' && (
-          <CheckCircle className="w-3 h-3 flex-shrink-0 text-green-600" />
+          <CheckCircle className="w-3 h-3 shrink-0 text-green-600" />
         )}
 
         {/* Title */}
         <span className="text-xs truncate">{eventInfo.event.title}</span>
 
         {/* Ticket number */}
-        <span className="text-xs opacity-60 flex-shrink-0 hidden sm:inline">
+        <span className="text-xs opacity-60 shrink-0 hidden sm:inline">
           #{ticket.ticketNumber}
         </span>
       </div>
@@ -232,19 +232,19 @@ export function TicketsCalendar({ onTicketSelect, onViewChange }: TicketsCalenda
           <span className="font-medium text-gray-900 dark:text-gray-100">Legend:</span>
           <div className="flex items-center gap-4">
             <span className="flex items-center gap-1">
-              <span className="w-3 h-3 rounded" style={{ backgroundColor: statusColors.open.bg, border: `1px solid ${statusColors.open.border}` }}></span>
+              <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: statusColors.open.bg, border: `1px solid ${statusColors.open.border}` }}></span>
               Open
             </span>
             <span className="flex items-center gap-1">
-              <span className="w-3 h-3 rounded" style={{ backgroundColor: statusColors.in_progress.bg, border: `1px solid ${statusColors.in_progress.border}` }}></span>
+              <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: statusColors.in_progress.bg, border: `1px solid ${statusColors.in_progress.border}` }}></span>
               In Progress
             </span>
             <span className="flex items-center gap-1">
-              <span className="w-3 h-3 rounded" style={{ backgroundColor: statusColors.waiting.bg, border: `1px solid ${statusColors.waiting.border}` }}></span>
+              <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: statusColors.waiting.bg, border: `1px solid ${statusColors.waiting.border}` }}></span>
               Waiting
             </span>
             <span className="flex items-center gap-1">
-              <span className="w-3 h-3 rounded" style={{ backgroundColor: statusColors.resolved.bg, border: `1px solid ${statusColors.resolved.border}` }}></span>
+              <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: statusColors.resolved.bg, border: `1px solid ${statusColors.resolved.border}` }}></span>
               Resolved
             </span>
           </div>

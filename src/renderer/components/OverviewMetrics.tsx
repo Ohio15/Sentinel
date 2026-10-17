@@ -55,7 +55,7 @@ export function OverviewMetrics({ deviceId, totalMemory, gpu, storage }: Overvie
   return (
     <div className="grid grid-cols-5 gap-4">
       {/* Storage Card */}
-      <div className="bg-gradient-to-br from-blue-500 to-blue-700 rounded-xl p-4 text-white shadow-lg">
+      <div className="bg-linear-to-br from-blue-500 to-blue-700 rounded-xl p-4 text-white shadow-lg">
         <div className="flex items-center gap-3 mb-3">
           <HardDriveIcon className="w-8 h-8" />
           <span className="text-lg font-medium">Storage</span>
@@ -71,7 +71,7 @@ export function OverviewMetrics({ deviceId, totalMemory, gpu, storage }: Overvie
       </div>
 
       {/* GPU Card */}
-      <div className="bg-gradient-to-br from-purple-500 to-purple-700 rounded-xl p-4 text-white shadow-lg">
+      <div className="bg-linear-to-br from-purple-500 to-purple-700 rounded-xl p-4 text-white shadow-lg">
         <div className="flex items-center gap-3 mb-3">
           <GpuIcon className="w-8 h-8" />
           <span className="text-lg font-medium">Graphics</span>
@@ -85,7 +85,7 @@ export function OverviewMetrics({ deviceId, totalMemory, gpu, storage }: Overvie
       </div>
 
       {/* RAM Card */}
-      <div className="bg-gradient-to-br from-teal-500 to-teal-700 rounded-xl p-4 text-white shadow-lg">
+      <div className="bg-linear-to-br from-teal-500 to-teal-700 rounded-xl p-4 text-white shadow-lg">
         <div className="flex items-center gap-3 mb-3">
           <MemoryIcon className="w-8 h-8" />
           <span className="text-lg font-medium">RAM</span>
@@ -101,7 +101,7 @@ export function OverviewMetrics({ deviceId, totalMemory, gpu, storage }: Overvie
       </div>
 
       {/* CPU Card */}
-      <div className="bg-gradient-to-br from-orange-500 to-orange-700 rounded-xl p-4 text-white shadow-lg">
+      <div className="bg-linear-to-br from-orange-500 to-orange-700 rounded-xl p-4 text-white shadow-lg">
         <div className="flex items-center gap-3 mb-3">
           <CpuIcon className="w-8 h-8" />
           <span className="text-lg font-medium">Processor</span>
@@ -117,7 +117,7 @@ export function OverviewMetrics({ deviceId, totalMemory, gpu, storage }: Overvie
       </div>
 
       {/* Uptime Card */}
-      <div className="bg-gradient-to-br from-green-500 to-green-700 rounded-xl p-4 text-white shadow-lg">
+      <div className="bg-linear-to-br from-green-500 to-green-700 rounded-xl p-4 text-white shadow-lg">
         <div className="flex items-center gap-3 mb-3">
           <ClockIcon className="w-8 h-8" />
           <span className="text-lg font-medium">Uptime</span>

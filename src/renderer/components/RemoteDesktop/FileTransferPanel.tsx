@@ -220,7 +220,7 @@ export function FileTransferPanel({
           </div>
           <button
             onClick={onClose}
-            className="p-1 rounded hover:bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
+            className="p-1 rounded-sm hover:bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
             title="Close"
           >
             <X className="w-5 h-5" />
@@ -231,7 +231,7 @@ export function FileTransferPanel({
         <div className="flex items-center gap-1 px-4 py-2 border-b border-gray-700/50 bg-gray-850 overflow-x-auto shrink-0" style={{ backgroundColor: 'rgb(26, 31, 41)' }}>
           <button
             onClick={onNavigateUp}
-            className="p-1 rounded hover:bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors shrink-0"
+            className="p-1 rounded-sm hover:bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors shrink-0"
             title="Go up"
           >
             <ArrowUp className="w-4 h-4" />
@@ -246,7 +246,7 @@ export function FileTransferPanel({
                   {idx > 0 && <ChevronRight className="w-3 h-3 text-gray-600 shrink-0" />}
                   <button
                     onClick={() => onNavigate(crumb.path)}
-                    className="px-1 py-0.5 rounded hover:bg-gray-700 hover:text-gray-200 transition-colors truncate max-w-[120px]"
+                    className="px-1 py-0.5 rounded-sm hover:bg-gray-700 hover:text-gray-200 transition-colors truncate max-w-[120px]"
                     title={crumb.path}
                   >
                     {crumb.label}
@@ -322,7 +322,7 @@ export function FileTransferPanel({
                   {!file.is_dir && (
                     <button
                       onClick={(e) => handleDownloadClick(e, file)}
-                      className="p-1.5 rounded hover:bg-gray-700 text-gray-400 hover:text-blue-400 transition-colors shrink-0"
+                      className="p-1.5 rounded-sm hover:bg-gray-700 text-gray-400 hover:text-blue-400 transition-colors shrink-0"
                       title="Download"
                     >
                       <Download className="w-4 h-4" />
@@ -392,7 +392,7 @@ export function FileTransferPanel({
                       {transfer.state === 'in_progress' && (
                         <button
                           onClick={() => onPause(transfer.id)}
-                          className="p-1 rounded hover:bg-gray-700 text-gray-400 hover:text-yellow-400 transition-colors"
+                          className="p-1 rounded-sm hover:bg-gray-700 text-gray-400 hover:text-yellow-400 transition-colors"
                           title="Pause"
                         >
                           <Pause className="w-3.5 h-3.5" />
@@ -402,7 +402,7 @@ export function FileTransferPanel({
                       {transfer.state === 'paused' && (
                         <button
                           onClick={() => onResume(transfer.id)}
-                          className="p-1 rounded hover:bg-gray-700 text-gray-400 hover:text-green-400 transition-colors"
+                          className="p-1 rounded-sm hover:bg-gray-700 text-gray-400 hover:text-green-400 transition-colors"
                           title="Resume"
                         >
                           <Play className="w-3.5 h-3.5" />
@@ -412,7 +412,7 @@ export function FileTransferPanel({
                       {(transfer.state === 'in_progress' || transfer.state === 'paused' || transfer.state === 'queued') && (
                         <button
                           onClick={() => onCancel(transfer.id)}
-                          className="p-1 rounded hover:bg-gray-700 text-gray-400 hover:text-red-400 transition-colors"
+                          className="p-1 rounded-sm hover:bg-gray-700 text-gray-400 hover:text-red-400 transition-colors"
                           title="Cancel"
                         >
                           <XCircle className="w-3.5 h-3.5" />

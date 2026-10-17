@@ -374,7 +374,7 @@ export const HighPerformanceRemoteDesktop = memo(function HighPerformanceRemoteD
                     setSelectedMonitor(idx);
                     selectMonitor(idx);
                   }}
-                  className="bg-gray-700 text-gray-200 text-xs px-2 py-1 rounded border border-gray-600"
+                  className="bg-gray-700 text-gray-200 text-xs px-2 py-1 rounded-sm border border-gray-600"
                   title="Select monitor"
                 >
                   {monitors.map((m) => (
@@ -455,7 +455,7 @@ export const HighPerformanceRemoteDesktop = memo(function HighPerformanceRemoteD
           {isConnected ? (
             <button
               onClick={handleDisconnect}
-              className="px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
+              className="px-3 py-1 text-sm bg-red-600 text-white rounded-sm hover:bg-red-700 transition-colors"
             >
               Disconnect
             </button>
@@ -463,7 +463,7 @@ export const HighPerformanceRemoteDesktop = memo(function HighPerformanceRemoteD
             <button
               onClick={() => { void handleConnect(); }}
               disabled={connectionState === 'connecting'}
-              className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 transition-colors disabled:opacity-50"
+              className="px-3 py-1 text-sm bg-green-600 text-white rounded-sm hover:bg-green-700 transition-colors disabled:opacity-50"
             >
               {connectionState === 'connecting' ? 'Connecting...' : 'Connect'}
             </button>
@@ -480,7 +480,7 @@ export const HighPerformanceRemoteDesktop = memo(function HighPerformanceRemoteD
         <div
           ref={wrapperRef}
           tabIndex={0}
-          className="relative focus:outline-none"
+          className="relative focus:outline-hidden"
           style={{
             width: wrapperSize.width > 0 ? `${wrapperSize.width}px` : '100%',
             height: wrapperSize.height > 0 ? `${wrapperSize.height}px` : '100%',
@@ -513,7 +513,7 @@ export const HighPerformanceRemoteDesktop = memo(function HighPerformanceRemoteD
 
           {/* Debug overlay */}
           {showDebug && isConnected && (
-            <div className="absolute top-2 left-2 bg-black/80 text-xs text-white p-2 rounded font-mono z-10">
+            <div className="absolute top-2 left-2 bg-black/80 text-xs text-white p-2 rounded-sm font-mono z-10">
               <div>Remote: {remoteSize.width}x{remoteSize.height}</div>
               <div>Wrapper: {wrapperSize.width.toFixed(0)}x{wrapperSize.height.toFixed(0)}</div>
               {stats && (
@@ -539,7 +539,7 @@ export const HighPerformanceRemoteDesktop = memo(function HighPerformanceRemoteD
                     setError(null);
                     void handleConnect();
                   }}
-                  className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
+                  className="px-4 py-2 bg-green-600 text-white rounded-sm hover:bg-green-700 transition-colors"
                 >
                   Try Again
                 </button>

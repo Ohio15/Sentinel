@@ -162,7 +162,7 @@ export function PerformanceView({ deviceId, systemInfo }: PerformanceViewProps) 
           <div className="flex-1 p-6 overflow-y-auto">
             {/* Debug info - remove after testing */}
             {metrics.length === 0 && (
-              <div className="mb-4 p-3 bg-warning/20 border border-warning/50 rounded text-warning text-sm">
+              <div className="mb-4 p-3 bg-warning/20 border border-warning/50 rounded-sm text-warning text-sm">
                 No metrics data received. Make sure the agent is connected and sending heartbeats.
               </div>
             )}
@@ -319,7 +319,7 @@ function CPUDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProps) 
           <div className="text-sm text-text-secondary mb-2">Logical processors</div>
           <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${Math.min(cpuPerCore.length, 8)}, 1fr)` }}>
             {cpuPerCore.map((corePercent, idx) => (
-              <div key={idx} className="relative h-10 bg-surface-alt border border-border rounded overflow-hidden" title={`Core ${idx}: ${corePercent.toFixed(0)}%`}>
+              <div key={idx} className="relative h-10 bg-surface-alt border border-border rounded-sm overflow-hidden" title={`Core ${idx}: ${corePercent.toFixed(0)}%`}>
                 <div
                   className="absolute bottom-0 left-0 right-0 bg-[#0078d4] transition-all duration-300"
                   style={{ height: `${Math.min(corePercent, 100)}%` }}
@@ -351,7 +351,7 @@ function CPUDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProps) 
       {topProcesses.length > 0 && (
         <div className="mt-6">
           <div className="text-sm text-text-secondary mb-2">Top processes by CPU</div>
-          <div className="bg-surface border border-border rounded overflow-hidden">
+          <div className="bg-surface border border-border rounded-sm overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-surface-alt border-b border-border">
                 <tr>
@@ -414,7 +414,7 @@ function MemoryDetailView({ metrics, systemInfo, latestMetrics }: DetailViewProp
       />
 
       {/* Memory composition bar */}
-      <div className="mt-4 h-12 bg-surface-alt border border-border rounded flex overflow-hidden">
+      <div className="mt-4 h-12 bg-surface-alt border border-border rounded-sm flex overflow-hidden">
         <div
           className="bg-[#8764b8] flex items-center justify-center text-xs text-white"
           style={{ width: `${memPercent}%` }}
@@ -503,11 +503,11 @@ function NetworkDetailView({ metrics, latestMetrics }: NetworkDetailViewProps) {
       </div>
 
       <div className="grid grid-cols-2 gap-4 mb-6">
-        <div className="bg-surface-alt border border-border p-4 rounded">
+        <div className="bg-surface-alt border border-border p-4 rounded-sm">
           <div className="text-sm text-text-secondary mb-2">Send</div>
           <div className="text-2xl font-light text-text-primary">{formatBytesPerSec(latestMetrics?.networkTxBytes ?? 0)}</div>
         </div>
-        <div className="bg-surface-alt border border-border p-4 rounded">
+        <div className="bg-surface-alt border border-border p-4 rounded-sm">
           <div className="text-sm text-text-secondary mb-2">Receive</div>
           <div className="text-2xl font-light text-text-primary">{formatBytesPerSec(latestMetrics?.networkRxBytes ?? 0)}</div>
         </div>
@@ -550,13 +550,13 @@ function GPUDetailView({ systemInfo, gpuIndex, latestMetrics }: GPUDetailViewPro
       </div>
 
       {!hasUtilization ? (
-        <div className="bg-surface-alt border border-border p-4 rounded mb-6">
+        <div className="bg-surface-alt border border-border p-4 rounded-sm mb-6">
           <div className="text-sm text-text-secondary mb-2">Real-time GPU utilization not available</div>
           <div className="text-xs text-text-secondary">NVIDIA GPUs with nvidia-smi support real-time monitoring</div>
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-4 mb-6">
-          <div className="bg-surface-alt border border-border p-4 rounded">
+          <div className="bg-surface-alt border border-border p-4 rounded-sm">
             <div className="text-sm text-text-secondary mb-2">GPU Memory</div>
             <div className="text-2xl font-light text-text-primary">
               {gpuMetric.memoryUsed && gpuMetric.memoryTotal
@@ -564,7 +564,7 @@ function GPUDetailView({ systemInfo, gpuIndex, latestMetrics }: GPUDetailViewPro
                 : 'N/A'}
             </div>
           </div>
-          <div className="bg-surface-alt border border-border p-4 rounded">
+          <div className="bg-surface-alt border border-border p-4 rounded-sm">
             <div className="text-sm text-text-secondary mb-2">Temperature</div>
             <div className="text-2xl font-light text-text-primary">
               {gpuMetric.temperature ? `${gpuMetric.temperature.toFixed(0)}°C` : 'N/A'}
@@ -710,7 +710,7 @@ function PerformanceGraph({ metrics, dataKey, color, label, maxValue }: Performa
     <div className="relative">
       <div className="absolute top-2 left-2 text-xs text-text-secondary z-10">{label}</div>
       <div className="absolute top-2 right-2 text-xs text-text-secondary z-10">60 seconds</div>
-      <div className="bg-surface-alt border border-border rounded overflow-hidden" style={{ height: '200px' }}>
+      <div className="bg-surface-alt border border-border rounded-sm overflow-hidden" style={{ height: '200px' }}>
         <canvas
           ref={canvasRef}
           width={800}

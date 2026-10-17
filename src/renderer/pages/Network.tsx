@@ -184,7 +184,7 @@ function AutomationTab() {
               id="isActive"
               checked={newAction.isActive}
               onChange={(e) => setNewAction({ ...newAction, isActive: e.target.checked })}
-              className="rounded border-border"
+              className="rounded-sm border-border"
             />
             <label htmlFor="isActive" className="text-sm text-text-secondary">Active immediately</label>
           </div>

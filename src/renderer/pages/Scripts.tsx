@@ -195,7 +195,7 @@ export function Scripts() {
                         ))}
                       </div>
                     ) : (
-                      <span className="text-xs bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded">All</span>
+                      <span className="text-xs bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded-sm">All</span>
                     )}
                   </div>
                   <span>Updated: {new Date(selectedScript.updatedAt).toLocaleDateString()}</span>
@@ -259,7 +259,7 @@ function OsBadge({ os }: { os: string }) {
   const displayName = osLower === 'macos' ? 'macOS' : os.charAt(0).toUpperCase() + os.slice(1).toLowerCase();
 
   return (
-    <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs ${colors[osLower] || 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>
+    <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-sm text-xs ${colors[osLower] || 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>
       {displayName}
     </span>
   );

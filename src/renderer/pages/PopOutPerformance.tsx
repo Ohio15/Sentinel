@@ -108,7 +108,7 @@ export function PopOutPerformance({ windowId }: PopOutPerformanceProps) {
           <button
             onClick={() => { void handleReattach(); }}
             disabled={isReattaching}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm bg-primary/10 text-primary hover:bg-primary/20 rounded transition-colors disabled:opacity-50"
+            className="flex items-center gap-2 px-3 py-1.5 text-sm bg-primary/10 text-primary hover:bg-primary/20 rounded-sm transition-colors disabled:opacity-50"
             title="Re-attach to main window"
           >
             {isReattaching ? (
@@ -127,7 +127,7 @@ export function PopOutPerformance({ windowId }: PopOutPerformanceProps) {
           {/* Close button */}
           <button
             onClick={handleClose}
-            className="p-1.5 hover:bg-hover rounded transition-colors"
+            className="p-1.5 hover:bg-hover rounded-sm transition-colors"
             title="Close window"
           >
             <CloseIcon className="w-4 h-4 text-text-secondary hover:text-text-primary" />

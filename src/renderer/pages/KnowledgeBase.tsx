@@ -345,10 +345,10 @@ export function KnowledgeBase() {
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           {article.isPinned && (
-                            <Pin className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                            <Pin className="w-4 h-4 text-blue-500 shrink-0" />
                           )}
                           {article.isFeatured && (
-                            <Star className="w-4 h-4 text-yellow-500 flex-shrink-0 fill-yellow-500" />
+                            <Star className="w-4 h-4 text-yellow-500 shrink-0 fill-yellow-500" />
                           )}
                           <div>
                             <div className="font-medium text-text-primary">{article.title}</div>
@@ -391,7 +391,7 @@ export function KnowledgeBase() {
                           {article.status === 'draft' && (
                             <button
                               onClick={() => { void handlePublishArticle(article); }}
-                              className="p-1.5 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/30 rounded"
+                              className="p-1.5 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/30 rounded-sm"
                               title="Publish"
                             >
                               <Eye className="w-4 h-4" />
@@ -399,14 +399,14 @@ export function KnowledgeBase() {
                           )}
                           <button
                             onClick={() => { void handleToggleFeatured(article); }}
-                            className={`p-1.5 rounded ${article.isFeatured ? 'text-yellow-500 bg-yellow-50 dark:bg-yellow-900/30' : 'text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
+                            className={`p-1.5 rounded-sm ${article.isFeatured ? 'text-yellow-500 bg-yellow-50 dark:bg-yellow-900/30' : 'text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
                             title={article.isFeatured ? 'Unfeature' : 'Feature'}
                           >
                             <Star className={`w-4 h-4 ${article.isFeatured ? 'fill-yellow-500' : ''}`} />
                           </button>
                           <button
                             onClick={() => { void handleTogglePinned(article); }}
-                            className={`p-1.5 rounded ${article.isPinned ? 'text-blue-500 bg-blue-50 dark:bg-blue-900/30' : 'text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
+                            className={`p-1.5 rounded-sm ${article.isPinned ? 'text-blue-500 bg-blue-50 dark:bg-blue-900/30' : 'text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
                             title={article.isPinned ? 'Unpin' : 'Pin'}
                           >
                             <Pin className="w-4 h-4" />
@@ -416,14 +416,14 @@ export function KnowledgeBase() {
                               setEditingArticle(article);
                               setShowArticleModal(true);
                             }}
-                            className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded"
+                            className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-sm"
                             title="Edit"
                           >
                             <Edit className="w-4 h-4" />
                           </button>
                           <button
                             onClick={() => { void handleDeleteArticle(article.id); }}
-                            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded"
+                            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-sm"
                             title="Delete"
                           >
                             <Trash2 className="w-4 h-4" />
@@ -752,7 +752,7 @@ function CategoryModal({
                   type="color"
                   value={formData.color}
                   onChange={(e) => setFormData({ ...formData, color: e.target.value })}
-                  className="w-10 h-10 rounded cursor-pointer"
+                  className="w-10 h-10 rounded-sm cursor-pointer"
                 />
                 <input
                   type="text"

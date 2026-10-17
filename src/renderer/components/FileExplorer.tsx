@@ -228,7 +228,7 @@ export const FileExplorer = memo(function FileExplorer({ deviceId, isOnline, isA
         </button>
 
         {/* Breadcrumb Path Bar */}
-        <div className="flex-1 flex items-center gap-1 px-3 py-1 bg-white dark:bg-slate-700 border border-border rounded text-sm overflow-x-auto">
+        <div className="flex-1 flex items-center gap-1 px-3 py-1 bg-white dark:bg-slate-700 border border-border rounded-sm text-sm overflow-x-auto">
           <button
             onClick={() => { void loadDrives(); }}
             className={`flex items-center gap-1 px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-slate-600 transition-colors whitespace-nowrap ${
@@ -241,10 +241,10 @@ export const FileExplorer = memo(function FileExplorer({ deviceId, isOnline, isA
 
           {viewMode === 'files' && getPathSegments().map((segment, index) => (
             <React.Fragment key={segment.path}>
-              <ChevronRightIcon className="w-4 h-4 text-gray-400 dark:text-gray-500 flex-shrink-0" />
+              <ChevronRightIcon className="w-4 h-4 text-gray-400 dark:text-gray-500 shrink-0" />
               <button
                 onClick={() => { void loadDirectory(segment.path); }}
-                className="px-2 py-0.5 rounded hover:bg-gray-100 dark:hover:bg-slate-600 transition-colors whitespace-nowrap font-mono text-text-primary"
+                className="px-2 py-0.5 rounded-sm hover:bg-gray-100 dark:hover:bg-slate-600 transition-colors whitespace-nowrap font-mono text-text-primary"
               >
                 {segment.name}
               </button>

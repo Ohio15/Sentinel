@@ -88,7 +88,7 @@ function TicketCard({ ticket, onClick }: TicketCardProps) {
       {...attributes}
       {...listeners}
       className={`
-        bg-white dark:bg-gray-800 rounded-lg shadow-sm border-l-4 p-3 cursor-grab
+        bg-white dark:bg-gray-800 rounded-lg shadow-xs border-l-4 p-3 cursor-grab
         hover:shadow-md transition-shadow
         ${priorityColors[ticket.priority] || 'border-l-gray-300'}
         ${isDragging ? 'shadow-lg ring-2 ring-blue-500' : ''}
@@ -195,7 +195,7 @@ interface KanbanColumnProps {
 
 function KanbanColumnComponent({ column, tickets, onTicketClick }: KanbanColumnProps) {
   return (
-    <div className="flex-shrink-0 w-72">
+    <div className="shrink-0 w-72">
       {/* Column Header */}
       <div className={`rounded-t-lg px-3 py-2 ${column.bgColor}`}>
         <div className="flex items-center justify-between">

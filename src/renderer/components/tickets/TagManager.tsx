@@ -196,7 +196,7 @@ export function TagManager({
             disabled={disabled}
             placeholder={selectedTags.length === 0 ? placeholder : ''}
             className={`
-              flex-1 min-w-[120px] bg-transparent border-none outline-none
+              flex-1 min-w-[120px] bg-transparent border-none outline-hidden
               text-sm text-gray-900 dark:text-gray-100
               placeholder-gray-400 dark:placeholder-gray-500
               disabled:cursor-not-allowed
@@ -220,7 +220,7 @@ export function TagManager({
               `}
             >
               <span
-                className="w-3 h-3 rounded-full flex-shrink-0"
+                className="w-3 h-3 rounded-full shrink-0"
                 style={{ backgroundColor: tag.color }}
               />
               <span className="flex-1 text-gray-900 dark:text-gray-100">{tag.name}</span>

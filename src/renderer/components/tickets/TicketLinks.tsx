@@ -220,7 +220,7 @@ export function TicketLinks({
               setIsAddingLink(true);
               setTimeout(() => searchRef.current?.focus(), 0);
             }}
-            className="inline-flex items-center gap-1 px-2 py-1 text-xs text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded"
+            className="inline-flex items-center gap-1 px-2 py-1 text-xs text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-sm"
           >
             <Plus className="w-3 h-3" />
             Add Link
@@ -269,7 +269,7 @@ export function TicketLinks({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search tickets by number or subject..."
-              className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
             />
             {isSearching && (
               <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 animate-spin" />
@@ -285,7 +285,7 @@ export function TicketLinks({
                   type="button"
                   onClick={() => { void handleAddLink(ticket.id); }}
                   disabled={isSubmitting}
-                  className="w-full flex items-center gap-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-left disabled:opacity-50"
+                  className="w-full flex items-center gap-3 p-2 rounded-sm hover:bg-gray-100 dark:hover:bg-gray-700 text-left disabled:opacity-50"
                 >
                   <span className="text-sm font-mono text-gray-500 dark:text-gray-400">
                     #{ticket.ticketNumber}
@@ -293,7 +293,7 @@ export function TicketLinks({
                   <span className="flex-1 text-sm text-gray-900 dark:text-gray-100 truncate">
                     {ticket.subject}
                   </span>
-                  <span className={`px-1.5 py-0.5 text-xs rounded ${statusColors[ticket.status] || statusColors.open}`}>
+                  <span className={`px-1.5 py-0.5 text-xs rounded-sm ${statusColors[ticket.status] || statusColors.open}`}>
                     {ticket.status.replace('_', ' ')}
                   </span>
                 </button>
@@ -358,7 +358,7 @@ export function TicketLinks({
                         {link.linkedTicket?.subject || 'Unknown ticket'}
                       </span>
                       {link.linkedTicket && (
-                        <span className={`px-1.5 py-0.5 text-xs rounded ${statusColors[link.linkedTicket.status] || statusColors.open}`}>
+                        <span className={`px-1.5 py-0.5 text-xs rounded-sm ${statusColors[link.linkedTicket.status] || statusColors.open}`}>
                           {link.linkedTicket.status.replace('_', ' ')}
                         </span>
                       )}
@@ -367,7 +367,7 @@ export function TicketLinks({
                           <button
                             type="button"
                             onClick={() => onNavigateToTicket(link.linkedTicket!.id)}
-                            className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded"
+                            className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded-sm"
                             title="Open ticket"
                           >
                             <ExternalLink className="w-3.5 h-3.5" />
@@ -378,7 +378,7 @@ export function TicketLinks({
                             type="button"
                             onClick={() => { void handleRemoveLink(link.id); }}
                             disabled={removingLinkId === link.id}
-                            className="p-1 text-gray-400 hover:text-red-500 rounded disabled:opacity-50"
+                            className="p-1 text-gray-400 hover:text-red-500 rounded-sm disabled:opacity-50"
                             title="Remove link"
                           >
                             {removingLinkId === link.id ? (
@@ -414,7 +414,7 @@ export function TicketLinksBadge({ count, onClick }: TicketLinksBadgeProps) {
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded hover:bg-gray-200 dark:hover:bg-gray-600"
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-sm hover:bg-gray-200 dark:hover:bg-gray-600"
       title={`${count} linked ticket${count === 1 ? '' : 's'}`}
     >
       <Link className="w-3 h-3" />

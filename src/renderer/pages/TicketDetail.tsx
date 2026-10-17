@@ -339,7 +339,7 @@ export function TicketDetail({ ticketId, onBack }: TicketDetailProps) {
                               {comment.authorName}
                             </span>
                             {comment.isInternal && (
-                              <span className="text-xs bg-yellow-200 dark:bg-yellow-800 text-yellow-800 dark:text-yellow-200 px-2 py-0.5 rounded">
+                              <span className="text-xs bg-yellow-200 dark:bg-yellow-800 text-yellow-800 dark:text-yellow-200 px-2 py-0.5 rounded-sm">
                                 Internal
                               </span>
                             )}

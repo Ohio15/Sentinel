@@ -290,7 +290,7 @@ export default function AgentInstallations() {
       </div>
 
       {viewMode === 'links' && (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col max-h-[calc(100vh-320px)]">
+        <div className="bg-white rounded-xl shadow-xs border border-gray-200 overflow-hidden flex flex-col max-h-[calc(100vh-320px)]">
           <div className="overflow-auto flex-1">
             <table className="w-full">
               <thead className="bg-gray-50 sticky top-0 z-10">
@@ -355,17 +355,17 @@ export default function AgentInstallations() {
           {totalPages > 1 && (
             <div className="px-6 py-3 border-t border-gray-200 flex items-center justify-between">
               <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}
-                className="px-3 py-1 border border-gray-300 rounded text-sm disabled:opacity-50">Previous</button>
+                className="px-3 py-1 border border-gray-300 rounded-sm text-sm disabled:opacity-50">Previous</button>
               <span className="text-sm text-gray-600">Page {page} of {totalPages}</span>
               <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}
-                className="px-3 py-1 border border-gray-300 rounded text-sm disabled:opacity-50">Next</button>
+                className="px-3 py-1 border border-gray-300 rounded-sm text-sm disabled:opacity-50">Next</button>
             </div>
           )}
         </div>
       )}
 
       {viewMode === 'codes' && (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col max-h-[calc(100vh-320px)]">
+        <div className="bg-white rounded-xl shadow-xs border border-gray-200 overflow-hidden flex flex-col max-h-[calc(100vh-320px)]">
           <div className="overflow-auto flex-1">
             <table className="w-full">
               <thead className="bg-gray-50 sticky top-0 z-10">
@@ -385,7 +385,7 @@ export default function AgentInstallations() {
                   <tr key={code.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-2">
-                        <code className="font-mono text-lg font-bold text-indigo-600 bg-indigo-50 px-3 py-1 rounded">{code.code}</code>
+                        <code className="font-mono text-lg font-bold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-sm">{code.code}</code>
                         <button onClick={() => copyToClipboard(code.code)} className="text-gray-400 hover:text-gray-600" title="Copy Code">
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
@@ -513,7 +513,7 @@ export default function AgentInstallations() {
                       <div className="flex items-center gap-2">
                         <input type="checkbox" id="sendEmail" checked={formData.sendEmail}
                           onChange={(e) => setFormData({ ...formData, sendEmail: e.target.checked })}
-                          className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500" />
+                          className="w-4 h-4 text-indigo-600 rounded-sm focus:ring-indigo-500" />
                         <label htmlFor="sendEmail" className="text-sm text-gray-700">Send email notification</label>
                       </div>
                     </div>
@@ -577,7 +577,7 @@ export default function AgentInstallations() {
                       <ol className="list-decimal list-inside space-y-1">
                         <li>Download the installer from the URL above</li>
                         <li>Run the installer on the target device</li>
-                        <li>Enter the code <code className="font-mono bg-white px-1 rounded">{codeResult.code}</code> when prompted</li>
+                        <li>Enter the code <code className="font-mono bg-white px-1 rounded-sm">{codeResult.code}</code> when prompted</li>
                       </ol>
                     </div>
                   </div>
@@ -665,7 +665,7 @@ export default function AgentInstallations() {
               {selectedLink.installationCode && (
                 <div className="mt-6">
                   <h3 className="font-semibold text-gray-900 mb-2">Installation Code</h3>
-                  <code className="font-mono text-lg font-bold text-indigo-600 bg-indigo-50 px-3 py-1 rounded">{selectedLink.installationCode}</code>
+                  <code className="font-mono text-lg font-bold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-sm">{selectedLink.installationCode}</code>
                 </div>
               )}
               {selectedLink.downloadUrl && (

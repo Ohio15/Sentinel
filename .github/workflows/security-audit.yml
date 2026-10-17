@@ -301,7 +301,46 @@ jobs:
           # govulncheck only reports vulns whose vulnerable symbols are
           # actually called from your code, so any finding is high-signal —
           # treat any non-zero exit as a fail.
-          govulncheck ./...
+          #
+          # SENTINEL-LOCAL (not yet in the dev-standards template): a module
+          # whose shipped binaries are cross-compiled for other GOOS values
+          # (agent/: CGO_ENABLED=0 builds for windows/linux/darwin, with
+          # Windows-only and cgo X11/PulseAudio files) cannot be loaded by a
+          # host-default `govulncheck ./...` on ubuntu: it failed at package
+          # load on every run, so nothing was examined. Such a module lists
+          # the targets that ship in <dir>/.govulncheck-targets, one per line:
+          #   GOOS GOARCH CGO_ENABLED ./pattern [./pattern ...]
+          # Every line is validated before use (the file is PR-controlled), a
+          # file with no valid target fails, and every target must pass.
+          targets=.govulncheck-targets
+          if [ ! -f "$targets" ]; then
+            govulncheck ./...
+            exit 0
+          fi
+          line_re='^(windows|linux|darwin|freebsd|openbsd|netbsd)[[:space:]]+(amd64|arm64|386|arm)[[:space:]]+[01]([[:space:]]+\./[A-Za-z0-9_./-]*)+[[:space:]]*$'
+          n=0; failed=0
+          while IFS= read -r line || [ -n "$line" ]; do
+            line="${line%$'\r'}"
+            case "$line" in ''|'#'*) continue ;; esac
+            if ! printf '%s\n' "$line" | grep -Eq "$line_re"; then
+              echo "::error::$targets has a line that is not 'GOOS GOARCH CGO_ENABLED ./pattern...'; nothing from it is trusted"
+              exit 1
+            fi
+            read -r t_goos t_goarch t_cgo t_rest <<< "$line"
+            read -r -a t_patterns <<< "$t_rest"
+            n=$((n + 1))
+            echo "::group::govulncheck $t_goos/$t_goarch CGO_ENABLED=$t_cgo ${t_patterns[*]}"
+            if ! GOOS="$t_goos" GOARCH="$t_goarch" CGO_ENABLED="$t_cgo" govulncheck "${t_patterns[@]}"; then
+              failed=$((failed + 1))
+              echo "::error::govulncheck failed for $t_goos/$t_goarch CGO_ENABLED=$t_cgo ${t_patterns[*]}"
+            fi
+            echo "::endgroup::"
+          done < "$targets"
+          if [ "$n" -eq 0 ]; then
+            echo "::error::$targets lists no target, so nothing was examined"
+            exit 1
+          fi
+          [ "$failed" -eq 0 ]
 
   pip-audit:
     name: pip-audit (${{ matrix.dir }})
