@@ -16,7 +16,7 @@ site's hardware chain:
   `no-new-privileges`).
 - Prometheus job `blackbox-wan-patriot`: ICMP probe of the site WAN IP
   `104.189.209.197` (AT&T) every 30s.
-- `configs/prometheus/rules/wan-patriot.yml`:
+- `monitoring/prometheus/rules/wan-patriot.yml` in Ohio15/infra:
   - `PatriotWANDown` (critical, 3m) — includes the on-call discriminator
     runbook in its description.
   - `PatriotWANProbeAbsent` (warning, 15m) — fires if the witness itself
@@ -30,7 +30,7 @@ Verified live against the real 2026-07-29 outage: `probe_success=0`,
 **Standing caveat:** the target assumes the WAN IP is static. If
 `PatriotWANDown` stays active while the site verifiably has internet, the
 AT&T gateway was likely reissued a new IP — update the target in
-`configs/prometheus/prometheus.yml`.
+`monitoring/prometheus/prometheus.yml` (Ohio15/infra).
 
 ## Phase 2 — on-site probe (DESIGN; blocked on site access)
 

@@ -1,6 +1,6 @@
 {
   "name": "sentinel",
-  "version": "1.77.51",
+  "version": "1.77.52",
   "description": "Sentinel - Remote Monitoring and Management",
   "author": "Sentinel",
   "license": "MIT",
@@ -16,7 +16,7 @@
     "lint": "eslint src --ext .ts,.tsx",
     "lint:fix": "eslint src --ext .ts,.tsx --fix",
     "sync-version": "node scripts/sync-version.js",
-    "release:agent": "npm run sync-version && npm run agent:build:win",
+    "release:agent": "node scripts/sync-version.js --agent && npm run agent:build:win",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

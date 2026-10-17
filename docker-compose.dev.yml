@@ -1,0 +1,22 @@
+# Local development overlay: builds the backend and frontend images from this
+# checkout instead of pulling them from ghcr.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#
+# docker-compose.yml is the production file that nexus-deploy renders on NEXUS
+# and checks against its allow-list, which refuses `build:`; build contexts
+# therefore live only here. Production images are built by release.yml on
+# GitHub-hosted runners (frontend build args come from release-config.yml).
+services:
+  backend:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        - VITE_API_URL=https://${DOMAIN:-localhost}/api
+        - VITE_WS_URL=wss://${DOMAIN:-localhost}/ws

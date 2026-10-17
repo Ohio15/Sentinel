@@ -36,10 +36,10 @@ dev-bg:
 
 # Build
 build:
-	docker-compose build
+	docker-compose -f docker-compose.yml -f docker-compose.dev.yml build
 
 build-no-cache:
-	docker-compose build --no-cache
+	docker-compose -f docker-compose.yml -f docker-compose.dev.yml build --no-cache
 
 # Production
 up:

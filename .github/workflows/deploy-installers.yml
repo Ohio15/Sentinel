@@ -39,13 +39,18 @@ permissions:
 jobs:
   deploy:
     name: Pull release assets onto NEXUS
-    runs-on: self-hosted
+    # Pinned to the legacy ohio_ runner by its own label. This job still needs
+    # docker (verification via `docker exec`) and writes the signed-release
+    # serving directory /home/ohio_/Sentinel/installers, neither of which the
+    # restricted runner-sentinel account (label nexus-deploy) may reach. A bare
+    # `self-hosted` would let it land on that runner once it is registered.
+    runs-on: [self-hosted, sentinel-installers]
     # workflow_run fires on every completion regardless of conclusion;
     # skip the job entirely when the triggering build failed so we don't
     # waste runner time or accidentally deploy a stale prior tag.
     # For workflow_run, also require the upstream run to come from this
     # repository: head_branch is matched by name, and a fork can name a
-    # branch anything (same guard as deploy-web.yml). And pin the upstream
+    # branch anything. And pin the upstream
     # source event to the ones Build Installers actually declares (tag push,
     # workflow_dispatch), both of which need write access, so a trigger added
     # to Build Installers later cannot silently reach this runner.

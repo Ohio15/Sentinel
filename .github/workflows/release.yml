@@ -1,9 +1,29 @@
 name: Release
 
 # Thin caller. Real logic lives in dev-standards.
-# Triggered by pushing a v* tag. Coexists with the existing ci.yml +
-# deploy-web.yml flow — those still fire on push to main.
 # Schema: https://github.com/Ohio15/dev-standards/blob/main/release/SPEC.md
+#
+# Triggered ONLY by pushing a v* tag to this repository. Ohio15/Sentinel is
+# public: no pull_request / pull_request_target / workflow_run trigger may be
+# added here, because the deploy job runs on a self-hosted NEXUS runner and a
+# fork PR must never reach one. A tag push can only come from someone with
+# write access to the base repo.
+#
+# Jobs:
+#   - gates, read-docker-config, build-and-push: GitHub-HOSTED (runs_on is
+#     pinned to ubuntu-latest so a future CI_RUNNER variable cannot move image
+#     builds onto self-hosted machines). Images listed in release-config.yml
+#     are pushed to ghcr.io/ohio15/sentinel-{backend,frontend} with this
+#     workflow's GITHUB_TOKEN (packages: write).
+#   - deploy, notify: the [self-hosted, nexus-deploy] runner registered as the
+#     restricted account runner-sentinel (no docker, no general sudo). Helper
+#     mode replaces the checkout/compose/health/rollback steps with ONE call,
+#     `sudo -n /usr/local/sbin/nexus-deploy sentinel deploy v<version>`, which
+#     deploys the tag's images by digest under the root-owned compose policy
+#     (Ohio15/infra nexus-deploy/stacks/sentinel.json).
+#
+# The signed agent release (build-installers.yml -> deploy-installers.yml)
+# also fires on the same v* tag and is unchanged by this workflow.
 
 on:
   push:
@@ -16,3 +36,6 @@ permissions:
 jobs:
   release:
     uses: Ohio15/dev-standards/.github/workflows/docker-release.yml@v1
+    with:
+      runs_on: ubuntu-latest
+      nexus_deploy_stack: sentinel

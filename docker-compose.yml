@@ -1,20 +1,32 @@
+# Production stack, deployed on NEXUS by the root-owned nexus-deploy helper
+# (Ohio15/infra nexus-deploy/, stack spec stacks/sentinel.json) from a v* tag:
+# images are built on GitHub-hosted runners by release.yml and pulled from
+# ghcr by digest. The helper renders THIS file alone and checks it against the
+# spec's allow-list, so it must stay free of `build:`, env_file, privileged,
+# extra capabilities and anything the spec does not list. Every service drops
+# ALL capabilities; none needs one back (backend and frontend run as their
+# image users, postgres as 70:70, redis as 999:999, all owning their data).
+# Local builds: `docker compose -f docker-compose.yml -f docker-compose.dev.yml`.
+# Monitoring (prometheus, alertmanager, grafana, exporters) moved to the
+# infra-owned monitoring stack (Ohio15/infra monitoring/); prometheus reaches
+# the backend over the external `sentinel-metrics` network.
 services:
   # Backend API Server
   backend:
     image: ghcr.io/ohio15/sentinel-backend:${IMAGE_TAG:-latest}
-    build:
-      context: ./server
-      dockerfile: Dockerfile
     container_name: sentinel-backend
     # Port 8090 for local development only - in production, only Traefik exposes ports
     ports:
       - "127.0.0.1:8090:8080"
       - "127.0.0.1:4445:4445"  # Plaintext gRPC for CF tunnel (localhost only)
-      - "8443:8443"             # Agent mTLS HTTP (direct, no Traefik)
-      - "4444:4444"             # Agent mTLS gRPC (direct, no Traefik)
-      - "${TURN_PORT:-3478}:${TURN_PORT:-3478}/udp"
-      - "${TURN_PORT:-3478}:${TURN_PORT:-3478}/tcp"
-      - "${TURN_MIN_PORT:-49152}-${TURN_MAX_PORT:-49252}:${TURN_MIN_PORT:-49152}-${TURN_MAX_PORT:-49252}/udp"
+      # Agent-facing ports are published on every IPv4 address. The host IP is
+      # explicit because nexus-deploy matches it literally against the spec
+      # (an omitted host IP renders as "" and is refused).
+      - "0.0.0.0:8443:8443"     # Agent mTLS HTTP (direct, no Traefik)
+      - "0.0.0.0:4444:4444"     # Agent mTLS gRPC (direct, no Traefik)
+      - "0.0.0.0:${TURN_PORT:-3478}:${TURN_PORT:-3478}/udp"
+      - "0.0.0.0:${TURN_PORT:-3478}:${TURN_PORT:-3478}/tcp"
+      - "0.0.0.0:${TURN_MIN_PORT:-49152}-${TURN_MAX_PORT:-49252}:${TURN_MIN_PORT:-49152}-${TURN_MAX_PORT:-49252}/udp"
     restart: unless-stopped
     environment:
       - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=${DB_SSL_MODE:-require}
@@ -61,8 +73,13 @@ services:
       - TURN_MIN_PORT=${TURN_MIN_PORT:-49152}
       - TURN_MAX_PORT=${TURN_MAX_PORT:-49252}
     volumes:
-      - ./installers:/app/installers:ro
-      - ./agent/version.json:/app/agent/version.json:ro
+      # INSTALLERS_DIR: the signed-release serving directory. On NEXUS it is
+      # /home/ohio_/Sentinel/installers (set in the nexus-deploy env file),
+      # which deploy-installers.yml fills; the spec pins that exact path.
+      - ${INSTALLERS_DIR:-./installers}:/app/installers:ro
+      # agent/version.json is deliberately NOT mounted: the server reads
+      # installers/version.json first, and the tracked file in a deploy tree
+      # nobody updates any more could only ever be a stale fallback.
       # release/agent is deliberately NOT mounted. It is a canonical artifact
       # search root (installer_paths.go), and findPlatformBinary falls back to
       # the unsuffixed "sentinel-<kind>" name — so the stale, unsigned,
@@ -76,6 +93,9 @@ services:
       # (sentinel-installer-template.exe, version.json — verified identical by
       # sha256); latest.yml/agent-latest.yml are legacy electron-updater files
       # no server code reads.
+      # On NEXUS the helper maps ./certs to /srv/nexus-state/sentinel/certs
+      # (root-owned dir; the keys stay owned by uid 1001 = appuser, 0440, so
+      # the backend reads them as their owner with every capability dropped).
       - ./certs:/certs:ro
       - agent-certs:/app/agent-certs
     depends_on:
@@ -84,10 +104,14 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - sentinel-network
+      - default
       - edge
+      # Prometheus scrape link (infra monitoring stack), backend + prometheus only.
+      - sentinel-metrics
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
     read_only: true
     tmpfs:
       - /tmp
@@ -106,30 +130,22 @@ services:
       retries: 3
       start_period: 40s
 
-  # Frontend
-  # Two release paths coexist:
-  #   - Old: push to main -> ci.yml -> deploy-web.yml builds locally on NEXUS, recreates frontend.
-  #   - New: tag v* -> dev-standards/docker-release pulls ghcr.io/ohio15/sentinel-frontend:vX.Y.Z.
-  # The `image:` line below lets `docker compose pull` work for the new path; `build:` keeps the
-  # old path (local rebuild tags the same name).
+  # Frontend. Built on a GitHub-hosted runner by release.yml (the VITE_* URLs
+  # are baked at build time from release-config.yml); nginx.conf is baked into
+  # the image by Dockerfile.web, so it is not bind-mounted.
   frontend:
     image: ghcr.io/ohio15/sentinel-frontend:${IMAGE_TAG:-latest}
-    build:
-      context: .
-      dockerfile: Dockerfile.web
-      args:
-        - VITE_API_URL=https://${DOMAIN}/api
-        - VITE_WS_URL=wss://${DOMAIN}/ws
     container_name: sentinel-frontend
     restart: unless-stopped
     volumes:
-      - ./installers:/app/installers:ro
-      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${INSTALLERS_DIR:-./installers}:/app/installers:ro
     networks:
-      - sentinel-network
+      - default
       - edge
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
     read_only: true
     tmpfs:
       - /var/cache/nginx:uid=101,gid=101
@@ -148,6 +164,10 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: sentinel-postgres
+    # Runs as the image's postgres uid with no capabilities: the data dir and
+    # the bound server key are 70:70 (0700 / 0600) on NEXUS. Started as root
+    # with ALL dropped, the entrypoint could not traverse the 0700 data dir.
+    user: "70:70"
     restart: unless-stopped
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-sentinel}
@@ -172,9 +192,11 @@ services:
       -c ssl_key_file=/var/lib/postgresql/server.key
       -c ssl_ca_file=/var/lib/postgresql/ca.crt
     networks:
-      - sentinel-network
+      - default
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
     deploy:
       resources:
         limits:
@@ -193,6 +215,10 @@ services:
   redis:
     image: redis:7-alpine
     container_name: sentinel-redis
+    # The image's redis uid; /data is 999-owned. The bound redis.conf must be
+    # readable by 999 (on NEXUS: /srv/nexus-state/sentinel/redis/redis.conf,
+    # 999:999 0400; see Ohio15/infra nexus-deploy/README.md Sentinel runbook).
+    user: "999:999"
     restart: unless-stopped
     # requirepass deliberately does NOT appear on the argv. Anything on the argv
     # is recorded verbatim in the container's Config.Cmd, which every holder of
@@ -207,9 +233,11 @@ services:
       - redis-data:/data
       - ${REDIS_CONF_DIR:-./configs/redis}/redis.conf:/usr/local/etc/redis/redis.conf:ro
     networks:
-      - sentinel-network
+      - default
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
     deploy:
       resources:
         limits:
@@ -240,213 +268,19 @@ services:
       timeout: 5s
       retries: 5
 
-  # Monitoring - Prometheus metrics collection
-  prometheus:
-    image: prom/prometheus:v2.51.0
-    container_name: sentinel-prometheus
-    restart: unless-stopped
-    volumes:
-      - ./configs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./configs/prometheus/rules:/etc/prometheus/rules:ro
-      - prometheus-data:/prometheus
-    networks:
-      - sentinel-network
-      - edge
-    labels:
-      - traefik.enable=true
-      - traefik.docker.network=edge
-      - traefik.http.routers.prometheus-nexus.rule=Host(`prometheus.nexus`)
-      - traefik.http.routers.prometheus-nexus.entrypoints=web,websecure
-      - traefik.http.routers.prometheus-nexus.tls=true
-      - traefik.http.services.prometheus-nexus.loadbalancer.server.port=9090
-    security_opt:
-      - no-new-privileges:true
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          # 512M starved this container: working set sat AT the limit from at
-          # least 2026-09-12 until the cgroup OOM on 2026-09-16 (~11k head
-          # series + 15d TSDB page cache). Measured, not guessed — see PR.
-          memory: 1536M
-        reservations:
-          cpus: '0.25'
-          memory: 256M
-
-  # Monitoring - Alertmanager (Phase 2 shadow mode: UI-only, no external push)
-  alertmanager:
-    image: prom/alertmanager:v0.27.0
-    container_name: sentinel-alertmanager
-    restart: unless-stopped
-    command:
-      - '--config.file=/etc/alertmanager/alertmanager.yml'
-      - '--storage.path=/alertmanager'
-      - '--web.external-url=https://alertmanager.nexus'
-    volumes:
-      - ./configs/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
-      - alertmanager-data:/alertmanager
-    networks:
-      - sentinel-network
-      - edge
-    labels:
-      - traefik.enable=true
-      - traefik.docker.network=edge
-      - traefik.http.routers.alertmanager-nexus.rule=Host(`alertmanager.nexus`)
-      - traefik.http.routers.alertmanager-nexus.entrypoints=web,websecure
-      - traefik.http.routers.alertmanager-nexus.tls=true
-      - traefik.http.services.alertmanager-nexus.loadbalancer.server.port=9093
-    security_opt:
-      - no-new-privileges:true
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 128M
-        reservations:
-          cpus: '0.1'
-          memory: 32M
-
-  # Monitoring - Node Exporter (host metrics: CPU, memory, disk, network)
-  node-exporter:
-    image: prom/node-exporter:v1.8.0
-    container_name: sentinel-node-exporter
-    restart: unless-stopped
-    command:
-      - '--path.rootfs=/host'
-      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc|run/docker)($$|/)'
-    pid: host
-    volumes:
-      - /:/host:ro,rslave
-    networks:
-      - sentinel-network
-    security_opt:
-      - no-new-privileges:true
-    deploy:
-      resources:
-        limits:
-          cpus: '0.25'
-          memory: 64M
-
-  # Monitoring - cAdvisor (per-container metrics: CPU, memory, network, restarts)
-  # v0.55.1 minimum: v0.49.1's Docker client speaks API 1.41, below dockerd 29.x's
-  # MinAPIVersion 1.44, so its Docker factory fails to register and cAdvisor falls
-  # back to the Raw/containerd factory — which emits cgroup `id` labels but no
-  # `name` label. Every alert in configs/prometheus/rules/containers.yml selects on
-  # {name!=""}, so they silently matched zero series. Do not downgrade.
-  cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.55.1
-    container_name: sentinel-cadvisor
-    restart: unless-stopped
-    # Collect only what configs/prometheus/rules/containers.yml consumes
-    # (container_cpu_usage_seconds_total, container_memory_*,
-    # container_spec_memory_limit_bytes, container_start_time_seconds) and
-    # only for Docker containers. At defaults cAdvisor walked every cgroup and
-    # every metric family and was cgroup-OOM-killed at 256M 16x on 2026-09-16.
-    command:
-      - --docker_only=true
-      - --housekeeping_interval=30s
-      - --store_container_labels=false
-      - --whitelisted_container_labels=com.docker.compose.service,com.docker.compose.project
-      - --enable_metrics=cpu,memory,oom_event
-    privileged: true
-    devices:
-      - /dev/kmsg:/dev/kmsg
-    volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:ro
-      - /sys:/sys:ro
-      - /var/lib/docker:/var/lib/docker:ro
-      - /dev/disk:/dev/disk:ro
-    networks:
-      - sentinel-network
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 512M
-
-  # Monitoring - Grafana dashboards
-  grafana:
-    image: grafana/grafana:11.0.0
-    container_name: sentinel-grafana
-    restart: unless-stopped
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-changeme}
-      - GF_SERVER_ROOT_URL=https://${DOMAIN}/grafana
-      - GF_SERVER_SERVE_FROM_SUB_PATH=true
-    volumes:
-      - grafana-data:/var/lib/grafana
-      - ./configs/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./configs/grafana/dashboards:/var/lib/grafana/dashboards:ro
-    networks:
-      - sentinel-network
-      - edge
-      # Grafana's only path to ai-console-prometheus ("AI Usage" dashboard): a
-      # dedicated two-member network, not read-only (ai-console README "Networks");
-      # ai-console-prometheus left the shared `edge` after the ai-console
-      # security audit of 2026-09-28 (F1: unauthenticated OTLP write/query).
-      - ai-console-grafana
-    labels:
-      - traefik.enable=true
-      - traefik.docker.network=edge
-      - traefik.http.routers.grafana-nexus.rule=Host(`grafana.nexus`)
-      - traefik.http.routers.grafana-nexus.entrypoints=web,websecure
-      - traefik.http.routers.grafana-nexus.tls=true
-      - traefik.http.services.grafana-nexus.loadbalancer.server.port=3000
-    security_opt:
-      - no-new-privileges:true
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 256M
-        reservations:
-          cpus: '0.25'
-          memory: 64M
-
-  # Monitoring - Blackbox exporter (synthetic end-to-end probes of public URLs).
-  # Probes https://sentinelrmm.us/health from inside the stack, exercising the
-  # full external path (Cloudflare -> Traefik -> backend). Catches edge/routing
-  # outages that internal scrapes miss (see PublicEndpointDown alert).
-  blackbox-exporter:
-    image: prom/blackbox-exporter:v0.25.0
-    container_name: sentinel-blackbox-exporter
-    restart: unless-stopped
-    command:
-      - '--config.file=/etc/blackbox_exporter/config.yml'
-    volumes:
-      - ./configs/blackbox/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
-    networks:
-      - sentinel-network
-    # Allow unprivileged ICMP (ping sockets) for the icmp module — the
-    # exporter runs as nobody, so raw sockets are unavailable; ping sockets
-    # need no extra capabilities and keep no-new-privileges intact.
-    sysctls:
-      net.ipv4.ping_group_range: "0 2147483647"
-    security_opt:
-      - no-new-privileges:true
-    deploy:
-      resources:
-        limits:
-          cpus: '0.25'
-          memory: 64M
-
 networks:
-  sentinel-network:
-    driver: bridge
+  # The project's own network is compose's implicit `default` (sentinel_default):
+  # nexus-deploy allows only `default` plus spec-listed external networks.
   edge:
     external: true
     name: edge
-  # Created once on NEXUS by the ai-console rollout; shared only with
-  # ai-console-prometheus.
-  ai-console-grafana:
+  # Created once on NEXUS by the infra monitoring stack rollout (internal: no
+  # gateway; members: sentinel-backend and the infra prometheus only).
+  sentinel-metrics:
     external: true
-    name: ai-console-grafana
+    name: sentinel-metrics
 
 volumes:
   postgres-data:
   redis-data:
   agent-certs:
-  prometheus-data:
-  grafana-data:
-  alertmanager-data:
